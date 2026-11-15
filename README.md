@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.52.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.53.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -66,7 +66,7 @@ it, its default and its limits: **Settings → Security → Security Features**,
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
 
-## What's new in 0.40 to 0.52
+## What's new in 0.40 to 0.53
 
 Every change on a computer below (services, processes, installing and removing software) needs the full (signed)
 Windows agent and an approval signer, and none of those changes has yet run on a real Windows computer: they have
@@ -74,6 +74,11 @@ been tested against a simulated one. Ask AI and Create ticket have been tested o
 real provider or PSA. [What each agent can do](docs/capabilities.md)
 says what is proven and what is not.
 
+- **Monthly patch windows (0.53).** A patch policy, or a company-wide one, can install on the nth or last weekday
+  of each month plus 0–14 days — *second Tuesday + 2* is the Thursday after Patch Tuesday — or on a day of the month
+  from 1 to 28. The form shows the next three openings in the policy's time zone, worked out by the same code the
+  approval signer holds every ring to. Weekly policies are unchanged. The approval signer needs updating to 0.53
+  before it accepts a monthly policy; the agent does not.
 - **See where every task is, and schedule update installs (0.52).** Every action, install, restart, script,
   snapshot, scan and agent upgrade you send shows its steps — scheduled, waiting for approval, queued for the next
   check-in, handed out, running, done — with per-update results, on the computer page, on Automation → Tasks and in

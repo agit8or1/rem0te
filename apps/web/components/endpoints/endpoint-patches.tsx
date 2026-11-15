@@ -19,7 +19,7 @@ import { connectivityLabel, connectivityOf } from '@/lib/connectivity';
 import { useApprovalMode } from '@/hooks/use-approval-mode';
 import { DIRECT_TOAST, oldAgentUpdateRefusal } from '@/lib/direct-mode';
 import { useAsks } from '@/lib/confirm-policy';
-import { PatchPolicySetting } from '@/components/patching/patch-policy-setting';
+import { PatchPolicySetting, type EffectivePolicy } from '@/components/patching/patch-policy-setting';
 import { ScheduleChoice, defaultSchedule, scheduleBody, type ScheduleValue } from '@/components/patching/schedule-choice';
 import { CancelTask, TaskItems, TaskSteps } from '@/components/tasks/task-ui';
 import { STATE_LABEL, STATE_VARIANT, type TaskView } from '@/lib/tasks';
@@ -157,6 +157,12 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
   const [windowHours, setWindowHours] = useState(8);
   const [reboot, setReboot] = useState<RebootRule>('never');
   const [when, setWhen] = useState<ScheduleValue>(() => defaultSchedule(p.timeZones ?? {}));
+  // 0.53: the computer's patch policy window (the same query the Patch policy card reads), offered as a start time.
+  const { data: pol } = useQuery({
+    queryKey: ['endpoint-patch-policy', endpointId],
+    queryFn: () => patchingApi.endpointPolicy(endpointId).then((r) => r.data.data as EffectivePolicy),
+  });
+  const policyOpening = pol?.effective.nextWindow && pol.effective.window ? { ...pol.effective.nextWindow, timezone: pol.effective.window.timezone } : null;
   const [done, setDone] = useState<{ approvalUrl: string; deploymentId: string; direct: boolean; scheduledFor: string | null } | null>(null);
   const installable = p.updates.filter((u) => u.installable);
   // Installable first, in the order Windows Update gave them.
@@ -269,7 +275,7 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
           </div>
         </div>
         <div className="max-w-xl">
-          <ScheduleChoice id="inst-when" value={when} onChange={setWhen} zones={p.timeZones ?? {}} maxDays={p.maxScheduleDays} />
+          <ScheduleChoice id="inst-when" value={when} onChange={setWhen} zones={p.timeZones ?? {}} maxDays={p.maxScheduleDays} policyWindow={policyOpening} onUsePolicyWindow={setWindowHours} />
         </div>
         <div className="space-y-1 max-w-xl">
           <Label htmlFor="inst-reason" className="text-xs">{direct ? 'Note (optional, recorded in the audit log)' : 'Reason (shown to the approvers)'}</Label>

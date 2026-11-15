@@ -4,7 +4,7 @@
  * fonts or images, a nonce CSP, and every value HTML-escaped.
  */
 import { REBOOT_UNPROVEN, UPDATE_RESTART_WARNING_MINUTES, type Plan } from '../actions/catalog';
-import { CLASSIFICATIONS as CLASS_NAME, type PolicyDoc } from '../actions/patch-policy';
+import { CLASSIFICATIONS as CLASS_NAME, describePolicyWindow, nextOccurrences, type PolicyDoc } from '../actions/patch-policy';
 import { resultKeyFingerprint } from '../actions/device-result';
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -156,7 +156,16 @@ export function renderPolicyApprovalPage(v: PolicyView, nonce: string): string {
   };
   const pc = (c: PolicyDoc['rings'][number][number]) => `${esc(c.hostname)} <span class="mut">(RustDesk ID ${esc(c.rustdeskId)})</span>${key(c)}`;
   const rings = d.rings.map((r, i) => `<li><strong>${i === 0 ? 'Ring 0 — canary' : `Ring ${i}`}</strong>: ${r.map(pc).join(', ')}</li>`).join('');
-  const days = d.window.days.map((x) => x[0].toUpperCase() + x.slice(1)).join(', ');
+  // 0.53: a weekly window reads as it always did; a monthly one says which day of each month, and both list the next openings.
+  const w = d.window;
+  const when = 'days' in w
+    ? `${esc(w.days.map((x) => x[0].toUpperCase() + x.slice(1)).join(', '))}, ${esc(w.start)}–${esc(w.end)}`
+    : `<strong>monthly</strong>: ${esc(describePolicyWindow(w).replace(` ${w.timezone}`, ''))}`;
+  const local = (t: Date) => new Intl.DateTimeFormat('en-GB', { timeZone: w.timezone, weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(t);
+  const openings = nextOccurrences(new Date(), w, 3, new Date(d.expiresAt));
+  const next = openings.length
+    ? `<br><span class="mut">Next openings before it expires: ${openings.map((o) => esc(`${local(o.start)} → ${local(o.end)}`)).join('; ')}</span>`
+    : '<br><strong>It never opens before the policy expires.</strong>';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Approve patch policy: ${esc(d.name)}</title>
 <style nonce="${nonce}">${STYLE}</style></head><body>
@@ -176,7 +185,7 @@ ${row('Customer', esc(d.businessName))}
 ${row('Computers', `<ul>${rings}</ul><span class="mut">Bound to each computer's enrolled identity and result key. A re-enrolled computer is not covered.</span>`)}
 ${row('Installs', esc(d.allow.classifications.map((c) => CLASS_NAME[c] ?? c).join(', ')) + (d.allow.severities ? ` — severity ${esc(d.allow.severities.join(', '))} only` : '') + '<br><span class="mut">Only updates Windows Update itself offers each computer. Drivers and definition updates only if listed above. Never feature upgrades, feature or service packs, tools, optional updates, or anything needing a licence or (drivers excepted) someone at the keyboard.</span>')}
 ${row('Never installs', d.allow.excludeKbs ? esc(d.allow.excludeKbs.join(', ')) : '<span class="mut">no KBs excluded</span>')}
-${row('Window', `${esc(days)}, ${esc(d.window.start)}–${esc(d.window.end)} <strong>${esc(d.window.timezone)}</strong> local time`)}
+${row('Window', `${when} <strong>${esc(w.timezone)}</strong> local time${next}`)}
 ${row('Between rings', `soak ${esc(d.soakHours)} h; at most ${esc(d.failureThreshold)} failed computer(s) per ring before the deployment pauses itself`)}
 ${row('Restarts', d.reboot === 'if_required_in_window' ? `<strong>if Windows requires one</strong>, after a ${UPDATE_RESTART_WARNING_MINUTES}-minute warning, inside the window only, never with a RustDesk session open` : 'never')}
 ${row('Proposed by', `${esc(d.createdBy.name)} <span class="mut">(cannot approve it)</span>`)}

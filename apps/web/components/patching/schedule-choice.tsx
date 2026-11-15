@@ -12,7 +12,7 @@
 import { useEffect, useMemo } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { browserTimeZone, localIn } from '@/lib/tasks';
+import { browserTimeZone, describeOccurrence, localAt, localIn } from '@/lib/tasks';
 
 export type ScheduleValue = { mode: 'now' | 'schedule'; local: string; timeZone: string };
 export type Zones = { site?: string | null; viewer?: string | null };
@@ -32,10 +32,18 @@ export function defaultSchedule(z: Zones): ScheduleValue {
   return { mode: 'now', local: localIn(tz, 60), timeZone: tz };
 }
 
-export function ScheduleChoice({ id, value, onChange, zones, maxDays = 14, nowLabel = 'Install now' }: {
+/** 0.53: the next opening of the computer's patch policy window, offered as a start time. */
+export type PolicyOpening = { start: string; end: string; timezone: string };
+
+export function ScheduleChoice({ id, value, onChange, zones, maxDays = 14, nowLabel = 'Install now', policyWindow, onUsePolicyWindow }: {
   id: string; value: ScheduleValue; onChange: (v: ScheduleValue) => void; zones: Zones; maxDays?: number; nowLabel?: string;
+  policyWindow?: PolicyOpening | null; onUsePolicyWindow?: (hours: number) => void;
 }) {
   const opts = useMemo(() => zoneOptions(zones), [zones]);
+  // 0.53: start at the policy window's next opening, as a wall-clock time in the zone chosen here (the same instant).
+  const opening = policyWindow ? { at: Date.parse(policyWindow.start), hours: (Date.parse(policyWindow.end) - Date.parse(policyWindow.start)) / 3_600_000 } : null;
+  const openingWhy = !opening ? null : opening.at <= Date.now() + 60_000 ? 'it is open now — install now instead'
+    : opening.at > Date.now() + maxDays * 86_400_000 ? `it is more than ${maxDays} days ahead` : null;
   // Keep the chosen zone one of the offered ones if the zones arrive later.
   useEffect(() => {
     if (!opts.some((o) => o.tz === value.timeZone)) onChange({ ...value, timeZone: opts[0]!.tz, local: localIn(opts[0]!.tz, 60) });
@@ -53,6 +61,15 @@ export function ScheduleChoice({ id, value, onChange, zones, maxDays = 14, nowLa
           Schedule
         </label>
       </div>
+      {policyWindow && opening && (
+        <p className="text-xs" data-testid="schedule-policy-window">
+          <button type="button" className="underline disabled:no-underline disabled:text-muted-foreground" disabled={!!openingWhy} data-testid="schedule-use-policy-window"
+            onClick={() => { onChange({ ...value, mode: 'schedule', local: localAt(value.timeZone, new Date(opening.at)) }); onUsePolicyWindow?.(Math.max(1, Math.min(24, Math.floor(opening.hours)))); }}>
+            Start at the next opening of this computer&apos;s patch policy window
+          </button>{' '}
+          <span className="text-muted-foreground">({describeOccurrence(policyWindow, policyWindow.timezone)}{openingWhy ? `; ${openingWhy}` : ''})</span>
+        </p>
+      )}
       {value.mode === 'schedule' && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="space-y-1">

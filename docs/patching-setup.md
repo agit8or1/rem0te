@@ -171,8 +171,13 @@ Then:
    - optionally, severities;
    - any KBs it must never install.
 4. Choose when:
-   - the maintenance window's days, its local start and end, and its IANA time zone (for example `America/Chicago`).
-     The window follows daylight-saving time.
+   - the maintenance window: **Weekly** (the days of the week) or, from 0.53, **Monthly** — the nth or last weekday
+     of each month plus 0–14 days (Patch Tuesday is *the second Tuesday*; *+ 2* is the Thursday after), or a day of
+     the month from 1 to 28 — then its local start and end, and its IANA time zone (for example `America/Chicago`).
+     The window follows daylight-saving time. The form shows the next three openings before the expiry; if there are
+     none, the policy would be refused (`window_never_opens`). A monthly window needs the approval signer rebuilt
+     from 0.53 (see [Staged patching → Monthly windows](staged-patching.md#monthly-windows-053)); until then it is
+     refused at the signer (`invalid_policy`).
    - the soak time between rings;
    - the number of failed computers allowed per ring;
    - the expiry, at most 90 days;
@@ -202,7 +207,7 @@ It signs nothing outside the policy. The bounds are listed in
 ### Or: one policy for the whole business (0.50)
 
 Instead of naming rings by hand, open **Patching** → **Company-wide patch policy** → **Company-wide policy** (fresh
-sign-in). Choose the classes, window, soak, failure threshold, restart rule, how long each revision lasts (at most 90
+sign-in). Choose the classes, window (weekly or, from 0.53, monthly), soak, failure threshold, restart rule, how long each revision lasts (at most 90
 days) and, optionally, the canary. The portal names the computers: every Windows computer of the business on the
 signed agent whose **Patch policy** is *Inherit*. The canary is the one you chose, or the one that checks in most
 reliably, and the rest go in rings of at most 25. Computers it can't include are listed with the reason.

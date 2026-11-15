@@ -110,6 +110,13 @@ jobs:
       # the signer's policy records (quorum, tamper, revocation).
       - name: Patch policy tests
         run: node apps/api/scripts/unit-patch-policy.mjs
+      # 0.53: monthly maintenance windows — the closed window union, the nth
+      # and last weekday with an offset into the next month, a day of the
+      # month, midnight at month end and DST in both hemispheres, expiry
+      # (window_never_opens), the signer signing inside and refusing outside,
+      # unknown kinds refused, and a weekly document's digest pinned to 0.52's.
+      - name: Monthly patch window tests
+        run: node apps/api/scripts/unit-monthly-window.mjs
       # 0.50: company-wide and assignable patch policies — the rings the
       # portal builds (checked with the signer's own validatePolicyDoc), the
       # membership fingerprint and the bounded revision decision.

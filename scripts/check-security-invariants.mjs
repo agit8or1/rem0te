@@ -4796,6 +4796,69 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'run-e2e.sh must run e2e-task-progress and CI must run unit-task-progress');
 }
 
+// 66. Monthly patch windows (0.53). A patch policy's window is a closed union
+//     of exactly three strict shapes: weekly (0.32's shape, no `kind`, so a
+//     weekly document's bytes, digest and signatures are unchanged), and two
+//     monthly ones (`kind: 'monthly'`: the nth or last weekday plus 0–14 days,
+//     or a day of the month 1–28). The occurrence arithmetic is defined once,
+//     in actions/patch-policy.ts, which the approval signer bundles: the
+//     portal's sweep and preview and the signer's admission and ring-plan
+//     check call the same functions, and the web works out no occurrence of
+//     its own. A shape that is none of the three never opens — refused by the
+//     schema, and null from every occurrence function. The agent never reads
+//     a policy window: it checks only its plan's own notBefore/notAfter.
+{
+  const pp = read('apps/api/src/actions/patch-policy.ts');
+  const body = (name) => (pp.match(new RegExp(`export const ${name} = z\\.object\\(\\{([\\s\\S]*?)\\n\\}\\)\\.strict\\(\\)\\.refine\\(notEmpty, 'the window must not be empty'\\);`)) ?? [])[1] ?? '';
+  const keys = (src) => [...src.matchAll(/^\s{2}([a-zA-Z]+):/gm)].map((m) => m[1]).join(',');
+  const wk = body('WeeklyWindow'), mw = body('MonthlyWeekdayWindow'), md = body('MonthlyDayWindow');
+  check('monthly windows: the window is a closed union of exactly three strict shapes',
+    /export const PolicyWindow = z\.union\(\[WeeklyWindow, MonthlyWeekdayWindow, MonthlyDayWindow\]\);/.test(pp)
+      && (pp.match(/export const PolicyWindow = /g) ?? []).length === 1
+      && keys(wk) === 'days,start,end,timezone' && keys(mw) === 'kind,week,weekday,offsetDays,start,end,timezone' && keys(md) === 'kind,day,start,end,timezone'
+      && (mw.match(/kind: z\.literal\('monthly'\),/g) ?? []).length === 1 && (md.match(/kind: z\.literal\('monthly'\),/g) ?? []).length === 1
+      && /offsetDays: z\.number\(\)\.int\(\)\.min\(0\)\.max\(MAX_MONTHLY_OFFSET_DAYS\),/.test(mw) && /day: z\.number\(\)\.int\(\)\.min\(1\)\.max\(MAX_MONTH_DAY\),/.test(md)
+      && /export const MAX_MONTHLY_OFFSET_DAYS = 14;/.test(pp) && /export const MAX_MONTH_DAY = 28;/.test(pp)
+      && /export const MONTH_WEEKS = \['first', 'second', 'third', 'fourth', 'last'\] as const;/.test(pp)
+      && /window: PolicyWindow,/.test(pp.slice(pp.indexOf('export const PolicyDoc = z.object('), pp.indexOf('export type PolicyDoc'))),
+    'patch-policy.ts: WeeklyWindow (days, start, end, timezone — no kind), MonthlyWeekdayWindow, MonthlyDayWindow, each .strict(), and PolicyDoc.window is their union');
+  // Any function taking a policy window (reports/schedule.ts has its own nextOccurrence, for report schedules, which takes none).
+  const takesWindow = /function \w+\([^)]*\b(PolicyWindow|MonthlyWindow|WeeklyWindow)\b/;
+  const defs = walk('apps/api/src').filter((f) => takesWindow.test(read(f)));
+  const webDefs = walk('apps/web').filter((f) => !f.endsWith('.generated.ts') && /function (occurrenceAt|nextOccurrence|nextOccurrences|monthlyDate|opensOn)\(|zonedToUtc/.test(read(f)));
+  const ev = pp.slice(pp.indexOf('export function evaluatePolicyPlan('), pp.indexOf('// ── Signed evidence'));
+  const val = pp.slice(pp.indexOf('export function validatePolicyDoc('), pp.indexOf('/** What a plan\'s params carry'));
+  const pol = read('apps/api/src/patching/policies.service.ts');
+  const prev = pol.slice(pol.indexOf('  previewWindow('), pol.indexOf('  async list('));
+  check('monthly windows: the signer and the portal share one occurrence function, and the web has none of its own',
+    defs.length === 1 && defs[0] === 'apps/api/src/actions/patch-policy.ts' && webDefs.length === 0
+      && /const occ = occurrenceAt\(nb, doc\.window\);\s*\n\s*if \(!occ \|\| na > occ\.end\) return no\('outside_window'/.test(ev)
+      && /if \(!nextOccurrence\(now, doc\.window, new Date\(exp\)\)\) return \{ ok: false, reason: 'window_never_opens'/.test(val)
+      && /const occ = occurrenceAt\(now, doc\.window\);/.test(pol) && /nextOccurrences\(now, w\.data, 3, until\)/.test(prev) && /PolicyWindow\.safeParse\(parsed\.data\.window\)/.test(prev)
+      && !/this\.prisma|this\.audit|\.create\(|\.update\(/.test(prev)
+      && /actions\\\/patch-policy\\\.js\$/.test(read('apps/api/scripts/build-approval-signer.mjs'))
+      && /patchingApi\.windowPreview\(/.test(read('apps/web/components/patching/window-editor.tsx')),
+    `occurrence functions defined in: ${defs.join(', ') || 'none'}; in the web: ${webDefs.join(', ') || 'none'}`);
+  const occAt = pp.slice(pp.indexOf('export function occurrenceAt('), pp.indexOf('/** The first occurrence'));
+  const nextO = pp.slice(pp.indexOf('export function nextOccurrence('), pp.indexOf('/** 0.53: the next `count`'));
+  const opens = pp.slice(pp.indexOf('function opensOn('), pp.indexOf('/** How many local days ahead'));
+  const kind = pp.slice(pp.indexOf('export function windowKind('), pp.indexOf('/**', pp.indexOf('export function windowKind(')));
+  check('monthly windows: an unknown window kind is refused — never read as weekly or monthly',
+    /if \(!\('kind' in o\)\) return Array\.isArray\(o\.days\) \? 'weekly' : null;/.test(kind) && /if \(o\.kind !== 'monthly' \|\| 'days' in o\) return null;/.test(kind)
+      && /^\s*if \(!windowKind\(w\)\) return null;/m.test(occAt) && /^\s*if \(!windowKind\(w\)\) return null;/m.test(nextO)
+      && /if \(kind !== 'monthly'\) return false;/.test(opens)
+      && /const parsed = PolicyDoc\.safeParse\(raw\);\s*\n\s*if \(!parsed\.success\) throw new Refused\('invalid_policy'/.test(read('apps/api/src/approval-signer/core.ts')),
+    'windowKind null for any other shape; occurrenceAt/nextOccurrence return null and opensOn false for it; the signer admits only what PolicyDoc parses');
+  const unit = read('apps/api/scripts/unit-monthly-window.mjs');
+  const agentGo = ['action.go', 'updates.go'].map((f) => { try { return read(`tools/windows-installer/internal/action/${f}`); } catch { return ''; } }).join('\n');
+  check('monthly windows: weekly documents are unchanged, the agent reads no policy window, and the suites prove it',
+    /P\.policyDigest\(parsed\) === '466423a5bb889e289b536d62ac25ddf66450179770f1161c576003fc3644f99b'/.test(unit)
+      && /unit-monthly-window\.mjs/.test(read('.github/workflows/ci.yml'))
+      && /section\('A monthly window \(0\.53\)/.test(read('apps/api/scripts/e2e-patch-policies.mjs'))
+      && agentGo.length > 0 && !/offsetDays|MonthWeek|"days"|Weekday/.test(agentGo),
+    'unit-monthly-window pins the 0.52 weekly digest and runs in CI; e2e-patch-policies has the monthly section; internal/action has no policy-window code');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

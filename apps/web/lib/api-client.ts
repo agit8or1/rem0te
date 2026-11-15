@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { PolicyWindowInput } from './patching';
 
 // Always use a relative path so browser requests go to the same origin,
 // avoiding CORS issues regardless of the port the user accesses the UI on.
@@ -113,6 +114,8 @@ export const patchingApi = {
   series: (businessId: string) => api.get('/patching/series', { params: { businessId } }),
   createSeries: (body: PatchSeriesInput) => api.post('/patching/series', body),
   retireSeries: (id: string, reason: string) => api.post(`/patching/series/${id}/retire`, { reason }),
+  // 0.53: a window's description and next openings, computed by the functions the approval signer runs.
+  windowPreview: (window: PolicyWindowInput, expiresInDays?: number) => api.post('/patching/window-preview', { window, ...(expiresInDays ? { expiresInDays } : {}) }),
 };
 
 export type PatchPolicySettingInput = { mode: 'inherit' } | { mode: 'exclude' } | { mode: 'policy'; seriesId: string };
@@ -120,7 +123,7 @@ export interface PatchSeriesInput {
   businessId: string; scope: 'business' | 'assigned'; name: string;
   allow: { classifications: string[]; severities?: string[]; excludeKbs?: string[] };
   soakHours: number; failureThreshold: number;
-  window: { days: string[]; start: string; end: string; timezone: string };
+  window: PolicyWindowInput;
   reboot: 'never' | 'if_required_in_window'; expiresInDays: number; reason: string; canaryEndpointId?: string;
 }
 
@@ -179,7 +182,7 @@ export interface PatchPolicyInput {
   businessId: string; name: string; rings: string[][];
   allow: { classifications: string[]; severities?: string[]; excludeKbs?: string[] };
   soakHours: number; failureThreshold: number;
-  window: { days: string[]; start: string; end: string; timezone: string };
+  window: PolicyWindowInput;
   reboot: 'never' | 'if_required_in_window'; expiresInDays: number; reason: string;
 }
 

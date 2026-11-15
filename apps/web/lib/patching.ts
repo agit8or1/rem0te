@@ -29,7 +29,41 @@ export const WEEKDAYS = [
   { id: 'fri', label: 'Fri' }, { id: 'sat', label: 'Sat' }, { id: 'sun', label: 'Sun' },
 ] as const;
 
-export function describeWindow(w: { days: string[]; start: string; end: string; timezone: string }) {
-  const days = w.days.length === 7 ? 'every day' : WEEKDAYS.filter((d) => w.days.includes(d.id)).map((d) => d.label).join(', ');
-  return `${days} ${w.start}–${w.end}${w.end <= w.start ? ' (next day)' : ''} ${w.timezone}`;
+/**
+ * A patch policy's maintenance window, as the policy document carries it
+ * (apps/api/src/actions/patch-policy.ts, PolicyWindow). Weekly has no `kind`
+ * — its shape has not changed since 0.32. Monthly (0.53) is the nth or last
+ * weekday of each month plus an offset, or one day of the month, 1–28.
+ */
+export type WeeklyWindowInput = { days: string[]; start: string; end: string; timezone: string };
+export type MonthlyWeekdayWindowInput = { kind: 'monthly'; week: MonthWeek; weekday: string; offsetDays: number; start: string; end: string; timezone: string };
+export type MonthlyDayWindowInput = { kind: 'monthly'; day: number; start: string; end: string; timezone: string };
+export type PolicyWindowInput = WeeklyWindowInput | MonthlyWeekdayWindowInput | MonthlyDayWindowInput;
+
+export const MONTH_WEEKS = [
+  { id: 'first', label: 'first' }, { id: 'second', label: 'second' }, { id: 'third', label: 'third' },
+  { id: 'fourth', label: 'fourth' }, { id: 'last', label: 'last' },
+] as const;
+export type MonthWeek = (typeof MONTH_WEEKS)[number]['id'];
+/** The same bounds as the policy document: an offset of 0–14 days, a day of the month 1–28. */
+export const MAX_MONTHLY_OFFSET_DAYS = 14;
+export const MAX_MONTH_DAY = 28;
+
+const WEEKDAY_LONG: Record<string, string> = { sun: 'Sunday', mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday' };
+const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'}`;
+
+/** "Sat 22:00–04:00 (next day) America/Chicago", or (0.53) "2 days after the second Tuesday of each month, 22:00–04:00 (next day) America/Chicago". */
+export function describeWindow(w: PolicyWindowInput) {
+  const times = `${w.start}–${w.end}${w.end <= w.start ? ' (next day)' : ''} ${w.timezone}`;
+  if ('days' in w && !('kind' in w)) {
+    const days = w.days.length === 7 ? 'every day' : WEEKDAYS.filter((d) => w.days.includes(d.id)).map((d) => d.label).join(', ');
+    return `${days} ${times}`;
+  }
+  if ('kind' in w && w.kind === 'monthly') {
+    if ('day' in w) return `the ${ordinal(w.day)} of each month, ${times}`;
+    const m = w as MonthlyWeekdayWindowInput;
+    const base = `the ${m.week} ${WEEKDAY_LONG[m.weekday] ?? m.weekday} of each month`;
+    return `${m.offsetDays ? `${m.offsetDays} day${m.offsetDays === 1 ? '' : 's'} after ${base}` : base}, ${times}`;
+  }
+  return `an unrecognised window ${times}`;
 }

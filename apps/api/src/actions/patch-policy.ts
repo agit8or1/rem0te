@@ -15,7 +15,7 @@ import { RESULT_STATUS, ResultKey, openDeviceStatement } from './device-result';
  * business, the exact computers of each ring (bound to their enrolled
  * identity, not a hostname), the update classifications and severities it
  * may install, KBs it never installs, the soak time and failure threshold,
- * a weekly maintenance window in a named timezone, the reboot rule, and an
+ * a weekly or (0.53) monthly maintenance window in a named timezone, the reboot rule, and an
  * expiry at most 90 days out. After that the approval signer — not the portal
  * — signs each ring plan, but only if `evaluatePolicyPlan` finds it inside
  * that document. The portal proposes; the signer decides from the policy it
@@ -87,13 +87,67 @@ export const PolicyComputer = z.object({
 }).strict();
 export type PolicyComputer = z.infer<typeof PolicyComputer>;
 
-export const PolicyWindow = z.object({
+const Timezone = z.string().min(1).max(64).refine(validTimezone, 'not a timezone this runtime knows (IANA name, e.g. America/Chicago)');
+const notEmpty = (w: { start: string; end: string }) => w.start !== w.end;
+
+/**
+ * A weekly window (0.32): the days of the week it opens on. Its shape is
+ * unchanged since 0.32 and carries no `kind`, so a weekly policy document's
+ * canonical bytes, digest and signature are exactly what they always were.
+ */
+export const WeeklyWindow = z.object({
   days: z.array(z.enum(WEEKDAYS)).min(1).max(7).refine((d) => new Set(d).size === d.length, 'a day is listed twice'),
   /** Local wall-clock time in `timezone`. An end at or before the start ends on the next day. */
   start: Hhmm,
   end: Hhmm,
-  timezone: z.string().min(1).max(64).refine(validTimezone, 'not a timezone this runtime knows (IANA name, e.g. America/Chicago)'),
-}).strict().refine((w) => w.start !== w.end, 'the window must not be empty');
+  timezone: Timezone,
+}).strict().refine(notEmpty, 'the window must not be empty');
+export type WeeklyWindow = z.infer<typeof WeeklyWindow>;
+
+/** 0.53: which week of the month a monthly window's weekday falls in. */
+export const MONTH_WEEKS = ['first', 'second', 'third', 'fourth', 'last'] as const;
+export type MonthWeek = (typeof MONTH_WEEKS)[number];
+/** 0.53: the most a monthly weekday window may be moved on (Patch Tuesday + 14 days). */
+export const MAX_MONTHLY_OFFSET_DAYS = 14;
+/** 0.53: a day-of-month window names 1 to 28, so it opens in every month, February included. */
+export const MAX_MONTH_DAY = 28;
+
+/**
+ * A monthly window on the nth (or last) weekday of each month, moved on by
+ * `offsetDays` (0.53): "second Tuesday + 2 days" is the Thursday after Patch
+ * Tuesday. The offset may carry it into the next month; that occurrence still
+ * belongs to the month whose weekday it was counted from.
+ */
+export const MonthlyWeekdayWindow = z.object({
+  kind: z.literal('monthly'),
+  week: z.enum(MONTH_WEEKS),
+  weekday: z.enum(WEEKDAYS),
+  offsetDays: z.number().int().min(0).max(MAX_MONTHLY_OFFSET_DAYS),
+  start: Hhmm,
+  end: Hhmm,
+  timezone: Timezone,
+}).strict().refine(notEmpty, 'the window must not be empty');
+export type MonthlyWeekdayWindow = z.infer<typeof MonthlyWeekdayWindow>;
+
+/** A monthly window on one day of each month, 1 to 28 (0.53). There is no "29th" that skips February. */
+export const MonthlyDayWindow = z.object({
+  kind: z.literal('monthly'),
+  day: z.number().int().min(1).max(MAX_MONTH_DAY),
+  start: Hhmm,
+  end: Hhmm,
+  timezone: Timezone,
+}).strict().refine(notEmpty, 'the window must not be empty');
+export type MonthlyDayWindow = z.infer<typeof MonthlyDayWindow>;
+export type MonthlyWindow = MonthlyWeekdayWindow | MonthlyDayWindow;
+
+/**
+ * The maintenance window: a closed union of exactly three strict shapes.
+ * Anything else — another `kind`, a weekly window with a `kind`, a monthly
+ * one with `days`, a day and a weekday together — matches none of them and
+ * is refused, by the portal before it proposes and by the signer before it
+ * admits. The occurrence functions below fail closed on an unknown shape too.
+ */
+export const PolicyWindow = z.union([WeeklyWindow, MonthlyWeekdayWindow, MonthlyDayWindow]);
 export type PolicyWindow = z.infer<typeof PolicyWindow>;
 
 export const PolicyAllow = z.object({
@@ -241,10 +295,63 @@ export function zonedToUtc(y: number, m: number, d: number, hh: number, mm: numb
 const addDays = (y: number, m: number, d: number, n: number) => { const t = new Date(Date.UTC(y, m - 1, d + n)); return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() }; };
 const hm = (s: string) => s.split(':').map(Number) as [number, number];
 
-/** The occurrence of the window that begins on this local date, if the date's weekday is one of its days. */
-function occurrenceOn(date: { y: number; m: number; d: number }, w: PolicyWindow): { start: Date; end: Date } | null {
-  const wd = WEEKDAYS[new Date(Date.UTC(date.y, date.m - 1, date.d)).getUTCDay()];
-  if (!w.days.includes(wd)) return null;
+type LocalDate = { y: number; m: number; d: number };
+const weekdayOf = (date: LocalDate): Weekday => WEEKDAYS[new Date(Date.UTC(date.y, date.m - 1, date.d)).getUTCDay()];
+const daysInMonth = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+const intIn = (v: unknown, lo: number, hi: number): v is number => typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
+
+/**
+ * 0.53: which kind of window this is — or null for a shape that is neither,
+ * which every function here treats as a window that never opens (fail
+ * closed: an unknown kind is never read as weekly or as monthly).
+ */
+export function windowKind(w: unknown): 'weekly' | 'monthly' | null {
+  if (!w || typeof w !== 'object') return null;
+  const o = w as Record<string, unknown>;
+  if (!('kind' in o)) return Array.isArray(o.days) ? 'weekly' : null;
+  if (o.kind !== 'monthly' || 'days' in o) return null;
+  return ('day' in o) !== ('week' in o) ? 'monthly' : null;
+}
+
+/**
+ * 0.53: the local date a monthly window opens in month (y, m), counted from
+ * that month (the offset may carry it into the next one). Null for a shape
+ * that is not a monthly window.
+ */
+export function monthlyDate(y: number, m: number, w: MonthlyWindow): LocalDate | null {
+  if ('day' in w) return intIn(w.day, 1, MAX_MONTH_DAY) ? { y, m, d: w.day } : null;
+  const wd = WEEKDAYS.indexOf(w.weekday), wk = MONTH_WEEKS.indexOf(w.week);
+  if (wd < 0 || wk < 0 || !intIn(w.offsetDays, 0, MAX_MONTHLY_OFFSET_DAYS)) return null;
+  let d: number;
+  if (w.week === 'last') {
+    const last = daysInMonth(y, m);
+    d = last - ((new Date(Date.UTC(y, m - 1, last)).getUTCDay() - wd + 7) % 7);
+  } else {
+    d = 1 + ((wd - new Date(Date.UTC(y, m - 1, 1)).getUTCDay() + 7) % 7) + 7 * wk;
+  }
+  return addDays(y, m, d, w.offsetDays);
+}
+
+/** Does the window open (start) on this local date? Weekly: one of its days. Monthly: its date this month, or last month's carried over by the offset. */
+function opensOn(date: LocalDate, w: PolicyWindow): boolean {
+  const kind = windowKind(w);
+  if (kind === 'weekly') return (w as WeeklyWindow).days.includes(weekdayOf(date));
+  if (kind !== 'monthly') return false;
+  // The offset is at most 14 days, so a date's occurrence was counted from its own month or the one before.
+  const prev = date.m === 1 ? { y: date.y - 1, m: 12 } : { y: date.y, m: date.m - 1 };
+  for (const mo of [{ y: date.y, m: date.m }, prev]) {
+    const t = monthlyDate(mo.y, mo.m, w as MonthlyWindow);
+    if (t && t.y === date.y && t.m === date.m && t.d === date.d) return true;
+  }
+  return false;
+}
+
+/** How many local days ahead `nextOccurrence` looks: a week and a day for weekly, two months and more for monthly. */
+const lookahead = (w: PolicyWindow) => (windowKind(w) === 'monthly' ? 70 : 8);
+
+/** The occurrence of the window that begins on this local date, if it opens on that date. */
+function occurrenceOn(date: LocalDate, w: PolicyWindow): { start: Date; end: Date } | null {
+  if (!opensOn(date, w)) return null;
   const [sh, sm] = hm(w.start), [eh, em] = hm(w.end);
   const start = zonedToUtc(date.y, date.m, date.d, sh, sm, w.timezone);
   const crosses = eh * 60 + em <= sh * 60 + sm;
@@ -255,6 +362,7 @@ function occurrenceOn(date: { y: number; m: number; d: number }, w: PolicyWindow
 
 /** The occurrence of the window that contains instant t, or null. */
 export function occurrenceAt(t: Date, w: PolicyWindow): { start: Date; end: Date } | null {
+  if (!windowKind(w)) return null;
   const l = localTime(t, w.timezone);
   for (const n of [-1, 0]) {
     const o = occurrenceOn(addDays(l.y, l.m, l.d, n), w);
@@ -265,14 +373,47 @@ export function occurrenceAt(t: Date, w: PolicyWindow): { start: Date; end: Date
 
 /** The first occurrence that has not ended by `after` (it may already be open), before `until` if given. */
 export function nextOccurrence(after: Date, w: PolicyWindow, until?: Date): { start: Date; end: Date } | null {
+  if (!windowKind(w)) return null;
   const l = localTime(after, w.timezone);
-  for (let n = -1; n <= 8; n++) {
+  for (let n = -1, most = lookahead(w); n <= most; n++) {
     const o = occurrenceOn(addDays(l.y, l.m, l.d, n), w);
     if (!o || o.end <= after) continue;
     if (until && o.start >= until) return null;
     return o;
   }
   return null;
+}
+
+/** 0.53: the next `count` occurrences (at most 12) from `after`, before `until` if given. What the editor previews and the signer's page shows. */
+export function nextOccurrences(after: Date, w: PolicyWindow, count: number, until?: Date): { start: Date; end: Date }[] {
+  const out: { start: Date; end: Date }[] = [];
+  let t = after;
+  for (let i = 0; i < Math.min(Math.max(count, 0), 12); i++) {
+    const o = nextOccurrence(t, w, until);
+    if (!o) break;
+    out.push(o);
+    t = o.end;
+  }
+  return out;
+}
+
+const WEEKDAY_NAME: Record<Weekday, string> = { sun: 'Sunday', mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday' };
+const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'}`;
+
+/**
+ * The window in words, as the signer's refusal and its approval page say it.
+ * A weekly window reads exactly as it did before 0.53 ("sat, sun 22:00–04:00
+ * America/Chicago").
+ */
+export function describePolicyWindow(w: PolicyWindow): string {
+  const kind = windowKind(w);
+  const times = `${w.start}–${w.end} ${w.timezone}`;
+  if (kind === 'weekly') return `${(w as WeeklyWindow).days.join(', ')} ${times}`;
+  if (kind !== 'monthly') return `an unrecognised window ${times}`;
+  const m = w as MonthlyWindow;
+  if ('day' in m) return `the ${ordinal(m.day)} of each month ${times}`;
+  const base = `the ${m.week} ${WEEKDAY_NAME[m.weekday]} of each month`;
+  return `${m.offsetDays ? `${m.offsetDays} day${m.offsetDays === 1 ? '' : 's'} after ${base}` : base} ${times}`;
 }
 
 // ── The ring gate ───────────────────────────────────────────────────────────
@@ -477,7 +618,7 @@ export function evaluatePolicyPlan(s: PolicyState, r: PolicyPlanRequest, opts: {
   if (p.requestedBy.userId !== doc.createdBy.userId) return no('requester_mismatch', 'A policy plan is requested on behalf of the policy\'s author.');
   const nb = new Date(p.window.notBefore), na = new Date(p.window.notAfter);
   const occ = occurrenceAt(nb, doc.window);
-  if (!occ || na > occ.end) return no('outside_window', `The plan must run inside the policy's maintenance window (${doc.window.days.join(', ')} ${doc.window.start}–${doc.window.end} ${doc.window.timezone}).`);
+  if (!occ || na > occ.end) return no('outside_window', `The plan must run inside the policy's maintenance window (${describePolicyWindow(doc.window)}).`);
   if (nb.getTime() < now.getTime() - CLOCK_SKEW_MS) return no('outside_window', 'The plan starts in the past.');
   if (na.getTime() - nb.getTime() > MAX_WINDOW_HOURS * 3_600_000) return no('outside_window', 'A plan runs for at most 24 hours.');
 
