@@ -61,9 +61,14 @@ func res(outcome, summary string, lines ...string) Result {
 	return Result{Outcome: outcome, Summary: CleanLine(summary, 300), Lines: cleanLines(lines)}
 }
 
-// Run runs one tool. An unknown tool, or an elevated one here without
-// elevation, is refused without touching the OS.
-func (r *Runner) Run(ctx context.Context, id string) Result {
+// Run runs one tool, naming the provider generically ("your IT provider").
+func (r *Runner) Run(ctx context.Context, id string) Result { return r.RunFor(ctx, id, "") }
+
+// RunFor runs one tool. An unknown tool, or an elevated one here without
+// elevation, is refused without touching the OS. provider is the IT
+// provider's name as the portal last named it for this user (0.53.1), used
+// only in the DNS and connection tests' sentences; "" says "your IT provider".
+func (r *Runner) RunFor(ctx context.Context, id, provider string) Result {
 	t, ok := Tool(id)
 	if !ok {
 		return res(OutcomeRefused, "That is not one of the self-help tools.")
@@ -75,7 +80,7 @@ func (r *Runner) Run(ctx context.Context, id string) Result {
 	defer cancel()
 	switch t.ID {
 	case "dns.check":
-		return r.dnsCheck(ctx)
+		return r.dnsCheck(ctx, provider)
 	case "dns.flush":
 		out, err := r.OS.FlushDNS()
 		if err != nil {
@@ -93,7 +98,7 @@ func (r *Runner) Run(ctx context.Context, id string) Result {
 		}
 		return res(OutcomeSucceeded, "The IP address was renewed.", lines...)
 	case "net.test":
-		return r.netTest(ctx)
+		return r.netTest(ctx, provider)
 	case "net.details":
 		ads, err := r.OS.Adapters()
 		if err != nil {
@@ -135,7 +140,7 @@ func (r *Runner) portalHost() (string, string) {
 // NCSIHost is the name Windows itself resolves to decide it is online.
 const NCSIHost = "www.msftconnecttest.com"
 
-func (r *Runner) dnsCheck(ctx context.Context) Result {
+func (r *Runner) dnsCheck(ctx context.Context, provider string) Result {
 	host, _ := r.portalHost()
 	var lines []string
 	okPortal, okPublic := false, false
@@ -166,14 +171,15 @@ func (r *Runner) dnsCheck(ctx context.Context) Result {
 	case okPortal && okPublic:
 		return res(OutcomeSucceeded, "DNS is working.", lines...)
 	case okPublic:
-		return res(OutcomeFailed, "Public names resolve, but your IT provider's portal does not.", lines...)
+		return res(OutcomeFailed, "Public names resolve, but "+ProviderOr(provider)+"'s portal does not.", lines...)
 	case okPortal:
-		return res(OutcomeFailed, "Your IT provider's portal resolves, but public names do not.", lines...)
+		return res(OutcomeFailed, ProviderTitle(provider)+"'s portal resolves, but public names do not.", lines...)
 	}
 	return res(OutcomeFailed, "DNS is not working: no name could be resolved.", lines...)
 }
 
-func (r *Runner) netTest(ctx context.Context) Result {
+func (r *Runner) netTest(ctx context.Context, provider string) Result {
+	p := ProviderTitle(provider)
 	var lines []string
 	gwOK, gwTried := false, false
 	if ads, err := r.OS.Adapters(); err == nil {
@@ -204,15 +210,15 @@ func (r *Runner) netTest(ctx context.Context) Result {
 	portalOK := false
 	if d, err := r.OS.DialTLS(ctx, net.JoinHostPort(host, port)); err == nil {
 		portalOK = true
-		lines = append(lines, fmt.Sprintf("Your IT provider's portal (%s): connected securely in %d ms", host, d.Milliseconds()))
+		lines = append(lines, fmt.Sprintf("%s's portal (%s): connected securely in %d ms", p, host, d.Milliseconds()))
 	} else {
-		lines = append(lines, fmt.Sprintf("Your IT provider's portal (%s): could not connect (%v)", host, err))
+		lines = append(lines, fmt.Sprintf("%s's portal (%s): could not connect (%v)", p, host, err))
 	}
 	switch {
 	case portalOK:
-		return res(OutcomeSucceeded, "This computer can reach your IT provider.", lines...)
+		return res(OutcomeSucceeded, "This computer can reach "+ProviderOr(provider)+".", lines...)
 	case gwOK:
-		return res(OutcomeFailed, "The local network answers, but your IT provider cannot be reached.", lines...)
+		return res(OutcomeFailed, "The local network answers, but "+ProviderOr(provider)+" cannot be reached.", lines...)
 	}
 	return res(OutcomeFailed, "This computer does not appear to be connected to a network.", lines...)
 }

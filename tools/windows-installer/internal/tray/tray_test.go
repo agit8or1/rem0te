@@ -727,10 +727,16 @@ func TestSupportReplyCarriesTicket(t *testing.T) {
 	if _, err := CheckFromHost(Frame{T: FrameState, State: &State{}, Ticket: "T-1"}); !errors.Is(err, ErrFrame) {
 		t.Errorf("state with a ticket: %v", err)
 	}
-	if got := SupportSentText("T-10481"); got != "Ticket T-10481 opened. Your IT provider will be in touch." {
+	if got := SupportSentText("T-10481", ""); got != "Ticket T-10481 opened. Your IT provider will be in touch." {
 		t.Errorf("%q", got)
 	}
-	if got := SupportSentText("bad ref!"); strings.Contains(got, "bad") {
+	if got := SupportSentText("T-10481", "Northwind IT"); got != "Ticket T-10481 opened. Northwind IT will be in touch." {
+		t.Errorf("%q", got)
+	}
+	if got := SupportSentText("", "Northwind IT"); got != "Your request was sent to Northwind IT's ticketing system. They will be in touch." {
+		t.Errorf("%q", got)
+	}
+	if got := SupportSentText("bad ref!", ""); strings.Contains(got, "bad") {
 		t.Errorf("%q", got)
 	}
 }

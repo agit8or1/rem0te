@@ -377,12 +377,13 @@ func OffersSupport(s State, have bool) bool {
 }
 
 // SupportSentText is what the tray says after a support request was sent:
-// the ticket it became when the PSA named one.
-func SupportSentText(ref string) string {
+// the ticket it became when the PSA named one, and who will be in touch
+// (the provider the portal named, else "your IT provider").
+func SupportSentText(ref, provider string) string {
 	if ref = CleanTicketRef(ref); ref != "" {
-		return "Ticket " + ref + " opened. Your IT provider will be in touch."
+		return "Ticket " + ref + " opened. " + ProviderTitle(provider) + " will be in touch."
 	}
-	return "Your request was sent to your IT provider's ticketing system. They will be in touch."
+	return "Your request was sent to " + ProviderOr(provider) + "'s ticketing system. They will be in touch."
 }
 
 func cleanLines(in []string) []string {

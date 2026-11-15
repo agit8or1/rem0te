@@ -5,6 +5,148 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.53.1] — 2026-11-15 · *Almanac*
+
+**The tray says who it is for.**
+
+The owner asked that the tray "gets populated per install with business name/etc. and isn't hardcoded". The
+names were already per install: `POST /tray/status` sends the computer's business, the tenant's name and the
+branding's support phone and e-mail. Most of what a person actually read was still fixed text, though: *Chat with
+support*, *New message from support*, *Connecting to your IT provider…*, *(paused by your IT provider)*, and the
+tooltip, which said a bare *Support* until the first answer came back. And the server's own fallback made it worse.
+A computer with no business was sent `businessName: 'Your IT provider'`, so its tooltip read **"Support for Your IT
+provider"**.
+
+**The menu header.** The menu now starts with lines that cannot be clicked, then a separator:
+
+```
+MSP Reboot · supported by Agit8or.net
+Support: 555-0100 · help@example.com
+```
+
+`menuHeader` in `cmd/rem0te-tray/args.go` builds it, and it is unit-tested like `menuLabel` and `aboutText`:
+
+- An empty part is left out, and with nothing at all there is no header.
+- The items use `MF_DISABLED` without `MF_GRAYED`, so they cannot be clicked but are drawn in normal text. Their id
+  is 0, which is never a command.
+- Every menu label now goes through `menuText`, which doubles `&`. Win32 treats `&` as a mnemonic prefix, so a
+  business called *A&B Plumbing* would otherwise show as *AB Plumbing* with an underlined B.
+
+**Branded wording, with the old text as the fallback.** Where the portal named a provider, the generic phrases now
+use its name:
+
+- The chat item: *Chat with Agit8or.net (2 new messages)*.
+- The tooltip: *Support for MSP Reboot*, or *Support from Agit8or.net* when there is no business.
+- The new-message balloon: title *New message from Agit8or.net*, text *Choose Chat with Agit8or.net to read and
+  reply*. Before, the balloon named a menu item that no longer existed under that name.
+- The connecting tooltip: *Connecting to Agit8or.net…*.
+- A paused tool: *(paused by Agit8or.net)*. The core's refusal says *Paused by Agit8or.net: …*.
+- About: who keeps the transcript, and whose portal cannot be reached.
+- `SupportSentText(ref, provider)`: *Agit8or.net will be in touch*. Its signature changed.
+- The chat window's title: *Chat with Agit8or.net — MSP Reboot*.
+
+Without a provider, every one of them says exactly what it said before.
+
+Windows limits, and how they are kept:
+
+- The tooltip is 128 UTF-16 units including the terminator, a balloon title 64 and its text 256.
+- `clipU16` cuts by UTF-16 units, never between the halves of a surrogate pair, and adds `…`.
+- `tooltip` cuts the name first, so *(offline)* and the unread count always fit.
+- `copyU16` (`win32_windows.go`) no longer ends a buffer on a lone high surrogate either. Before, a 64-character
+  emoji business name could leave half a character at the end of the tooltip.
+
+**The self-help tools name the provider too.** The tray host runs the tools as SYSTEM, and it already had the
+provider: `Core.lastState[user]` is the portal's last answer for that session's user. `Core.SelfHelp` passes its
+`Provider` to `Runner.RunFor(ctx, id, provider)`. *Check DNS* and *Test connection* now say *This computer can reach
+Agit8or.net* and *Agit8or.net's portal (host): connected securely in 20 ms*. So does the offline note *will be
+reported to Agit8or.net*.
+
+`Runner.Run(ctx, id)` stays as `RunFor(…, "")`, which is the generic wording. That is also what a user whose own
+status call has not yet been answered gets. The name comes from that user's state, never from another session's.
+
+One string is still generic: `reason()` in `serve.go`, *your IT provider's portal could not be reached*. It is the
+fallback for a transport failure and has no state to hand. It was left alone deliberately.
+
+**Remembering the brand.** The tray now keeps the last brand it was given in `%LOCALAPPDATA%\Rem0te\tray-brand.json`
+(`cmd/rem0te-tray/brandfile.go`). It shows that brand until the portal answers, and while a host that has never
+reached the portal reports offline with no names (`shownState`).
+
+Why there, and not elsewhere:
+
+- `C:\ProgramData\Rem0te\tray` is machine-wide and written by the SYSTEM heartbeat. An unprivileged tray should not
+  write there.
+- The signed host's memory does not survive a reboot.
+- The standard tray has no host at all.
+
+What the file holds, and how it is read and written:
+
+- It holds `tray.Brand`'s four fields and nothing else: business, provider, supportText and accent.
+- It is written only from an online answer (`brandToSave`), and only when that answer changed it. That includes a
+  change to nothing, so a computer moved out of a business stops naming the old one.
+- On read it is capped at 4 KiB (`MaxBrandFileBytes`) and decoded with `DisallowUnknownFields`. Anything else is
+  treated as no file. What is left goes back through `CleanLine` with `CleanState`'s limits, and an accent that is
+  not `#RRGGBB` is dropped.
+- It is written to a temporary file and renamed into place.
+- The chat window is a separate process and has no state of its own. It reads the same file for its title.
+
+The residual risk: the person, or anything running as them, can edit their own file. That changes only what their
+own tray shows until the next answer, and they could draw any window they liked anyway. The file is never used to
+decide anything.
+
+**Server.** `TrayService.brand()` now sends `''` for a name it has no record of, instead of `'Your IT provider'`.
+`supportLine()` now sends `''` when the branding has neither phone nor e-mail. It used to send *Contact your IT
+provider for support.*, which the new header would have shown as if it were a contact. Every consumer was checked:
+
+- The Go tray already treats an empty name as absent (About says *This computer*).
+- `/assist` (`assist-page.ts`) now says *Support chat* with no business, *With Tara* with no provider, and *Your IT
+  provider will never ask…* when it has neither name. The static HTML fallback is unchanged.
+- `chat.service.ts` stores its own `businessName` on a conversation, with the same `'Your IT provider'` fallback. That
+  is a record shown in the console, not the tray's brand, and it was left as it is.
+
+The provider is the **Tenant's name**, not `TenantBranding.portalTitle`. `portalTitle` is the portal's page title, and
+it defaults to `'Remote Support Portal'` for every tenant (`schema.prisma`, `tenants.service.ts`). Using it would make
+nearly every tray read *MSP Reboot · supported by Remote Support Portal*. The e2e sets `portalTitle` to that default
+and checks that it is not the provider.
+
+**Invariants.** §55 gains two checks:
+
+1. `brand()` takes the customer's and tenant's names through `deviceName`, else `''`, plus `supportLine(branding)` and
+   `accent(...)`. It reads nothing from the request body, and its code contains no *Your IT provider* and no
+   `portalTitle`. The comment *from the portal's records, never from a device or a message* must still be there.
+2. `Brand` has exactly the four JSON fields. `ParseBrand` caps the file, refuses unknown fields and re-cleans what it
+   reads. The tray writes only `MarshalBrand(b)` to `%LOCALAPPDATA%` and never to ProgramData, and only from an
+   online answer.
+
+**Tests.**
+
+| Suite | Result |
+|---|---|
+| Go `cmd/rem0te-tray` | 13 tests (5 new: header, branded phrases, tooltip limit with astral characters, shown/saved brand, the file on disk) |
+| Go `internal/tray` | 28 tests (3 new: the brand file's parse and refusals, `WithBrand`, the tools naming the provider through the host's `Core`) |
+| `go test ./...` | passes |
+| `GOOS=windows go build ./...` and `vet` | clean, Go 1.27.4 |
+| `unit-tray.mjs` | 67 passed. `supportLine(null) === ''` |
+| `e2e-tray.mjs` (port 3632, a `_scratch_test` database) | 161 passed |
+| `check-security-invariants.mjs` | 619 passed |
+
+The four new e2e checks:
+
+- the provider is the tenant's name;
+- no phone or e-mail gives an empty `supportText`, and the portal title is not the provider;
+- the support line is the branding's phone and e-mail;
+- a computer with no business is sent `businessName: ''`, with the provider still named.
+
+The e2e puts the tenant's branding back afterwards.
+
+**Shipping it.** The tray and the tray host are in the signed agent. The server change takes effect on deploy, and
+existing trays already handle empty names. The new menu header, wording and brand file reach a computer only after
+`rem0te-signed-publish` and the agent's update.
+
+**None of it has run on real Windows**, the same as the rest of the tray: the disabled menu items, the `&&` escaping,
+the tooltip and balloon limits, the chat window's title, and writing to `%LOCALAPPDATA%` from the tray's session.
+
+---
+
 ## [0.53.0] — 2026-11-15 · *Almanac*
 
 **Monthly patch windows: a patch policy can install on the nth or last weekday of each month, some days after it, or

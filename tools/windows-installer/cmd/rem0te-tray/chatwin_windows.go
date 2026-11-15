@@ -62,7 +62,9 @@ func runChatWindow(portal string) int {
 	if err := registerClass(chatClass, chatProc); err != nil {
 		return 5
 	}
-	hwnd := createWindow(0, chatClass, "Chat with support", wsOverlapped|wsCaption|wsSysMenu|wsMinimizeBox|wsThickFrame|wsVisible, 120, 80, 440, 640, 0, 0)
+	// 0.53.1: the title names the provider and business from the brand file
+	// the tray wrote from the portal's answer ("Chat with support" without).
+	hwnd := createWindow(0, chatClass, chatTitle(loadBrand(brandDir())), wsOverlapped|wsCaption|wsSysMenu|wsMinimizeBox|wsThickFrame|wsVisible, 120, 80, 440, 640, 0, 0)
 	if hwnd == 0 {
 		return 5
 	}

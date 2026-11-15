@@ -222,6 +222,11 @@ func (c *Core) SelfHelp(ctx context.Context, user, id string) Result {
 	if !c.Lim.ToolOK(t) {
 		return res(OutcomeRefused, fmt.Sprintf("%q has run too often on this computer. Try again later.", t.Title))
 	}
+	// The provider's name as the portal last named it for this user (0.53.1),
+	// for the sentences below: from the portal's answer, never the tray.
+	c.mu.Lock()
+	provider := c.lastState[user].Provider
+	c.mu.Unlock()
 	if t.Elevated && c.SignedPause != nil {
 		c.mu.Lock()
 		biz := c.business
@@ -233,7 +238,7 @@ func (c *Core) SelfHelp(ctx context.Context, user, id string) Result {
 		}
 		c.mu.Unlock()
 		if err == nil && msg != "" {
-			return res(OutcomeRefused, "Paused by your IT provider: "+msg)
+			return res(OutcomeRefused, "Paused by "+ProviderOr(provider)+": "+msg)
 		}
 	}
 	runID, err := c.API.Begin(ctx, user, t.ID)
@@ -250,11 +255,11 @@ func (c *Core) SelfHelp(ctx context.Context, user, id string) Result {
 	}
 	c.Lim.RecordTool(t)
 	started := c.now()
-	r := c.Run.Run(ctx, t.ID)
+	r := c.Run.RunFor(ctx, t.ID, provider)
 	rep := RunReport{RunID: runID, Tool: t.ID, RanAt: started, Outcome: r.Outcome, Summary: r.Summary, Lines: r.Lines, User: user}
 	if offline {
 		c.queue(rep)
-		r.Lines = append(r.Lines, "The portal could not be reached; this run will be reported to your IT provider when it can.")
+		r.Lines = append(r.Lines, "The portal could not be reached; this run will be reported to "+ProviderOr(provider)+" when it can.")
 		return r
 	}
 	if err := c.API.Result(ctx, rep); err != nil {
@@ -289,7 +294,7 @@ func (c *Core) offlineRefusal(user string, t SelfHelpTool) string {
 	for _, ts := range st.Tools {
 		if ts.ID == t.ID {
 			if ts.Blocked != "" {
-				return "Paused by your IT provider: " + ts.Blocked
+				return "Paused by " + ProviderOr(st.Provider) + ": " + ts.Blocked
 			}
 			allowed = true
 		}

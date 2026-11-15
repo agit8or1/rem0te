@@ -154,15 +154,19 @@ export const ASSIST_JS = `'use strict';
   function header(s) {
     if (s.accent) document.documentElement.style.setProperty('--accent', s.accent);
     var c = s.conversation;
-    $('brand').textContent = 'Support chat - ' + s.businessName;
-    document.title = 'Support chat - ' + s.businessName;
-    $('with').textContent = c ? (c.startedBy === 'end_user' && c.technicianName === 'Waiting for a technician' ? 'Waiting for a technician to answer' : 'With ' + c.technicianName + ' of ' + s.providerName) : s.providerName;
-    $('trust').textContent = s.businessName + ' and ' + s.providerName + ' will never ask for your password. Links in this chat are never opened.';
+    // 0.53.1: a name the portal's records do not have is '' — say the generic thing instead.
+    var biz = s.businessName || '', prov = s.providerName || '';
+    var title = biz ? 'Support chat - ' + biz : 'Support chat';
+    $('brand').textContent = title;
+    document.title = title;
+    $('with').textContent = c ? (c.startedBy === 'end_user' && c.technicianName === 'Waiting for a technician' ? 'Waiting for a technician to answer' : 'With ' + c.technicianName + (prov ? ' of ' + prov : '')) : prov;
+    var who = biz && prov ? biz + ' and ' + prov : (biz || prov || 'Your IT provider');
+    $('trust').textContent = who + ' will never ask for your password. Links in this chat are never opened.';
     var recorded = c ? c.recorded : s.recordNew;
     var rec = $('recording');
     rec.className = recorded ? 'on' : 'off';
     rec.textContent = recorded
-      ? 'This chat is recorded: your IT provider keeps the transcript (up to ' + s.retentionDays + ' days).'
+      ? 'This chat is recorded: ' + (prov || 'your IT provider') + ' keeps the transcript (up to ' + s.retentionDays + ' days).'
       : 'This chat is not recorded: each message is deleted from the server once both of you have it, and anything left is deleted when the chat ends. Closing this window loses what is on screen.';
     var p = $('paused');
     if (s.contained) { p.hidden = false; p.textContent = s.contained; } else { p.hidden = true; }

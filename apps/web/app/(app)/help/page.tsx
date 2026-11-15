@@ -491,6 +491,14 @@ const SECTIONS: Section[] = [
           <em>About</em>. <em>Open a support request</em> appears only when the business, or the platform default, has
           a PSA / ticketing connector switched on.
         </p>
+        <p>
+          The menu starts with who the computer is for (0.53.1): the business&apos;s name, <em>supported by</em> your
+          account&apos;s name, and the support phone and e-mail from your branding, as lines that cannot be clicked.
+          The chat item, the tooltip, the chat window&apos;s title and the tray&apos;s messages use the same names. All of
+          them come from the portal&apos;s records. Anything not set is left out, and the tray says <em>support</em> or{' '}
+          <em>your IT provider</em> instead. The tray remembers the last names per Windows account and shows them until
+          the portal answers.
+        </p>
         <ul className="list-disc pl-5 space-y-1">
           <li>
             <strong className="text-foreground">Support requests</strong> from the tray become a ticket in your PSA

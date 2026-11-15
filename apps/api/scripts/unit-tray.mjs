@@ -123,7 +123,7 @@ check(T.usageSample({ cpuPercent: 5, topProcesses: Array.from({ length: 30 }, ()
 
 section('Branding');
 check(T.accent('#112233') === '#112233' && T.accent('red') === '#3B82F6' && T.accent('#112233;x') === '#3B82F6', 'the accent is a #RRGGBB colour or the default');
-check(T.supportLine({ supportPhone: '555-0100', supportEmail: 'help@example.com' }) === 'Support: 555-0100 · help@example.com' && /Contact your IT provider/.test(T.supportLine(null)), 'the support line comes from branding, or a fixed sentence');
+check(T.supportLine({ supportPhone: '555-0100', supportEmail: 'help@example.com' }) === 'Support: 555-0100 · help@example.com' && T.supportLine(null) === '' && T.supportLine({ supportPhone: '  ', supportEmail: null }) === '', 'the support line comes from branding, or is empty (0.53.1: the tray decides the wording; no stock sentence posing as a contact)');
 
 section('Which computers can chat through the tray');
 const sup = (o) => C.chatSupport({ platform: 'Windows 11', updateChannel: 'signed', chatProtocol: null, trayProtocol: null, trayPaired: false, agentBound: true, ...o });

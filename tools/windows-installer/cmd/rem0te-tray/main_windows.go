@@ -25,17 +25,17 @@ import (
 var buildVersion string
 
 const (
-	trayDir     = `C:\ProgramData\Rem0te\tray`
-	appClass    = "Rem0teTrayApp"
-	chatClass   = "Rem0teChatWindow"
-	wmTrayIcon  = wmApp + 1
-	wmNewState  = wmApp + 2
-	wmRunUI     = wmApp + 3
-	idChat      = 100
-	idSupport   = 101
-	idAbout     = 102
-	idToolBase  = 200
-	tooltipBase = "Support"
+	trayDir    = `C:\ProgramData\Rem0te\tray`
+	appClass   = "Rem0teTrayApp"
+	chatClass  = "Rem0teChatWindow"
+	wmTrayIcon = wmApp + 1
+	wmNewState = wmApp + 2
+	wmRunUI    = wmApp + 3
+	idChat     = 100
+	idSupport  = 101
+	idAbout    = 102
+	idToolBase = 200
+	mfDisabled = 0x2 // not clickable, drawn normally (the menu header)
 )
 
 func main() {
@@ -148,6 +148,10 @@ type app struct {
 	chatCmd     *exec.Cmd
 	busyTool    bool
 	support     *supportForm
+	// brand (0.53.1) is the last-known brand: read from the user's brand
+	// file at start, shown until the portal names someone, and written back
+	// when the portal's answer changes it.
+	brand tray.Brand
 }
 
 var theApp *app
@@ -176,7 +180,8 @@ func (a *app) run() int {
 		return 5
 	}
 	a.lightBar = lightTaskbar()
-	a.setIcon(iconNormal, "Connecting to your IT provider…")
+	a.brand = loadBrand(brandDir())
+	a.setIcon(iconNormal, connectingTip(a.brand))
 	a.backend.Start(func(s tray.State) {
 		a.mu.Lock()
 		a.state, a.haveState = s, true
@@ -241,32 +246,38 @@ func appProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
 	return r
 }
 
+// snapshot is the state to draw: the portal's, with the last-known brand
+// filled in while the portal has named no one yet (shownState).
 func (a *app) snapshot() (tray.State, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.state, a.haveState
+	return shownState(a.state, a.haveState, a.brand), a.haveState
+}
+
+// rememberBrand writes the portal's brand to the user's brand file when it
+// changed. Window thread only.
+func (a *app) rememberBrand() {
+	a.mu.Lock()
+	b, write := brandToSave(a.state, a.haveState, a.brand)
+	if write {
+		a.brand = b
+	}
+	a.mu.Unlock()
+	if write {
+		_ = saveBrand(brandDir(), b)
+	}
 }
 
 // applyState redraws the icon and tooltip, says when a technician writes,
 // reports what it showed, and opens a technician's new chat in the console
 // session once.
 func (a *app) applyState() {
+	a.rememberBrand()
 	s, _ := a.snapshot()
 	if a.portalFromState && tray.ValidPortal(s.Portal) {
 		a.portal = s.Portal
 	}
-	tip := "Support"
-	if s.Business != "" {
-		tip = "Support for " + s.Business
-	}
-	if s.Offline {
-		tip += " (offline)"
-	}
-	unread := len(s.Chat.Unread)
-	if unread > 0 {
-		tip += fmt.Sprintf(" — %d new message(s)", unread)
-	}
-	a.setIcon(iconStateFor(s, true), tip)
+	a.setIcon(iconStateFor(s, true), tooltip(s))
 	var fresh []string
 	for _, id := range s.Chat.Unread {
 		if !a.shownUnread[id] {
@@ -275,7 +286,7 @@ func (a *app) applyState() {
 		}
 	}
 	if len(fresh) > 0 {
-		a.balloon("New message from support", "Choose Chat with support to read and reply.")
+		a.balloon(newMessageBalloon(s))
 		a.backend.Seen(fresh)
 	}
 	if s.Chat.AutoOpen && s.Chat.ConversationID != "" && !a.autoOpened[s.Chat.ConversationID] && !a.chatOpen() {
@@ -401,11 +412,19 @@ func (a *app) showMenu() {
 	s, have := a.snapshot()
 	menu, _, _ := pCreatePopupMenu.Call()
 	defer pDestroyMenu.Call(menu)
+	// 0.53.1: who this computer is for, who supports it and how to reach
+	// them, as disabled lines (id 0, never a command), then a separator.
+	if hdr := menuHeader(s); len(hdr) > 0 {
+		for _, line := range hdr {
+			appendItem(menu, mfString|mfDisabled, 0, line)
+		}
+		appendItem(menu, mfSeparator, 0, "")
+	}
 	chatFlags := uint32(mfString)
 	if !have || s.Offline || (!s.Chat.Open && (s.Remote != "" || !s.HasBusiness)) || s.Chat.OtherUser {
 		chatFlags |= mfGrayed
 	}
-	appendItem(menu, chatFlags, idChat, menuLabel(s))
+	appendItem(menu, chatFlags, idChat, menuText(menuLabel(s)))
 	// 0.51: offered only when the portal says a PSA is set up — hidden, not
 	// greyed, otherwise (tray.OffersSupport).
 	if tray.OffersSupport(s, have) {
@@ -417,7 +436,7 @@ func (a *app) showMenu() {
 		if t.Blocked != "" || a.busyTool {
 			f |= mfGrayed
 		}
-		appendItem(sub, f, uintptr(idToolBase+i), toolLabel(t))
+		appendItem(sub, f, uintptr(idToolBase+i), menuText(toolLabel(t, s.Provider)))
 	}
 	if len(s.Tools) == 0 {
 		appendItem(sub, mfString|mfGrayed, 0, "No tools available")
@@ -466,12 +485,14 @@ func (a *app) openChat() {
 		defer cancel()
 		u, err := a.backend.OpenChat(ctx)
 		a.onUI(func() {
+			s, _ := a.snapshot()
+			title := clipU16(chatWith(s), maxWindowTitle)
 			if err != nil {
-				msgBox(a.hwnd, err.Error(), "Chat with support", mbOK|mbIconWarn)
+				msgBox(a.hwnd, err.Error(), title, mbOK|mbIconWarn)
 				return
 			}
 			if !tray.ValidPortal(a.portal) || !strings.HasPrefix(u, "https://"+a.portal+"/assist/open?c=") {
-				msgBox(a.hwnd, "The chat link was not for this computer's portal, so it was not opened.", "Chat with support", mbOK|mbIconError)
+				msgBox(a.hwnd, "The chat link was not for this computer's portal, so it was not opened.", title, mbOK|mbIconError)
 				return
 			}
 			if webView2Available() {

@@ -175,7 +175,7 @@ function png(w, h) {
 }
 const jpeg = (w, h, pad = 0) => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0xff, 0xc0, 0, 17, 8, h >> 8, h & 255, w >> 8, w & 255, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]), randomBytes(pad), Buffer.from([0xff, 0xd9])]);
 
-const created = { businesses: [], users: [] };
+const created = { businesses: [], users: [], endpoints: [], branding: undefined };
 let savedDefault = null;
 
 const hookHits = [];
@@ -283,6 +283,25 @@ async function all() {
   check(r.data?.selfHelp?.length === 3 && r.data.selfHelp.every((t) => !t.elevated), 'standard: the three read-only tools only', JSON.stringify(r.data?.selfHelp));
   r = await tray.status(bPC, 'BIRCH\\carol');
   check(r.data?.businessName === birch.name && r.data.businessId === birch.id, 'Birch\'s tray is told Birch\'s name, nothing of Acme', JSON.stringify(r.data?.businessName));
+
+  // 0.53.1: the brand is the portal's records, and '' where they have nothing —
+  // the tray picks the generic wording, never "Support for Your IT provider".
+  check(st.providerName === tenant.name, 'the provider is the tenant\'s name (not its portal title)', JSON.stringify(st.providerName));
+  {
+    const prev = await prisma.tenantBranding.findUnique({ where: { tenantId: tenant.id } });
+    created.branding = { tenantId: tenant.id, prev: prev ? { supportPhone: prev.supportPhone, supportEmail: prev.supportEmail, portalTitle: prev.portalTitle } : null };
+    await prisma.tenantBranding.upsert({ where: { tenantId: tenant.id }, create: { tenantId: tenant.id, supportPhone: null, supportEmail: null }, update: { supportPhone: null, supportEmail: null, portalTitle: 'Remote Support Portal' } });
+    r = await tray.status(sPC, ALICE);
+    check(r.data?.supportText === '' && r.data.providerName === tenant.name, 'no support phone or e-mail: supportText is empty, not a stock sentence; the portal title is not the provider', JSON.stringify([r.data?.supportText, r.data?.providerName]));
+    await prisma.tenantBranding.update({ where: { tenantId: tenant.id }, data: { supportPhone: '555-0100', supportEmail: 'help@example.com' } });
+    r = await tray.status(sPC, ALICE);
+    check(r.data?.supportText === 'Support: 555-0100 · help@example.com', 'the support line is the branding\'s phone and e-mail', JSON.stringify(r.data?.supportText));
+    const loose = await mkEp(null, 'LOBBY-KIOSK');
+    created.endpoints.push(loose.id);
+    r = await tray.status(loose, 'LOBBY\\guest');
+    check(r.status === 200 && r.data?.businessName === '' && r.data.hasBusiness === false && r.data.providerName === tenant.name && !/Your IT provider/.test(JSON.stringify(r.data)),
+      'a computer with no business: businessName is empty (was "Your IT provider"), the provider is still named', msg(r));
+  }
 
   // 0.51: support requests only with a PSA.
   check(st.supportRequests === false, 'no PSA connector: the tray is told support requests are off (it hides the item)', JSON.stringify(st.supportRequests));
@@ -650,7 +669,7 @@ async function cleanup() {
   await new Promise((res) => hookServer.close(() => res()));
   try {
     const ids = created.businesses;
-    const eps = (await prisma.endpoint.findMany({ where: { customerId: { in: ids } }, select: { id: true } })).map((e) => e.id);
+    const eps = [...(await prisma.endpoint.findMany({ where: { customerId: { in: ids } }, select: { id: true } })).map((e) => e.id), ...created.endpoints];
     await prisma.chatConversation.deleteMany({ where: { endpointId: { in: eps } } });
     await prisma.supportRequest.deleteMany({ where: { customerId: { in: ids } } });
     await prisma.traySelfHelpRun.deleteMany({ where: { endpointId: { in: eps } } });
@@ -664,6 +683,9 @@ async function cleanup() {
     await prisma.customer.deleteMany({ where: { id: { in: ids } } });
     if (created.users.length) await prisma.user.deleteMany({ where: { id: { in: created.users } } });
     if (created.globalConnector) await prisma.psaConnector.deleteMany({ where: { scopeKey: 'global' } });
+    // Put the tenant's branding back as it was (0.53.1's brand checks change it).
+    if (created.branding?.prev === null) await prisma.tenantBranding.deleteMany({ where: { tenantId: created.branding.tenantId } });
+    else if (created.branding) await prisma.tenantBranding.updateMany({ where: { tenantId: created.branding.tenantId }, data: created.branding.prev });
     if (savedDefault !== null) await prisma.platformSettings.updateMany({ where: { id: 'singleton' }, data: { chatRecordingDefault: savedDefault } });
   } catch (e) { console.error('cleanup:', e.message); }
   await prisma.$disconnect();

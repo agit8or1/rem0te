@@ -74,10 +74,10 @@ func TestLabels(t *testing.T) {
 		t.Errorf("about %q", a)
 	}
 	s.Chat.Unread = []string{"a", "b"}
-	if menuLabel(s) != "Chat with support (2 new messages)" {
+	if menuLabel(s) != "Chat with Prov (2 new messages)" {
 		t.Error(menuLabel(s))
 	}
-	if toolLabel(tray.ToolState{Title: "Renew IP address", Blocked: "x"}) != "Renew IP address (paused by your IT provider)" {
+	if toolLabel(tray.ToolState{Title: "Renew IP address", Blocked: "x"}, "") != "Renew IP address (paused by your IT provider)" {
 		t.Error("blocked label")
 	}
 }

@@ -55,12 +55,46 @@ note, instead of being dropped.
 
 ## The menu
 
+From 0.53.1 the menu opens with who the computer is for, as one or two lines that cannot be clicked, then a
+separator:
+
+```
+MSP Reboot · supported by Agit8or.net
+Support: 555-0100 · help@example.com
+──────────────────────────────
+Chat with Agit8or.net
+…
+```
+
+| Line | Where it comes from |
+|---|---|
+| The business | The name of the computer's business in the portal (*Businesses*) |
+| *supported by* … | The name of your IT provider's account in the portal (the tenant), not the portal's page title, which is *Remote Support Portal* unless someone changed it |
+| The support line | *Support phone* and *Support e-mail* in the portal's branding. Left out when neither is set |
+
+A part the portal has no record of is left out, and with nothing at all the menu starts at the chat item. The same
+names replace the generic wording elsewhere: the tooltip (*Support for MSP Reboot*), the chat item and its window
+title (*Chat with Agit8or.net — MSP Reboot*), the new-message balloon, a paused tool (*paused by Agit8or.net*),
+About, the support-request confirmation, and the result lines of *Check DNS* and *Test connection*. Where the portal
+named no provider, the tray still says *support* or *your IT provider*.
+
+Every name is the portal's own record, sent in the tray's status call. Nothing the computer reports, the person
+types or a chat message says can set it.
+
+**Before the first answer.** The tray keeps the last names it was given in
+`%LOCALAPPDATA%\Rem0te\tray-brand.json`, per Windows account, and shows them until the portal answers, so the icon
+says who it is for rather than a bare *Support* while it connects or while the portal cannot be reached. The file
+holds four fields (business, provider, support line, accent colour) and nothing else: no key, code, conversation or
+message. It is checked again each time it is read, and a file that is larger than 4 KB, is not JSON, or has any other
+field is ignored. The portal's answer replaces it, including with nothing when a computer leaves its business.
+Deleting it is harmless.
+
 | Item | What it does |
 |---|---|
-| **Chat with support** (*n new*) | Opens the chat window. If a technician has started a chat, it opens that one. If not, the person can start one (see below) |
+| **Chat with support** (*n new*) — from 0.53.1 *Chat with* the provider's name | Opens the chat window. If a technician has started a chat, it opens that one. If not, the person can start one (see below) |
 | **Open a support request…** | Shown only when the business (or the platform default) has an enabled PSA connector; hidden otherwise. A small form: what they need help with, plus two boxes that are **unticked by default**, *Include my computer's current resource usage* and *Include a screenshot of my screen*. A ticked screenshot is taken at once and shown as a preview with a **Remove** button before anything is sent. Afterwards it says *Ticket <ref> opened*, or that it could not be sent |
 | **Self-help tools** ▸ | The tools listed below. A tool that is paused or not available here is greyed out, with the reason |
-| **About** | The business, the agent type (signed or standard), the version, and the portal it talks to |
+| **About** | The business, the provider and its support line, the agent type (signed or standard), the version, and whether chats are recorded |
 
 There is no Quit item. The tray is part of the managed agent, and it is started again at the next sign-in.
 
