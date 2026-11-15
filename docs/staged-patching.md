@@ -186,6 +186,70 @@ if required, inside the window*) and a window, and give a reason.
 
 The same checks run again when the request arrives, and once more when the deployment is built.
 
+### Watching the install (0.52)
+
+Until 0.52 the tab said nothing between the request and the next scan, so an install that was running looked the
+same as one that had failed. On DEWEY-WKS2022 the plan was handed out at 23:33, delivered four times, and answered at
+23:45 with eight updates installed and a restart required — and for those twelve minutes the owner saw no change.
+
+Now the tab's **Latest install** card follows the install from the request to the scan after it:
+
+- **Steps**: scheduled (when it was), approval (in signed mode), queued, handed out, running, done. The sentence under
+  them says where it is in words: *Queued: it is handed to the computer at its next check-in, about every 3 minutes*;
+  *Handed to the computer at 23:33 UTC (4 deliveries, the last at 23:42)*; and so on. It re-reads every 5 seconds
+  while something is moving and shows when it last checked.
+- **Overdue**: an install handed out more than 30 minutes ago with no answer says so, and what that usually means (a
+  large update can take a long time; the agent may be busy or the computer offline). Nothing is retried or canceled
+  because of it.
+- **Results**: one row per update, with Windows' own result and, for a failure, the HRESULT and its meaning
+  (`0x80240022` *all updates failed*, `0x80070005` *access denied*, and so on).
+- **Restart required**: *Installed 8 updates — restart required. The update list refreshes after the restart.* with
+  **Schedule restart** and **Scan now**. Schedule restart is an ordinary `windows.reboot.schedule` plan, requested
+  like the *Schedule a restart* action — its own approvals in signed mode, its fixed warning to the signed-in user,
+  its open-session check. When that restart is reported scheduled, the portal asks for a patch scan two minutes after
+  the restart time, so the list catches up without anyone pressing Scan now.
+- **Installed, waiting for restart**: until a scan after the install, the updates it installed are listed with that
+  badge instead of a checkbox — Windows keeps offering them until the computer restarts and scans again, and
+  installing them a second time would do nothing.
+
+The same task appears in the computer's **Tasks** panel and on **Automation → Tasks**; see
+[Following a task](approved-actions.md#following-a-task-052).
+
+## Scheduled installs
+
+From 0.52, **Install updates** on the Patches tab and a deployment's **next ring** can start at a time instead of now.
+Choose **Schedule**, a date and time, and a time zone. The form offers the computer's site zone, your profile's zone,
+this browser's and UTC, and says which one the time is in. Up to 14 days ahead; for a regular schedule, use a
+[patch policy](#patch-policies) and its weekly maintenance window.
+
+What happens:
+
+1. The portal turns the wall-clock time into an instant in that zone (`zonedToUtc`, the same arithmetic as policy
+   windows, DST included). A time more than 5 minutes in the past is `SCHEDULE_IN_PAST`, beyond 14 days
+   `SCHEDULE_TOO_FAR`, an unknown zone `INVALID_TIMEZONE`, a date that does not exist `INVALID_REQUEST`.
+2. That instant is the plan's **`notBefore`**, and `notBefore` plus the deployment's window hours is its
+   **`notAfter`**. Both are inside what is signed: the approvers see the window, and in direct mode the signer signs it
+   at the request.
+3. **Nothing is handed to the computer before `notBefore`.** The heartbeat skips a plan whose start has not come, and
+   the target stays *pending*, never delivered. If an envelope did reach the agent early, the agent refuses it
+   (`not_yet_valid`) without consuming or journaling it, and takes it again at its first check-in after the start.
+4. At the first check-in after `notBefore` (about every 3 minutes) it runs like any other ring, and the restart rule
+   applies inside the scheduled window.
+
+A scheduled install shows as **Scheduled for …** on the Patches tab, the ring, the Tasks panel and the Tasks page. Until
+it starts it can be **canceled** — the existing `POST /actions/:id/cancel`, which cancels only targets that were never
+handed out. In signed mode the two approvals can come at any time before `notAfter`; a plan approved after its start
+runs at the next check-in. A ring under a patch policy cannot be given a schedule: it runs in the policy's own window
+(`INVALID_REQUEST`), and a schedule together with *starts in minutes* is refused the same way.
+
+**Scheduling has been tested against the simulated agent only** (`e2e-task-progress.mjs`, `rem0te-action-sim` with
+its clock moved). It has not run on a real Windows computer.
+
+Patch policies show their **next install window** — on the company-wide policy list and on each computer's Patch
+policy card — computed from the running revision's signed window. Windows are weekly (days of the week, a start and an
+end, in one zone). There is no monthly schedule such as *the second Tuesday*: that would change the signed policy
+document and the approval signer, and has not been done.
+
 ## Patch policies
 
 A **patch policy** (0.32) approves a bounded kind of patching once, so the nightly canary doesn't need two people
@@ -506,6 +570,7 @@ There are no new server settings.
 | **Fixture-tested (0.34, restart rule)** | Yes, for the restart rule. Go tests: the closed rule, the shared scheduling path and fixed warning, never under *never*, and every deferral (session open, cannot tell, window closing first, a restart already pending, an uncertain install, nothing installed). `e2e-staged-patching.mjs` (94 checks) adds: restart in the window, scheduled, the simulated restart (`rem0te-action-sim -fire-restart`) and the post-restart scan to *effective* and a completed deployment; an open session and a closing window each deferring with nothing scheduled. `e2e-patch-policies.mjs` (84 checks) adds a *never* policy's signer refusing a restart plan (`reboot_not_allowed`), and an in-window policy signing one |
 | **Fixture-tested (0.34, signed results)** | Yes. Go tests (`internal/devsig`, `internal/action`) cover creating the key once under concurrency, an unusable key file, signing and opening (forged, claimed key, altered, cross-domain), every journaled result signed, and replay returning the same signature. `unit-patch-policy.mjs` (151 checks) covers forged, replayed, cross-device, cross-plan, stale, malformed and missing signatures, an unsigned canceled target, a pre-0.34 policy, and `result_key_missing`. `unit-approval-signer.mjs` (99 checks) covers the pin on approval, `device_key_changed` at proposal and at signing, the ledger's plan hash, and `device-key list/forget`. `e2e-patch-policies.mjs` (89 checks) covers the portal refusing a canary without a key, the key bound from the agent's own scan, the stored signature equal to the agent's, five forged canary successes refused, and the genuine one opening ring 1 |
 | **Fixture-tested (0.50, company-wide policies)** | Yes, against the simulated agent only. `unit-patch-assignment.mjs` (62 checks) covers the ring builder (canary choice, rings of at most 25, keyless computers only in the last ring, the 101 cap, stable order), the membership fingerprint, every revision decision and its bounds, and the setting's parser. `e2e-patch-assignment.mjs` (68 checks) covers a company-wide policy built from the business's computers with the left-out reasons; a new computer joining by revision no sooner than the per-business bound, and no further revision when nothing changed; nothing revised mid-ring; Exclude dropping the computer by revision; *Use policy X* moving a computer to an assignable policy in one revision pass; another business's policy refused by the API and by the database trigger; the one-live-row index and the setting's CHECK; the setting audited before and after and needing a fresh sign-in; a hand-made policy refused over a covered computer (`COMPUTER_IN_POLICY`); signed mode, where the old revision keeps running until the new one is approved; renewal before expiry; and retirement. `e2e-patch-policies.mjs` (100 checks) and `e2e-staged-patching.mjs` (100 checks) still pass |
+| **Fixture-tested (0.52, progress and scheduling)** | Yes, against the simulated agent only. `unit-task-progress.mjs` (59 checks) replays the DEWEY-WKS2022 timeline through the lifecycle builder (queued, handed out with four deliveries, overdue at 30 minutes, restart required with eight updates and the HRESULT text) and covers every task kind, the scheduled, approval, containment and quiet-computer states, ordering and the schedule arithmetic. `e2e-task-progress.mjs` (58 checks) covers an install from request to restart required, overdue, the Tasks page's scope, Schedule restart as a `windows.reboot.schedule` plan and the scan requested after it, a scheduled install signed with its `notBefore`, nothing handed out before it, the agent refusing it early (`not_yet_valid`) and running it after, cancel touching only undelivered targets, and a scheduled ring |
 | **Paired lab** (real Windows, real Windows Update, real authenticator) | **Not done.** The script hasn't run against a real Windows Update service. Classification IDs, result codes and pending-restart keys are as Microsoft documents them, not yet as observed |
 | **Production-ready** | **No.** It needs the paired lab first: a canary, a WSUS-managed computer, an update that needs a restart, and one that fails |
 
@@ -528,6 +593,9 @@ There are no new server settings.
   up to an hour (more if a deployment is running, and until two approvals in signed mode). Exclude takes effect at once.
 - The Devices list doesn't show each computer's patch policy; the Patches tab and the business's policy view do.
 - The session check sees RustDesk sessions only, once. Console and Remote Desktop users see the warning.
+- A scheduled install (0.52) starts at the computer's first check-in after its time, so up to a few minutes late, and
+  not at all if the computer is off for the whole window. Scheduling has not run on real Windows. There are no monthly
+  windows, only weekly ones.
 - Under a policy, ring results are signed by the computers (0.34), and a forged result is refused. Each computer's
   key is trusted on first use: the first time a policy names it, approvers vouch for it, and only a fingerprint
   read-back on the computer proves it ([The trust-on-first-use window](#the-trust-on-first-use-window)).

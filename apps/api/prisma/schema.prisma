@@ -1335,6 +1335,8 @@ model EndpointCommand {
   expiresAt    DateTime
 
   @@index([endpointId, status])
+  // 0.52 task progress: "what I started" (TasksService.mine).
+  @@index([requestedById, completedAt])
   @@index([status, expiresAt])
   // 0.34 retention: the age cutoff, and "is there a newer one of this type".
   @@index([createdAt])
@@ -2631,6 +2633,8 @@ model ActionJob {
   @@index([softwareDeploymentId])
   @@index([endpointId, status])
   @@index([customerId, createdAt])
+  // 0.52 task progress: "what I started" (TasksService.mine).
+  @@index([requestedById, createdAt])
   @@index([status])
 }
 
@@ -2676,6 +2680,8 @@ model ActionTarget {
 
   @@unique([jobId, endpointId])
   @@index([endpointId, status])
+  // 0.52 task progress: the console's "your task finished" poll (TasksService.mine).
+  @@index([resultAt])
 }
 
 enum PatchDeploymentStatus {

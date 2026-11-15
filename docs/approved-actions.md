@@ -645,6 +645,37 @@ The approval page shows the business, the computer (hostname, class, RustDesk ID
 warning, who asked and why, the window, the agent build and the plan digest. **Approve** and **Reject** each ask for
 a passkey. A rejection is final.
 
+## Following a task (0.52)
+
+Every task sent or queued to a computer — an approved action, an update install or restart, software, a script,
+service or process control, a snapshot, a diagnostic, an update scan, an agent upgrade, a migration or a reinstall —
+has the same lifecycle, shown in three places: the computer page's **Tasks** panel, **Automation → Tasks** (every
+computer you can see, filterable by state and type), and a toast when one you started finishes.
+
+| Step | What it means |
+|---|---|
+| **Scheduled** | Its start (`notBefore`) has not come. Nothing is handed out before it. It can be canceled |
+| **Waiting for approval** | Signed mode: two approvers have not both approved it on the signer. It can be canceled |
+| **Queued** | Approved, waiting for the computer's next check-in (about every 3 minutes). The sentence says if it is held instead — by a containment pause, or because the computer has not checked in for a while |
+| **Handed out** | Given to the computer at its check-in, with how many times it was delivered and when last |
+| **Running** | The agent reported it started (not every kind reports this) |
+| **Done** | The result, with one row per item where there are items (updates, with Windows' HRESULT text) |
+
+A task handed out with no answer for longer than its kind usually takes (10 minutes for a restart, a service or a
+snapshot; 15 for a script; 20 for software and a scan; 30 for an update install or an agent upgrade) is marked
+**Overdue** with what that usually means. Nothing is retried, canceled or changed because of it.
+
+The pages re-read every 5 seconds while something is moving and every minute otherwise, and show when they last
+checked. The toast is a small poll of `GET /tasks/mine`, which returns only tasks you started.
+
+All three are reads: `GET /tasks`, `GET /tasks/mine` and `GET /endpoints/:id/tasks`, each needing View computers and
+reaching computers only through the same visibility rule as the device list. They change nothing a computer is sent.
+The one thing a read does is the pull every job read makes: a plan still awaiting approval is checked with the signer,
+so a plan approved there shows as approved here. **Cancel**, on a scheduled or still-unapproved plan, is the existing
+`POST /actions/:id/cancel`, which cancels only targets that were never handed out.
+
+Snapshots taken automatically and the 12-hourly inventory scan are not listed: nobody asked for them.
+
 ## Refusal codes
 
 | Code | Meaning |
@@ -707,6 +738,7 @@ agent built without them).
 | **Fixture-tested, 0.34** | `internal/action` Go tests for script runs (every refusal, at-most-once, interruption, exit code, timeout, output cap), including runs under real **PowerShell 7 on Linux**; `unit-approval-signer.mjs` adds the script allowlist and script-run cases; `e2e-script-run.mjs` runs the whole path through the portal, the signer and the agent's real decision code with PowerShell 7 |
 | **Fixture-tested, 0.34** | `internal/action` Go tests for the software actions against a stub winget run through the agent's real exec path (success, already installed, hash and manifest mismatch, winget missing or too old, managed elsewhere, timeout, not effective, restart required, argument injection in every field); `unit-approval-signer.mjs` adds the software admission, two-approver and 25-computer cases; `e2e-software-deploy.mjs` runs the catalog, single installs and uninstalls, rings, compliance and isolation through the portal, the signer and the agent's real decision code. winget, App Installer under SYSTEM, the uninstall registry and file versions are simulated |
 | **Fixture-tested, 0.45** | Service control and ending a process: `internal/action` Go tests (`svcproc_test.go`: closed parameters, the refusal lists, every operation with read-back, no change, failures, the RustDesk session check, a reused process id, trees, the signed pause, interruption, direct plans). `unit-service-process.mjs` (109 checks) compares the portal's parameters, charsets and protected lists with the agent's Go source. `e2e-service-process.mjs` (96 checks) runs every operation in direct and signed mode through the portal, the signer and the agent's real decision code against a simulated service manager and process table, including plans a compromised portal would forge. **The service control manager and OpenProcess / TerminateProcess calls have not run on real Windows** |
+| **Fixture-tested, 0.52** | Task progress and scheduled installs: `unit-task-progress.mjs` and `e2e-task-progress.mjs` (see [Staged patching](staged-patching.md#what-has-been-proven-and-what-hasnt)), against the simulated agent. Scheduling has not run on real Windows |
 | **Paired lab** (real Windows workstation, real authenticator, real ClientSt0r) | **Not done.** (0.34: nor Windows PowerShell 5.1, the SYSTEM context or the job object for script runs, nor winget under SYSTEM for the software actions.) The Windows calls (service control manager, registry product type, `rustdesk --get-id`, and from 0.32 `shutdown.exe`, `wevtutil.exe` and the RustDesk process count) are compiled and vetted for Windows but haven't run on a lab machine |
 | **Production-ready** | **No.** It needs the paired lab first, and an operator who has done the key and roster ceremonies |
 

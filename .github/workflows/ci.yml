@@ -201,6 +201,13 @@ jobs:
       - name: Patch summary tests
         run: node apps/api/scripts/unit-patch-summary.mjs
 
+      # Task progress (0.52): the lifecycle every task view is built from —
+      # queued, scheduled, held, handed out, overdue, done with each update's
+      # result — replayed against DEWEY-WKS2022's real timeline, and the
+      # schedule that becomes a plan's signed notBefore.
+      - name: Task progress tests
+        run: node apps/api/scripts/unit-task-progress.mjs
+
       # Global search (0.33): q is 2–100 visible characters, LIKE metacharacters
       # are literal, the ranking, and which capability gates each group.
       - name: Global search tests

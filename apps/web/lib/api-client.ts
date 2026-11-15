@@ -89,14 +89,15 @@ export const patchingApi = {
   get: (id: string) => api.get(`/patching/deployments/${id}`),
   create: (body: { businessId: string; name: string; updates: UpdateIdentity[]; rings: string[][]; soakHours: number; failureThreshold: number; windowHours: number; reboot?: 'never' | 'if_required_in_window' }) =>
     api.post('/patching/deployments', body),
-  requestRing: (id: string, ring: number, body: { reason: string; startsInMinutes?: number; exclude?: { endpointId: string; why: string }[] }) =>
+  requestRing: (id: string, ring: number, body: { reason: string; startsInMinutes?: number; exclude?: { endpointId: string; why: string }[]; schedule?: ScheduleInput }) =>
     api.post(`/patching/deployments/${id}/rings/${ring}/request`, body),
   pause: (id: string, reason: string) => api.post(`/patching/deployments/${id}/pause`, { reason }),
   resume: (id: string, reason: string) => api.post(`/patching/deployments/${id}/resume`, { reason }),
   cancel: (id: string, reason: string) => api.post(`/patching/deployments/${id}/cancel`, { reason }),
   // 0.32. "Install updates" builds a one-computer deployment; its canary
   // still needs two approvals on the approval signer.
-  install: (endpointId: string, body: { updates: UpdateIdentity[]; reboot: 'never' | 'if_required_in_window'; reason: string; windowHours: number }) =>
+  // 0.52: `schedule` installs at a wall-clock time in a named zone instead of now.
+  install: (endpointId: string, body: { updates: UpdateIdentity[]; reboot: 'never' | 'if_required_in_window'; reason: string; windowHours: number; schedule?: ScheduleInput }) =>
     api.post(`/endpoints/${endpointId}/patches/install`, body),
   preflight: () => api.get('/patching/preflight'),
   policies: (businessId: string) => api.get('/patching/policies', { params: { businessId } }),
@@ -664,6 +665,16 @@ export const supportRequestsApi = {
 export function chatAttachmentUrl(endpointId: string, conversationId: string, attachmentId: string): string {
   return `${BASE_URL}/endpoints/${encodeURIComponent(endpointId)}/chat/conversations/${encodeURIComponent(conversationId)}/attachments/${encodeURIComponent(attachmentId)}`;
 }
+
+// ─── v0.52: task progress (read only) ────────────────────────────────────────
+// Every task sent or queued for a computer, with one lifecycle. Cancelling a
+// scheduled one is actionsApi.cancel (the existing route).
+export type ScheduleInput = { local: string; timeZone: string };
+export const tasksApi = {
+  list: (q: { state?: string; type?: string; businessId?: string } = {}) => api.get('/tasks', { params: q }),
+  endpoint: (endpointId: string) => api.get(`/endpoints/${encodeURIComponent(endpointId)}/tasks`),
+  mine: (since?: string) => api.get('/tasks/mine', { params: since ? { since } : {} }),
+};
 
 // ─── v0.44: the chat inbox (the header's chat icon, toasts, the title count) ─
 export const chatInboxApi = {

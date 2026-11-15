@@ -11,6 +11,7 @@ import { EndpointActions } from '@/components/endpoints/endpoint-actions';
 import { EndpointPatches } from '@/components/endpoints/endpoint-patches';
 import { EndpointUpdateHistory } from '@/components/rollouts/endpoint-update-history';
 import { TemporaryAccessCard } from '@/components/security-controls/temporary-access-card';
+import { DeviceTasks } from '@/components/tasks/device-tasks';
 import { DeviceHeader } from '@/components/endpoints/workspace/device-header';
 import { DeviceActions } from '@/components/endpoints/workspace/device-actions';
 import { DeviceOverviewTab } from '@/components/endpoints/workspace/overview-tab';
@@ -241,6 +242,8 @@ export default function EndpointDetailPage() {
         onDismiss={() => setGrantRequired(null)}
         onConnect={() => launchMutation.mutate(undefined)}
       />
+
+      {canView && <DeviceTasks endpointId={id} />}
 
       <Tabs value={active} onValueChange={(v) => setTab(v as WorkspaceTab)}>
         {/* Scrolls sideways on a narrow window rather than wrapping into a
