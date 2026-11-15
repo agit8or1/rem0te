@@ -414,8 +414,11 @@ const CALLOUT_PAGES = [
   },
   {
     name: 'guide/device-patches',
-    height: 1300,
-    path: '@endpoint:HARB-DISPATCH-01?tab=patches',
+    height: 1750,
+    // A standard-agent computer: the key describes Install updates saying why it
+    // is not available, and the Offered card, which a signed computer folds into
+    // Install updates (HARB-DISPATCH-01 has a signed scan since the roster seed).
+    path: '@endpoint:ACF-CAD-WS?tab=patches',
     before: async (page) => { await page.waitForSelector('[role="tab"][data-state="active"]', { timeout: 15_000 }); await page.waitForTimeout(1500); },
     callouts: [
       { find: '[role="tab"][data-state="active"]' },
@@ -546,8 +549,9 @@ const CALLOUT_PAGES = [
   {
     name: 'guide/client-updates',
     // 3400 from 0.36: the Device groups card (0.35) pushed the computers'
-    // table below a 2250 px window, so callouts 5–6 drew off the page.
-    height: 3400,
+    // table below a 2250 px window, so callouts 5–6 drew off the page. 4300
+    // from 0.50.5: the every-business agent card (0.46) pushed it again.
+    height: 4300,
     path: '/settings/client-updates',
     before: async (page) => {
       await page.waitForSelector('#cu-business', { timeout: 15_000 });
@@ -797,6 +801,125 @@ const CALLOUT_PAGES = [
       { find: { text: 'Send', tag: 'button', exact: true } },
     ],
   },
+  // ── 0.46–0.50 ───────────────────────────────────────────────────────────
+  // prisma/_docs-demo-roster.ts seeds what these show: Harbor's company-wide
+  // and assignable patch policies and each computer's setting, the per-
+  // computer and per-business agent auto-update values, and a Confirm it is
+  // you policy with the everyday functions set to Don't ask.
+  {
+    name: 'guide/confirm-it-is-you',
+    // Tall enough for Devices & enrolment (callout 5).
+    height: 1900,
+    path: '/settings?tab=confirm',
+    before: async (page) => { await page.waitForSelector('[data-testid="confirm-policy"]', { timeout: 15_000 }); await page.waitForTimeout(600); },
+    callouts: [
+      { find: '[role="tab"][id$="-trigger-confirm"]' },
+      { find: { text: "Don't ask for any", tag: 'button' }, within: '[data-testid="confirm-policy"] > div' },
+      { find: '[data-testid="confirm-group-Patching & updates"]' },
+      { find: '[data-testid="confirm-patching.override"]' },
+      { find: '[data-testid="confirm-enrollment.create"]' },
+    ],
+  },
+  {
+    name: 'guide/patch-policy-setting',
+    height: 1500,
+    path: '@endpoint:HARB-DISPATCH-01?tab=patches',
+    before: async (page) => {
+      await page.waitForSelector('[data-testid="patch-policy-setting"]', { timeout: 15_000 });
+      await page.evaluate(() => document.querySelector('[data-testid="patch-policy-setting"]').scrollIntoView({ block: 'center' }));
+      await page.waitForTimeout(600);
+    },
+    callouts: [
+      { find: { text: 'Patched automatically', tag: 'div' }, within: '[data-testid="patch-policy-setting"]' },
+      { find: { text: 'Open the policy', tag: 'a' } },
+      { find: '[data-testid="patch-policy-setting"] select' },
+      { find: { text: 'Save', tag: 'button', exact: true }, within: '[data-testid="patch-policy-setting"]' },
+    ],
+  },
+  {
+    name: 'guide/company-wide-policy',
+    height: 1750,
+    path: '/patching',
+    before: async (page) => {
+      await page.waitForSelector('[data-testid="patching-preflight"]', { timeout: 15_000 });
+      await page.selectOption('main select >> nth=0', { label: 'Harbor Logistics' });
+      await page.waitForSelector('[data-testid="company-policies"] summary', { timeout: 10_000 });
+      await page.click('[data-testid="company-policies"] summary:has-text("Left out")');
+      await page.click('[data-testid="company-policies"] summary:has-text("Each computer")');
+      await page.evaluate(() => document.querySelector('[data-testid="company-policies"]').scrollIntoView({ block: 'start' }));
+      await page.waitForTimeout(800);
+    },
+    callouts: [
+      { find: { text: 'Assignable policy', tag: 'button' } },
+      { find: { text: 'company-wide', tag: 'div', exact: true } },
+      { find: { text: 'Next revision would name' } },
+      { find: { text: 'Left out: ', tag: 'summary' } },
+      { find: { text: 'running', exact: true } },
+      { find: 'select[aria-label="Patch policy for harb-warehouse-2"]' },
+    ],
+  },
+  {
+    name: 'guide/agent-auto-update-computer',
+    height: 1250,
+    path: '@endpoint:HARB-DISPATCH-01',
+    before: async (page) => {
+      await page.waitForSelector('[data-testid="agent-auto-update-select"]', { timeout: 15_000 });
+      await page.evaluate(() => document.querySelector('[data-testid="agent-auto-update"]').scrollIntoView({ block: 'center' }));
+      await page.waitForTimeout(600);
+    },
+    callouts: [
+      { find: '[data-testid="agent-auto-update"] > div' },
+      { find: '[data-testid="agent-auto-update-select"]' },
+      { find: '[data-testid="agent-auto-update-effective"]' },
+    ],
+  },
+  {
+    name: 'guide/agent-auto-update-business',
+    height: 1000,
+    path: '@business:Harbor Logistics',
+    before: async (page) => { await page.waitForSelector('[data-testid="business-agent-auto-update-select"]', { timeout: 15_000 }); await page.waitForTimeout(600); },
+    callouts: [
+      { find: '[data-testid="business-agent-auto-update-select"]' },
+      { find: '[data-testid="business-agent-auto-update-effective"]' },
+    ],
+  },
+  {
+    name: 'guide/reinstall-menu',
+    height: 900,
+    path: '@endpoint:HARB-WAREHOUSE-2',
+    before: async (page) => {
+      await page.waitForSelector('[data-testid="header-reinstall-hint"]', { timeout: 15_000 });
+      await page.click('button:has-text("More")');
+      await page.waitForSelector('[data-testid="action-reinstall-link"]', { timeout: 10_000 });
+      await page.waitForTimeout(500);
+    },
+    callouts: [
+      { find: { text: 'More', tag: 'button' } },
+      { find: '[data-testid="action-reinstall-link"]' },
+      { find: { text: 'Reinstall agent at next check-in', tag: '[role="menuitem"]' } },
+    ],
+  },
+  {
+    name: 'guide/reinstall-hint',
+    height: 900,
+    path: '@endpoint:HARB-WAREHOUSE-2',
+    before: async (page) => { await page.waitForSelector('[data-testid="header-reinstall-hint"]', { timeout: 15_000 }); await page.waitForTimeout(600); },
+    callouts: [
+      { find: '[data-testid="device-status"]' },
+      { find: '[data-testid="header-reinstall-hint"] a' },
+    ],
+  },
+  {
+    name: 'guide/reinstall-banner',
+    height: 1100,
+    path: '@reinstall:HARB-WAREHOUSE-2',
+    before: async (page) => { await page.waitForSelector('[data-testid="reinstall-banner"]', { timeout: 15_000 }); await page.waitForTimeout(1500); },
+    callouts: [
+      { find: '[data-testid="reinstall-banner"]' },
+      { find: '[data-testid="step-place"]' },
+      { find: { text: 'Who may connect', tag: 'legend' } },
+    ],
+  },
 ];
 // The throwaway admin's password, for the one capture that has to confirm a
 // step-up (making an install link). Set in main(); never a real credential.
@@ -845,6 +968,21 @@ async function captureWithCallouts(page, spec, outDir, theme) {
     const e = await prisma.endpoint.findFirst({ where: { name: m[1] }, select: { id: true } });
     if (!e) throw new Error(`demo computer ${m[1]} not found`);
     target = `/endpoints/${e.id}${m[2] ?? ''}`;
+  }
+  // "@business:<name>" resolves to that business's page.
+  const bm = /^@business:(.+)$/.exec(target);
+  if (bm) {
+    const b = await prisma.customer.findFirst({ where: { name: bm[1] }, select: { id: true } });
+    if (!b) throw new Error(`demo business ${bm[1]} not found`);
+    target = `/businesses/${b.id}`;
+  }
+  // "@reinstall:<name>" is Add device bound to that computer, as its
+  // "Reinstall manually (download link)" item opens it (0.48.2).
+  const rm = /^@reinstall:(.+)$/.exec(target);
+  if (rm) {
+    const e = await prisma.endpoint.findFirst({ where: { name: rm[1] }, select: { id: true, customerId: true } });
+    if (!e) throw new Error(`demo computer ${rm[1]} not found`);
+    target = `/endpoints/enroll?endpointId=${e.id}&businessId=${e.customerId}`;
   }
   // "@script:<name>" resolves to that demo script's page.
   const sm = /^@script:(.+)$/.exec(target);

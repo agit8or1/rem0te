@@ -256,6 +256,18 @@ exactly as before. The portal can't widen a running revision. It can only propos
 | `no_result_key` | It can't sign its results, and the last ring, the only place it could go, is full |
 | `policy_full` | The policy already names 101 computers. The newest are left out |
 
+![Patching for Harbor Logistics: the company-wide policy with its rings and left-out computers, the assignable depots policy, and each computer's Patch policy](screenshots/guide/company-wide-policy.png)
+
+1. **Assignable policy** — a new policy for only the computers set to use it. *Company-wide policy* is offered here
+   while the business has none.
+2. **company-wide** — this business's one company-wide policy, active, with its window and restart rule.
+3. **Last check** — what the next revision would name: how many computers, the ring sizes, and the canary with the
+   reason it was chosen. Here a computer moved back to *Inherit* a few minutes ago, so the change is *settling*.
+4. **Left out** — each computer it can't include, with the reason (the codes above).
+5. **Revision 1 · running** — the signed revision the sweep patches under; its page shows the rings.
+6. **Each computer's Patch policy** — *Inherit*, *Exclude* or *Use* an assignable policy, with what that means for
+   the computer now.
+
 **When a revision is proposed.** The sweep (`PATCH_POLICY_SWEEP`) works out the rings the next revision would have.
 It proposes one when they differ from the running revision's (a computer joined, left, changed its setting, was
 re-enrolled, or its result key changed), or when the running revision is near its expiry. "Near" means seven days,
@@ -307,6 +319,14 @@ change under *Confirm it is you*). The write is conditional on the value read. I
 policy of another business or one that isn't assignable. A computer moved to another business goes back to
 *Inherit*. The setting signs nothing. A revision follows under the bounds above, and the Patches tab says where that
 stands: *patched automatically*, *pending a revision*, *left out* (and why), *excluded*, or *no automatic patching*.
+
+![A computer's Patches tab: its Patch policy card, inheriting the company-wide policy as ring 1 of revision 1](screenshots/guide/patch-policy-setting.png)
+
+1. **State** — *Patched automatically* here, with which policy, revision and ring.
+2. **Open the policy** — the running revision's page.
+3. **The setting** — *Inherit* (naming the company-wide policy), *Exclude*, or *Use policy* for each assignable one.
+4. **Save** — offered once the choice differs from the saved one; needs **Edit computers** and, unless *A computer's
+   patch policy* is set to *Don't ask*, a fresh sign-in.
 
 A company-wide policy's settings (classes, window, soak, threshold, restart rule, how long each revision lasts,
 canary) are fixed for its life. To change them, retire it and create another.

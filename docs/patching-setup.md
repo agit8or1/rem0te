@@ -221,6 +221,22 @@ a hand-made policy can't name a computer one of these covers. The Patches tab sh
 and why. Device groups aren't a scope: use an assignable policy. See
 [Staged patching → Company-wide policies](staged-patching.md#company-wide-policies-and-each-computers-patch-policy-050).
 
+![The company-wide patch policy for one business, an assignable policy, and each computer's setting](screenshots/guide/company-wide-policy.png)
+
+1. **Assignable policy** — create one (*Company-wide policy* appears instead while the business has none).
+2. **The company-wide policy** — its window and restart rule; *Retire* revokes every revision.
+3. **What the next revision would name**, and the canary the portal picked, with why.
+4. **Left out** — computers it can't include, each with the reason.
+5. **The running revision** — an ordinary signed policy; open it to see its rings.
+6. **A computer's setting** — here *Exclude*; *Inherit* and *Use policy* are the others.
+
+![The Patch policy card on a computer's Patches tab](screenshots/guide/patch-policy-setting.png)
+
+1. **Where it stands** — patched automatically, pending a revision, left out, excluded or none.
+2. **Open the policy** that patches it.
+3. **Inherit / Exclude / Use policy X.**
+4. **Save.**
+
 **Revoking** is one-way: **Revoke** on the policy's page (fresh sign-in), or on the signer host (`$S` as in
 [Approved actions → Setting it up](approved-actions.md#setting-it-up), step 2):
 

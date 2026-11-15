@@ -56,6 +56,16 @@ Some actions need you to confirm it is you, even with a valid session: re-enter 
 MFA, is enough for that function. Signing in is always required, permissions are checked first as before, and every
 change made with the function is still in the audit log. Everyone else sees the page read-only.
 
+![Settings → Confirm it is you: functions in groups, each with Ask or Don't ask](screenshots/guide/confirm-it-is-you.png)
+
+1. **Confirm it is you** — the tab, on *Settings* (`/settings?tab=confirm`).
+2. **Don't ask for any / Ask for all** — for every function at once. The line above says how many don't ask.
+3. **A group** — *Patching & updates* here, with its own *Don't ask for any* / *Ask for all*.
+4. **One function** — *A computer's patch policy*, set to *Don't ask*.
+5. **Install links** — still *Ask*: turning other functions off never turns this one off.
+
+Further down, *Always asks* lists the confirmations that are not settings (below).
+
 | Group | Functions (key in the `403`) |
 |---|---|
 | Software | `software.catalog` — adding, editing or archiving a catalog entry, one-click and bulk winget adds |
