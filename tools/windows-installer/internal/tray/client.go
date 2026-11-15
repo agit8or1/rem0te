@@ -138,6 +138,8 @@ type PortalStatus struct {
 	Agent        string `json:"agent"`
 	HasBusiness  bool   `json:"hasBusiness"`
 	BusinessID   string `json:"businessId"`
+	// 0.51: a PSA connector is set up, so support requests are offered.
+	SupportRequests bool `json:"supportRequests"`
 	Chat         struct {
 		Open           bool     `json:"open"`
 		ConversationID string   `json:"conversationId"`
@@ -186,8 +188,15 @@ func (c *Client) ChatCode(ctx context.Context, localUser string) (string, error)
 	return r.Code, nil
 }
 
+// SupportSent is what came of a support request (0.51): the Rem0te request
+// and the PSA's reference for the ticket it became ("" when it named none).
+type SupportSent struct {
+	ID     string
+	Ticket string
+}
+
 // Support sends a support request. usage and shot are optional (nil / empty).
-func (c *Client) Support(ctx context.Context, localUser, text string, usage *Usage, shotB64 string) (string, error) {
+func (c *Client) Support(ctx context.Context, localUser, text string, usage *Usage, shotB64 string) (SupportSent, error) {
 	extra := map[string]any{"localUser": localUser, "description": text}
 	if usage != nil {
 		extra["usage"] = usage
@@ -196,10 +205,17 @@ func (c *Client) Support(ctx context.Context, localUser, text string, usage *Usa
 		extra["screenshot"] = shotB64
 	}
 	var r struct {
-		ID string `json:"id"`
+		ID     string `json:"id"`
+		Ticket *struct {
+			Ref *string `json:"ref"`
+		} `json:"ticket"`
 	}
 	err := c.post(ctx, "/tray/support-requests", extra, &r)
-	return r.ID, err
+	out := SupportSent{ID: r.ID}
+	if r.Ticket != nil && r.Ticket.Ref != nil {
+		out.Ticket = CleanTicketRef(*r.Ticket.Ref)
+	}
+	return out, err
 }
 
 // Begin asks whether a tool may run now; the portal records the run.

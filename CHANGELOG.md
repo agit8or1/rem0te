@@ -5,6 +5,213 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.51.0] — 2026-11-15 · *Handover*
+
+**One computer, one agent: once the signed agent has reported, nothing standard is handed to that computer, and the
+standard leftovers are removed. Also a tray icon you can find, and support requests that become PSA tickets.**
+
+**None of the agent, tray or installer changes has run on real Windows.** They are proved by Go tests, by the
+generated PowerShell parsed (and the hand-over run against a stub agent) under pwsh 7.4 on Linux, and by heartbeats
+posted the way the scripts post them. A new agent build is needed for the agent side (`rem0te-signed-publish`
+after merge, which this release does not do).
+
+### Two heartbeats on one computer
+
+Two production computers showed the portal changing its mind about which agent they run, seconds apart:
+
+- **DS-HOME1.** `agentSha256` is the published 0.47.0 signed agent, but `agentVersion` reads 0.46.0. Its
+  `AgentAutoUpdateAttempt` rows come in pairs, both `updated`: `signed` → 0.47 at 18:17:03, then
+  `standard_pre015` → 0.46.0 at 18:17:39. The same pair appears at 13:38.
+- **DEWEY-WKS2022.** The re-enrol link ran at 23:17:13 (`ENDPOINT_CLAIMED`). A standard reinstall queued at 21:49
+  was handed out at 23:17:21 (0.50.2 fixes that part). The old 0.37 migration was handed out again, and
+  `AGENT_MIGRATION_COMPLETED` was recorded twice, at 23:20:04 and 23:24:04. The record then read
+  `updateChannel = legacy` with `agentVersion` 0.47.0. `TRAY_SELF_HELP` `net.test` succeeded at 23:24:11, then the
+  tray's *Check DNS* failed with `TRAY_KEY_REQUIRED`. Then the tray icon disappeared, and there has been no heartbeat
+  since 23:24:54.
+
+**Root cause: every authenticated report to `/enrollment/heartbeat` rewrote which agent the computer runs, and the
+signed install script makes reports that do not say.** In detail:
+
+1. **The installers check in without a channel.** `install.ps1` comes from one template with a standard and a signed
+   variant (`apps/api/src/public/windows-script.ts`), and both variants check in on their own:
+   - `Register` (step 6, `windows-script.ts:1033`) sends the device secret and `agentVersion`, but no
+     `updateChannel`.
+   - `Test-Registered` (`:2050`) runs every 5 seconds for up to 90 seconds and sends the device secret only. Before
+     0.51 it sent no version either.
+   - The 24-hour `Rem0teEnrollment` retry (`:1953`–`:1972`) is a third such source.
+2. **The portal took every one of them at its word.** `EnrollmentService.heartbeat` wrote, for *any* authenticated
+   report (0.50.2 `enrollment.service.ts:768`):
+   - `updateChannel: dto.updateChannel === 'signed' ? 'signed' : 'legacy'`;
+   - null for `agentSha256`, `agentActions`, `chatProtocol` and the trust versions.
+
+   So a signed computer read *legacy* for as long as the installer kept checking in, and again whenever any
+   standard script reported.
+3. **While it read legacy, everything standard applied to it:**
+   - `agentChannel()` (`agent-auto-update/schedule.ts:119`) classes a legacy computer with no `agentVersion` in the
+     report as `standard_pre015` (0.13–0.14) and hands it `updateRustdesk`. That flag runs the *standard* installer,
+     which rewrites the shared `Rem0teHeartbeat` task (`windows-script.ts:1910`, the same task name in both
+     variants) with the standard `heartbeat.ps1`. That is DS-HOME1's pair, and why its version then reads 0.46.0
+     next to a signed build's hash.
+   - The open migration and the queued reinstall are handed to "a standard agent" again: DEWEY's second
+     `AGENT_MIGRATION_COMPLETED`.
+   - `TrayService.identify` accepts the device secret only from a computer whose `updateChannel` is `signed`, so the
+     signed tray host's next call was refused with `TRAY_KEY_REQUIRED`: DEWEY's *Check DNS*.
+
+**Fixed:**
+- **The agent identity is sticky to signed.** `apps/api/src/common/agent-identity.ts` holds one rule,
+  `runsSignedAgent`. A computer runs the signed agent while an authenticated signed heartbeat has been seen within
+  seven days (`Endpoint.signedSeenAt`, migration 0073, backfilled from `trustReportedAt` for computers already
+  signed). Before any signed heartbeat has been recorded, it runs the signed agent while it reports signed.
+- **The heartbeat reads the computer before it writes.** `heartbeatKind` names each report:
+  - `signed`;
+  - `standard`, on a computer that is not signed;
+  - `legacy_on_signed`, a standard heartbeat with live state;
+  - `installer_on_signed`, a check-in with no live state.
+
+  Only `signed` and `standard` may act (`heartbeatMayAct`). The other two write no agent field: not the version,
+  channel, build, actions, chat or tray protocol, update check or tray pairing. The node's dispatched reinstall and
+  update are not cleared either. The heartbeat returns before any update step, with every flag null: no rotation,
+  reinstall, RustDesk update, command, action, monitor query, diagnostic, chat or tray. The reply keeps
+  `rustdeskRegistered`, so `Test-Registered` still works. The online status and address still update.
+- **An installer check-in starts no automatic update** (`isInstallerCheckIn`), whatever the computer runs. This
+  includes `standard_pre015`. `Test-Registered` now sends `agentVersion` as well.
+- **A leftover is recorded and told to go.** A `legacy_on_signed` report sets `legacySeenAt` and
+  `legacySeenVersion`. It is audited as `AGENT_DUAL_REPORT` at most once a day, with ids and the version only, and
+  answered `retireStandard: true`. A 0.51 standard `heartbeat.ps1` acts on that flag only when all of these hold:
+  - `agent-status.json` holds a 64-hex signed build hash;
+  - `%ProgramFiles%\Rem0te\rem0te-agent.exe` exists;
+  - it has not tried in the last 30 minutes.
+
+  It then runs that installed signed agent's own `update`, and nothing it downloads. The signed agent re-verifies
+  everything, reinstalls its heartbeat in place of the standard one, and removes the leftovers. A standard heartbeat
+  older than 0.51 cannot be told anything; the console says what to run.
+- **`TrayService.identify` and `pair`** decide "signed" by the rule, not by the last heartbeat. A device secret from
+  the signed host is accepted while the computer is signed, even with `updateChannel` already flipped to `legacy` by
+  a pre-0.51 portal. A tray key is refused there (`TRAY_SIGNED`).
+- **The Agent card's type** (`AgentUpgradeService.kindOf`) uses the same rule.
+- **The console warns.** When a leftover has reported in the last 24 hours, the Agent card says *Two agents are
+  reporting from this computer: the signed agent, and an old standard heartbeat (version …)*. It also says what to
+  do, and gives the command to run in an elevated PowerShell: `& "$env:ProgramFiles\Rem0te\rem0te-agent.exe"
+  update`. The Agent card and the Devices list show the signed agent's version, because a report that may not act
+  no longer writes one.
+
+Seven days without a signed heartbeat make the computer standard again. That is how a machine that really went back
+to the standard agent stops being treated as signed.
+
+Not established from server data: **why DEWEY's heartbeat stopped after 23:24:54.** The signed heartbeat runs
+`rem0te-agent.exe update` synchronously inside the scheduled task, so a hung update would block the task. Its
+`install.log` and `agent-status.json` are needed to tell.
+
+### The signed agent removes the standard leftovers
+
+`tools/windows-installer/internal/agent/retire.go` lists them by exact name. There are no wildcards:
+- the scheduled task `Rem0teEnrollment`;
+- `retry-enroll.ps1`, `enroll.dat` and `tray\tray.json` (the standard tray key) under `C:\ProgramData\Rem0te`;
+- the HKLM `Run` value `Rem0teTray`.
+
+How it works:
+- Only regular files are removed, and running it again is harmless.
+- **`Rem0teHeartbeat` is never deleted.** Both agents use that task name, and the signed installer has just
+  rewritten it. A `heartbeat.ps1` that is still the standard variant is reported in the result, not deleted.
+- On Windows (`retire_windows.go`) it runs System32 `schtasks.exe /Query` and `/Delete /TN <name> /F` as an argument
+  array, with an allowlist check in both calls and a 60-second timeout. `Run` is deleted with `x/sys/windows/registry`.
+- It runs after every successful signed install, update or migration (stage 2, exit 0, with the summary in
+  `lastResult`), and once each time the tray host starts.
+
+### The tray icon disappeared after *Test connection*
+
+`net.test` itself only pings and makes one TLS dial. Nothing in it can take the tray down. What did:
+1. `InstallAgent` always renamed and replaced `rem0te-agent.exe`, even with identical bytes.
+2. The running tray host leaves when its own binary's timestamp or size changes (`trayhost_windows.go`).
+3. When the pipes close, every session's tray exits.
+4. Only the next heartbeat started a new host. On DEWEY there was no next heartbeat, so the icon stayed gone.
+
+Fixed:
+- **An identical agent is no longer replaced.** Stage 1 compares SHA-256 and leaves the installed binary alone.
+- **A host that leaves because it was replaced starts its successor** from the install directory
+  (`exec.Command(paths.AgentExe(), "tray-host")`, detached) after releasing its lock (`tray.HostExit`). §55's
+  tray-host exec count is now two.
+- **A separate real bug:** a tool reply frame over 16 KB was silently dropped. `CleanLine` caps characters, not
+  bytes, so 80 lines of non-ASCII text exceed the frame. `FitReply` now trims the lines to fit and says so:
+  *(the rest of the result was too long to show)*.
+
+Go tests: `internal/tray/hostexit_test.go` and `internal/agent/retire_test.go`.
+
+### A tray icon you can find
+
+The tray used to draw a plain disc in the business's colour, which on most taskbars was one more small blue circle.
+It is now a generated icon: a white speech bubble on a deep navy disc, inside a bright ring. The ring colour gives
+the state:
+- cyan normally;
+- green, with dots, while a chat is open;
+- amber, with a red dot, for an unread message;
+- grey when the portal cannot be reached.
+
+There are light-taskbar and dark-taskbar variants, and the dark one glows from 24 px up. Sizes run from 16 to 48 px,
+with the 16 px geometry lined up on whole pixels. The tray follows `SystemUsesLightTheme` and redraws on
+`WM_SETTINGCHANGE`. `tools/windows-installer/cmd/rem0te-tray/icons/gen-icons.mjs` writes the eight `.ico` files,
+which are embedded. Its `--check` (a CI step) fails if they drift from the generator. The business colour no longer
+tints the icon, so it looks the same for every business. The icon has not been seen on real Windows.
+
+### Support requests from the tray need a PSA, and become tickets
+
+**Open a support request…** used to be offered on every managed computer, and a request only ever reached Rem0te's
+own support queue, which many businesses never look at. Now the tray offers it only when the computer's business
+has an enabled PSA connector, or the platform default is enabled. The server decides: `/tray/status` carries
+`supportRequests`, and when it is false the tray hides the item rather than greying it. A tray from before 0.51
+that still shows the item gets `409 SUPPORT_REQUEST_NOT_CONFIGURED` with a sentence to show, and nothing is stored.
+
+When a connector is set up, a tray request becomes a ticket through `PsaService`. It uses the same connector,
+driver, `notifications` pause and readiness check as *Create ticket*:
+- The subject is the person's text on one line, at most 200 characters.
+- The body has the computer, business, Windows account, last reported logged-on user, a portal link and the text.
+- `source_ref` is `support:<request id>`. ClientSt0r's proposed contract regex was widened to accept it.
+- No connector carries files, so the screenshot and usage sample stay in Rem0te and the body links to the request.
+
+The request is still kept in the queue, with a `sent_to_psa` (or `psa_failed`) event and the reference. The
+computer's History → Tray shows the reference too. A `PsaTicket` row records it with `createdById: 'tray'`. There
+is no History note, because a note needs a person as its author. The request is not notified twice: `agentSubmit`
+sends no notification. The tray answers *Ticket T-10481 opened. Your IT provider will be in touch.*
+
+Behaviour change: **a `notifications` pause now stops a tray request** (`403 CONTAINED`, before anything is stored),
+because the request is now an outbound send. Before 0.51 no pause stopped one. Other failures:
+- A connector that is not ready: `409 PSA_NOT_READY`.
+- A send that fails: the request is kept (the queue has it) and the answer is `502 PSA_SEND_FAILED`.
+- A backstop of 6 tickets per computer per hour (`PSA_TRAY_TICKETS_PER_HOUR`) sits behind the queue's own limits.
+  It is taken only after `agentSubmit` accepts a request, so a refused request costs nothing.
+
+`PSA_TICKET_CREATED` and `PSA_TICKET_FAILED` from the tray carry `source: "tray"`, `supportRequestId`, the
+connector and the reference, with no actor and never the text.
+
+### Invariants and tests
+
+- **§64** (new): the sticky rule, and the heartbeat's order (identity read → node update → endpoint update → early
+  return → update steps, with every flag null in the early return). It also checks:
+  - agent fields are written only when the report may act, and `signedSeenAt` only by a signed heartbeat, only in
+    the heartbeat;
+  - the installer check-in gate and the once-a-day audit;
+  - `identify`, `pair` and `kindOf` use the rule;
+  - the retire lists are exact names, `Rem0teHeartbeat` is never deleted, the Windows side runs System32 schtasks
+    with the allowlist checked twice, and stage 2 retires only on success;
+  - the standard hand-over runs only the installed agent's `update`;
+  - CI and `run-e2e.sh` run the suites.
+- **§55** now expects two tray-host execs, a chat and tray offer only from a heartbeat that may act, the identity
+  rule in `identify`, and the support-request checks above. **§53**'s heartbeat step adds `!isInstallerCheckIn(dto)`.
+- `apps/api/scripts/e2e-dual-agent.mjs` (port 3771, a `*_scratch_test` database): 33 checks. It replays DEWEY's and
+  DS-HOME1's sequence and proves:
+  - nothing standard is handed to the leftover or to the installer check-ins;
+  - `updateChannel` stays signed;
+  - *Check DNS* begins;
+  - the warning shows;
+  - the signed heartbeat still gets its queued reinstall, and a standard computer still gets its automatic update;
+  - seven days on, the computer is standard again.
+- `apps/api/scripts/unit-agent-identity.mjs`: the rule and every production report shape. With `PWSH`, it parses the
+  four generated scripts and runs the hand-over against a stub agent.
+- `e2e-tray.mjs` (157 checks, with a loopback PSA webhook stub on `TRAY_PSA_HOOK_PORT`, 3633–3639) and
+  `unit-ai-psa.mjs` cover the support-request path.
+
+---
+
 ## [0.50.5] — 2026-11-15 · *Roster*
 
 **A new captioned walkthrough of every feature, and pictures for the screens 0.46 to 0.50 added.**

@@ -8,5 +8,7 @@ import { PsaService } from './psa.service';
   imports: [AiModule],
   controllers: [PsaConnectorsController, PsaTicketsController],
   providers: [PsaService],
+  // 0.51: the tray's support request becomes a ticket through PsaService.
+  exports: [PsaService],
 })
 export class PsaModule {}

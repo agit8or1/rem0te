@@ -344,7 +344,7 @@ type TrayRun = {
 type TrayInfo = {
   tray: { kind: 'signed' | 'standard' | 'none' | 'unsupported'; protocol: number | null; pairedAt: string | null; message: string };
   selfHelp: TrayRun[];
-  requests: { id: string; status: string; createdAt: string; contactName: string | null; _count: { attachments: number } }[] | null;
+  requests: { id: string; status: string; createdAt: string; contactName: string | null; _count: { attachments: number }; psa?: { connectorKind: string; ref: string | null } | null }[] | null;
 };
 
 const TOOL_TITLE: Record<string, string> = {
@@ -404,7 +404,7 @@ function TrayHistory({ endpointId }: { endpointId: string }) {
                       {data.requests.map((q) => (
                         <li key={q.id} className="text-xs">
                           <Link href={`/support-requests?open=${q.id}`} className="underline underline-offset-2">{formatDate(q.createdAt)}</Link>
-                          <span className="text-muted-foreground"> · {q.status.toLowerCase()}{q.contactName ? ` · ${q.contactName}` : ''}{q._count.attachments ? ` · ${q._count.attachments} attachment(s)` : ''}</span>
+                          <span className="text-muted-foreground"> · {q.status.toLowerCase()}{q.contactName ? ` · ${q.contactName}` : ''}{q._count.attachments ? ` · ${q._count.attachments} attachment(s)` : ''}{q.psa ? ` · sent to the PSA${q.psa.ref ? ` as ticket ${q.psa.ref}` : ''}` : ''}</span>
                         </li>
                       ))}
                     </ul>

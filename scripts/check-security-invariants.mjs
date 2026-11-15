@@ -2619,7 +2619,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /if \(!node\?\.agentSecretHash \|\| !agentSecret \|\| !this\.secretMatches\(node\.agentSecretHash, agentSecret\)\)/.test(auth)
       && /throw new UnauthorizedException/.test(auth)
       && /if \(authenticated && \(\(dto\.updateChannel === 'signed' && \(dto\.agentChat \?\? 0\) >= 1\) \|\| \(trayProtocol \?\? 0\) >= 1\)\) \{/.test(es)
-      && /if \(authenticated && node\.endpointId && \(dto\.agentTray \?\? 0\) >= 1\) \{/.test(es)
+      // 0.51 (§64): and only from a heartbeat that may act (not a legacy report on a signed computer).
+      && /if \(authenticated && mayAct && node\.endpointId && \(dto\.agentTray \?\? 0\) >= 1\) \{/.test(es)
       && /chatProtocol: dto\.updateChannel === 'signed' \? dto\.agentChat \?\? null : null/.test(es),
     'chat/poll and chat/reply call authenticateDevice (secretMatches); the heartbeat gate is authenticated && (signed chat || a tray recorded only from an authenticated heartbeat)');
   const metas = [...svc.matchAll(/meta: \{([^}]*)\}/g)].map((m) => m[1]);
@@ -2733,8 +2734,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /windows\.PIPE_REJECT_REMOTE_CLIENTS/.test(host) && /access\|windows\.FILE_FLAG_FIRST_PIPE_INSTANCE/.test(host)
       && /sddl, err := tray\.PipeSDDL\(u\.User\.Sid\.String\(\)\)/.test(host)
       && /windows\.GetNamedPipeClientProcessId\(hp, &pid\); err == nil && pid != pi\.ProcessId \{/.test(host)
-      && (host.match(/exec\.Command/g) ?? []).length === 1 && /exec\.CommandContext\(ctx, rd, "--get-id"\)/.test(host),
-    'PipeSDDL protected DACL (SY + user GRGW); FIRST_PIPE_INSTANCE and REJECT_REMOTE_CLIENTS; client PID == launched PID; one exec (rustdesk --get-id)');
+      // 0.51: and one more, the host starting its successor from the install directory (startHost).
+      && (host.match(/exec\.Command/g) ?? []).length === 2 && /exec\.CommandContext\(ctx, rd, "--get-id"\)/.test(host)
+      && /exec\.Command\(paths\.AgentExe\(\), "tray-host"\)/.test(host),
+    'PipeSDDL protected DACL (SY + user GRGW); FIRST_PIPE_INSTANCE and REJECT_REMOTE_CLIENTS; client PID == launched PID; two execs (rustdesk --get-id, and the installed agent as tray-host)');
   const tab = read('apps/web/components/endpoints/workspace/chat-tab.tsx');
   const attTsx = read('apps/web/components/endpoints/workspace/chat-attachment.tsx');
   const inboxTsx = read('apps/web/components/chat/chat-inbox.tsx');
@@ -3266,13 +3269,13 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const ws = read('apps/api/src/public/windows-script.ts');
   const hbStep = enr.slice(enr.indexOf('let agentSelfCheck = false;'), enr.indexOf('// v0.28: updates paused everywhere or for this business.'));
   check('the heartbeat step runs only when authenticated and not paused, adds a flag only when none is going out, and precedes the containment override',
-    hbStep.length > 200 && /if \(authenticated && !updatesHeld\) \{\s*try \{\s*const auto = await this\.agentAuto\.forHeartbeat\(\{/.test(hbStep)
+    hbStep.length > 200 && /if \(authenticated && !updatesHeld && !isInstallerCheckIn\(dto\)\) \{\s*try \{\s*const auto = await this\.agentAuto\.forHeartbeat\(\{/.test(hbStep)
       && /if \(auto\.flag && !updateRustdesk && !reinstallAgent\) \{/.test(hbStep)
       && /flagGoingOut: !!\(updateRustdesk \|\| reinstallAgent\)/.test(hbStep)
       && enr.indexOf('let agentSelfCheck = false;') > enr.indexOf('const mig = await this.agentMigration.forHeartbeat(')
       && /if \(updatesHeld\) \{\s*updateRustdesk = null;\s*reinstallAgent = null;/.test(enr.slice(enr.indexOf('let agentSelfCheck = false;')))
       && (enr.match(/this\.agentAuto\.forHeartbeat\(/g) ?? []).length === 1,
-    'enrollment.service: `if (authenticated && !updatesHeld)`, `if (auto.flag && !updateRustdesk && !reinstallAgent)`, after the migration step, before `if (updatesHeld)`');
+    'enrollment.service: `if (authenticated && !updatesHeld && !isInstallerCheckIn(dto))`, `if (auto.flag && !updateRustdesk && !reinstallAgent)`, after the migration step, before `if (updatesHeld)`');
   check('it sends only reinstallAgent or updateRustdesk, with this server\'s version and no nonce',
     /if \(auto\.flag === 'updateRustdesk'\) updateRustdesk = \{ targetVersion: this\.platformVersion\(\) \};\s*else reinstallAgent = \{ targetVersion: this\.platformVersion\(\) \};/.test(hbStep)
       && !/nonce/.test(hbStep.replace(/\/\/[^\n]*/g, ''))
@@ -3501,8 +3504,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /if \(t\.elevated && dev\.via !== 'signed'\) \{\s*\n\s*throw new ForbiddenException\(\{ code: 'SELF_HELP_SIGNED_ONLY'/.test(tsv)
       && /if \(t\.elevated && dev\.via !== 'signed'\) throw new ForbiddenException\(\{ code: 'SELF_HELP_SIGNED_ONLY'/.test(tsv)
       && /CHECK \(\s*\n\s*"via" = 'signed' OR "tool" IN \('dns\.check', 'net\.test', 'net\.details'\)\);/.test(sql)
-      && /if \(ep\.updateChannel !== 'signed'\) \{[\s\S]{0,200}throw new ForbiddenException\(\{ code: 'TRAY_KEY_REQUIRED'/.test(tsv)
-      && /ep\.updateChannel === 'signed' \|\| ep\.status === 'ARCHIVED'\) \{/.test(tsv)
+      // 0.51 (§64): "signed" is the sticky rule (runsSignedAgent), not the last heartbeat's channel.
+      && /if \(!runsSignedAgent\(ep\)\) \{[\s\S]{0,300}throw new ForbiddenException\(\{ code: 'TRAY_KEY_REQUIRED'/.test(tsv)
+      && /runsSignedAgent\(ep\) \|\| ep\.status === 'ARCHIVED'\) \{/.test(tsv)
       && /Run:\s+&tray\.Runner\{OS: tray\.WinOS\{\}, Portal: tf\.Portal, Elevated: false\},/.test(trayMain)
       && /if t\.Elevated && !r\.Elevated \{/.test(tools)
       && /func \(WinOS\) FlushDNS\(\) \(string, error\)\s+\{ return "", ErrNotHere \}/.test(winos)
@@ -3570,6 +3574,37 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /\nexport TRAY_SWEEP=off\n/.test(read('scripts/run-e2e.sh'))
       && /TRAY_SWEEP: 'off',/.test(read('apps/web/scripts/e2e-ui.mjs')),
     "onModuleInit: TRAY_SWEEP === 'off' → no timer; run-e2e.sh exports it; e2e-ui's API env sets it");
+
+  // 0.51: "Open a support request" only with a PSA, and the request is a ticket.
+  const psvc = read('apps/api/src/psa/psa.service.ts');
+  const pre = psvc.slice(psvc.indexOf('  async trayPrecheck('), psvc.indexOf('  async trayTicket('));
+  const tt = psvc.slice(psvc.indexOf('  async trayTicket('), psvc.indexOf('  /** For the buttons:'));
+  const sr = tsv.slice(tsv.indexOf('  async supportRequest('), tsv.indexOf('  // ── POST /tray/self-help/*'));
+  check('tray support requests: the server decides — status carries supportRequests from PsaService.trayOffered (an enabled connector for the business, else the platform default)',
+    /this\.psa\.trayOffered\(dev\.customerId\),/.test(tsv) && /\n\s*supportRequests,\n/.test(tsv)
+      && /async trayOffered\(customerId: string \| null\): Promise<boolean> \{\s*\n\s*return !!customerId && !!\(await this\.effective\(customerId\)\);/.test(psvc)
+      && /if \(b\?\.enabled\) return \{ row: b, scope: 'business' \};/.test(psvc) && /return g\?\.enabled \? \{ row: g, scope: 'global' \} : null;/.test(psvc),
+    'TrayService.status → trayOffered → effective() (enabled rows only)');
+  check('tray support requests: refused before anything is stored without a connector (SUPPORT_REQUEST_NOT_CONFIGURED), under a notifications pause or when not ready; then stored; then the per-computer budget and the send',
+    pre.indexOf('this.effective(ep.customerId)') > 0 && pre.indexOf("code: 'SUPPORT_REQUEST_NOT_CONFIGURED'") > pre.indexOf('this.effective(')
+      && pre.indexOf("activePause(this.prisma, 'notifications', ep.customerId)") > pre.indexOf("'SUPPORT_REQUEST_NOT_CONFIGURED'")
+      && pre.indexOf('.ready(eff.row') > pre.indexOf("'notifications'")
+      && /this\.trayBudget\.take\(ep\.id\) \? await drv\.send\(eff\.row, draft, this\.deps\)/.test(tt) && (psvc.match(/drv\.send\(/g) ?? []).length === 2
+      && sr.indexOf('this.psa.trayPrecheck(') > 0 && sr.indexOf('this.support.agentSubmit(') > sr.indexOf('this.psa.trayPrecheck(')
+      && sr.indexOf('this.psa.trayTicket(') > sr.indexOf('this.support.agentSubmit(') && (tsv.match(/this\.support\.agentSubmit\(/g) ?? []).length === 1,
+    'trayPrecheck: effective → NOT_CONFIGURED → notifications pause → ready; supportRequest: precheck → agentSubmit → trayTicket (budget → send)');
+  check('tray tickets: audited with ids, the kind and the reference only — never the text, subject or body — and recorded as a PsaTicket',
+    [...tt.matchAll(/meta: \{([^}]*)\}/g)].every((m) => !/subject|body|text|windowsAccount|localUser|loggedOnUser/.test(m[1]))
+      && /action: 'PSA_TICKET_CREATED', meta: \{ \.\.\.ids, ticketId: ticket\.id, ref: ticket\.ref, status: r\.status \}/.test(tt)
+      && /this\.prisma\.psaTicket\.create\(/.test(tt) && /sourceRef: `support:\$\{t\.requestId\}`/.test(read('apps/api/src/psa/ticket.ts')),
+    'PsaService.trayTicket meta; sourceRef support:<request id>');
+  const gproto = read('tools/windows-installer/internal/tray/protocol.go'), gmenu = read('tools/windows-installer/cmd/rem0te-tray/main_windows.go');
+  check('the tray hides "Open a support request" unless the portal said a PSA is set up, and draws a ticket reference only through its charset',
+    /func OffersSupport\(s State, have bool\) bool \{\s*\n\s*return have && s\.HasBusiness && s\.SupportRequests\s*\n\}/.test(gproto)
+      && /if tray\.OffersSupport\(s, have\) \{\s*\n\s*appendItem\(menu, mfString, idSupport,/.test(gmenu) && (gmenu.match(/idSupport,/g) ?? []).length === 1
+      && /onlyFields\(f, "id", "ok", "reason", "url", "outcome", "summary", "lines", "ticket"\)/.test(gproto) && /f\.Ticket = CleanTicketRef\(f\.Ticket\)/.test(gproto)
+      && /onlyFields\(f, "id", "text", "usage", "shot"\)/.test(gproto),
+    'OffersSupport; the menu appends idSupport only behind it; reply frames may carry ticket, cleaned; a support frame from the tray may not');
 }
 
 // 56. Signed releases on one host (0.37). deploy/release/ sets up, builds,
@@ -4606,6 +4641,88 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'revoke() and the signer-revoked mirror must retire the series');
   check('assignment: the suites prove it', / patch-assignment /.test(read('scripts/run-e2e.sh')) && /unit-patch-assignment\.mjs/.test(read('.github/workflows/ci.yml')),
     'run-e2e.sh must run e2e-patch-assignment and CI must run unit-patch-assignment');
+}
+
+// 64. Which agent a computer runs is sticky to signed, and a signed computer
+//     is handed nothing meant for the standard agent (0.51). Two production
+//     computers flipped between 'signed' and 'legacy' within seconds: the
+//     signed install script's own check-ins (Register, Test-Registered) carry
+//     the device secret but no channel, every authenticated heartbeat
+//     overwrote updateChannel, and so a signed computer was handed standard
+//     installs, the old migration again, `standard_pre015` auto-updates, and
+//     its signed tray host was refused (TRAY_KEY_REQUIRED).
+//
+//     One rule, common/agent-identity.ts: signed while an authenticated signed
+//     heartbeat was seen within SIGNED_STICKY_MS (signedSeenAt), else while it
+//     reports signed. The heartbeat reads the computer before it writes, and a
+//     report that does not say signed on a signed computer writes no agent
+//     field and returns before any update step, with every flag null. Only a
+//     signed heartbeat writes signedSeenAt. identify() and the Agent card use
+//     the rule. The signed agent removes the standard leftovers by exact name
+//     (never the shared Rem0teHeartbeat task) after a successful install, and
+//     a 0.51 standard heartbeat hands over only by running the installed
+//     signed agent's own update.
+{
+  const SRC = 'apps/api/src';
+  const idn = read(`${SRC}/common/agent-identity.ts`);
+  const enr = read(`${SRC}/enrollment/enrollment.service.ts`);
+  const hb = enr.slice(enr.indexOf('  async heartbeat('), enr.indexOf('  async authenticateDevice('));
+  const tsv = read(`${SRC}/tray/tray.service.ts`);
+  const up = read(`${SRC}/agent-upgrade/agent-upgrade.service.ts`);
+  const ws = read(`${SRC}/public/windows-script.ts`);
+  const ret = read('tools/windows-installer/internal/agent/retire.go');
+  const retw = read('tools/windows-installer/retire_windows.go');
+  const ag = read('tools/windows-installer/internal/agent/agent.go');
+  const mig = read('apps/api/prisma/migrations/0073_signed_sticky/migration.sql');
+
+  check('sticky: one rule — signed while a signed heartbeat is within SIGNED_STICKY_MS, else while it reports signed; only signed and standard heartbeats may act',
+    /export const SIGNED_STICKY_MS = 7 \* 24 \* 3600_000;/.test(idn)
+      && /if \(f\.signedSeenAt\) return now\.getTime\(\) - f\.signedSeenAt\.getTime\(\) < SIGNED_STICKY_MS;\s*\n\s*return f\.updateChannel === 'signed';/.test(idn)
+      && /return kind === 'signed' \|\| kind === 'standard';/.test(idn)
+      && /if \(dto\.updateChannel === 'signed'\) return 'signed';\s*\n\s*if \(!runsSignedAgent\(ep, now\)\) return 'standard';/.test(idn),
+    'common/agent-identity.ts runsSignedAgent / heartbeatKind / heartbeatMayAct');
+
+  const iRead = hb.indexOf("select: { updateChannel: true, signedSeenAt: true, legacySeenAt: true }"), iNode = hb.indexOf('await this.prisma.rustdeskNode.update({', iRead),
+    iEp = hb.indexOf('await this.prisma.endpoint.update({'), iRet = hb.indexOf('if (authenticated && !mayAct) {'), iFlags = hb.indexOf('let updateRustdesk:');
+  const early = hb.slice(iRet, hb.indexOf('\n    }\n', iRet));
+  check('sticky: the heartbeat reads the computer first, and a legacy report on a signed computer returns before any update step with every flag null',
+    iRead > 0 && iNode > iRead && iEp > iNode && iRet > iEp && iFlags > iRet
+      && /rotate: null, updateRustdesk: null, reinstallAgent: null,\s*\n\s*commands: \[\], actions: \[\], actionAcks: \[\], patchPostureAck: null, patchScan: false,\s*\n\s*monitor: null, diagnostics: \[\], chat: null, tray: null,/.test(early)
+      && !/agentAuto|agentMigration|rollouts|reinstallRequestedAt|updateRequestedAt/.test(early),
+    'enrollment.service heartbeat: identity read → node update → endpoint update → `if (authenticated && !mayAct)` return → the update steps');
+  check('sticky: no agent field is written by a report that may not act, and only a signed heartbeat writes signedSeenAt',
+    /\.\.\.\(authenticated && mayAct && dto\.agentVersion !== undefined && \{ agentVersion: dto\.agentVersion \}\),/.test(hb)
+      && /\.\.\.\(authenticated && mayAct && \{\s*\n\s*updateChannel: dto\.updateChannel === 'signed' \? 'signed' : 'legacy',/.test(hb)
+      && /\.\.\.\(authenticated && mayAct && plausibleCheck\(dto\.agentUpdateCheckedAt\) && \{/.test(hb)
+      && /\.\.\.\(authenticated && mayAct &&\s*\n\s*node\.reinstallRequestedAt &&/.test(hb) && /\.\.\.\(authenticated && mayAct &&\s*\n\s*node\.updateRequestedAt &&/.test(hb)
+      && /\.\.\.\(authenticated && kind === 'signed' && \{ signedSeenAt: now \}\),/.test(hb)
+      && walk(SRC).filter((f) => /signedSeenAt: (now|new Date)/.test(read(f))).join() === `${SRC}/enrollment/enrollment.service.ts`,
+    'agentVersion, updateChannel… and agentUpdateCheckedAt gated on mayAct; signedSeenAt written only in the heartbeat, only for kind signed');
+  check('sticky: an installer check-in starts no automatic update; a dual report is audited at most once a day',
+    /export function isInstallerCheckIn\(dto: HeartbeatShape & \{ agentVersion\?: string \}\): boolean \{\s*\n\s*return !carriesLiveState\(dto\) && dto\.updateChannel !== 'signed';/.test(idn)
+      && /if \(kind === 'legacy_on_signed' && \(!identity\?\.legacySeenAt \|\| now\.getTime\(\) - identity\.legacySeenAt\.getTime\(\) > DUAL_AUDIT_EVERY_MS\)\) \{/.test(hb)
+      && /ALTER TYPE "ActivityAction" ADD VALUE 'AGENT_DUAL_REPORT';/.test(mig),
+    'isInstallerCheckIn; AGENT_DUAL_REPORT gated by DUAL_AUDIT_EVERY_MS');
+  check('sticky: identify() and the Agent card decide "signed" by the rule, not by the last heartbeat',
+    (tsv.match(/runsSignedAgent\(ep\)/g) ?? []).length >= 3 && !/ep\.updateChannel (===|!==) 'signed'/.test(tsv.slice(tsv.indexOf('  async identify('), tsv.indexOf('  private async context(')))
+      && /if \(runsSignedAgent\(ep\)\) return 'signed';/.test(up),
+    'tray.service identify/pair and agent-upgrade kindOf use runsSignedAgent');
+  check('retire: the signed agent removes the standard leftovers by exact name, never the shared heartbeat task, and only after a successful install',
+    /var StandardTasks = \[\]string\{"Rem0teEnrollment"\}/.test(ret) && /const SharedHeartbeatTask = "Rem0teHeartbeat"/.test(ret)
+      && !/Rem0teHeartbeat/.test(retw) && !/[*?]/.test((ret.match(/var StandardFiles = \[\]string\{[^}]*\}/) ?? [''])[0])
+      && /if !allowedRetireTask\(name\) \{/.test(retw) && (retw.match(/allowedRetireTask\(name\)/g) ?? []).length === 2
+      && /exec\.Command\(filepath\.Join\(dir, "schtasks\.exe"\), args\.\.\.\)/.test(retw) && (retw.match(/exec\.Command/g) ?? []).length === 1
+      && /if code == 0 && err == nil \{\s*\n\s*if sr, ok := p\.\(StandardRetirer\); ok \{/.test(ag),
+    'internal/agent/retire.go lists; retire_windows.go: System32 schtasks.exe, the allowlist checked in TaskExists and DeleteTask; stage2 retires only on success');
+  const legacyRetire = ws.slice(ws.indexOf('    retireHook: `try {'), ws.indexOf("} catch {}`,", ws.indexOf('    retireHook: `try {')));
+  check("retire: a standard heartbeat hands over only by running the installed signed agent's own update, and the signed heartbeat has no such hook",
+    legacyRetire.length > 100 && /\\\$agentExe = Join-Path \\\$env:ProgramFiles 'Rem0te\\\\rem0te-agent\.exe'/.test(legacyRetire)
+      && /try \{ & \\\$agentExe @\('update'\) \*>\\\$null \} catch \{\}/.test(legacyRetire)
+      && !/irm|iex|Invoke-WebRequest|Invoke-Expression|\$iu/.test(legacyRetire)
+      && /retireHook: '# Handing over to the signed agent: standard channel only\.',/.test(ws),
+    'windows-script.ts legacy retireHook');
+  check('sticky: the suites prove it', / dual-agent /.test(read('scripts/run-e2e.sh')) && /unit-agent-identity\.mjs/.test(read('.github/workflows/ci.yml')),
+    'run-e2e.sh must run e2e-dual-agent and CI must run unit-agent-identity');
 }
 
 if (failures.length > 0) {

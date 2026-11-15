@@ -750,6 +750,42 @@ goes when the chat ends. Nothing about files goes through the tray pipes.
 WebView2's handling of pictures, the file picker and downloads has never run
 on Windows.
 
+0.51 extended §55 for support requests. The tray offers *Open a support
+request* only when `/tray/status` says `supportRequests`, which is
+`PsaService.trayOffered`: the business's *enabled* connector, or else the
+global one. Go's `OffersSupport` needs it and `hasBusiness`, and the item is
+hidden, never greyed. Without a connector a request is
+`409 SUPPORT_REQUEST_NOT_CONFIGURED`, before anything is stored.
+`trayPrecheck` runs in this order:
+
+1. the connector;
+2. the `notifications` pause, which now stops a tray request (`remote` and
+   `actions` still do not);
+3. `ready()`.
+
+Then `agentSubmit` runs; it is called once, in the tray service. Then
+`trayTicket` takes the per-computer budget and makes the only send.
+
+- The ticket's audit meta holds ids, the connector, `source: 'tray'` and the
+  reference, never text.
+- `PsaTicket.createdById` is `'tray'` and `sourceRef` is `support:<id>`.
+- No connector is sent the screenshot or usage.
+- The request row is always kept, and a failed send is `502 PSA_SEND_FAILED`.
+- The Go reply frame carries only `ticket`, cleaned by `CleanTicketRef`; the
+  support frame's fields are unchanged.
+
+Also in 0.51:
+
+- The tray host has a second exec. A host that leaves because its binary was
+  replaced starts its successor, `exec.Command(paths.AgentExe(), "tray-host")`,
+  after releasing its lock.
+- A tool reply goes through `FitReply` so it fits one frame.
+- The tray and chat offer on the heartbeat need `mayAct` (§64).
+- `identify` decides "signed" by `runsSignedAgent` (§64).
+
+Behavioural proof: `e2e-tray.mjs` (webhook stub on `TRAY_PSA_HOOK_PORT`,
+3633–3639). Unit: `unit-ai-psa.mjs` and the Go `internal/tray` tests.
+
 0.37 added §56 for signed releases on one host (`deploy/release/`). The
 keys live on the portal host under the `rem0te-release` system user, in
 `/var/lib/rem0te-release` (0700), and the portal (`reboot`) must never be able
@@ -977,6 +1013,44 @@ no open deployment, in one transaction. Revoking a revision retires its series.
 §38 still holds for revisions: a keyless computer goes only in the last ring.
 Behavioural proof: `e2e-patch-assignment.mjs` (ports 3741–3743, `RELEASE_BIN` /
 `ACTION_SIM`); unit: `unit-patch-assignment.mjs`.
+
+§64 (0.51) is which agent a computer runs. It is one rule,
+`runsSignedAgent` in `apps/api/src/common/agent-identity.ts`: signed while an
+authenticated signed heartbeat was seen within `SIGNED_STICKY_MS` (7 days,
+`Endpoint.signedSeenAt`, 0073), else while the computer reports signed. The
+signed install script's own check-ins (`Register`, `Test-Registered`) carry
+the device secret but no channel. Before 0.51 they flipped a signed computer
+to legacy, and it was handed standard installs, the old migration and
+`standard_pre015` auto-updates, and its tray host was refused.
+
+The heartbeat reads the computer's identity before it writes. `heartbeatKind`
+names each report, and only `signed` and `standard` may act
+(`heartbeatMayAct`). A report that may not act:
+
+- writes no agent field (version, channel, build, actions, chat, tray,
+  update check), clears nothing on the node and pairs no tray;
+- returns right after the endpoint update, before any update step, with every
+  flag null and `rustdeskRegistered` kept.
+
+`signedSeenAt` is written only by a signed heartbeat, only in the heartbeat.
+An installer check-in (`isInstallerCheckIn`) starts no automatic update on any
+computer (§53). A leftover standard heartbeat on a signed computer sets
+`legacySeenAt`. It is audited as `AGENT_DUAL_REPORT` at most once a day, and
+answered `retireStandard`. The standard `heartbeat.ps1` acts on that only by
+running the installed signed agent's own `update` (a signed build hash in
+`agent-status.json`, at most every 30 minutes). `identify`, `pair` and the
+Agent card's `kindOf` use the rule.
+
+The signed agent removes the standard leftovers by exact name
+(`internal/agent/retire.go`): `Rem0teEnrollment`, `retry-enroll.ps1`,
+`enroll.dat`, `tray\tray.json`, and the HKLM Run value `Rem0teTray`. It never
+deletes `Rem0teHeartbeat`, which both agents use. It runs System32
+`schtasks.exe` as an argument array, with the allowlist checked in both
+calls. It runs only after a successful stage 2, and once per tray-host start.
+**None of it has run on real Windows.** Behavioural proof:
+`e2e-dual-agent.mjs` (port 3771, in `run-e2e.sh`, with `AGENT_AUTO_UPDATE` on).
+Unit: `unit-agent-identity.mjs` (with `PWSH`: four scripts parsed, the
+hand-over run against a stub agent) and the Go `internal/agent/retire_test.go`.
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 

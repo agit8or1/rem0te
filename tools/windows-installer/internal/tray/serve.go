@@ -130,7 +130,7 @@ func Serve(ctx context.Context, c *Core, s Session, r *Reader, w io.Writer, kick
 		bmu.Unlock()
 		go func() {
 			defer func() { bmu.Lock(); delete(busy, f.T); bmu.Unlock() }()
-			_ = send(Answer(ctx, c, s.User, f))
+			_ = send(FitReply(Answer(ctx, c, s.User, f)))
 		}()
 	}
 
@@ -184,11 +184,12 @@ func Answer(ctx context.Context, c *Core, user string, f Frame) Frame {
 			}
 			shot = b
 		}
-		if _, err := c.Support(ctx, user, f.Text, f.Usage, shot); err != nil {
+		sent, err := c.Support(ctx, user, f.Text, f.Usage, shot)
+		if err != nil {
 			rep.Reason = reason(err, "The request could not be sent")
 			return rep
 		}
-		rep.OK = true
+		rep.OK, rep.Ticket = true, sent.Ticket
 	case FrameSelfHelp:
 		r := c.SelfHelp(ctx, user, f.Tool)
 		rep.OK, rep.Outcome, rep.Summary, rep.Lines = r.Outcome == OutcomeSucceeded, r.Outcome, r.Summary, r.Lines

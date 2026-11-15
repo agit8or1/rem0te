@@ -1,3 +1,4 @@
+import { dualAgentWarning, runsSignedAgent } from '../common/agent-identity';
 import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -79,10 +80,11 @@ export class AgentUpgradeService {
     return `curl -fsSL ${base}/api/v1/public/install/${os === 'Linux' ? 'linux' : 'macos'}.sh | sudo bash`;
   }
 
-  private kindOf(ep: { platform: string | null; updateChannel: string | null; agentVersion: string | null }): AgentKind {
+  private kindOf(ep: { platform: string | null; updateChannel: string | null; signedSeenAt: Date | null; agentVersion: string | null }): AgentKind {
     const os = readOnlyAgentOs(ep.platform);
     if (os) return ep.agentVersion ? (os === 'Linux' ? 'linux' : 'macos') : 'rustdesk-only';
-    if (ep.updateChannel === 'signed') return 'signed';
+    // 0.51 (§64): sticky to signed, not the last heartbeat's channel.
+    if (runsSignedAgent(ep)) return 'signed';
     if (ep.agentVersion) return 'standard';
     return isWindows(ep.platform) ? 'standard' : 'unknown';
   }
@@ -108,6 +110,7 @@ export class AgentUpgradeService {
       select: {
         platform: true, agentVersion: true, updateChannel: true, trustRootVersion: true, targetsVersion: true, trustReportedAt: true,
         agentSha256: true, agentUpdateCheckedAt: true, agentUpdateResult: true, status: true, customerId: true, lastSeenAt: true,
+        signedSeenAt: true, legacySeenAt: true, legacySeenVersion: true,
         rustdeskNode: { select: { agentSecretHash: true, reinstallRequestedAt: true, reinstallDispatchedAt: true } },
       },
     }))!;
@@ -194,6 +197,8 @@ export class AgentUpgradeService {
       kind,
       platform: ep.platform,
       version: ep.agentVersion,
+      // 0.51: a standard heartbeat still reporting beside the signed agent.
+      dualAgent: dualAgentWarning(ep),
       server,
       current,
       channel: kind === 'signed' ? 'signed' : isWindows(ep.platform) ? 'standard' : null,
@@ -223,7 +228,7 @@ export class AgentUpgradeService {
   async updateAgent(actor: ActorContext, id: string) {
     await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
-    const ep = (await this.prisma.endpoint.findUnique({ where: { id }, select: { platform: true, updateChannel: true, agentVersion: true, customerId: true } }))!;
+    const ep = (await this.prisma.endpoint.findUnique({ where: { id }, select: { platform: true, updateChannel: true, signedSeenAt: true, agentVersion: true, customerId: true } }))!;
     const os = readOnlyAgentOs(ep.platform);
     if (os) {
       throw new BadRequestException({

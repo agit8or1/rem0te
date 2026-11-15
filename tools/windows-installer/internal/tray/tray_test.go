@@ -293,6 +293,7 @@ type fakePortal struct {
 	paths     []string
 	down      bool
 	contained string
+	noPSA     bool // 0.51: no PSA connector, so no support requests
 	runs      int
 	results   []map[string]any
 }
@@ -329,13 +330,17 @@ func (p *fakePortal) handler(t *testing.T) http.Handler {
 			}
 			ok(map[string]any{"businessName": "Acme", "providerName": "Prov", "supportText": "Call us", "accent": "#112233", "agent": "signed", "hasBusiness": true,
 				"chat":      map[string]any{"open": true, "conversationId": "clx0000000000000000000001", "startedBy": "technician", "recorded": false, "unread": []string{"clx0000000000000000000009"}, "autoOpen": true},
-				"recordNew": true, "contained": map[string]any{"remote": nil, "actions": blocked},
+				"recordNew": true, "contained": map[string]any{"remote": nil, "actions": blocked}, "supportRequests": !p.noPSA,
 				"selfHelp":    []map[string]any{{"id": "dns.check", "title": "Check DNS", "elevated": false, "blocked": nil}, {"id": "ip.renew", "title": "Renew IP address", "elevated": true, "blocked": blocked}},
 				"pollSeconds": 10})
 		case "/api/v1/tray/chat-code":
 			ok(map[string]any{"code": strings.Repeat("Z", 43)})
 		case "/api/v1/tray/support-requests":
-			ok(map[string]any{"id": "req1"})
+			if p.noPSA {
+				fail(409, "SUPPORT_REQUEST_NOT_CONFIGURED", "Your IT provider has not set up support requests from this computer. Contact them directly.")
+				return
+			}
+			ok(map[string]any{"id": "req1", "ticket": map[string]any{"ref": "T-10481", "system": "Webhook"}})
 		case "/api/v1/tray/self-help/begin":
 			if p.contained != "" && body["tool"] == "ip.renew" {
 				fail(403, "CONTAINED", p.contained)
@@ -618,8 +623,8 @@ func TestServeAndPipeBackend(t *testing.T) {
 	if r, err := b.SelfHelp(ctx, "dns.flush"); err != nil || r.Outcome != OutcomeSucceeded || o.flushes != 1 {
 		t.Fatalf("%+v %v", r, err)
 	}
-	if err := b.Support(ctx, "help", false, nil); err != nil {
-		t.Fatal(err)
+	if ref, err := b.Support(ctx, "help", false, nil); err != nil || ref != "T-10481" {
+		t.Fatalf("support over the pipes: %q %v", ref, err)
 	}
 	// The user is the host's, never the tray's: every portal call names PC\bob.
 	for _, call := range p.calls {
@@ -657,5 +662,75 @@ func TestAttachNeedsTheNonce(t *testing.T) {
 func TestProtocolVersionMatchesAgent(t *testing.T) {
 	if agent.TrayProtocol != ProtocolVersion {
 		t.Fatalf("agent reports tray %d, tray speaks %d", agent.TrayProtocol, ProtocolVersion)
+	}
+}
+
+// ── 0.51: support requests only with a PSA ───────────────────────────────────
+
+func TestSupportRequestsFlag(t *testing.T) {
+	c, p, _ := newCore(t, deviceCred, true)
+	st, _, err := c.Refresh(context.Background(), `PC\bob`, true)
+	if err != nil || !st.SupportRequests || !OffersSupport(st, true) {
+		t.Fatalf("PSA set up: %+v %v", st.SupportRequests, err)
+	}
+	if OffersSupport(st, false) {
+		t.Error("offered before the portal answered")
+	}
+	p.mu.Lock()
+	p.noPSA = true
+	p.mu.Unlock()
+	st, _, _ = c.Refresh(context.Background(), `PC\bob`, true)
+	if st.SupportRequests || OffersSupport(st, true) {
+		t.Fatal("offered with no PSA")
+	}
+	// No business: never offered, whatever the portal says.
+	if OffersSupport(State{SupportRequests: true}, true) {
+		t.Error("offered without a business")
+	}
+	// The zero value (an older portal that sends no flag) hides it.
+	var zero State
+	if OffersSupport(CleanState(zero), true) {
+		t.Error("offered by default")
+	}
+	// An older tray that ignores the flag is refused by the portal with a clear message.
+	_, err = c.Support(context.Background(), `PC\amy`, "printer", false, nil)
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.Code != "SUPPORT_REQUEST_NOT_CONFIGURED" || !strings.Contains(reason(err, "x"), "has not set up support requests") {
+		t.Fatalf("not configured: %v", err)
+	}
+}
+
+func TestSupportReplyCarriesTicket(t *testing.T) {
+	c, _, _ := newCore(t, deviceCred, true)
+	sent, err := c.Support(context.Background(), `PC\bob`, "printer", false, nil)
+	if err != nil || sent.ID != "req1" || sent.Ticket != "T-10481" {
+		t.Fatalf("%+v %v", sent, err)
+	}
+	rep := Answer(context.Background(), c, `PC\amy`, Frame{T: FrameSupport, ID: "0011aabb", Text: "printer"})
+	if !rep.OK || rep.Ticket != "T-10481" {
+		t.Fatalf("reply %+v", rep)
+	}
+	f, err := CheckFromHost(rep)
+	if err != nil || f.Ticket != "T-10481" {
+		t.Fatalf("host reply refused: %v", err)
+	}
+	// A reference outside the portal's charset is dropped, not drawn.
+	f, err = CheckFromHost(Frame{T: FrameReply, ID: "0011aabb", OK: true, Ticket: "T-1\n<script>"})
+	if err != nil || f.Ticket != "" {
+		t.Errorf("bad ref kept: %q %v", f.Ticket, err)
+	}
+	// The tray may not send a ticket field.
+	if _, err := CheckFromTray(Frame{T: FrameSupport, ID: "0011aabb", Text: "x", Ticket: "T-1"}); !errors.Is(err, ErrFrame) {
+		t.Errorf("tray sent a ticket: %v", err)
+	}
+	// A state frame may not carry one either.
+	if _, err := CheckFromHost(Frame{T: FrameState, State: &State{}, Ticket: "T-1"}); !errors.Is(err, ErrFrame) {
+		t.Errorf("state with a ticket: %v", err)
+	}
+	if got := SupportSentText("T-10481"); got != "Ticket T-10481 opened. Your IT provider will be in touch." {
+		t.Errorf("%q", got)
+	}
+	if got := SupportSentText("bad ref!"); strings.Contains(got, "bad") {
+		t.Errorf("%q", got)
 	}
 }

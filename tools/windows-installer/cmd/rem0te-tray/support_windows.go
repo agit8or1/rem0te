@@ -193,7 +193,7 @@ func (f *supportForm) submit() {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
-		err := theApp.backend.Support(ctx, text, usage, shot)
+		ticket, err := theApp.backend.Support(ctx, text, usage, shot)
 		theApp.onUI(func() {
 			if f.hwnd == 0 {
 				return
@@ -204,7 +204,7 @@ func (f *supportForm) submit() {
 				f.setStatus(err.Error())
 				return
 			}
-			msgBox(f.hwnd, "Your request was sent. Your IT provider will be in touch.", "Support request", mbOK|mbIconInfo)
+			msgBox(f.hwnd, tray.SupportSentText(ticket), "Support request", mbOK|mbIconInfo)
 			pDestroyWindow.Call(uintptr(f.hwnd))
 		})
 	}()

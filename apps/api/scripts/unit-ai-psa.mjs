@@ -245,6 +245,32 @@ t('the webhook body is fixed, and its HMAC is over "<timestamp>.<body>"', () => 
   assert.equal(WH.signature(secret, '1700000000', body), `sha256=${createHmac('sha256', secret).update(`1700000000.${body}`).digest('hex')}`);
   assert.equal(WH.hostOf('https://hooks.zapier.com/hooks/catch/123/secretpath'), 'hooks.zapier.com');
 });
+t('0.51: a tray support request becomes a ticket — subject is the text on one line, body names the computer, business and accounts', () => {
+  const base = {
+    requestId: 'creq1234567890', text: '  The printer\r\nwill not print\u0007  ', link: 'https://rmm.example.test/endpoints/cabc12345',
+    requestLink: 'https://rmm.example.test/support-requests?open=creq1234567890',
+    computer: { id: 'cabc12345', name: 'ACME-PC17' }, business: { id: 'cbiz12345', name: 'Acme Widgets Ltd' },
+    windowsAccount: 'ACMEW\\jsmith', loggedOnUser: 'ACMEW\\jsmith', screenshot: true, usage: false,
+  };
+  const d = TK.buildTrayDraft(base);
+  assert.equal(d.subject, 'The printer will not print');
+  assert.equal(d.sourceRef, 'support:creq1234567890');
+  assert.match(d.body, /^Computer: ACME-PC17\nBusiness: Acme Widgets Ltd\nSent from the tray by: ACMEW\\jsmith\nLogged-on user: ACMEW\\jsmith\nPortal: https:\/\/rmm\.example\.test\/endpoints\/cabc12345\n\nRequest:\nThe printer\nwill not print/);
+  assert.match(d.body, /The screenshot is kept in Rem0te \(no connector carries files\): https:\/\/rmm\.example\.test\/support-requests\?open=creq1234567890$/);
+  assert.ok(!d.body.includes('\u0007') && d.event === null && d.alert === null && d.ai === null);
+  assert.equal(d.requestedBy, 'ACMEW\\jsmith (tray)');
+  const long = TK.buildTrayDraft({ ...base, text: 'x'.repeat(500), windowsAccount: null, loggedOnUser: null, screenshot: false, usage: false });
+  assert.ok(long.subject.length <= TK.SUBJECT_MAX && long.subject.endsWith('…'));
+  assert.ok(!/Logged-on user|kept in Rem0te/.test(long.body) && /Sent from the tray by: the person at the computer/.test(long.body));
+  const both = TK.buildTrayDraft({ ...base, usage: true });
+  assert.match(both.body, /The screenshot and resource-usage sample are kept in Rem0te/);
+  // The webhook carries it in the same fixed body; the proposed ClientSt0r event accepts its source_ref.
+  assert.equal(JSON.parse(WH.webhookBody(d, new Date(0))).ticket.source_ref, 'support:creq1234567890');
+  const ev = K.PROPOSED_SCHEMAS['ticket-create-request-event'];
+  const srcRef = ev.shape.ticket.shape.source_ref;
+  assert.ok(srcRef.safeParse('support:creq1234567890').success);
+  assert.ok(!srcRef.safeParse('support:x').success && !srcRef.safeParse('other:creq1234567890').success);
+});
 t('the proposed ClientSt0r event and capabilities feature stay proposed', () => {
   assert.ok('ticket-create-request-event' in K.PROPOSED_SCHEMAS && !('ticket-create-request-event' in K.CONTRACT_SCHEMAS));
   assert.equal(K.TICKET_REQUEST_FEATURE, 'ticket_create_request_v1');
