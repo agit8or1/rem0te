@@ -18,6 +18,8 @@ import { DIRECT_TOAST, oldAgentUpdateRefusal } from '@/lib/direct-mode';
 import { useAsks } from '@/lib/confirm-policy';
 import { useApprovalMode } from '@/hooks/use-approval-mode';
 import { ArrowLeft, ExternalLink, Loader2, ShieldCheck } from 'lucide-react';
+import { ScheduleChoice, defaultSchedule, scheduleBody, type ScheduleValue } from '@/components/patching/schedule-choice';
+import { CancelTask } from '@/components/tasks/task-ui';
 import { rebootSummary } from '@/components/patching/patch-reboot-choice';
 import { DEPLOYMENT_STATUS } from '@/lib/patching';
 
@@ -48,6 +50,8 @@ interface Deployment {
   soakHours: number; failureThreshold: number; windowHours: number; reboot: string; createdAt: string;
   updates: { updateId: string; revision: number; kb: string | null; title: string; className: string | null; severity: string | null }[];
   next: { ring: number | null; canRequest: boolean; why: string };
+  /** 0.52: for the schedule picker. */
+  timeZones?: { viewer: string | null }; maxScheduleDays?: number;
   rings: Ring[];
 }
 
@@ -85,15 +89,17 @@ export default function DeploymentPage() {
   const askDirect = useAsks('actions.direct');
   const [reason, setReason] = useState('');
   const [exclude, setExclude] = useState<Record<string, string>>({});
-  const [startsIn, setStartsIn] = useState(0);
+  // 0.52: now, or a wall-clock time in a named zone (the plan's notBefore).
+  const [when, setWhen] = useState<ScheduleValue>(() => defaultSchedule({}));
 
   const request = useMutation({
     mutationFn: () => patchingApi.requestRing(id, d!.next.ring!, {
-      reason: reason.trim(), startsInMinutes: startsIn,
+      reason: reason.trim(), ...scheduleBody(when),
       exclude: Object.entries(exclude).filter(([, why]) => why.trim()).map(([endpointId, why]) => ({ endpointId, why: why.trim() })),
     }),
     onSuccess: (r) => {
-      setReason(''); setExclude({}); refresh();
+      setReason(''); setExclude({}); setWhen((w) => ({ ...w, mode: 'now' })); refresh();
+      qc.invalidateQueries({ queryKey: ['tasks'] });
       // 0.40, direct mode: signed at the request; there is no approval page to open.
       if (r.data.data.job?.direct) { toast({ title: 'Approved automatically', description: DIRECT_TOAST }); return; }
       const url = r.data.data.job?.approvalUrl;
@@ -154,18 +160,15 @@ export default function DeploymentPage() {
                   ))}
                 </div>
               )}
-              <div className="grid gap-3 sm:grid-cols-[1fr_200px]">
-                <div className="space-y-1">
-                  <Label htmlFor="ring-reason" className="text-xs">{direct ? 'Why (recorded in the audit log)' : 'Why (shown to the approvers)'}</Label>
-                  <Textarea id="ring-reason" rows={2} maxLength={400} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Patch Tuesday; canary confirmed" />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Starts in (minutes)</Label>
-                  <Input type="number" min={0} max={1440} value={startsIn} onChange={(e) => setStartsIn(Number(e.target.value))} />
-                </div>
+              <div className="space-y-1">
+                <Label htmlFor="ring-reason" className="text-xs">{direct ? 'Why (recorded in the audit log)' : 'Why (shown to the approvers)'}</Label>
+                <Textarea id="ring-reason" rows={2} maxLength={400} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Patch Tuesday; canary confirmed" />
+              </div>
+              <div className="max-w-xl">
+                <ScheduleChoice id="ring-when" value={when} onChange={setWhen} zones={d.timeZones ?? {}} maxDays={d.maxScheduleDays} nowLabel="Start now" />
               </div>
               <Button size="sm" disabled={reason.trim().length < 3 || request.isPending} onClick={() => request.mutate()}>
-                {request.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Request {nextRing.canary ? 'canary' : `ring ${nextRing.ring}`}
+                {request.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}{when.mode === 'schedule' ? 'Schedule' : 'Request'} {nextRing.canary ? 'canary' : `ring ${nextRing.ring}`}
               </Button>
             </>
           )}
@@ -178,6 +181,10 @@ export default function DeploymentPage() {
 }
 
 function RingCard({ r, d, onChanged }: { r: Ring; d: Deployment; onChanged: () => void }) {
+  // 0.52: a plan whose start has not come has reached no computer; it can be canceled (POST /actions/:id/cancel touches only undelivered targets).
+  const open = !!r.job && ['AWAITING_APPROVAL', 'APPROVED'].includes(r.job.status);
+  const scheduled = open && Date.parse(r.job!.window.notBefore) > Date.now();
+  const cancelable = open && (r.job!.status === 'AWAITING_APPROVAL' || (scheduled && r.computers.every((c) => !c.status || c.status === 'PENDING')));
   return (
     <Card>
       <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0 gap-2 flex-wrap">
@@ -189,6 +196,8 @@ function RingCard({ r, d, onChanged }: { r: Ring; d: Deployment; onChanged: () =
             <Button size="sm" variant="outline" asChild><a href={r.job.approvalUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5 mr-1" />Approval page</a></Button>
           )}
           {r.job?.direct && <Badge variant="outline" title="Signed at the request: the business is in direct mode on the approval signer">direct mode</Badge>}
+          {scheduled && <Badge variant="secondary" data-testid="ring-scheduled">Scheduled for {formatDate(r.job!.window.notBefore)}</Badge>}
+          {cancelable && <CancelTask jobId={r.job!.id} onDone={onChanged} />}
         </div>
       </CardHeader>
       <CardContent className="space-y-2 text-xs">

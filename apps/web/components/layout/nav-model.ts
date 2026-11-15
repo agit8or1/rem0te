@@ -26,6 +26,9 @@
  * 0.35: Devices gained Agent migrations, the status page for moves from the
  * standard agent to the signed one.
  *
+ * 0.52: Automation gained Tasks, every task sent or queued with its progress
+ * (computers:view, the capability its API needs).
+ *
  * 0.37: Devices gained Full agent, the whole move to the signed agent as four
  * live steps (signing set up, a signed agent published, timestamp fresh,
  * computers moved — automatically, canary first). Shown for computers:view,
@@ -35,7 +38,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Activity, ArrowRightLeft, BarChart3, BellRing, Building2, Cpu, WifiOff, Download, FileCode2, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
   Monitor, MonitorCheck, MonitorX, Package, PackageCheck, PlayCircle, RefreshCw, Settings, Shield, ShieldCheck, Siren,
-  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail, Sparkles, Ticket,
+  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail, Sparkles, Ticket, ListChecks,
 } from 'lucide-react';
 import { CAP, type Capability } from '@/lib/auth';
 
@@ -108,6 +111,8 @@ export const NAV: NavSection[] = [
         show: (c) => c.can(CAP.SCRIPTS_AUTHOR) || c.can(CAP.SCRIPTS_REVIEW) || c.isIndependentReviewer,
       },
       { href: '/automation/software', label: 'Software catalog', icon: Package, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
+      // 0.52: every task sent or queued to the computers you can see, and where it is.
+      { href: '/automation/tasks', label: 'Tasks', icon: ListChecks, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
     ],
   },
   {

@@ -5,6 +5,101 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.52.0] — 2026-11-15 · *Stopwatch*
+
+**Every task sent to a computer shows where it is, and update installs can be scheduled.**
+
+On DEWEY-WKS2022 (Windows Server 2022, signed agent, direct mode) the owner installed updates from the Patches tab
+and ten minutes later wrote: "I tried to apply the updates 10 minutes ago but status hasnt changed. polling? did it
+fail? need a way to measure and check progress when tasks are sent/queued. also need a schedule for patches so they
+can be scheduled (in the patch plan)". The database shows nothing had failed:
+
+| Time (UTC) | What happened |
+|---|---|
+| 23:31:46 | `ActionJob` for `windows.update.install` created, signed at once (direct mode) |
+| 23:33:05 | Target handed to the computer at its check-in |
+| 23:42:04 | Fourth delivery (the agent was still installing; each check-in hands the plan out again until it answers) |
+| 23:45:04 | Result: `restart_required`, eight updates installed (KB5007651, KB5135243, KB890830, KB2267602 and four without a KB), `reboot.pending: true` |
+
+The tab showed none of it. It read the posture from the last scan, which was older than the install, and refetched
+only while a scan was pending, so for thirteen minutes it looked exactly like an install that had never been sent —
+and afterwards the same eight updates were still listed as installable, because Windows offers them until the
+computer restarts and scans.
+
+**The agent and the approval signer are unchanged.** Both already honoured a plan's `notBefore`: the heartbeat does
+not hand out a plan whose start has not come, and the agent refuses one early (`not_yet_valid`) without consuming or
+journaling it. Scheduling only had to put the time into `notBefore`. No new agent release and no signer redeploy.
+
+#### Added
+- **One lifecycle for every task** (`apps/api/src/tasks/lifecycle.ts`, pure): approved actions, update installs,
+  restarts, software, service and process control, scripts, log collection, snapshots, diagnostics, update scans,
+  agent upgrades and migrations, reinstall links and RustDesk updates. Each is *scheduled*, *waiting for approval*,
+  *queued* (with the reason: next check-in about every 3 minutes, a containment pause, or a computer that has not
+  checked in for 10 minutes), *handed out* (when, and how many deliveries), *running* (when reported), or *done* with
+  one row per item — updates with Windows' HRESULT and its meaning. A task handed out with no answer for longer than
+  its kind usually takes (10 minutes for a restart or service change, 15 for a script, 20 for software or a scan, 30
+  for an update install or agent upgrade) is **overdue**, with what that usually means. Nothing acts on overdue.
+- **Where it shows:**
+  - a **Tasks** panel on the computer page (in progress, or the last two weeks);
+  - **Automation → Tasks**, every computer you can see, filtered by state (in progress, scheduled, failed or overdue,
+    finished, all) and type;
+  - a **toast** when a task you started finishes, from any page, and a count of yours in progress in the top bar.
+  Each re-reads every 5 seconds while something is moving and every minute otherwise, and shows when it last checked.
+- **The Patches tab's Latest install card**: the install's steps, then its per-update results, then — when Windows
+  wants a restart — *Installed N updates — restart required. The update list refreshes after the restart.* with
+  **Schedule restart** and **Scan now**. Schedule restart is an ordinary `windows.reboot.schedule` request (its own
+  approvals in signed mode, its fixed warning, its open-session check; refused while another restart is open). Updates
+  the install put on the computer are marked *installed, waiting for restart* (or *waiting for a scan*) and are not
+  offered again until a scan after the install.
+- **Scheduled installs.** *Install updates* on the Patches tab and a deployment's next ring take **Install now** or
+  **Schedule**: a date and time, in the computer's site zone, your profile's, this browser's or UTC (the form says
+  which), up to 14 days ahead. The API converts it with `zonedToUtc` and it becomes the signed plan's `notBefore`
+  (`notAfter` = `notBefore` + the window hours). Refusals: `SCHEDULE_IN_PAST` (more than 5 minutes ago),
+  `SCHEDULE_TOO_FAR`, `INVALID_TIMEZONE`, `INVALID_REQUEST` (a date that does not exist, a schedule together with
+  `startsInMinutes`, or a ring under a patch policy, which runs in the policy's window). The audit entries
+  `PATCH_INSTALL_REQUESTED` and `PATCH_RING_REQUESTED` record `scheduledFor`. A scheduled ring shows *Scheduled for …*
+  and can be canceled through the existing `POST /actions/:id/cancel`, which cancels only targets never handed out.
+- **Next install window** on the company-wide policy list and on each computer's Patch policy card, from the running
+  revision's signed weekly window.
+- **Routes** (all `GET`, View computers, through `endpointVisibilityWhere` / `assertEndpointInScope`):
+  - `GET /tasks?state=&type=&businessId=`
+  - `GET /tasks/mine?since=`
+  - `GET /endpoints/:id/tasks`
+
+#### Changed
+- **After a restart reported scheduled, the portal asks for a patch scan** two minutes after the restart time
+  (`Endpoint.patchScanRequestedAt`, the same marker *Scan now* sets and `patchScanDue` already waits for). Only for a
+  succeeded `windows.reboot.schedule` result whose `scheduledFor` is within the next 25 hours.
+- A task read pulls the signer's decision for plans still awaiting approval (`ActionsService.refresh`, the pull
+  `GET /actions/:id` already makes; at most 20 per read), so a plan approved on the signer reads as approved.
+
+#### Not done
+- **No monthly schedules** ("second Tuesday"). Policy windows are weekly; a monthly one changes the signed policy
+  document and the approval signer, which this release does not touch.
+- **Scheduling has not run on real Windows.** It is proven against `rem0te-action-sim` with its clock moved.
+
+#### Database
+- Migration `0074_task_progress`: three indexes, no columns — `ActionJob (requestedById, createdAt)`,
+  `ActionTarget (resultAt)`, `EndpointCommand (requestedById, completedAt)`, for the toast poll and the Tasks page.
+  Deploying needs `prisma migrate deploy` and `prisma generate` at the target (CLAUDE.md, *A schema change*).
+
+#### Invariants
+- **§65** in `scripts/check-security-invariants.mjs`: a schedule reaches the plan only as its signed `notBefore`
+  (`scheduledWindow` → `createPlan`'s `window`); the heartbeat's one PENDING → DISPATCHED write sits after the
+  `notBefore` check; the agent still refuses `not_yet_valid`; cancel touches only PENDING targets and the task view
+  offers it only for a job still awaiting approval or approved with nothing delivered; the tasks module writes nothing
+  (only `ActionsService.refresh`), has only GET routes and reads through the visibility rule; the reboot result's scan
+  request; and the suites are wired into CI and `run-e2e.sh`.
+
+#### Tests
+- `apps/api/scripts/unit-task-progress.mjs` (59 checks): the DEWEY timeline replayed through the lifecycle, every
+  kind and state, thresholds, ordering, HRESULT text, the schedule arithmetic. In CI as *Task progress tests*.
+- `apps/api/scripts/e2e-task-progress.mjs` (58 checks; ports 3781–3783; `RELEASE_BIN`, `ACTION_SIM`): an install
+  from request to restart required and overdue; the Tasks page's scope across businesses; Schedule restart and the
+  scan after it; a scheduled install signed with its `notBefore`, held at the heartbeat, refused early by the agent
+  and run after; cancel; a scheduled ring.
+- `e2e-staged-patching`, `e2e-patch-policies`, `e2e-patch-assignment` and `e2e-maintenance-actions` still pass.
+
 ## [0.51.0] — 2026-11-15 · *Handover*
 
 **One computer, one agent: once the signed agent has reported, nothing standard is handed to that computer, and the

@@ -10,7 +10,10 @@ import { AccessPolicyService } from '../security-controls/access-policy.service'
 import { ActionsService } from '../actions/actions.service';
 import { SignerClient } from '../actions/signer.client';
 import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, UPDATE_ID_RE, UPDATE_INSTALL, UpdateReboot, planDirect, type UpdateRebootRule } from '../actions/catalog';
-import { evaluateRingGate, targetStates, toEvidenceTarget, type Gate, type GateTarget, type RingEvidence } from '../actions/patch-policy';
+import { evaluateRingGate, targetStates, toEvidenceTarget, validTimezone, zonedToUtc, type Gate, type GateTarget, type RingEvidence } from '../actions/patch-policy';
+import { ContainmentService } from '../containment/containment.service';
+import { REBOOT_SCHEDULE, catalogEntry } from '../actions/catalog';
+import { actionTask, patchScanTask, type TaskView } from '../tasks/lifecycle';
 import { CLASSIFICATIONS, MANAGER_LABEL, Posture, eligibility, idKey } from './posture';
 import { patchSummaryFor, type PatchSummary } from './summary-db';
 
@@ -35,6 +38,33 @@ import { patchSummaryFor, type PatchSummary } from './summary-db';
 const Ident = z.object({ updateId: z.string().regex(UPDATE_ID_RE), revision: z.number().int().min(1).max(1_000_000) }).strict();
 const Id = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/);
 
+/**
+ * 0.52: a scheduled install. A wall-clock time in a named zone; the portal
+ * turns it into the plan's signed notBefore (and notAfter = notBefore + the
+ * window). The heartbeat hands nothing out before notBefore, and the agent
+ * refuses a plan whose window has not opened by its own clock
+ * (not_yet_valid, not consumed), so the schedule holds on both sides.
+ */
+export const MAX_SCHEDULE_DAYS = 14;
+export const Schedule = z.object({
+  local: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, 'local is YYYY-MM-DDTHH:MM'),
+  timeZone: z.string().min(1).max(64),
+}).strict();
+export type Schedule = z.infer<typeof Schedule>;
+
+/** The instant a schedule names, checked: a known zone, not in the past (5 minutes' grace), at most MAX_SCHEDULE_DAYS ahead. */
+export function scheduledStart(s: Schedule, now = new Date()): Date {
+  if (!validTimezone(s.timeZone)) throw new BadRequestException({ code: 'INVALID_TIMEZONE', message: `${s.timeZone} is not a time zone this server knows (an IANA name, e.g. Europe/London).` });
+  const [d, t] = s.local.split('T');
+  const [y, m, day] = d.split('-').map(Number), [hh, mm] = t.split(':').map(Number);
+  if (m < 1 || m > 12 || day < 1 || new Date(Date.UTC(y, m - 1, day)).getUTCDate() !== day || hh > 23 || mm > 59) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'That date or time does not exist.' });
+  const at = zonedToUtc(y, m, day, hh, mm, s.timeZone);
+  if (Number.isNaN(at.getTime())) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'That date or time does not exist.' });
+  if (at.getTime() < now.getTime() - 5 * 60_000) throw new BadRequestException({ code: 'SCHEDULE_IN_PAST', message: `${s.local} in ${s.timeZone} has already passed.` });
+  if (at.getTime() > now.getTime() + MAX_SCHEDULE_DAYS * 86_400_000) throw new BadRequestException({ code: 'SCHEDULE_TOO_FAR', message: `An install can be scheduled at most ${MAX_SCHEDULE_DAYS} days ahead. For a regular schedule, use a patch policy's maintenance window.` });
+  return new Date(Math.max(at.getTime(), now.getTime()));
+}
+
 export const CreateDeploymentDto = z.object({
   businessId: Id,
   name: z.string().trim().min(3).max(120),
@@ -52,9 +82,12 @@ export const RequestRingDto = z.object({
   startsInMinutes: z.number().int().min(0).max(24 * 60).default(0),
   /** Computers of this ring to leave out, each with why. */
   exclude: z.array(z.object({ endpointId: Id, why: z.string().trim().min(3).max(200) }).strict()).max(MAX_RING_TARGETS).default([]),
+  /** 0.52: start at this wall-clock time instead (startsInMinutes must then be 0). */
+  schedule: Schedule.optional(),
 }).strict();
 
 const ReasonDto = z.object({ reason: z.string().trim().min(3).max(300) }).strict();
+
 
 /**
  * 0.32: "Install updates" from one computer's Patches tab. It becomes a
@@ -69,6 +102,8 @@ export const InstallDto = z.object({
   reason: z.string().trim().min(3).max(400),
   windowHours: z.number().int().min(1).max(24).default(8),
   startsInMinutes: z.number().int().min(0).max(24 * 60).default(0),
+  /** 0.52: Schedule instead of Install now: the plan's window opens at this wall-clock time. */
+  schedule: Schedule.optional(),
 }).strict();
 
 export type DeploymentUpdate = { updateId: string; revision: number; kb: string | null; title: string; className: string | null; severity: string | null };
@@ -84,6 +119,15 @@ export interface UnderPolicy { policyId: string; name: string; digest: string; a
 /** A deployment's restart rule. Anything the column should never hold (it has a CHECK) reads as never. */
 export const rebootOf = (d: Pick<PatchDeployment, 'reboot'>): UpdateRebootRule => (UpdateReboot.safeParse(d.reboot).success ? d.reboot as UpdateRebootRule : 'never');
 
+/** 0.52: the signed window a scheduled ring gets: it opens at the scheduled time and lasts the deployment's window. */
+export function scheduledWindow(s: Schedule, windowHours: number, now = new Date()): { notBefore: Date; notAfter: Date } {
+  const notBefore = scheduledStart(s, now);
+  return { notBefore, notAfter: new Date(notBefore.getTime() + windowHours * 3600_000) };
+}
+
+type AfterInstallEp = { id: string; name: string; hostname: string | null; customerId: string | null; lastSeenAt: Date | null; patchScanRequestedAt: Date | null };
+type InstalledMark = { jobId: string; at: string; waiting: 'restart' | 'scan'; text: string };
+
 @Injectable()
 export class PatchingService {
   constructor(
@@ -94,6 +138,7 @@ export class PatchingService {
     private readonly actions: ActionsService,
     private readonly signer: SignerClient,
     private readonly migration: AgentMigrationService,
+    private readonly containment: ContainmentService,
   ) {}
 
   private bad(code: string, message: string, extra: Record<string, unknown> = {}): never {
@@ -116,11 +161,18 @@ export class PatchingService {
     await this.acl.assertEndpointInScope(actor, endpointId);
     const [inv, ep] = await Promise.all([
       this.prisma.endpointInventory.findUnique({ where: { endpointId }, select: { patchPosture: true, patchScannedAt: true, pendingUpdates: true, rebootRequired: true, updatesCheckedAt: true } }),
-      this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { updateChannel: true, agentActions: true, patchScanRequestedAt: true } }),
+      this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { id: true, name: true, hostname: true, customerId: true, lastSeenAt: true, updateChannel: true, agentActions: true, patchScanRequestedAt: true, site: { select: { timezone: true } } } }),
     ]);
     const p = Posture.safeParse(inv?.patchPosture);
     const posture = p.success ? p.data : null;
+    const after = ep ? await this.afterInstall(ep, inv?.patchScannedAt ?? null, posture) : null;
+    const viewer = await this.prisma.user.findUnique({ where: { id: actor.userId }, select: { timeZone: true } });
     return {
+      /** 0.52: the latest install on this computer, its progress and result, and what follows it (restart, scan). */
+      afterInstall: after?.view ?? null,
+      /** 0.52: the zones a schedule can be given in: the computer's site, and the viewer's own (profile). */
+      timeZones: { site: ep?.site?.timezone && validTimezone(ep.site.timezone) ? ep.site.timezone : null, viewer: viewer?.timeZone && validTimezone(viewer.timeZone) ? viewer.timeZone : null },
+      maxScheduleDays: MAX_SCHEDULE_DAYS,
       summary: await this.summaryFor(endpointId),
       supported: ep?.updateChannel === 'signed' && !!ep.agentActions?.includes(`${UPDATE_INSTALL.id}@${UPDATE_INSTALL.version}`),
       scannedAt: inv?.patchScannedAt ?? null,
@@ -130,7 +182,14 @@ export class PatchingService {
       managers: (posture?.managers ?? []).map((m) => ({ id: m, label: MANAGER_LABEL[m] })),
       autoUpdate: posture?.autoUpdate ?? null,
       reboot: posture?.reboot ?? null,
-      updates: (posture?.updates ?? []).map((u) => ({ ...u, ...(() => { const e = eligibility(u); return { installable: e.ok, notInstallableBecause: e.reason }; })() })),
+      updates: (posture?.updates ?? []).map((u) => {
+        const e = eligibility(u);
+        // 0.52: installed by the latest install, and still listed because
+        // Windows offers it until the restart (or no scan has run since).
+        const done = after?.installed.get(u.updateId);
+        if (done) return { ...u, installable: false, notInstallableBecause: done.text, installedByJob: { jobId: done.jobId, at: done.at, waiting: done.waiting } };
+        return { ...u, installable: e.ok, notInstallableBecause: e.reason, installedByJob: null };
+      }),
       history: posture?.history ?? [],
       /** 0.32: whether "Install updates" is offered, and if not, why and what to do instead. */
       install: await this.installState(actor, endpointId),
@@ -152,6 +211,73 @@ export class PatchingService {
    */
   summaryFor(endpointId: string, now = new Date()): Promise<PatchSummary> {
     return patchSummaryFor(this.prisma, endpointId, now);
+  }
+
+  /**
+   * 0.52: what the Patches tab shows after Install. The latest install on
+   * this computer as a task — queued, handed out, or done with each update's
+   * result — and what follows it: the restart someone scheduled after it, and
+   * the scan that refreshes the list. Also which offered updates that install
+   * already put on the computer: Windows keeps offering an installed update
+   * until the restart, so without this the list looked as if nothing had
+   * happened (DEWEY-WKS2022, 0.52's changelog).
+   *
+   * Shown while the install is in flight, after it until a scan has run with
+   * no restart pending (at most a week), and for a day after it was canceled
+   * or expired. Read only.
+   */
+  private async afterInstall(ep: AfterInstallEp, scannedAt: Date | null, posture: Posture | null, now = new Date()): Promise<{ view: unknown; installed: Map<string, InstalledMark> } | null> {
+    const found = await this.prisma.actionTarget.findFirst({ where: { endpointId: ep.id, job: { actionId: UPDATE_INSTALL.id } }, orderBy: { createdAt: 'desc' }, select: { jobId: true } });
+    if (!found) return null;
+    // The signer's decision, pulled as every read of a job pulls it (ActionsService.refresh).
+    await this.actions.refresh((await this.prisma.actionJob.findUnique({ where: { id: found.jobId } }))!);
+    const t = (await this.prisma.actionTarget.findFirst({ where: { endpointId: ep.id, jobId: found.jobId }, include: { job: true } }))!;
+    const epRow = { id: ep.id, name: ep.name, hostname: ep.hostname, customerId: ep.customerId, lastSeenAt: ep.lastSeenAt };
+    const titleOf = (id: string) => catalogEntry(id, 1)?.title ?? id;
+    const held = !!(await this.containment.blocking('actions', t.job.customerId));
+    const task: TaskView = actionTask(t.job, t, { now, held, titleOf, endpoint: epRow });
+    const installed = new Map<string, InstalledMark>();
+    const resultAt = t.resultAt;
+    const unscanned = !!resultAt && (!scannedAt || resultAt > scannedAt);
+    // A scan older than the result cannot know about the restart the result asks for.
+    const rebootPending = unscanned ? !!(task.restartPending || posture?.reboot.pending) : !!posture?.reboot.pending;
+    const settled = !!resultAt && (now.getTime() - resultAt.getTime() > 7 * 86_400_000 || (!unscanned && !rebootPending));
+    const stoppedLongAgo = !task.inFlight && !resultAt && now.getTime() - t.job.createdAt.getTime() > 86_400_000;
+    if (settled || stoppedLongAgo) return { view: null, installed };
+
+    const updates = ((t.result ?? null) as { updates?: { updateId: string; state: string }[] } | null)?.updates ?? [];
+    if (resultAt) {
+      for (const u of updates) {
+        if (u.state !== 'installed' && u.state !== 'restart_required') continue;
+        installed.set(u.updateId, {
+          jobId: t.jobId, at: resultAt.toISOString(), waiting: rebootPending ? 'restart' : 'scan',
+          text: rebootPending ? 'Installed, waiting for the restart: Windows lists it until the computer restarts and scans again.' : 'Installed; it leaves this list at the next scan.',
+        });
+      }
+    }
+    const r = await this.prisma.actionTarget.findFirst({ where: { endpointId: ep.id, job: { actionId: REBOOT_SCHEDULE.id }, createdAt: { gte: t.createdAt } }, orderBy: { createdAt: 'desc' }, include: { job: true } });
+    const restart = r ? actionTask(r.job, r, { now, held, titleOf, endpoint: epRow }) : null;
+    const scan = ep.patchScanRequestedAt ? patchScanTask(ep.id, epRow, ep.patchScanRequestedAt, scannedAt, now) : null;
+    const full = await this.actions.endpointFor(ep.id);
+    const notReady = full ? this.actions.readiness(full, `${REBOOT_SCHEDULE.id}@${REBOOT_SCHEDULE.version}`) : 'Computer not found.';
+    const restartOpen = await this.actions.blocking(ep.id, REBOOT_SCHEDULE.id);
+    return {
+      installed,
+      view: {
+        task,
+        deploymentId: t.job.deploymentId,
+        installed: updates.filter((u) => u.state === 'installed' || u.state === 'restart_required').length,
+        failed: updates.filter((u) => u.state === 'failed').length,
+        restartRequired: !!resultAt && (task.state === 'restart_required' || rebootPending),
+        scannedSince: !!resultAt && !unscanned,
+        restart,
+        scan,
+        // The banner's Schedule restart is windows.reboot.schedule, requested
+        // like any other action (POST /endpoints/:id/actions): its fixed
+        // warning, its 2-hour window and the session check all apply.
+        scheduleRestart: { possible: !notReady && !restartOpen, reason: notReady ?? (restartOpen ? 'A restart request for this computer is already open.' : null) },
+      },
+    };
   }
 
   // ── Building a deployment ─────────────────────────────────────────────────
@@ -319,6 +445,8 @@ export class PatchingService {
     if (!parsed.success) this.bad('INVALID_REQUEST', parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
     const dto = parsed.data;
     await this.acl.assertEndpointInScope(actor, endpointId);
+    // 0.52: refused before anything is written, like every other check here.
+    if (dto.schedule) { if (dto.startsInMinutes) this.bad('INVALID_REQUEST', 'Give a schedule or startsInMinutes, not both.'); scheduledStart(dto.schedule); }
     const st = await this.installState(actor, endpointId);
     if (!st.possible) throw new ConflictException({ code: 'INSTALL_NOT_POSSIBLE', message: st.reason, fix: st.fix });
     const ep = (await this.actions.endpointFor(endpointId))!;
@@ -328,8 +456,8 @@ export class PatchingService {
       businessId: ep.customerId!, name: `Install on ${host}`.slice(0, 120), updates: dto.updates, rings: [[endpointId]],
       soakHours: 0, failureThreshold: 0, windowHours: dto.windowHours, reboot: dto.reboot,
     }, 'MANUAL', null);
-    const out = await this.requestRing(actor, d.id, 0, { reason: dto.reason, startsInMinutes: dto.startsInMinutes }, undefined, freshMethod);
-    await this.audit.log({ tenantId: d.tenantId ?? undefined, customerId: d.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_INSTALL_REQUESTED', resource: 'endpoint', resourceId: endpointId, meta: { deploymentId: d.id, jobId: out.job.id, updates: dto.updates.length, reboot: dto.reboot } });
+    const out = await this.requestRing(actor, d.id, 0, { reason: dto.reason, startsInMinutes: dto.startsInMinutes, ...(dto.schedule ? { schedule: dto.schedule } : {}) }, undefined, freshMethod);
+    await this.audit.log({ tenantId: d.tenantId ?? undefined, customerId: d.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_INSTALL_REQUESTED', resource: 'endpoint', resourceId: endpointId, meta: { deploymentId: d.id, jobId: out.job.id, updates: dto.updates.length, reboot: dto.reboot, scheduledFor: dto.schedule ? out.job.window.notBefore : null } });
     return out;
   }
 
@@ -426,6 +554,9 @@ export class PatchingService {
       id: d.id, name: d.name, businessId: d.customerId, origin: d.origin, policyId: d.policyId, windowKey: d.windowKey, status: d.status, pausedReason: d.pausedReason,
       soakHours: d.soakHours, failureThreshold: d.failureThreshold, windowHours: d.windowHours, reboot: rebootOf(d), createdById: d.createdById, createdAt: d.createdAt,
       updates: d.updates,
+      // 0.52: a ring can be scheduled in the viewer's own zone (profile), or the browser's.
+      timeZones: { viewer: await this.prisma.user.findUnique({ where: { id: actor.userId }, select: { timeZone: true } }).then((u) => (u?.timeZone && validTimezone(u.timeZone) ? u.timeZone : null)) },
+      maxScheduleDays: MAX_SCHEDULE_DAYS,
       next,
       rings: rings.map((r, i) => {
         const j = jobs.get(i);
@@ -482,6 +613,7 @@ export class PatchingService {
     const parsed = RequestRingDto.safeParse(raw);
     if (!parsed.success) this.bad('INVALID_REQUEST', parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
     const dto = parsed.data;
+    if (dto.schedule && (under || dto.startsInMinutes)) this.bad('INVALID_REQUEST', under ? 'A policy ring runs in the policy\'s own window.' : 'Give a schedule or startsInMinutes, not both.');
     const d = await this.scoped(actor, id);
     if (under && d.policyId !== under.policyId) this.bad('INVALID_REQUEST', 'This deployment was not proposed by that policy.');
     // A policy's rings are signed by the signer under that policy, in order,
@@ -508,10 +640,12 @@ export class PatchingService {
         ...(under ? { policy: { id: under.policyId, name: under.name.slice(0, 120), digest: under.digest } } : {}),
       },
       deployment: { id: d.id, ring },
+      // 0.52: a scheduled ring. The plan's signed window opens at the scheduled time.
+      ...(!under && dto.schedule ? { window: scheduledWindow(dto.schedule, d.windowHours) } : {}),
       ...(under ? { window: under.window, underPolicy: { policyId: under.policyId, digest: under.digest, evidence: ring === 0 ? null : await this.ringEvidence(d, ring - 1) } } : {}),
       freshMethod,
     });
-    await this.audit.log({ tenantId: d.tenantId ?? undefined, customerId: d.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_RING_REQUESTED', resource: 'patch_deployment', resourceId: d.id, meta: { ring, jobId: job.id, computers: endpointIds.length, excluded: Object.fromEntries(excluded), underPolicy: under?.policyId ?? null } });
+    await this.audit.log({ tenantId: d.tenantId ?? undefined, customerId: d.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_RING_REQUESTED', resource: 'patch_deployment', resourceId: d.id, meta: { ring, jobId: job.id, computers: endpointIds.length, excluded: Object.fromEntries(excluded), underPolicy: under?.policyId ?? null, scheduledFor: dto.schedule ? job.notBefore.toISOString() : null } });
     return { job: await this.actions.view(job), deployment: await this.detail(actor, id) };
   }
 

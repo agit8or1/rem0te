@@ -1212,6 +1212,29 @@ const SECTIONS: Section[] = [
           <Link href="/docs/staged-patching" className="underline text-foreground">Staged patching</Link>.
         </p>
         <p>
+          From 0.52, every task you send has <strong className="text-foreground">progress you can watch</strong>:
+          scheduled, waiting for approval, queued for the computer&apos;s next check-in (about every 3 minutes), handed
+          out (with how many times), running, and done with a result per item. The computer page shows a{' '}
+          <em>Tasks</em> panel, <Link href="/automation/tasks" className="underline text-foreground">Automation → Tasks</Link>{' '}
+          lists them for every computer you can see, and a toast tells you when one of yours finishes. A task that has
+          been handed out for a long time without an answer says so, and what that usually means. On the{' '}
+          <em>Patches</em> tab the latest install shows its progress and then each update&apos;s result with Windows&apos;
+          error text; when Windows wants a restart, a banner says how many were installed and offers{' '}
+          <em>Schedule restart</em> (an ordinary <em>Schedule a restart</em> action, approved like any other) and{' '}
+          <em>Scan now</em>. Updates already installed show as &ldquo;installed, waiting for restart&rdquo; until a scan
+          after the restart.
+        </p>
+        <p>
+          From 0.52, <em>Install updates</em> and a deployment&apos;s next ring can be{' '}
+          <strong className="text-foreground">scheduled</strong>: a date and time, in the computer&apos;s site time zone,
+          your profile&apos;s or this browser&apos;s (the form says which), up to 14 days ahead. The time is signed into the
+          plan as the start of its window; nothing is handed to the computer before it, and the agent itself refuses the
+          plan until then. Until it starts it can be canceled from the task, the Tasks page or the ring. Patch policies
+          show their next install window. Scheduling has been tested against a simulated agent only, not yet on a real
+          Windows computer. More in{' '}
+          <Link href="/docs/staged-patching#scheduled-installs" className="underline text-foreground">Staged patching</Link>.
+        </p>
+        <p>
           From 0.34, a deployment, an <em>Install updates</em> request and a patch policy each have a{' '}
           <strong className="text-foreground">restart rule</strong>: <em>Never restart</em> (the default) or{' '}
           <em>Restart if required, inside the window</em>. With the second, a computer that Windows says needs a restart

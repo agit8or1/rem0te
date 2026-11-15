@@ -11,7 +11,7 @@ import { AccessPolicyService } from '../security-controls/access-policy.service'
 import { AbuseGuardService } from '../security-controls/abuse-guard.service';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import {
-  DIRECT, approvalsRequiredFor, planDirect, CATALOG, Envelope, LOG_SOURCES, MAX_WINDOW_HOURS, PLAN_SCHEMA, Plan, catalogEntry, planDigest, SOFTWARE_INSTALL, UPDATE_INSTALL, type CatalogAction,
+  DIRECT, approvalsRequiredFor, planDirect, CATALOG, Envelope, LOG_SOURCES, MAX_WINDOW_HOURS, PLAN_SCHEMA, Plan, catalogEntry, planDigest, REBOOT_SCHEDULE, SOFTWARE_INSTALL, UPDATE_INSTALL, type CatalogAction,
 } from './catalog';
 import { sanitizeLogs } from './logs';
 import { DeviceSigned, RESULT_STATUS } from './device-result';
@@ -752,6 +752,15 @@ export class ActionsService {
         if (at.getTime() > Date.now() - 3_600_000 && at.getTime() <= t.job.notAfter.getTime() + 2 * 60_000) {
           await this.prisma.endpoint.update({ where: { id: endpointId }, data: { patchScanRequestedAt: at } });
         }
+      }
+      // 0.52: a restart scheduled on its own (the Patches tab's "Schedule
+      // restart" after an install that needs one). The update list changes
+      // only after it, so ask for a scan due just after it, as above. Only a
+      // read is requested; a restart the agent skipped (an open session)
+      // reports not_executed and asks for nothing.
+      const rebootAt = t.job.actionId === REBOOT_SCHEDULE.id && r.outcome === 'succeeded' ? Date.parse(r.observed?.scheduledFor ?? '') : NaN;
+      if (u.count && Number.isFinite(rebootAt) && rebootAt > Date.now() - 3_600_000 && rebootAt < Date.now() + 25 * 3_600_000) {
+        await this.prisma.endpoint.update({ where: { id: endpointId }, data: { patchScanRequestedAt: new Date(rebootAt + 2 * 60_000) } });
       }
       if (u.count && script) {
         const o = sanitizeScriptOutput(script);

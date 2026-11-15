@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { endpointsApi, patchingApi } from '@/lib/api-client';
+import { actionsApi, endpointsApi, patchingApi } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { CardHeading } from './card-heading';
@@ -20,6 +20,9 @@ import { useApprovalMode } from '@/hooks/use-approval-mode';
 import { DIRECT_TOAST, oldAgentUpdateRefusal } from '@/lib/direct-mode';
 import { useAsks } from '@/lib/confirm-policy';
 import { PatchPolicySetting } from '@/components/patching/patch-policy-setting';
+import { ScheduleChoice, defaultSchedule, scheduleBody, type ScheduleValue } from '@/components/patching/schedule-choice';
+import { CancelTask, TaskItems, TaskSteps } from '@/components/tasks/task-ui';
+import { STATE_LABEL, STATE_VARIANT, type TaskView } from '@/lib/tasks';
 
 /**
  * Windows Update posture of one computer (v0.27), as its signed agent's
@@ -37,6 +40,13 @@ import { PatchPolicySetting } from '@/components/patching/patch-policy-setting';
 interface PatchUpdate {
   updateId: string; revision: number; kb?: string; title: string; className?: string; severity?: string;
   downloaded: boolean; rebootBehavior: number; sizeBytes: number; installable: boolean; notInstallableBecause: string | null;
+  /** 0.52: installed by the latest install job, and what Windows still waits for. */
+  installedByJob?: { jobId: string; at: string; waiting: 'restart' | 'scan' } | null;
+}
+/** 0.52: the latest install on this computer, until a scan after it settles things. */
+export interface AfterInstall {
+  task: TaskView; deploymentId: string | null; installed: number; failed: number; restartRequired: boolean; scannedSince: boolean;
+  restart: TaskView | null; scan: TaskView | null; scheduleRestart: { possible: boolean; reason: string | null };
 }
 interface History { updateId: string; revision: number; kb?: string; title: string; result: string; hresult?: string; operation: string; date: string }
 /** Built by apps/api/src/patching/summary.ts (0.30). */
@@ -63,6 +73,9 @@ export interface Patches {
     // 0.34: the fix is the Agent card's button, or a page to read.
     fixAction?: 'agent-card'; fixLink?: { href: string; label: string } | null;
   };
+  afterInstall?: AfterInstall | null;
+  timeZones?: { site: string | null; viewer: string | null };
+  maxScheduleDays?: number;
 }
 
 const REBOOT_SOURCE: Record<string, string> = {
@@ -143,7 +156,8 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
   const [reason, setReason] = useState('');
   const [windowHours, setWindowHours] = useState(8);
   const [reboot, setReboot] = useState<RebootRule>('never');
-  const [done, setDone] = useState<{ approvalUrl: string; deploymentId: string; direct: boolean } | null>(null);
+  const [when, setWhen] = useState<ScheduleValue>(() => defaultSchedule(p.timeZones ?? {}));
+  const [done, setDone] = useState<{ approvalUrl: string; deploymentId: string; direct: boolean; scheduledFor: string | null } | null>(null);
   const installable = p.updates.filter((u) => u.installable);
   // Installable first, in the order Windows Update gave them.
   const listed = [...installable, ...p.updates.filter((u) => !u.installable)];
@@ -157,20 +171,24 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
   const go = useMutation({
     mutationFn: () => patchingApi.install(endpointId, {
       updates: chosen.map((u) => ({ updateId: u.updateId, revision: u.revision })),
-      reboot, reason: reason.trim() || (direct ? 'Installed from the computer’s Patches tab' : ''), windowHours,
+      reboot, reason: reason.trim() || (direct ? 'Installed from the computer’s Patches tab' : ''), windowHours, ...scheduleBody(when),
     }),
     onSuccess: (r) => {
-      const d = r.data.data as { job: { approvalUrl: string; direct?: boolean }; deployment: { id: string } };
-      setDone({ approvalUrl: d.job.approvalUrl, deploymentId: d.deployment.id, direct: !!d.job.direct });
-      setPicked(new Set()); setReason(''); setReboot('never');
+      const d = r.data.data as { job: { approvalUrl: string; direct?: boolean; window?: { notBefore: string } }; deployment: { id: string } };
+      const scheduledFor = when.mode === 'schedule' ? (d.job.window?.notBefore ?? null) : null;
+      setDone({ approvalUrl: d.job.approvalUrl, deploymentId: d.deployment.id, direct: !!d.job.direct, scheduledFor });
+      setPicked(new Set()); setReason(''); setReboot('never'); setWhen((w) => ({ ...w, mode: 'now' }));
       qc.invalidateQueries({ queryKey: ['endpoint-patches', endpointId] });
-      toast(d.job.direct ? { title: 'Installing', description: DIRECT_TOAST } : { title: 'Install requested', description: 'It awaits two approvals on the approval signer.' });
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+      toast(scheduledFor
+        ? { title: 'Scheduled', description: `Nothing is handed to the computer before ${new Date(scheduledFor).toLocaleString()}.${d.job.direct ? '' : ' It still needs its two approvals.'}` }
+        : d.job.direct ? { title: 'Installing', description: DIRECT_TOAST } : { title: 'Install requested', description: 'It awaits two approvals on the approval signer.' });
     },
     onError: (e) => toast({ title: 'Not requested', description: apiMessage(e, 'The request was refused.'), variant: 'destructive' }),
   });
   const requested = done && (
     done.direct
-      ? <p>Approved automatically (direct mode). It installs when the computer next checks in · <Link className="underline" href={`/patching/${done.deploymentId}`}>follow it</Link></p>
+      ? <p>Approved automatically (direct mode). {done.scheduledFor ? `It installs at the computer’s first check-in after ${new Date(done.scheduledFor).toLocaleString()}` : 'It installs when the computer next checks in'} · <Link className="underline" href={`/patching/${done.deploymentId}`}>follow it</Link></p>
       : <p>Requested: <a className="underline" href={done.approvalUrl} target="_blank" rel="noreferrer">its approval page</a> · <Link className="underline" href={`/patching/${done.deploymentId}`}>its deployment</Link></p>
   );
 
@@ -225,7 +243,14 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
                   <span className="block text-muted-foreground">
                     {u.className ?? 'Unclassified'}{u.severity ? ` · ${u.severity}` : ''}{u.sizeBytes ? ` · ${size(u.sizeBytes)}` : ''}{u.downloaded ? ', downloaded' : ''}{u.rebootBehavior > 0 ? ' · may need a restart' : ''}
                   </span>
-                  {!u.installable && <span className="block" data-testid="patch-not-installable">Not installable: {u.notInstallableBecause}</span>}
+                  {u.installedByJob ? (
+                    <span className="mt-0.5 flex flex-wrap items-center gap-1.5" data-testid="patch-installed-waiting" data-waiting={u.installedByJob.waiting}>
+                      <Badge variant={u.installedByJob.waiting === 'restart' ? 'warning' : 'success'} className="text-[10px]">
+                        {u.installedByJob.waiting === 'restart' ? 'installed, waiting for restart' : 'installed, waiting for a scan'}
+                      </Badge>
+                      <span className="text-muted-foreground">{u.notInstallableBecause}</span>
+                    </span>
+                  ) : !u.installable && <span className="block" data-testid="patch-not-installable">Not installable: {u.notInstallableBecause}</span>}
                 </span>
               </label>
             );
@@ -243,13 +268,19 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
             <Input id="inst-window" type="number" min={1} max={24} value={windowHours} onChange={(e) => setWindowHours(Math.min(24, Math.max(1, Number(e.target.value) || 1)))} />
           </div>
         </div>
+        <div className="max-w-xl">
+          <ScheduleChoice id="inst-when" value={when} onChange={setWhen} zones={p.timeZones ?? {}} maxDays={p.maxScheduleDays} />
+        </div>
         <div className="space-y-1 max-w-xl">
           <Label htmlFor="inst-reason" className="text-xs">{direct ? 'Note (optional, recorded in the audit log)' : 'Reason (shown to the approvers)'}</Label>
           <Input id="inst-reason" maxLength={400} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. the user reports the November CU is missing" />
         </div>
         <div className="flex gap-2">
           <Button size="sm" data-testid="patch-install-go" disabled={chosen.length === 0 || (!direct && reason.trim().length < 3) || (reason.trim().length > 0 && reason.trim().length < 3) || go.isPending} onClick={() => go.mutate()}>
-            {go.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}{direct ? (chosen.length ? `Install ${chosen.length} selected` : 'Install selected') : 'Request approval'}
+            {go.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
+            {when.mode === 'schedule'
+              ? (direct ? (chosen.length ? `Schedule ${chosen.length} selected` : 'Schedule selected') : 'Request approval for the scheduled install')
+              : direct ? (chosen.length ? `Install ${chosen.length} selected` : 'Install selected') : 'Request approval'}
           </Button>
           {chosen.length > 0 && <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>Clear</Button>}
         </div>
@@ -260,6 +291,97 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
 }
 
 
+const RESTART_DELAYS = [5, 15, 30, 60, 120, 240];
+
+/**
+ * The latest install on this computer (0.52), from request to the scan after
+ * it: where it is, per-update results with Windows' own error text, and —
+ * when Windows wants a restart — a Schedule restart button and Scan now.
+ *
+ * Schedule restart is windows.reboot.schedule requested like any other
+ * action: its own approval (or direct mode), its fixed warning to the
+ * signed-in user, its session check. Nothing here restarts a computer itself.
+ */
+function AfterInstallCard({ endpointId, a, checkedAt, onScan, scanning }: { endpointId: string; a: AfterInstall; checkedAt: number; onScan: () => void; scanning: boolean }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [delay, setDelay] = useState(15);
+  const t = a.task;
+  const restart = useMutation({
+    mutationFn: () => actionsApi.request(endpointId, {
+      actionId: 'windows.reboot.schedule', version: 1, params: { delayMinutes: delay },
+      reason: 'Restart to finish installing updates (from the Patches tab)', windowHours: 2,
+    }),
+    onSuccess: (r) => {
+      const j = r.data?.data as { direct?: boolean } | undefined;
+      qc.invalidateQueries({ queryKey: ['endpoint-patches', endpointId] });
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+      toast(j?.direct
+        ? { title: 'Restart requested', description: `At its next check-in the computer warns the signed-in user and restarts ${delay} minutes later. Nothing restarts while someone is connected.` }
+        : { title: 'Restart requested', description: 'It awaits two approvals on the approval signer, like any restart.' });
+    },
+    onError: (e) => toast({ title: 'Not requested', description: apiMessage(e, 'The request was refused.'), variant: 'destructive' }),
+  });
+  const finished = t.stage === 'done';
+  const scanAfterRestart = a.restart && a.restart.state === 'succeeded';
+  return (
+    <Card data-testid="patch-after-install" data-state={t.state}>
+      <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Download className="h-4 w-4" />Latest install
+          <Badge variant={STATE_VARIANT[t.state]} data-testid="patch-after-state">{STATE_LABEL[t.state] ?? t.state}</Badge>
+          {t.overdue && <Badge variant="warning">Overdue</Badge>}
+        </CardTitle>
+        <span className="text-xs text-muted-foreground" data-testid="patch-after-checked">Last checked {new Date(checkedAt).toLocaleTimeString()}</span>
+      </CardHeader>
+      <CardContent className="space-y-3 text-xs">
+        <TaskSteps t={t} />
+        <p className="text-sm" data-testid="patch-after-text">{t.text}</p>
+        {t.overdue && t.overdueText && <p className="text-amber-700 dark:text-amber-400">{t.overdueText}</p>}
+        {t.cancelJobId && <CancelTask jobId={t.cancelJobId} />}
+        {finished && a.restartRequired && !a.scannedSince && (
+          <div className="rounded-md border border-yellow-300 bg-yellow-50 p-3 dark:border-yellow-800 dark:bg-yellow-950/40 space-y-2" data-testid="patch-restart-banner">
+            <p className="flex gap-2 text-sm">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-yellow-600" />
+              <span>Installed {a.installed} update{a.installed === 1 ? '' : 's'}{a.failed ? `, ${a.failed} failed` : ''} — restart required. The update list refreshes after the restart.</span>
+            </p>
+            {a.restart && (
+              <p data-testid="patch-restart-task">Restart: <strong>{STATE_LABEL[a.restart.state] ?? a.restart.state}</strong> — {a.restart.text}</p>
+            )}
+            {scanAfterRestart && <p className="text-muted-foreground">A scan is asked for two minutes after the restart, so the list catches up on its own.</p>}
+            <div className="flex flex-wrap items-end gap-2">
+              {a.scheduleRestart.possible ? (
+                <>
+                  <div className="space-y-1">
+                    <Label htmlFor="after-delay" className="text-xs">Warning before the restart</Label>
+                    <select id="after-delay" value={delay} onChange={(e) => setDelay(Number(e.target.value))} data-testid="patch-restart-delay"
+                      className="flex h-8 rounded-md border border-input bg-background px-2 text-xs">
+                      {RESTART_DELAYS.map((m) => <option key={m} value={m}>{m < 60 ? `${m} minutes` : m === 60 ? '1 hour' : `${m / 60} hours`}</option>)}
+                    </select>
+                  </div>
+                  <Button size="sm" disabled={restart.isPending} onClick={() => restart.mutate()} data-testid="patch-schedule-restart">
+                    {restart.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Schedule restart
+                  </Button>
+                </>
+              ) : a.scheduleRestart.reason && <span className="text-muted-foreground" data-testid="patch-restart-unavailable">Schedule restart: {a.scheduleRestart.reason}</span>}
+              <Button size="sm" variant="outline" disabled={scanning} onClick={onScan} data-testid="patch-after-scan">
+                {scanning ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1" />}{scanning ? 'Scan requested' : 'Scan now'}
+              </Button>
+            </div>
+          </div>
+        )}
+        {finished && t.items.length > 0 && (
+          <div data-testid="patch-after-results"><p className="mb-1 font-medium">Results</p><TaskItems t={t} /></div>
+        )}
+        <p className="text-muted-foreground">
+          {a.deploymentId && <><Link className="underline" href={`/patching/${a.deploymentId}`}>Its deployment</Link> · </>}
+          <Link className="underline" href="/automation/tasks">All tasks</Link>
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { endpointId: string; platform?: unknown; onOpenAgentCard?: () => void }) {
   // The read-only Linux and macOS agents report through the same basic scan; their words are their own (0.35).
   const os = osName(platform);
@@ -268,10 +390,16 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
   const qc = useQueryClient();
   // A basic scan has no request marker on the server, so poll for a while after Scan now.
   const [waitUntil, setWaitUntil] = useState(0);
-  const { data: p, isLoading } = useQuery({
+  const { data: p, isLoading, dataUpdatedAt } = useQuery({
     queryKey: ['endpoint-patches', endpointId],
     queryFn: () => patchingApi.endpoint(endpointId).then((r) => r.data.data as Patches),
-    refetchInterval: (q) => ((q.state.data as Patches | undefined)?.scanPending || Date.now() < waitUntil ? 20_000 : false),
+    // 0.52: every 5 s while an install, its restart or the scan after it is moving.
+    refetchInterval: (q) => {
+      const d = q.state.data as Patches | undefined;
+      const a = d?.afterInstall;
+      if (a && [a.task, a.restart, a.scan].some((t) => t && t.inFlight && t.state !== 'scheduled')) return 5_000;
+      return d?.scanPending || Date.now() < waitUntil ? 20_000 : a?.task.state === 'scheduled' ? 60_000 : false;
+    },
   });
   const rescan = useMutation({
     mutationFn: () => endpointsApi.refreshInventory(endpointId),
@@ -337,6 +465,7 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
   return (
     <div className="space-y-4">
       <PatchSummaryCard s={p.summary} platform={platform} />
+      {p.afterInstall && <AfterInstallCard endpointId={endpointId} a={p.afterInstall} checkedAt={dataUpdatedAt} onScan={() => rescan.mutate()} scanning={rescan.isPending || p.scanPending} />}
       <InstallUpdates endpointId={endpointId} p={p} onOpenAgentCard={onOpenAgentCard} />
       <PatchPolicySetting endpointId={endpointId} />
       <Card>

@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import { Menu, Search } from 'lucide-react';
 import { CommandPalette } from '@/components/search/command-palette';
 import { ChatInbox } from '@/components/chat/chat-inbox';
+import { TaskWatcher } from '@/components/tasks/task-watcher';
 import { usePermissions } from '@/lib/auth';
 import { NAV_DRAWER_ID, useNavDrawer } from './nav-drawer';
 
@@ -62,6 +63,7 @@ export function TopBar() {
         <kbd className="ml-auto hidden shrink-0 rounded border bg-background px-1.5 py-0.5 font-mono text-[10px] sm:inline">{mac ? '⌘K' : 'Ctrl K'}</kbd>
       </button>
       <ChatInbox />
+      <TaskWatcher />
       <CommandPalette open={open} onOpenChange={setOpen} />
     </header>
   );
