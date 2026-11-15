@@ -130,7 +130,7 @@ export interface DeviceGroup {
   may: { manage: boolean };
 }
 
-export type BulkAction = 'group.add' | 'group.remove' | 'inventory.refresh' | 'client.update' | 'agent.update' | 'agent.migrate';
+export type BulkAction = 'group.add' | 'group.remove' | 'inventory.refresh' | 'client.update' | 'agent.update' | 'agent.migrate' | 'restart.schedule';
 export interface BulkResponse {
   action: BulkAction;
   requested: number;
@@ -139,5 +139,5 @@ export interface BulkResponse {
   group?: { id: string; name: string };
   /** 0.34: the group acted on, and how many computers it resolved to when the request ran. */
   target?: { id: string; name: string; kind: 'static' | 'rule'; resolved: number };
-  results: { endpointId: string; name?: string; ok: boolean; code?: string; reason?: string; unchanged?: boolean }[];
+  results: { endpointId: string; name?: string; ok: boolean; code?: string; reason?: string; unchanged?: boolean; jobId?: string }[];
 }

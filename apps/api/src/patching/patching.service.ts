@@ -10,8 +10,9 @@ import { AccessPolicyService } from '../security-controls/access-policy.service'
 import { ActionsService } from '../actions/actions.service';
 import { SignerClient } from '../actions/signer.client';
 import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, UPDATE_ID_RE, UPDATE_INSTALL, UpdateReboot, planDirect, type UpdateRebootRule } from '../actions/catalog';
-import { evaluateRingGate, targetStates, toEvidenceTarget, validTimezone, zonedToUtc, type Gate, type GateTarget, type RingEvidence } from '../actions/patch-policy';
+import { evaluateRingGate, targetStates, toEvidenceTarget, validTimezone, type Gate, type GateTarget, type RingEvidence } from '../actions/patch-policy';
 import { ContainmentService } from '../containment/containment.service';
+import { MAX_SCHEDULE_DAYS, Schedule, scheduledStart } from '../common/schedule';
 import { REBOOT_SCHEDULE, catalogEntry } from '../actions/catalog';
 import { actionTask, patchScanTask, type TaskView } from '../tasks/lifecycle';
 import { CLASSIFICATIONS, MANAGER_LABEL, Posture, eligibility, idKey } from './posture';
@@ -38,32 +39,8 @@ import { patchSummaryFor, type PatchSummary } from './summary-db';
 const Ident = z.object({ updateId: z.string().regex(UPDATE_ID_RE), revision: z.number().int().min(1).max(1_000_000) }).strict();
 const Id = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/);
 
-/**
- * 0.52: a scheduled install. A wall-clock time in a named zone; the portal
- * turns it into the plan's signed notBefore (and notAfter = notBefore + the
- * window). The heartbeat hands nothing out before notBefore, and the agent
- * refuses a plan whose window has not opened by its own clock
- * (not_yet_valid, not consumed), so the schedule holds on both sides.
- */
-export const MAX_SCHEDULE_DAYS = 14;
-export const Schedule = z.object({
-  local: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, 'local is YYYY-MM-DDTHH:MM'),
-  timeZone: z.string().min(1).max(64),
-}).strict();
-export type Schedule = z.infer<typeof Schedule>;
-
-/** The instant a schedule names, checked: a known zone, not in the past (5 minutes' grace), at most MAX_SCHEDULE_DAYS ahead. */
-export function scheduledStart(s: Schedule, now = new Date()): Date {
-  if (!validTimezone(s.timeZone)) throw new BadRequestException({ code: 'INVALID_TIMEZONE', message: `${s.timeZone} is not a time zone this server knows (an IANA name, e.g. Europe/London).` });
-  const [d, t] = s.local.split('T');
-  const [y, m, day] = d.split('-').map(Number), [hh, mm] = t.split(':').map(Number);
-  if (m < 1 || m > 12 || day < 1 || new Date(Date.UTC(y, m - 1, day)).getUTCDate() !== day || hh > 23 || mm > 59) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'That date or time does not exist.' });
-  const at = zonedToUtc(y, m, day, hh, mm, s.timeZone);
-  if (Number.isNaN(at.getTime())) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'That date or time does not exist.' });
-  if (at.getTime() < now.getTime() - 5 * 60_000) throw new BadRequestException({ code: 'SCHEDULE_IN_PAST', message: `${s.local} in ${s.timeZone} has already passed.` });
-  if (at.getTime() > now.getTime() + MAX_SCHEDULE_DAYS * 86_400_000) throw new BadRequestException({ code: 'SCHEDULE_TOO_FAR', message: `An install can be scheduled at most ${MAX_SCHEDULE_DAYS} days ahead. For a regular schedule, use a patch policy's maintenance window.` });
-  return new Date(Math.max(at.getTime(), now.getTime()));
-}
+// 0.52's schedule (a wall-clock time in a named zone) lives in common/schedule.ts from 0.54, shared with a scheduled restart.
+export { MAX_SCHEDULE_DAYS, Schedule, scheduledStart } from '../common/schedule';
 
 export const CreateDeploymentDto = z.object({
   businessId: Id,
@@ -114,7 +91,7 @@ export type { Gate };
 /** Built by the patch-policy sweep (0.32); never from a request body. */
 export interface PolicyOrigin { policyId: string; windowKey: string; createdById: string }
 /** What a ring request under a policy adds: the policy, the exact window, and the filter the agent applies. */
-export interface UnderPolicy { policyId: string; name: string; digest: string; allow: Record<string, string[]>; window: { notBefore: Date; notAfter: Date } }
+export interface UnderPolicy { policyId: string; name: string; digest: string; allow: Record<string, string[]>; window: { notBefore: Date; notAfter: Date }; /** 0.54: the policy's RustDesk-session exception, carried into its in-window restart. */ ignoreRemoteSession?: true }
 
 /** A deployment's restart rule. Anything the column should never hold (it has a CHECK) reads as never. */
 export const rebootOf = (d: Pick<PatchDeployment, 'reboot'>): UpdateRebootRule => (UpdateReboot.safeParse(d.reboot).success ? d.reboot as UpdateRebootRule : 'never');
@@ -632,7 +609,7 @@ export class PatchingService {
     const updates = d.updates as unknown as DeploymentUpdate[];
     const job = await this.actions.createPlan(actor, {
       action: UPDATE_INSTALL, endpointIds,
-      params: { updates: updates.map((u) => ({ updateId: u.updateId, revision: u.revision })), reboot: rebootOf(d), ...(under ? { allow: under.allow } : {}) },
+      params: { updates: updates.map((u) => ({ updateId: u.updateId, revision: u.revision })), reboot: rebootOf(d), ...(under ? { allow: under.allow } : {}), ...(under?.ignoreRemoteSession && rebootOf(d) === 'if_required_in_window' ? { ignoreRemoteSession: true as const } : {}) },
       reason: `${d.name} — ${ring === 0 ? 'canary' : `ring ${ring}`}: ${dto.reason}`.slice(0, 500),
       startsInMinutes: dto.startsInMinutes, windowHours: d.windowHours,
       display: {

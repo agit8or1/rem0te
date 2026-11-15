@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.53.2-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.54.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -66,7 +66,7 @@ it, its default and its limits: **Settings → Security → Security Features**,
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
 
-## What's new in 0.40 to 0.53
+## What's new in 0.40 to 0.54
 
 Every change on a computer below (services, processes, installing and removing software) needs the full (signed)
 Windows agent and an approval signer, and none of those changes has yet run on a real Windows computer: they have
@@ -74,6 +74,15 @@ been tested against a simulated one. Ask AI and Create ticket have been tested o
 real provider or PSA. [What each agent can do](docs/capabilities.md)
 says what is proven and what is not.
 
+- **Restart scheduling and restart windows (0.54).** A restart can be asked for now or at a date and time up to
+  14 days ahead, in a named zone, from a computer's Actions tab, the Patches tab's restart banner, or the device
+  list for a selection or a device group (at most 200, one approved plan each). *Only if a restart is required*
+  leaves the decision to the computer, which reads Windows' own pending-restart state. A patch policy, or a
+  company-wide one, can now have a **restart window** — *restart if required* or a *maintenance restart* — and the
+  approval signer signs each restart only inside it. A signed-in user never stops a restart: they see the 15-minute
+  warning, and unsaved work is lost. Only a technician connected through RustDesk does, unless the request (or the
+  policy) carries the new, never-ticked-by-default exception *Restart even if a technician is connected through
+  RustDesk*. Needs the 0.54 agent (a signed publish) and an updated approval signer.
 - **Monthly patch windows (0.53).** A patch policy, or a company-wide one, can install on the nth or last weekday
   of each month plus 0–14 days — *second Tuesday + 2* is the Thursday after Patch Tuesday — or on a day of the month
   from 1 to 28. The form shows the next three openings in the policy's time zone, worked out by the same code the

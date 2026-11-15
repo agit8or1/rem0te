@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { MAX_RING_TARGETS, UpdateReboot } from '../actions/catalog';
-import { MAX_POLICY_DAYS, MAX_POLICY_RINGS, PolicyAllow, PolicyWindow, type PolicyComputer } from '../actions/patch-policy';
+import { MAX_POLICY_DAYS, MAX_POLICY_RINGS, PolicyAllow, PolicyWindow, type PolicyComputer, PolicyRestart } from '../actions/patch-policy';
 
 /**
  * Company-wide and assignable patch policies (0.50): the pure part.
@@ -53,6 +53,10 @@ export const SeriesSettings = z.object({
   failureThreshold: z.number().int().min(0).max(MAX_RING_TARGETS).default(0),
   window: PolicyWindow,
   reboot: UpdateReboot.default('never'),
+  /** 0.54: a restart window and rule, carried into every revision. Absent in series made before 0.54. */
+  restart: PolicyRestart.optional(),
+  /** 0.54: the RustDesk-session exception for the series' restarts. Present only when ticked. */
+  ignoreRemoteSession: z.literal(true).optional(),
   expiresInDays: z.number().int().min(1).max(MAX_POLICY_DAYS).default(30),
   /** Optional: the canary to use while it is eligible. Otherwise the portal picks one. */
   canaryEndpointId: Id.optional(),

@@ -161,7 +161,7 @@ export interface ActionTargetRow {
 export interface EndpointRow { id: string; name: string; hostname: string | null; customerId: string | null; lastSeenAt: Date | null }
 export interface Context { now: Date; held: boolean; titleOf: (actionId: string) => string; endpoint: EndpointRow | null }
 
-type PlanDisplay = { display?: { updates?: { updateId: string; kb?: string | null; title?: string }[]; deployment?: { name?: string }; software?: { name?: string } } };
+type PlanDisplay = { display?: { updates?: { updateId: string; kb?: string | null; title?: string }[]; deployment?: { name?: string }; software?: { name?: string }; policy?: { name?: string } } };
 type UpdateOutcome = { updateId: string; kb?: string; state: string; reason?: string; hresult?: string };
 type ActionResult = { outcome?: string; reason?: string; detail?: string; updates?: UpdateOutcome[]; reboot?: { pending: boolean }; restart?: { state: string; reason?: string; scheduledFor?: string }; observed?: Record<string, string> };
 
@@ -218,12 +218,41 @@ function base(kind: TaskKind, id: string, type: TaskType, title: string, endpoin
   };
 }
 
+/**
+ * 0.54: why a restart did or did not happen, in words. A signed-in Windows
+ * user never stops a restart; only a technician's RustDesk session does, and
+ * only without the signed exception — so "connected" is always said as
+ * "connected through RustDesk", never as "signed in".
+ */
+export const RESTART_REASON_TEXT: Record<string, string> = {
+  remote_session_open: 'a technician was connected through RustDesk',
+  session_state_unknown: 'the computer could not tell whether a technician was connected through RustDesk',
+  window_closed: 'the plan\'s window closed before the warning could run out',
+  restart_already_scheduled: 'Windows already had a restart or shutdown pending',
+  install_uncertain: 'the install\'s outcome was not known',
+  no_restart_required: 'Windows reported no restart required',
+  reboot_state_unknown: 'the computer could not read whether Windows requires a restart',
+};
+const reasonText = (r: string | null | undefined) => (r ? RESTART_REASON_TEXT[r] ?? r.replace(/_/g, ' ') : 'no reason given');
+export const OVERRIDE_TEXT = 'restarted although a technician was connected through RustDesk';
+
+function restartDoneText(t: ActionTargetRow, r: ActionResult | null, policyRestart: boolean): string {
+  const o = r?.observed ?? {};
+  const override = o.sessionOverride === 'true' ? ` — ${OVERRIDE_TEXT}${o.remoteSessions && o.remoteSessions !== '0' ? ` (${o.remoteSessions === 'unknown' ? 'sessions unknown' : `${o.remoteSessions} session${o.remoteSessions === '1' ? '' : 's'} open`})` : ''}` : '';
+  if (r?.outcome === 'succeeded' && o.scheduledFor) return `Restart scheduled for ${at(new Date(o.scheduledFor))}, after the warning on screen${override}.`;
+  if (r?.outcome === 'no_change' && r.reason === 'no_restart_required') return 'Not restarted: Windows reported no restart required.';
+  if (r?.outcome === 'not_executed' && (r.reason === 'remote_session_open' || r.reason === 'session_state_unknown')) {
+    return `Not restarted: ${reasonText(r.reason)}. A signed-in user never stops a restart; a RustDesk session does, unless the exception is ticked.${policyRestart ? ' The policy tries again later in this restart window, and in the next one.' : ''}`;
+  }
+  return '';
+}
+
 /** One computer's row of one signed plan. */
 export function actionTask(job: ActionJobRow, t: ActionTargetRow, ctx: Context): TaskView {
   const { now } = ctx;
   const type = actionType(job.actionId);
   const plan = job.plan as PlanDisplay | null;
-  const named = plan?.display?.deployment?.name ?? plan?.display?.software?.name;
+  const named = plan?.display?.deployment?.name ?? plan?.display?.software?.name ?? (plan?.display?.policy?.name && job.actionId === 'windows.reboot.schedule' ? `policy "${plan.display.policy.name}"` : undefined);
   const title = `${ctx.titleOf(job.actionId)}${named ? ` — ${named}` : ''}`.slice(0, 160);
   const v = base('action', `action:${job.id}:${t.endpointId}`, type, title, t.endpointId, ctx.endpoint, job.requestedById, job.createdAt);
   v.link = linkFor(job, t.endpointId);
@@ -248,9 +277,11 @@ export function actionTask(job: ActionJobRow, t: ActionTargetRow, ctx: Context):
     const failed = v.items.filter((i) => i.state === 'failed').length;
     const took = t.dispatchedAt ? ` ${span(t.resultAt.getTime() - t.dispatchedAt.getTime())} after it was handed out` : '';
     if (type === 'update_install') {
-      const restart = r?.restart?.state === 'scheduled' && r.restart.scheduledFor ? ` It scheduled the restart for ${at(new Date(r.restart.scheduledFor))}.`
-        : r?.restart?.state === 'restart_deferred' ? ` The restart was deferred (${(r.restart.reason ?? 'no reason given').replace(/_/g, ' ')}).` : '';
+      const restart = r?.restart?.state === 'scheduled' && r.restart.scheduledFor ? ` It scheduled the restart for ${at(new Date(r.restart.scheduledFor))}${r.observed?.sessionOverride === 'true' ? ` — ${OVERRIDE_TEXT}` : ''}.`
+        : r?.restart?.state === 'restart_deferred' ? ` The restart was deferred (${reasonText(r.restart.reason)}).` : '';
       v.text = `${n ? `Installed ${n} update${n === 1 ? '' : 's'}` : 'Nothing was installed'}${failed ? `, ${failed} failed` : ''}${v.state === 'restart_required' ? ' — restart required' : ''}. Answered at ${at(t.resultAt)},${took}.${restart}`;
+    } else if (job.actionId === 'windows.reboot.schedule' && restartDoneText(t, r, !!plan?.display?.policy)) {
+      v.text = `${restartDoneText(t, r, !!plan?.display?.policy)} Answered at ${at(t.resultAt)}${took ? `,${took}` : ''}.`;
     } else {
       const what = { succeeded: 'Succeeded', restart_required: 'Succeeded — restart required', failed: 'Failed', refused: 'Refused by the computer', not_executed: 'Not executed', uncertain: 'Outcome uncertain' }[v.state as string] ?? 'Finished';
       v.text = `${what}${t.statusReason ? ` (${t.statusReason.replace(/_/g, ' ')})` : ''}. Answered at ${at(t.resultAt)}${took ? `,${took}` : ''}.`;

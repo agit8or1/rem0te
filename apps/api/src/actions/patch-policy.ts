@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { canonicalJson } from '../integration/crypto';
-import { APPROVALS_REQUIRED, MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, MAX_WINDOW_HOURS, UPDATE_ID_RE, UPDATE_INSTALL, UpdateReboot, rebootWithin, type Plan } from './catalog';
+import { APPROVALS_REQUIRED, MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, MAX_WINDOW_HOURS, REBOOT_SCHEDULE, UPDATE_ID_RE, UPDATE_INSTALL, UPDATE_RESTART_WARNING_MINUTES, UpdateReboot, rebootWithin, type Plan } from './catalog';
 import { CLASSIFICATIONS, idKey, updateState, type PostureLike, type TargetView, type UpdateState } from '../patching/posture';
 import { RESULT_STATUS, ResultKey, openDeviceStatement } from './device-result';
 
@@ -150,6 +150,44 @@ export type MonthlyWindow = MonthlyWeekdayWindow | MonthlyDayWindow;
 export const PolicyWindow = z.union([WeeklyWindow, MonthlyWeekdayWindow, MonthlyDayWindow]);
 export type PolicyWindow = z.infer<typeof PolicyWindow>;
 
+/**
+ * 0.54: a policy's restart rule, with its own restart window (the same three
+ * window shapes and the same occurrence functions as the install window).
+ * Absent in every document made before 0.54, whose bytes and digest are
+ * therefore unchanged. Two rules, and nothing else:
+ *
+ *   if_required  after an install leaves a computer "restart required", the
+ *                portal proposes a windows.reboot.schedule plan for it in
+ *                the next restart window, carrying onlyIfRequired: the agent
+ *                restarts only if Windows still says a restart is required.
+ *   always       a maintenance restart: every computer in the policy, once
+ *                per restart window, whether or not one is required.
+ *
+ * The signer signs such a plan only inside this window, only for a computer
+ * the policy names, with the fixed warning, and at most MAX_RESTART_ATTEMPTS
+ * times per computer per occurrence (restart_already_signed / _retry_limit).
+ */
+export const RESTART_RULES = ['if_required', 'always'] as const;
+export type RestartRule = (typeof RESTART_RULES)[number];
+export const PolicyRestart = z.object({
+  rule: z.enum(RESTART_RULES),
+  window: PolicyWindow,
+}).strict();
+export type PolicyRestart = z.infer<typeof PolicyRestart>;
+/** The warning before a policy's restart: the update restart's fixed warning. The signer accepts no other delay. */
+export const POLICY_RESTART_DELAY_MINUTES = UPDATE_RESTART_WARNING_MINUTES;
+/** Restart plans one computer may have signed in one occurrence of a restart window (the first and two retries). */
+export const MAX_RESTART_ATTEMPTS = 3;
+/** The longest window a restart plan is signed for; windows.reboot.schedule's own maxWindowHours. */
+export const MAX_RESTART_PLAN_HOURS = 2;
+
+/** The restart rule of a document, or null — fail closed on anything but the two named rules. */
+export function restartRuleOf(doc: { restart?: unknown }): RestartRule | null {
+  const r = doc.restart as { rule?: unknown } | undefined;
+  if (!r || typeof r !== 'object') return null;
+  return (RESTART_RULES as readonly unknown[]).includes(r.rule) ? r.rule as RestartRule : null;
+}
+
 export const PolicyAllow = z.object({
   /** Windows Update classification ids; a subset of what any plan may install. */
   classifications: z.array(z.string().refine((c) => !!CLASSIFICATIONS[c], 'not an installable classification')).min(1).max(6)
@@ -178,6 +216,16 @@ export const PolicyDoc = z.object({
    * a plan asking for more (reboot_not_allowed).
    */
   reboot: UpdateReboot,
+  /** 0.54: a separate restart window and rule. Absent before 0.54 (and when not chosen), so older documents keep their digest. */
+  restart: PolicyRestart.optional(),
+  /**
+   * 0.54, the owner's exception to the RustDesk-session rule: this policy's
+   * restarts (in the install window and in the restart window) go ahead even
+   * while a technician is connected through RustDesk. Present only when true.
+   * The signer refuses a plan carrying ignoreRemoteSession under a policy
+   * without it (override_not_allowed).
+   */
+  ignoreRemoteSession: z.literal(true).optional(),
   createdAt: Iso,
   expiresAt: Iso,
   createdBy: z.object({ userId: Id, name: z.string().max(120) }).strict(),
@@ -211,6 +259,10 @@ export function validatePolicyDoc(doc: PolicyDoc, now: Date): { ok: true } | { o
   }
   if (created > now.getTime() + CLOCK_SKEW_MS) return { ok: false, reason: 'bad_created', message: 'The policy is dated in the future.' };
   if (!nextOccurrence(now, doc.window, new Date(exp))) return { ok: false, reason: 'window_never_opens', message: 'The maintenance window never opens before the policy expires.' };
+  // 0.54: a restart window must open before expiry too, and the RustDesk-session exception needs a restart to apply to.
+  if (doc.restart !== undefined && !restartRuleOf(doc)) return { ok: false, reason: 'restart_rule_unknown', message: 'The restart rule is not one this version knows.' };
+  if (doc.restart && !nextOccurrence(now, doc.restart.window, new Date(exp))) return { ok: false, reason: 'restart_window_never_opens', message: 'The restart window never opens before the policy expires.' };
+  if (doc.ignoreRemoteSession && doc.reboot !== 'if_required_in_window' && !doc.restart) return { ok: false, reason: 'override_without_restart', message: 'The RustDesk-session exception applies to a restart, and this policy never restarts.' };
   // v0.34, fail closed: a computer whose results open the next ring must be
   // able to sign them. Only the last ring's results gate nothing.
   const unsigned = doc.rings.slice(0, -1).flat().filter((c) => !c.resultKey);
@@ -416,6 +468,45 @@ export function describePolicyWindow(w: PolicyWindow): string {
   return `${m.offsetDays ? `${m.offsetDays} day${m.offsetDays === 1 ? '' : 's'} after ${base}` : base} ${times}`;
 }
 
+const SHORT_DAY: Record<Weekday, string> = { sun: 'Sun', mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat' };
+const WEEK_WORD: Record<MonthWeek, string> = { first: '1st', second: '2nd', third: '3rd', fourth: '4th', last: 'Last' };
+
+/**
+ * 0.54: a window in plain words for the policy list — "Sundays 02:00–04:00
+ * America/New_York", "2nd Tuesday +2, 22:00–04:00 America/New_York". Words
+ * only: the occurrences themselves come from the functions above.
+ */
+export function windowInWords(w: PolicyWindow): string {
+  const kind = windowKind(w);
+  const times = `${w.start}–${w.end} ${w.timezone}`;
+  if (kind === 'weekly') {
+    const days = WEEKDAYS.filter((d) => (w as WeeklyWindow).days.includes(d));
+    const which = days.length === 7 ? 'Every day' : days.length === 1 ? `${WEEKDAY_NAME[days[0]]}s` : days.map((d) => SHORT_DAY[d]).join(', ');
+    return `${which} ${times}`;
+  }
+  if (kind !== 'monthly') return `an unrecognised window ${times}`;
+  const m = w as MonthlyWindow;
+  if ('day' in m) return `the ${ordinal(m.day)} of each month, ${times}`;
+  return `${WEEK_WORD[m.week]} ${WEEKDAY_NAME[m.weekday]}${m.offsetDays ? ` +${m.offsetDays}` : ''}, ${times}`;
+}
+
+/** 0.54: what a policy does about restarts, in words. */
+export function restartInWords(doc: Pick<PolicyDoc, 'reboot' | 'restart' | 'ignoreRemoteSession'>): string {
+  const rule = restartRuleOf(doc);
+  const inWindow = doc.reboot === 'if_required_in_window';
+  let s: string;
+  if (doc.restart && rule === 'always') s = `every restart window (maintenance restart), ${windowInWords(doc.restart.window)}${inWindow ? '; also if required in the install window' : ''}`;
+  else if (doc.restart && rule === 'if_required') s = `${inWindow ? 'if required, in the install window or else ' : 'if required, '}${windowInWords(doc.restart.window)}`;
+  else if (doc.restart) s = 'an unrecognised restart rule (nothing is restarted)';
+  else s = inWindow ? 'if required, in the install window' : 'never (someone restarts it by hand)';
+  return doc.ignoreRemoteSession ? `${s} — even with a technician connected through RustDesk` : s;
+}
+
+/** 0.54: the whole schedule in one line: "Installs: … · Restarts: …". */
+export function scheduleInWords(doc: Pick<PolicyDoc, 'window' | 'reboot' | 'restart' | 'ignoreRemoteSession'>): string {
+  return `Installs: ${windowInWords(doc.window)} · Restarts: ${restartInWords(doc)}`;
+}
+
 // ── The ring gate ───────────────────────────────────────────────────────────
 // One rule, used by the portal to decide what it may request and by the
 // signer to decide whether a policy plan for the next ring may be signed.
@@ -549,6 +640,9 @@ export type PolicyStatus = 'AWAITING_APPROVAL' | 'ACTIVE' | 'REJECTED' | 'REVOKE
 /** One plan the signer signed under a policy: its ledger, kept on the signer's own disk. */
 export interface LedgerEntry {
   jobId: string; deploymentId: string; ring: number; signedAt: string; notBefore: string; notAfter: string; endpointIds: string[]; updates: string[];
+  /** 0.54: a restart plan (windows.reboot.schedule), and the occurrence of the restart window (its UTC start) it was signed for. Never a ring. */
+  kind?: 'restart';
+  restartWindow?: string;
   /** v0.34: sha256 of the signed plan bytes, which each computer's signed result must name. */
   planSha256?: string;
 }
@@ -588,6 +682,26 @@ export function policyQuorum(doc: PolicyDoc, approvals: PolicyApproval[], custom
  * each is a different thing a compromised portal might try.
  */
 export function evaluatePolicyPlan(s: PolicyState, r: PolicyPlanRequest, opts: { now: Date; customerSignoff: boolean; direct?: boolean }): PolicyDecision {
+  // 0.54: a restart plan is decided by its own rule, after the same standing checks.
+  if (r.plan.action.id === REBOOT_SCHEDULE.id && r.plan.action.version === REBOOT_SCHEDULE.version) return evaluatePolicyRestartPlan(s, r, opts);
+  const standing = policyStanding(s, r, opts);
+  if (standing) return standing;
+  const { doc } = s, p = r.plan;
+
+  // The action and what it installs.
+  if (p.action.id !== UPDATE_INSTALL.id || p.action.version !== UPDATE_INSTALL.version) return no('action_not_in_policy', 'A patch policy signs Windows update installs only.');
+  const params = p.params as { updates?: { updateId: string; revision: number }[]; reboot?: unknown; allow?: unknown; ignoreRemoteSession?: unknown };
+  if (!rebootWithin(params.reboot, doc.reboot)) return no('reboot_not_allowed', `The plan's restart rule asks for more than the policy allows (${doc.reboot === 'never' ? 'never restart' : 'restart if required, inside the window'}).`);
+  if (params.ignoreRemoteSession !== undefined && !(params.ignoreRemoteSession === true && doc.ignoreRemoteSession === true)) return no('override_not_allowed', 'The plan asks to restart even with a technician connected through RustDesk, which this policy does not allow.');
+  return evaluateInstallPlan(s, r, opts, params);
+}
+
+/**
+ * The policy's own standing, the same for an install and a restart plan:
+ * revoked, signature, digest, expiry, status, quorum, and the plan inside
+ * its life. Null when it may sign.
+ */
+function policyStanding(s: PolicyState, r: PolicyPlanRequest, opts: { now: Date; customerSignoff: boolean; direct?: boolean }): PolicyDecision | null {
   const { doc } = s, p = r.plan, now = opts.now;
   // The policy itself.
   if (s.revokedAt || s.status === 'REVOKED') return no('policy_revoked', 'This policy was revoked; nothing more is signed under it.');
@@ -599,11 +713,11 @@ export function evaluatePolicyPlan(s: PolicyState, r: PolicyPlanRequest, opts: {
   if (!policyQuorum(doc, s.approvals, false, opts.direct === true)) return no('policy_not_approved', 'This policy does not carry two approvals from people other than its author (a policy activated in direct mode stops counting when the business leaves direct mode).');
   if (!policyQuorum(doc, s.approvals, opts.customerSignoff, opts.direct === true)) return no('policy_mismatch', 'This business now requires customer sign-off, which this policy was not approved with. Approve a new policy.');
   if (Date.parse(p.window.notAfter) > Date.parse(doc.expiresAt)) return no('policy_expired', 'The plan would run past the policy\'s expiry.');
+  return null;
+}
 
-  // The action and what it installs.
-  if (p.action.id !== UPDATE_INSTALL.id || p.action.version !== UPDATE_INSTALL.version) return no('action_not_in_policy', 'A patch policy signs Windows update installs only.');
-  const params = p.params as { updates?: { updateId: string; revision: number }[]; reboot?: unknown; allow?: unknown };
-  if (!rebootWithin(params.reboot, doc.reboot)) return no('reboot_not_allowed', `The plan's restart rule asks for more than the policy allows (${doc.reboot === 'never' ? 'never restart' : 'restart if required, inside the window'}).`);
+function evaluateInstallPlan(s: PolicyState, r: PolicyPlanRequest, opts: { now: Date }, params: { updates?: { updateId: string; revision: number }[]; allow?: unknown }): PolicyDecision {
+  const { doc } = s, p = r.plan, now = opts.now;
   if (canonicalJson(params.allow ?? null) !== canonicalJson(allowParams(doc.allow))) return no('filter_mismatch', 'The plan must carry exactly the policy\'s update filter, so each computer applies it.');
   const updates = params.updates ?? [];
   const shown = p.display?.updates ?? [];
@@ -636,7 +750,7 @@ export function evaluatePolicyPlan(s: PolicyState, r: PolicyPlanRequest, opts: {
   if (ring === 0 && p.targets.length !== 1) return no('computer_not_in_policy', 'Ring 0 is the canary alone.');
 
   // Ring order, from this signer's own ledger.
-  const mine = s.ledger.filter((e) => e.deploymentId === dep.id);
+  const mine = s.ledger.filter((e) => e.kind !== 'restart' && e.deploymentId === dep.id);
   if (mine.some((e) => e.ring > ring)) return no('ring_out_of_order', `A later ring of this deployment is already signed; ring ${ring} is not signed again.`);
   const same = mine.filter((e) => e.ring === ring);
   if (same.some((e) => Date.parse(e.notAfter) > now.getTime())) return no('ring_already_signed', `Ring ${ring} of this deployment is already signed and its window is still open.`);
@@ -664,6 +778,49 @@ export function evaluatePolicyPlan(s: PolicyState, r: PolicyPlanRequest, opts: {
   }, new Date(Math.max(now.getTime(), nb.getTime())));
   if (!gate.ok) return no(gate.reason === 'canary_not_effective' || gate.reason === 'canary_proved_nothing' ? gate.reason : 'gate_not_passed', gate.detail);
   if (nb.getTime() < Date.parse(prev.signedAt)) return no('ring_out_of_order', 'A ring cannot start before the ring before it was signed.');
+  return { ok: true };
+}
+
+/**
+ * 0.54: a restart plan (windows.reboot.schedule) under a policy's restart
+ * rule. The portal proposes one per computer reporting a required restart
+ * (or, under `always`, per computer) inside an open restart window; this
+ * decides whether it is inside the signed document. Every refusal is its own
+ * code.
+ */
+export function evaluatePolicyRestartPlan(s: PolicyState, r: PolicyPlanRequest, opts: { now: Date; customerSignoff: boolean; direct?: boolean }): PolicyDecision {
+  const standing = policyStanding(s, r, opts);
+  if (standing) return standing;
+  const { doc } = s, p = r.plan, now = opts.now;
+  if (!doc.restart) return no('restart_not_in_policy', 'This policy has no restart window, so it signs no restart plan.');
+  const rule = restartRuleOf(doc);
+  if (!rule) return no('restart_rule_unknown', 'The policy\'s restart rule is not one this signer knows; nothing is restarted under it.');
+  if (p.action.id !== REBOOT_SCHEDULE.id || p.action.version !== REBOOT_SCHEDULE.version) return no('action_not_in_policy', 'A policy restart is windows.reboot.schedule@1 only.');
+  const params = p.params as Record<string, unknown>;
+  const allowed = new Set(['delayMinutes', 'onlyIfRequired', 'ignoreRemoteSession']);
+  if (Object.keys(params).some((k) => !allowed.has(k)) || params.delayMinutes !== POLICY_RESTART_DELAY_MINUTES) return no('restart_params_not_allowed', `A policy restart gives the fixed ${POLICY_RESTART_DELAY_MINUTES}-minute warning and nothing else.`);
+  if (rule === 'if_required' ? params.onlyIfRequired !== true : params.onlyIfRequired !== undefined) return no('restart_params_not_allowed', rule === 'if_required' ? 'Under "restart if required" the computer must decide from Windows\' own state (onlyIfRequired).' : 'A maintenance restart restarts whether or not one is required.');
+  if (params.ignoreRemoteSession !== undefined && !(params.ignoreRemoteSession === true && doc.ignoreRemoteSession === true)) return no('override_not_allowed', 'The plan asks to restart even with a technician connected through RustDesk, which this policy does not allow.');
+  if (r.evidence) return no('bad_evidence', 'A restart plan carries no evidence.');
+  if (p.display?.policy?.id !== doc.policyId || p.display.policy.digest !== s.digest) return no('bad_display', 'The plan must name this policy.');
+  if (p.display.deployment || (p.display.updates ?? []).length) return no('bad_display', 'A restart plan names no deployment and no update.');
+  if (p.requestedBy.userId !== doc.createdBy.userId) return no('requester_mismatch', 'A policy plan is requested on behalf of the policy\'s author.');
+  if (p.targets.length !== 1) return no('computer_not_in_policy', 'A restart plan names one computer.');
+  const t = p.targets[0];
+  const c = doc.rings.flat().find((x) => x.endpointId === t.endpointId);
+  if (!c || t.businessId !== doc.businessId || t.rustdeskId !== c.rustdeskId || t.deviceSecretSha256 !== c.deviceSecretSha256) {
+    return no('computer_not_in_policy', `${t.hostname} is not in this policy, or is not the computer that was approved (its enrolled identity differs).`);
+  }
+  // Inside the restart window: received at the latest at notAfter, restarted the fixed warning later, before the window closes.
+  const nb = new Date(p.window.notBefore), na = new Date(p.window.notAfter);
+  const occ = occurrenceAt(nb, doc.restart.window);
+  if (!occ || na.getTime() + POLICY_RESTART_DELAY_MINUTES * 60_000 > occ.end.getTime()) return no('outside_restart_window', `The restart must happen inside the policy's restart window (${describePolicyWindow(doc.restart.window)}).`);
+  if (nb.getTime() < now.getTime() - CLOCK_SKEW_MS) return no('outside_restart_window', 'The plan starts in the past.');
+  if (na.getTime() - nb.getTime() > MAX_RESTART_PLAN_HOURS * 3_600_000) return no('outside_restart_window', `A restart plan runs for at most ${MAX_RESTART_PLAN_HOURS} hours.`);
+  const key = occ.start.toISOString();
+  const mine = s.ledger.filter((e) => e.kind === 'restart' && e.restartWindow === key && e.endpointIds.includes(t.endpointId));
+  if (mine.some((e) => Date.parse(e.notAfter) > now.getTime())) return no('restart_already_signed', `A restart of ${t.hostname} in this window is already signed and its plan is still open.`);
+  if (mine.length >= MAX_RESTART_ATTEMPTS) return no('restart_retry_limit', `${t.hostname} has had ${mine.length} restart plans signed in this window. The next window tries again.`);
   return { ok: true };
 }
 

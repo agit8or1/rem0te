@@ -89,7 +89,11 @@ export class PatchingController {
 
   @Get('endpoints/:id/patch-policy')
   async endpointPolicy(@Actor() actor: ActorContext, @Param('id') id: string) {
-    return { success: true, data: await this.series.effective(actor, id) };
+    const eff = await this.series.effective(actor, id);
+    // 0.54: what the policy that patches it will do about a restart (scope was checked by effective).
+    const pid = eff.effective.policy?.id;
+    const restart = pid ? await this.policies.restartPlanFor(pid, id, await this.policies.restartRequired(id)) : null;
+    return { success: true, data: { ...eff, restart } };
   }
 
   /** computers:edit on that computer; the step-up is checked inside, after the change is known (setOverride). */

@@ -27,6 +27,8 @@ export interface EffectivePolicy {
     /** 0.52: the covering policy's window (0.53: weekly or monthly), and when it next opens. */
     window?: PolicyWindowInput | null; nextWindow?: { start: string; end: string } | null };
   choices: { id: string; name: string }[];
+  /** 0.54: what the policy patching this computer will do about a restart, in words. */
+  restart?: { words: string; text: string; rule: string | null; ignoreRemoteSession: boolean; nextRestartWindow: { start: string; end: string } | null } | null;
   companyWide: { id: string; name: string } | null;
   mayEdit: boolean;
 }
@@ -73,6 +75,13 @@ export function PatchPolicySetting({ endpointId }: { endpointId: string }) {
           <p className="text-xs" data-testid="policy-next-window">
             {p.effective.nextWindow ? <>Next install window: <strong>{describeOccurrence(p.effective.nextWindow, p.effective.window.timezone)}</strong></> : <span className="text-muted-foreground">No install window coming up for this computer.</span>}
             <span className="block text-muted-foreground">Window: {describeWindow(p.effective.window)}</span>
+          </p>
+        )}
+        {p.restart && (
+          <p className="text-xs" data-testid="policy-restart-plan">
+            {p.restart.text}
+            {p.restart.ignoreRemoteSession && <span className="block text-muted-foreground">This policy restarts even if a technician is connected through RustDesk.</span>}
+            <span className="block text-muted-foreground">A signed-in user does not stop the restart. They see the 15-minute warning, and unsaved work is lost.</span>
           </p>
         )}
         <div className="flex flex-wrap items-center gap-2">

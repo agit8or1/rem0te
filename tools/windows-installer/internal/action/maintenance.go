@@ -22,6 +22,8 @@ import (
 	"time"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"github.com/agit8or1/rem0te/windows-installer/internal/patch"
 )
 
 // Maintenance is the Windows surface these actions use; tests and the
@@ -98,10 +100,39 @@ const (
 	MaxRestartDelayMinutes = 24 * 60
 )
 
+// The two optional restart flags (0.54). Each is present only when it is
+// exactly true: anything else — false, a string, a number — is a plan this
+// agent refuses (params_not_allowed), so a plan without them keeps its bytes.
+//
+//	onlyIfRequired       restart only if Windows itself reports a restart
+//	                     required when the plan runs (patch.RebootSources);
+//	                     otherwise no_change, nothing scheduled.
+//	ignoreRemoteSession  the owner's explicit exception (0.54, reversing the
+//	                     0.32/0.34 rule at their request): restart even while
+//	                     a technician is connected through RustDesk. The
+//	                     fixed warning still shows; the session is dropped.
+var RestartFlags = []string{"onlyIfRequired", "ignoreRemoteSession"}
+
+// SignedTrue: the signed parameter k is present and exactly the boolean true.
+func SignedTrue(p map[string]any, k string) bool {
+	v, ok := p[k].(bool)
+	return ok && v
+}
+
 // RestartDelay returns the plan's delay in minutes, or 0 if the params are
-// anything but exactly {"delayMinutes": <integer 5..1440>}.
+// anything but exactly {"delayMinutes": <integer 5..1440>} plus, from 0.54,
+// any of RestartFlags set to true.
 func RestartDelay(p map[string]any) int {
-	if len(p) != 1 {
+	want := 1
+	for _, k := range RestartFlags {
+		if _, has := p[k]; has {
+			if !SignedTrue(p, k) {
+				return 0
+			}
+			want++
+		}
+	}
+	if len(p) != want {
 		return 0
 	}
 	d, ok := p["delayMinutes"].(float64)
@@ -160,6 +191,43 @@ func sessionCheck(what string) func(p *Plan, o Options) *Result {
 				Detail: "a RustDesk session was open on this computer, so " + what + " was not done. Request it again when nobody is connected."}
 		}
 		return nil
+	}
+}
+
+// rebootPrecheck (windows.reboot.schedule, 0.54): with onlyIfRequired, the
+// computer's own reboot-required state decides first ("cannot tell" is not
+// required: nothing is restarted). Then the RustDesk session rule, which only
+// the signed ignoreRemoteSession exception skips.
+func rebootPrecheck(p *Plan, o Options) *Result {
+	if o.Maint == nil {
+		return &Result{Outcome: "failed", Reason: "no_maintenance", Detail: "this agent cannot perform maintenance actions"}
+	}
+	if SignedTrue(p.Params, "onlyIfRequired") {
+		if o.Registry == nil {
+			return &Result{Outcome: "not_executed", Reason: "reboot_state_unknown",
+				Detail: "this agent cannot read whether Windows requires a restart, so the computer was not restarted"}
+		}
+		if len(patch.RebootSources(o.Registry, false)) == 0 {
+			return &Result{Outcome: "no_change", Reason: "no_restart_required", Observed: map[string]string{"rebootPending": "false"},
+				Detail: "Windows reports no restart required, so the computer was not restarted"}
+		}
+	}
+	if SignedTrue(p.Params, "ignoreRemoteSession") {
+		return nil
+	}
+	return sessionCheck("the restart")(p, o)
+}
+
+// sessionOverride records, for a restart whose signed plan carries
+// ignoreRemoteSession, how many RustDesk sessions were open when it was
+// scheduled: the result then says "restarted although a technician was
+// connected". It never stops the restart.
+func sessionOverride(o Options, r *Result) {
+	r.Observed["sessionOverride"] = "true"
+	if n, err := o.Maint.RemoteSessions(); err == nil {
+		r.Observed["remoteSessions"] = strconv.Itoa(n)
+	} else {
+		r.Observed["remoteSessions"] = "unknown"
 	}
 }
 
@@ -261,6 +329,9 @@ func scheduleRestart(p *Plan, o Options) Result {
 	if minutes == 0 {
 		r.Outcome, r.Reason, r.Detail = "refused", "params_not_allowed", "the delay is outside 5 minutes to 24 hours"
 		return r
+	}
+	if SignedTrue(p.Params, "ignoreRemoteSession") {
+		sessionOverride(o, &r)
 	}
 	journalStep(o, p, "scheduling")
 	at, err := scheduleWarnedRestart(p, o, minutes)

@@ -14,6 +14,7 @@ import { formatDate } from '@/lib/utils';
 import { CLASS_NAMES, DEFAULT_POLICY_CLASSES, DRIVERS_CLASS, POLICY_STATUS, describeWindow, type PolicyWindowInput } from '@/lib/patching';
 import { WindowEditor, defaultWindowDraft, draftReady, windowFromDraft } from '@/components/patching/window-editor';
 import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
+import { PolicyRestartEditor, defaultPolicyRestart, policyRestartBody, policyRestartReady } from '@/components/patching/policy-restart';
 import { EFFECTIVE_LABEL, type EffectivePolicy } from '@/components/patching/patch-policy-setting';
 import { Building2, Loader2, Plus } from 'lucide-react';
 import { describeOccurrence } from '@/lib/tasks';
@@ -35,6 +36,8 @@ interface Series {
   computersSetToUse: number;
   /** 0.52: when the running revision next installs (null when nothing runs, or it expires first). */
   nextWindow?: { start: string; end: string } | null;
+  /** 0.54: installs and restarts in plain words, and the next restart window. */
+  schedule?: string | null; nextRestartWindow?: { start: string; end: string } | null;
   lastCheck: { at: string; code: string; message: string; members: number; rings: number[]; canary: { hostname: string; why: string } | null; leftOut: LeftOut[]; lastRingOnly: string[]; promotion?: { code: string; message: string } | null } | null;
   revisions: { id: string; revision: number; status: string; expiresAt: string; createdAt: string; running: boolean; computers: number; approvalUrl: string }[];
   bounds: { revisionMinutes: number; settleMinutes: number; maxComputers: number };
@@ -94,7 +97,8 @@ export function CompanyPoliciesCard({ businessId }: { businessId: string }) {
                 <strong>{s.name}</strong>
                 <Badge variant="outline">{s.scope === 'business' ? 'company-wide' : 'assignable'}</Badge>
                 <Badge variant={s.status === 'active' ? 'success' : 'outline'}>{s.status}</Badge>
-                <span className="text-xs text-muted-foreground">{describeWindow(s.settings.window)} · {s.settings.reboot === 'never' ? 'never restarts' : 'restarts if required, in the window'} · revisions last {s.settings.expiresInDays} days{s.scope === 'assigned' ? ` · ${s.computersSetToUse} computer(s) set to use it` : ''}</span>
+                <span className="text-xs text-muted-foreground">{s.schedule ?? `${describeWindow(s.settings.window)} · ${s.settings.reboot === 'never' ? 'never restarts' : 'restarts if required, in the window'}`} · revisions last {s.settings.expiresInDays} days{s.scope === 'assigned' ? ` · ${s.computersSetToUse} computer(s) set to use it` : ''}</span>
+                {s.nextRestartWindow && <span className="w-full text-xs" data-testid="series-next-restart">Next restart window: <strong>{describeOccurrence(s.nextRestartWindow, s.settings.window.timezone)}</strong></span>}
                 <span className="w-full text-xs" data-testid="series-next-window">{s.nextWindow ? <>Next install window: <strong>{describeOccurrence(s.nextWindow, s.settings.window.timezone)}</strong></> : <span className="text-muted-foreground">No install window coming up{s.status === 'active' ? ' — no revision is running, or it expires first' : ''}.</span>}</span>
                 {s.status === 'active' && s.mayManage && (
                   <Button size="sm" variant="ghost" className="ml-auto" disabled={retire.isPending} onClick={() => { const reason = window.prompt('Why retire this policy? Its revisions are revoked on the approval signer.'); if (reason && reason.trim().length >= 3) retire.mutate({ id: s.id, reason: reason.trim() }); }}>Retire</Button>
@@ -169,18 +173,19 @@ function CreateSeries({ businessId, scope, computers, onDone }: { businessId: st
   const [failureThreshold, setFailureThreshold] = useState(0);
   const [expiresInDays, setExpiresInDays] = useState(30);
   const [reboot, setReboot] = useState<RebootRule>('never');
+  const [restart, setRestart] = useState(defaultPolicyRestart);
   const [canary, setCanary] = useState('');
   const [reason, setReason] = useState('');
   const toggle = (set: Set<string>, v: string, on: boolean) => { const n = new Set(set); if (on) n.add(v); else n.delete(v); return n; };
   const create = useMutation({
     mutationFn: () => patchingApi.createSeries({
       businessId, scope, name: name.trim(), allow: { classifications: [...classes] }, soakHours, failureThreshold, expiresInDays, reboot, reason: reason.trim(),
-      window: windowFromDraft(win), ...(canary ? { canaryEndpointId: canary } : {}),
+      window: windowFromDraft(win), ...policyRestartBody(restart, reboot), ...(canary ? { canaryEndpointId: canary } : {}),
     }),
     onSuccess: () => { toast({ title: scope === 'business' ? 'Company-wide policy created' : 'Assignable policy created', description: scope === 'business' ? 'Revision 1 was proposed on the approval signer.' : 'Set computers to use it; its first revision follows.' }); onDone(); },
     onError: (e) => toast({ title: 'Not created', description: apiMessage(e, 'Refused.'), variant: 'destructive' }),
   });
-  const ok = name.trim().length >= 3 && classes.size > 0 && draftReady(win) && reason.trim().length >= 3;
+  const ok = name.trim().length >= 3 && classes.size > 0 && draftReady(win) && policyRestartReady(restart) && reason.trim().length >= 3;
   return (
     <Card className="mb-4">
       <CardHeader className="pb-3"><CardTitle className="text-sm">{scope === 'business' ? 'New company-wide patch policy' : 'New assignable patch policy'}</CardTitle></CardHeader>
@@ -198,6 +203,7 @@ function CreateSeries({ businessId, scope, computers, onDone }: { businessId: st
           <div className="space-y-1"><Label className="text-xs">Each revision lasts (days, at most 90)</Label><Input type="number" min={1} max={90} value={expiresInDays} onChange={(e) => setExpiresInDays(Number(e.target.value))} /></div>
         </div>
         <div className="max-w-xl"><RebootChoice id="ser-reboot" value={reboot} onChange={setReboot} scope="policy" /></div>
+        <PolicyRestartEditor id="ser" value={restart} onChange={setRestart} reboot={reboot} expiresInDays={expiresInDays} />
         <div className="max-w-md space-y-1">
           <Label htmlFor="ser-canary" className="text-xs">Canary</Label>
           <select id="ser-canary" className={`${selectClass} w-full h-9`} value={canary} onChange={(e) => setCanary(e.target.value)}>

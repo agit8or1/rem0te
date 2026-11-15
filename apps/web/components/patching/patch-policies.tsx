@@ -17,6 +17,7 @@ import { POLICY_STATUS, CLASS_NAMES, DEFAULT_POLICY_CLASSES, DRIVERS_CLASS, SEVE
 import { WindowEditor, defaultWindowDraft, draftReady, windowFromDraft } from '@/components/patching/window-editor';
 import { AlertTriangle, CheckCircle2, Loader2, Plus, ScrollText, XCircle } from 'lucide-react';
 import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
+import { PolicyRestartEditor, defaultPolicyRestart, policyRestartBody, policyRestartReady } from '@/components/patching/policy-restart';
 
 /**
  * Patch policies (0.32) and the production pre-flight.
@@ -66,7 +67,7 @@ export function PreflightCard() {
   );
 }
 
-interface PolicyRow { id: string; name: string; status: string; expiresAt: string; createdAt: string; computers: number; rings: number; window: PolicyWindowInput; nextWindow: { start: string; end: string } | null; lastProposal: { at: string; ok: boolean; code: string; message: string } | null }
+interface PolicyRow { id: string; name: string; status: string; expiresAt: string; createdAt: string; computers: number; rings: number; window: PolicyWindowInput; nextWindow: { start: string; end: string } | null; schedule?: string; nextRestartWindow?: { start: string; end: string } | null; lastProposal: { at: string; ok: boolean; code: string; message: string } | null }
 
 export function PoliciesCard({ businessId }: { businessId: string }) {
   const [creating, setCreating] = useState(false);
@@ -95,7 +96,9 @@ export function PoliciesCard({ businessId }: { businessId: string }) {
                   <Badge variant={POLICY_STATUS[p.status] ?? 'outline'}>{p.status.toLowerCase().replace(/_/g, ' ')}</Badge>
                   <span className="text-xs text-muted-foreground">{p.computers} computer{p.computers === 1 ? '' : 's'} in {p.rings} ring{p.rings === 1 ? '' : 's'} · {describeWindow(p.window)} · expires {formatDate(p.expiresAt)}</span>
                 </div>
+                {p.schedule && <p className="text-xs mt-1" data-testid="policy-schedule">{p.schedule}</p>}
                 {p.nextWindow && <p className="text-xs text-muted-foreground mt-1">Next window: {formatDate(p.nextWindow.start)} – {formatDate(p.nextWindow.end)}</p>}
+                {p.nextRestartWindow && <p className="text-xs text-muted-foreground mt-1" data-testid="policy-next-restart">Next restart window: {formatDate(p.nextRestartWindow.start)} – {formatDate(p.nextRestartWindow.end)}</p>}
                 {p.lastProposal && <p className="text-xs mt-1">{p.lastProposal.ok ? 'Last' : 'Last refusal'} ({formatDate(p.lastProposal.at)}): {p.lastProposal.message}</p>}
               </Link>
             ))}
@@ -125,6 +128,7 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
   const [expiresInDays, setExpiresInDays] = useState(30);
   const [reason, setReason] = useState('');
   const [reboot, setReboot] = useState<RebootRule>('never');
+  const [restart, setRestart] = useState(defaultPolicyRestart);
   const askPropose = useAsks('patching.policy');
 
   const rings = useMemo(() => {
@@ -141,7 +145,7 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
     mutationFn: () => patchingApi.createPolicy({
       businessId, name: name.trim(), rings, soakHours, failureThreshold, expiresInDays, reason: reason.trim(), reboot,
       allow: { classifications: [...classes], ...(severities.size ? { severities: [...severities] } : {}), ...(kbs.length ? { excludeKbs: [...new Set(kbs)] } : {}) },
-      window: windowFromDraft(win),
+      window: windowFromDraft(win), ...policyRestartBody(restart, reboot),
     }),
     onSuccess: (r) => {
       // 0.40: in direct mode the signer makes it active at once.
@@ -154,7 +158,7 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
 
   if (isLoading || !c) return <Card className="mb-4"><CardContent className="pt-6 text-sm text-muted-foreground">Loading the computers…</CardContent></Card>;
   const toggle = (set: Set<string>, v: string, on: boolean) => { const n = new Set(set); if (on) n.add(v); else n.delete(v); return n; };
-  const ok = name.trim().length >= 3 && ringsOk && classes.size > 0 && draftReady(win) && kbsOk && reason.trim().length >= 3;
+  const ok = name.trim().length >= 3 && ringsOk && classes.size > 0 && draftReady(win) && policyRestartReady(restart) && kbsOk && reason.trim().length >= 3;
 
   return (
     <Card className="mb-4">
@@ -214,13 +218,15 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
           <RebootChoice id="pol-reboot" value={reboot} onChange={setReboot} scope="policy" />
         </div>
 
+        <PolicyRestartEditor id="pol" value={restart} onChange={setRestart} reboot={reboot} expiresInDays={expiresInDays} />
+
         <div className="space-y-1 max-w-xl">
           <Label htmlFor="pol-reason" className="text-xs">Reason (shown to the approvers)</Label>
           <Input id="pol-reason" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
         </div>
 
         <p className="text-xs text-muted-foreground flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />
-          The restart rule is part of what the approvers sign: a ring plan may never ask for more than it. {askPropose ? 'Proposing needs a fresh sign-in; approving' : 'Approving'} happens only on the approval signer.
+          The restart rules, the restart window and the RustDesk exception are part of what the approvers sign: a ring plan may never ask for more than it. {askPropose ? 'Proposing needs a fresh sign-in; approving' : 'Approving'} happens only on the approval signer.
         </p>
         <div className="flex gap-2">
           <Button size="sm" disabled={!ok || create.isPending} onClick={() => create.mutate()}>{create.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Propose for approval</Button>

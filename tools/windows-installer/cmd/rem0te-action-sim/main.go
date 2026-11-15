@@ -487,6 +487,9 @@ func main() {
 	}
 	if wua != nil {
 		o.WUA, o.Registry = wua, reg
+	} else if *regPath != "" {
+		// 0.54: windows.reboot.schedule's onlyIfRequired reads the pending-restart keys alone.
+		o.Registry = reg
 	}
 	if *scriptPath != "" {
 		raw, err := os.ReadFile(*scriptPath)

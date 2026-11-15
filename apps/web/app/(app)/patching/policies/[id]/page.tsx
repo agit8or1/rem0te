@@ -28,6 +28,7 @@ interface PolicyDoc {
   rings: { endpointId: string; hostname: string }[][];
   allow: { classifications: string[]; severities?: string[]; excludeKbs?: string[] };
   soakHours: number; failureThreshold: number; window: PolicyWindowInput; reboot: 'never' | 'if_required_in_window';
+  restart?: { rule: string; window: PolicyWindowInput }; ignoreRemoteSession?: true;
 }
 interface Policy {
   id: string; name: string; status: string; digest: string; approvalUrl: string; expiresAt: string; createdAt: string;
@@ -41,6 +42,10 @@ interface Policy {
   signer: { reachable: boolean; status: string | null; signedPlans: number | null; refusals: { at: string; jobId: string; code: string; message: string }[] };
   deployments: { id: string; name: string; status: string; windowKey: string | null; pausedReason: string | null; createdAt: string }[];
   sweep: { enabled: boolean; everySeconds: number };
+  /** 0.54: installs and restarts in plain words, the restart window's openings, and the restarts asked for under it. */
+  schedule?: string; restartWords?: string;
+  currentRestartWindow?: { start: string; end: string } | null; upcomingRestartWindows?: { start: string; end: string }[];
+  restarts?: { endpointId: string; computer: string; windowKey: string; attempt: number; at: string; code: string; message: string; jobId: string | null; jobStatus: string | null; outcome: string | null; reason: string | null; scheduledFor: string | null; sessionOverride: boolean }[];
   /** 0.40: activated at admission in direct mode, with no approvals (the signer's word). */
   direct?: boolean;
   createdById?: string;
@@ -111,7 +116,8 @@ export default function PolicyPage() {
             {row('Window', <span data-testid="policy-window">{describeWindow(d.window)}{(p.upcomingWindows?.length ?? 0) > 0 && <span className="block text-muted-foreground">Next openings: {p.upcomingWindows!.map((o) => describeOccurrence(o, d.window.timezone)).join('; ')}</span>}</span>)}
             {row('Soak between rings', `${d.soakHours} h`)}
             {row('Failures allowed per ring', String(d.failureThreshold))}
-            {row('Restart', rebootSummary(d.reboot))}
+            {row('Restart', <span data-testid="policy-restart">{p.restartWords ? `${rebootSummary(d.reboot)}. Restarts: ${p.restartWords}` : rebootSummary(d.reboot)}{(p.upcomingRestartWindows?.length ?? 0) > 0 && d.restart && <span className="block text-muted-foreground">Next restart windows: {p.upcomingRestartWindows!.map((o) => describeOccurrence(o, d.restart!.window.timezone)).join('; ')}</span>}{(d.restart || d.reboot === 'if_required_in_window') && <span className="block text-muted-foreground">A signed-in user does not stop the restart. They see the 15-minute warning, and unsaved work is lost.</span>}</span>)}
+            {p.schedule && row('Schedule', <span data-testid="policy-schedule">{p.schedule}</span>)}
             {row('Reason', d.reason)}
             {row('Approved by', p.direct ? `${directApproved(d.createdBy.name, p.createdAt)} — it stops counting if the business leaves direct mode on the approval signer` : p.approvals.length ? p.approvals.map((a) => `${a.name} (${a.role}, ${formatDate(a.at)})`).join('; ') : 'nobody yet — two approvers other than its author approve it on the approval signer')}
             {row('Document digest', <code className="break-all">{p.digest}</code>)}
@@ -146,6 +152,7 @@ export default function PolicyPage() {
         <CardContent className="text-xs space-y-2">
           {!p.sweep.enabled && <p className="text-destructive">The policy sweep is off on this server (PATCH_POLICY_SWEEP=off): nothing is proposed under any policy.</p>}
           {p.currentWindow ? <p>Its window is open now, until {formatDate(p.currentWindow.end)}.</p> : p.nextWindow ? <p>Next window: {formatDate(p.nextWindow.start)} – {formatDate(p.nextWindow.end)}.</p> : p.status === 'ACTIVE' ? <p>No window opens before it expires.</p> : null}
+          {p.currentRestartWindow && <p data-testid="policy-restart-open">Its restart window is open now, until {formatDate(p.currentRestartWindow.end)}.</p>}
           {p.lastProposal && <p>{p.lastProposal.ok ? 'Last' : 'Last refusal'} ({formatDate(p.lastProposal.at)}, <code>{p.lastProposal.code}</code>): {p.lastProposal.message}</p>}
           <p className="text-muted-foreground">Approval signer: {p.signer.reachable ? `${p.signer.status?.toLowerCase().replace(/_/g, ' ')}, ${p.signer.signedPlans} plan${p.signer.signedPlans === 1 ? '' : 's'} signed under it` : 'not reachable'}.</p>
           {p.signer.refusals.length > 0 && (
@@ -156,6 +163,20 @@ export default function PolicyPage() {
           )}
         </CardContent>
       </Card>
+
+      {d.restart && (
+        <Card data-testid="policy-restarts">
+          <CardHeader className="pb-3"><CardTitle className="text-sm">Restarts under it</CardTitle></CardHeader>
+          <CardContent className="space-y-1 text-xs">
+            {(p.restarts ?? []).length === 0 ? <p className="text-muted-foreground">None asked for yet.</p> : p.restarts!.map((x) => (
+              <p key={`${x.endpointId}-${x.windowKey}-${x.attempt}`}>
+                <strong>{x.computer}</strong> <span className="text-muted-foreground">{formatDate(x.at)} · window {formatDate(x.windowKey)} · attempt {x.attempt}</span>{' '}
+                {x.jobId ? <>— {x.outcome ?? x.jobStatus?.toLowerCase() ?? 'signed'}{x.reason ? ` (${x.reason.replace(/_/g, ' ')})` : ''}{x.sessionOverride ? ' — restarted although a technician was connected through RustDesk' : ''}{x.scheduledFor ? `, restart at ${formatDate(x.scheduledFor)}` : ''}</> : <>— not signed: <code>{x.code}</code> {x.message}</>}
+              </p>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-sm">Deployments under it</CardTitle></CardHeader>

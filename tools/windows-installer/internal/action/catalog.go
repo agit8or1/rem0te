@@ -96,11 +96,13 @@ var catalog = []Action{
 	{
 		// Schedule a restart after a warning of 5 minutes to 24 hours
 		// (v0.32). Never immediate; the message is fixed text; skipped while a
-		// RustDesk session is open or when that cannot be told.
+		// RustDesk session is open or when that cannot be told — unless the
+		// signed plan carries ignoreRemoteSession (0.54). With onlyIfRequired
+		// (0.54) it restarts only if Windows reports a restart required.
 		ID: "windows.reboot.schedule", Version: 1, MaxTargets: 1, MaxWindow: 2 * time.Hour,
 		ParamsOK:    func(p map[string]any) bool { return RestartDelay(p) != 0 },
 		Risk:        func(int, int) string { return "high" },
-		Precheck:    sessionCheck("the restart"),
+		Precheck:    rebootPrecheck,
 		Execute:     scheduleRestart,
 		Interrupted: scheduleInterrupted,
 	},

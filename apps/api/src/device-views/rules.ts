@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { z } from 'zod';
+import { BulkRestart } from '../actions/restart-bulk';
 import { isOwnerRole, CAP } from '../rbac/capabilities';
 import type { ActorContext } from '../rbac/access-control.service';
 import { LIST_FILTER_KEYS, parseListFilters, SORT_KEYS, storedForm } from '../endpoints/list-query';
@@ -114,7 +115,7 @@ export function normalizeViewFilters(raw: Record<string, unknown>): StoredFilter
  * approved action here: those keep their own flows.
  */
 // agent.update / agent.migrate (0.34): the Agent card's two buttons, per computer.
-export const BULK_ACTIONS = ['group.add', 'group.remove', 'inventory.refresh', 'client.update', 'agent.update', 'agent.migrate'] as const;
+export const BULK_ACTIONS = ['group.add', 'group.remove', 'inventory.refresh', 'client.update', 'agent.update', 'agent.migrate', 'restart.schedule'] as const;
 export type BulkAction = (typeof BULK_ACTIONS)[number];
 
 const BulkBody = z.object({
@@ -128,10 +129,12 @@ const BulkBody = z.object({
    * evaluated then), capped at BULK_MAX like a selection.
    */
   targetGroupId: z.string().regex(ID).optional(),
-  // agent.migrate only: recorded in the audit log, like the single route's.
+  // agent.migrate and (0.54) restart.schedule: recorded in the audit log, like the single route's.
   reason: z.string().trim().min(3).max(400).optional(),
+  /** 0.54, restart.schedule only: the warning, an optional time, and the two closed flags (BulkRestart). */
+  restart: BulkRestart.optional(),
 }).strict();
-export type BulkInput = { action: BulkAction; endpointIds?: string[]; groupId?: string; targetGroupId?: string; reason?: string };
+export type BulkInput = { action: BulkAction; endpointIds?: string[]; groupId?: string; targetGroupId?: string; reason?: string; restart?: BulkRestart };
 
 /** The selection, de-duplicated (order kept) and capped. Over the cap is a 400 naming it, never a silent truncation. */
 export function parseSelection(ids: unknown): string[] {
@@ -153,8 +156,10 @@ export function parseBulk(raw: unknown): BulkInput {
   if (groupAction && !p.data.groupId) throw bad('INVALID_REQUEST', 'groupId is required for a group action');
   if (!groupAction && p.data.groupId) throw bad('INVALID_REQUEST', 'groupId applies only to group actions');
   if (groupAction && p.data.targetGroupId && p.data.targetGroupId === p.data.groupId) throw bad('INVALID_REQUEST', 'A group cannot be its own target');
-  if (p.data.action === 'agent.migrate' && !p.data.reason) throw bad('REASON_REQUIRED', 'Give a reason of 3 to 400 characters; it is recorded in the audit log.');
-  if (p.data.action !== 'agent.migrate' && p.data.reason) throw bad('INVALID_REQUEST', 'reason applies only to agent.migrate');
+  const reasoned = p.data.action === 'agent.migrate' || p.data.action === 'restart.schedule';
+  if (reasoned && !p.data.reason) throw bad('REASON_REQUIRED', 'Give a reason of 3 to 400 characters; it is recorded in the audit log.');
+  if (!reasoned && p.data.reason) throw bad('INVALID_REQUEST', 'reason applies only to agent.migrate and restart.schedule');
+  if ((p.data.action === 'restart.schedule') !== !!p.data.restart) throw bad('INVALID_REQUEST', 'restart is required for restart.schedule, and applies only to it');
   return p.data;
 }
 

@@ -305,7 +305,7 @@ async function all() {
   {
     const v = await req('GET', `/endpoints/${std.id}/patches`, { s: S.owen, business: acme.id });
     const i = v.body?.data?.install;
-    check(v.status === 200 && i?.possible === false && /standard agent/.test(i.reason) && i.fixAction === 'agent-card' && /Upgrade to full agent/.test(i.fix), 'a standard-agent computer: no Install button — it says why (standard agent) and what to do (Upgrade to full agent, on the Agent card)', msg(v));
+    check(v.status === 200 && i?.possible === false && /standard agent/.test(i.reason) && i.fixAction === 'agent-card' && /Upgrade to full agent/.test(i.fix), 'a standard-agent computer: no Install button — it says why (standard agent) and what to do (Upgrade to full agent, on the Agent card)', `HTTP ${v.status} ${JSON.stringify(i)}`);
     const r0 = await req('POST', `/endpoints/${std.id}/patches/install`, { s: S.owen, business: acme.id, body: { updates: [id(CU)], reboot: 'never', reason: 'try anyway' } });
     check(r0.status === 409 && code(r0) === 'INSTALL_NOT_POSSIBLE', 'and asking anyway is refused with the same reason', msg(r0));
     const m = await req('GET', `/endpoints/${manual.id}/patches`, { s: S.owen, business: acme.id });
@@ -524,7 +524,7 @@ async function all() {
     const r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, rings: [[outsider.id]], name: 'Acme security, with restarts', reboot: 'if_required_in_window' } });
     check(r.status === 201 && r.body?.data?.document?.reboot === 'if_required_in_window', 'the portal proposes a policy whose rule is "restart if required, inside the window"', msg(r));
     const page = r.status === 201 ? await (await fetch(r.body.data.approvalUrl)).text() : '';
-    check(page.includes('if Windows requires one') && page.includes('15-minute warning') && page.includes('not yet run on a real Windows computer'), 'its approval page says it restarts, with the fixed warning, and that this has not run on real Windows', page.slice(0, 200));
+    check(page.includes('if required, in the install window') && page.includes('15-minute warning') && page.includes('not yet run on a real Windows computer'), 'its approval page says it restarts, with the fixed warning, and that this has not run on real Windows', page.slice(0, 200));
     const dflt = await prisma.patchPolicy.findUnique({ where: { id: pol.id } });
     check(dflt.document.reboot === 'never', 'a policy proposed without a rule says never (the default)', JSON.stringify(dflt.document.reboot));
     // Straight to the signer (the portal never sees it), approved, then plans under it.

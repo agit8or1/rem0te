@@ -3,8 +3,8 @@
  * sign — not by the portal. Self-contained: no external scripts, styles,
  * fonts or images, a nonce CSP, and every value HTML-escaped.
  */
-import { REBOOT_UNPROVEN, UPDATE_RESTART_WARNING_MINUTES, type Plan } from '../actions/catalog';
-import { CLASSIFICATIONS as CLASS_NAME, describePolicyWindow, nextOccurrences, type PolicyDoc } from '../actions/patch-policy';
+import { IGNORE_REMOTE_SESSION_LABEL, REBOOT_UNPROVEN, SIGNED_IN_USER_NOTE, UPDATE_RESTART_WARNING_MINUTES, type Plan } from '../actions/catalog';
+import { CLASSIFICATIONS as CLASS_NAME, describePolicyWindow, nextOccurrences, restartInWords, type PolicyDoc } from '../actions/patch-policy';
 import { resultKeyFingerprint } from '../actions/device-result';
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -30,7 +30,7 @@ export function renderApprovalPage(v: View, nonce: string): string {
     ? `<table class="inner"><tr><th>Update</th><th>Classification</th><th>Severity</th></tr>${p.display.updates.map((u) => `<tr><td>${u.kb ? `<strong>${esc(u.kb)}</strong> ` : ''}${esc(u.title)}<br><code>${esc(u.updateId)} rev ${esc(u.revision)}</code></td><td>${esc(u.className ?? 'unknown')}</td><td>${esc(u.severity ?? '—')}</td></tr>`).join('')}</table><p class="mut">Titles and KBs are as the computers reported them. Each computer installs an update only if Windows Update itself offers it as a security, critical, rollup, ordinary, driver or definition update.</p>`
     : '';
   const restarts = (p.params as { reboot?: unknown }).reboot === 'if_required_in_window'
-    ? `<strong>restarting if Windows requires it</strong>, after a fixed ${UPDATE_RESTART_WARNING_MINUTES}-minute warning, only inside the window below and never while a RustDesk session is open. <span class="mut">${esc(REBOOT_UNPROVEN)}</span>`
+    ? `<strong>restarting if Windows requires it</strong>, after a fixed ${UPDATE_RESTART_WARNING_MINUTES}-minute warning, only inside the window below, ${(p.params as { ignoreRemoteSession?: unknown }).ignoreRemoteSession === true ? '<strong>even while a technician is connected through RustDesk (their session is dropped)</strong>' : 'never while a technician is connected through RustDesk'}. ${esc(SIGNED_IN_USER_NOTE)} <span class="mut">${esc(REBOOT_UNPROVEN)}</span>`
     : 'never restarting';
   // 0.34: what a software plan installs. The params are what the computer
   // acts on; the name and publisher are the catalog's labels for them.
@@ -177,7 +177,12 @@ export function renderPolicyApprovalPage(v: PolicyView, nonce: string): string {
 <li>Installing updates changes computers. An update can break a driver or an application, and some cannot be uninstalled.</li>
 ${d.reboot === 'if_required_in_window'
     ? `<li>Computers restart. After installing, a computer Windows says needs a restart shows a fixed warning and restarts ${UPDATE_RESTART_WARNING_MINUTES} minutes later, closing programs still open without saving. It does not restart while a RustDesk session is open (or when it cannot tell), or after the window ends; then it stays "restart required" until someone restarts it, and the next ring waits for that. ${esc(REBOOT_UNPROVEN)}</li>`
-    : '<li>Computers are never restarted. An update that needs a restart is reported as "restart required" until someone restarts it, and the next ring waits for that.</li>'}
+    : d.restart ? '' : '<li>Computers are never restarted. An update that needs a restart is reported as "restart required" until someone restarts it, and the next ring waits for that.</li>'}
+${d.restart
+    ? `<li>Computers restart in the restart window (0.54): ${esc(restartInWords(d))}. The signer signs one restart plan per computer per window (two retries), only inside that window, each with the fixed ${UPDATE_RESTART_WARNING_MINUTES}-minute warning${d.restart.rule === 'if_required' ? ', and the computer itself restarts only if Windows still says a restart is required' : ' — a maintenance restart, whether or not one is required'}. ${esc(REBOOT_UNPROVEN)}</li>`
+    : ''}
+<li>${esc(SIGNED_IN_USER_NOTE)}</li>
+${d.ignoreRemoteSession ? `<li><strong>RustDesk-session exception:</strong> ${esc(IGNORE_REMOTE_SESSION_LABEL)}. This policy's restarts go ahead even while a technician is connected; the fixed warning still shows.</li>` : ''}
 <li>Each computer signs its own results with its result key, shown below. Approving binds that key to the computer: the signer opens a later ring only on results that key signed, so a portal cannot forge a canary success. A key shown as "first time" is trusted because you approve it here; to be sure it is the computer's, compare its fingerprint with <code>rem0te-agent.exe status</code> on that computer.</li>
 </ul></div>
 <table>
@@ -187,7 +192,7 @@ ${row('Installs', esc(d.allow.classifications.map((c) => CLASS_NAME[c] ?? c).joi
 ${row('Never installs', d.allow.excludeKbs ? esc(d.allow.excludeKbs.join(', ')) : '<span class="mut">no KBs excluded</span>')}
 ${row('Window', `${when} <strong>${esc(w.timezone)}</strong> local time${next}`)}
 ${row('Between rings', `soak ${esc(d.soakHours)} h; at most ${esc(d.failureThreshold)} failed computer(s) per ring before the deployment pauses itself`)}
-${row('Restarts', d.reboot === 'if_required_in_window' ? `<strong>if Windows requires one</strong>, after a ${UPDATE_RESTART_WARNING_MINUTES}-minute warning, inside the window only, never with a RustDesk session open` : 'never')}
+${row('Restarts', `${esc(restartInWords(d))}${d.reboot === 'if_required_in_window' || d.restart ? `, after a ${UPDATE_RESTART_WARNING_MINUTES}-minute warning${d.ignoreRemoteSession ? '' : ', never while a technician is connected through RustDesk'}` : ''}`)}
 ${row('Proposed by', `${esc(d.createdBy.name)} <span class="mut">(cannot approve it)</span>`)}
 ${row('Reason', esc(d.reason))}
 ${row('Expires', `${fmt(d.expiresAt)} <span class="mut">(then approved again)</span>`)}

@@ -27,10 +27,19 @@ func updateParams(p map[string]any) ([]patch.Identity, *patch.Filter, error) {
 	_, hasAllow := p["allow"]
 	want := 2
 	if hasAllow {
-		want = 3
+		want++
+	}
+	// 0.54: ignoreRemoteSession, exactly true and only beside the in-window
+	// rule — the owner's exception to the RustDesk-session rule for the
+	// update's own restart.
+	if _, has := p["ignoreRemoteSession"]; has {
+		if !SignedTrue(p, "ignoreRemoteSession") || UpdateReboot(p) != RebootInWindow {
+			return nil, nil, paramErr("ignoreRemoteSession is exactly true, and only with reboot if_required_in_window")
+		}
+		want++
 	}
 	if len(p) != want || UpdateReboot(p) == "" {
-		return nil, nil, paramErr("params must be exactly updates, reboot (never or if_required_in_window) and optionally allow")
+		return nil, nil, paramErr("params must be exactly updates, reboot (never or if_required_in_window) and optionally allow and ignoreRemoteSession")
 	}
 	list, ok := p["updates"].([]any)
 	if !ok || len(list) < 1 || len(list) > patch.MaxPerPlan {
@@ -237,8 +246,11 @@ func restartInWindow(p *Plan, o Options, r *Result) {
 		deferred("window_closed", "the plan's window closes before a restart with a "+strconv.Itoa(UpdateRestartWarningMinutes)+"-minute warning could happen.")
 		return
 	}
-	// The same check windows.reboot.schedule makes: "cannot tell" counts as open.
-	if pr := sessionCheck("the restart")(p, o); pr != nil {
+	// The same check windows.reboot.schedule makes: "cannot tell" counts as
+	// open — unless the signed plan carries the owner's exception (0.54).
+	if SignedTrue(p.Params, "ignoreRemoteSession") {
+		sessionOverride(o, r)
+	} else if pr := sessionCheck("the restart")(p, o); pr != nil {
 		deferred(pr.Reason, "a RustDesk session was open, or the agent could not tell.")
 		for k, v := range pr.Observed {
 			r.Observed[k] = v
