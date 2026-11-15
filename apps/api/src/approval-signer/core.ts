@@ -28,10 +28,10 @@
 import { createHash, createPrivateKey, createPublicKey, sign as edSign, verify as edVerify, type KeyObject } from 'node:crypto';
 import { canonicalJson } from '../integration/crypto';
 import {
-  APPROVALS_REQUIRED, DIRECT, ENVELOPE_SCHEMA, PLAN_SIGNING_PREFIX, Plan, planDigest, validatePlanAction, type Envelope,
+  APPROVALS_REQUIRED, DIRECT, ENVELOPE_SCHEMA, PLAN_SIGNING_PREFIX, Plan, REBOOT_SCHEDULE, planDigest, validatePlanAction, type Envelope,
 } from '../actions/catalog';
 import {
-  POLICY_PROPOSAL_DAYS, PolicyDoc, RingEvidence as RingEvidenceSchema, evaluatePolicyPlan, policyDigest, policyQuorum, policySigningBytes, validatePolicyDoc,
+  POLICY_PROPOSAL_DAYS, PolicyDoc, RingEvidence as RingEvidenceSchema, evaluatePolicyPlan, occurrenceAt, policyDigest, policyQuorum, policySigningBytes, validatePolicyDoc,
   type LedgerEntry, type PolicyApproval, type PolicyComputer, type PolicyDecision, type PolicyPlanRequest, type PolicyStatus,
 } from '../actions/patch-policy';
 import { resultKeyFingerprint } from '../actions/device-result';
@@ -346,12 +346,24 @@ export function signUnderPolicy(
     decisions: r.decisions.filter((d) => d.decision === 'approve'), envelope: null, createdAt: now.toISOString(), updatedAt: now.toISOString(),
   };
   signJob(job, k, now);
+  const planSha256 = createHash('sha256').update(Buffer.from(job.envelope!.plan, 'base64')).digest('hex');
+  if (plan.action.id === REBOOT_SCHEDULE.id) {
+    // 0.54: a restart under the policy's restart rule. Its ledger entry is
+    // keyed by the restart window's occurrence, never by a deployment or ring.
+    const occ = occurrenceAt(new Date(plan.window.notBefore), r.doc.restart!.window)!;
+    const entry: LedgerEntry = {
+      jobId: plan.jobId, kind: 'restart', restartWindow: occ.start.toISOString(), deploymentId: `restart:${occ.start.toISOString()}`, ring: 0, signedAt: now.toISOString(),
+      notBefore: plan.window.notBefore, notAfter: plan.window.notAfter, endpointIds: plan.targets.map((t) => t.endpointId), updates: [], planSha256,
+    };
+    r.ledger.push(entry); r.updatedAt = now.toISOString();
+    return { job, entry };
+  }
   const p = plan.params as { updates: { updateId: string; revision: number }[] };
   const entry: LedgerEntry = {
     jobId: plan.jobId, deploymentId: plan.display!.deployment!.id, ring: plan.display!.deployment!.ring, signedAt: now.toISOString(),
     notBefore: plan.window.notBefore, notAfter: plan.window.notAfter, endpointIds: plan.targets.map((t) => t.endpointId), updates: p.updates.map((u) => `${u.updateId}@${u.revision}`),
     // Each computer's signed result must name exactly these bytes (v0.34).
-    planSha256: createHash('sha256').update(Buffer.from(job.envelope!.plan, 'base64')).digest('hex'),
+    planSha256,
   };
   r.ledger.push(entry); r.updatedAt = now.toISOString();
   return { job, entry };

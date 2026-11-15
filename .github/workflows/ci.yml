@@ -117,6 +117,13 @@ jobs:
       # unknown kinds refused, and a weekly document's digest pinned to 0.52's.
       - name: Monthly patch window tests
         run: node apps/api/scripts/unit-monthly-window.mjs
+      # 0.54: restart scheduling and restart windows — the two closed restart
+      # flags (onlyIfRequired, the RustDesk-session exception), a policy's
+      # restart window and rule, the signer's restart-plan evaluation (inside
+      # the window, the fixed warning, the exception only when the policy has
+      # it, one open plan and three per window), and the 0.52 digest pinned.
+      - name: Restart window tests
+        run: node apps/api/scripts/unit-restart-windows.mjs
       # 0.50: company-wide and assignable patch policies — the rings the
       # portal builds (checked with the signer's own validatePolicyDoc), the
       # membership fingerprint and the bounded revision decision.

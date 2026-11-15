@@ -1140,7 +1140,8 @@ const SECTIONS: Section[] = [
           restart after a warning of 5 minutes to 24 hours, cancel a pending restart, and collect a fixed set of logs.
           Each one always needs two different approvers, whatever the computer. A scheduled restart shows the person at
           the computer a fixed warning and closes unsaved programs when it ends; it is never immediate, and the computer
-          skips it, like a RustDesk restart, while a RustDesk session is open. Collected logs are bounded, redacted twice
+          skips it, like a RustDesk restart, while a technician is connected through RustDesk. A signed-in user does not
+          stop the restart: they see the warning, and unsaved work is lost. Collected logs are bounded, redacted twice
           and shown only to people who may read the computer&apos;s event logs. Like every approved action, these do
           nothing until an approval signer is installed and the computer runs a 0.32+ signed agent; until then the tab
           says why. They have been tested against a simulated Windows only.{' '}
@@ -1259,12 +1260,28 @@ const SECTIONS: Section[] = [
           <strong className="text-foreground">restart rule</strong>: <em>Never restart</em> (the default) or{' '}
           <em>Restart if required, inside the window</em>. With the second, a computer that Windows says needs a restart
           after the install shows the same fixed warning as a scheduled restart and restarts 15 minutes later. It does not
-          restart while a RustDesk session is open (or when it cannot tell), or if the restart would fall after the
+          restart while a technician is connected through RustDesk (or when it cannot tell), or if the restart would fall after the
           plan&apos;s window; then the deployment shows the restart as <em>deferred</em>, with why, and the update stays
           &ldquo;restart required&rdquo;. The approvers see and sign the rule, and a plan under a policy may never ask for
           more than the policy allows. After the restart a new scan confirms the update effective. The in-window restart
           has been tested against a simulated Windows only; it has not yet run on a real Windows computer. More in{' '}
           <Link href="/docs/staged-patching#restarting-after-updates" className="underline text-foreground">Staged patching</Link>.
+        </p>
+        <p>
+          From 0.54, a <strong className="text-foreground">restart can be scheduled</strong> for a date and time up to 14
+          days ahead, in a named zone, from the Actions tab, the Patches tab&apos;s restart banner, or{' '}
+          <em>Schedule restart…</em> in the Devices list (a selection or a device group, at most 200, one approved plan
+          each). <em>Only if a restart is required</em> leaves the decision to the computer, which reads Windows&apos; own
+          pending-restart state when the plan runs. A patch policy (or a company-wide one) can have a{' '}
+          <strong className="text-foreground">restart window</strong>: <em>restart if required</em> or a{' '}
+          <em>maintenance restart</em> of every computer. The approval signer signs each restart only inside that window,
+          with the fixed 15-minute warning; a restart held back because a technician was connected through RustDesk is
+          asked for again 15 minutes later (up to three times) and in the next window. A signed-in user does not stop the
+          restart. They see the 15-minute warning, and unsaved work is lost. The checkbox{' '}
+          <em>Restart even if a technician is connected through RustDesk (their session is dropped)</em> is never ticked
+          by default; it needs the 0.54 agent, and on a policy the approvers see it. Tested against a simulated agent only.
+          More in{' '}
+          <Link href="/docs/staged-patching#restart-windows-054" className="underline text-foreground">Staged patching → Restart windows</Link>.
         </p>
         <p>
           From 0.34, computers <strong className="text-foreground">sign their own patch results</strong> with a key

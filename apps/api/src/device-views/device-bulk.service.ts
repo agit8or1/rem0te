@@ -15,6 +15,7 @@ import { latestRustdeskVersion } from '../common/rustdesk-release';
 import { BLOCKER, blocker, ROLLOUT_OPEN } from '../client-updates/policy';
 import { DeviceGroupsService } from './device-groups.service';
 import { AgentUpgradeService } from '../agent-upgrade/agent-upgrade.service';
+import { RestartBulkService } from '../actions/restart-bulk';
 import { ruleFilters } from './group-rule';
 import { BULK_MAX, FleetBudget, manageRefusal, membershipStep, parseBulk, parseSelection, refusalOf, type BulkAction, type BulkResult } from './rules';
 
@@ -72,6 +73,7 @@ export class DeviceBulkService {
     private readonly policy: AccessPolicyService,
     private readonly groups: DeviceGroupsService,
     private readonly agentUpgrade: AgentUpgradeService,
+    private readonly restarts: RestartBulkService,
   ) {}
 
   /** The selected computers this caller can see. Everything else is NOT_FOUND. */
@@ -131,6 +133,9 @@ export class DeviceBulkService {
     } else if (input.action === 'agent.update' || input.action === 'agent.migrate') {
       // 0.34: through the Agent card's own methods (AgentUpgradeService.bulk).
       await this.agentUpgrade.bulk(a, input.action, targets, results, { reason: input.reason, freshMethod });
+    } else if (input.action === 'restart.schedule') {
+      // 0.54: one signed restart plan per computer, each the Actions tab's own request (RestartBulkService).
+      await this.restarts.bulk(a, targets, results, { restart: input.restart!, reason: input.reason!, freshMethod }, refusalOf);
     } else {
       await this.clientUpdate(a, targets, results);
     }

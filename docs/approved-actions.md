@@ -246,7 +246,7 @@ the agent's own checks, the journal, the dispatch rechecks, containment and the 
 | Action | Parameters | What the agent does |
 |---|---|---|
 | `windows.service.restart@1` | `{"service": <one of the list below>}` | Re-checks the name against a charset (`^[A-Za-z0-9_]{1,64}$`) and its own allowlist. Journals *executing*, then *stopping*, asks the service manager to stop it and waits up to 60 s, journals *starting*, starts it, and checks it 10 and 30 seconds later. A stopped service is only started. A service with running dependents is refused by Windows, and nothing else is stopped. The startup type is never changed |
-| `windows.reboot.schedule@1` | `{"delayMinutes": 5…1440}` (the page offers 5, 15, 30 min; 1, 2, 4, 8, 24 h) | Runs `%SystemRoot%\System32\shutdown.exe /r /t <seconds> /d p:4:1 /c <fixed warning>`. Never immediate. If Windows already has a restart or shutdown pending, it changes nothing (`restart_already_scheduled`) |
+| `windows.reboot.schedule@1` | `{"delayMinutes": 5…1440}` (the page offers 5, 15, 30 min; 1, 2, 4 h), and from 0.54 optionally `"onlyIfRequired": true` and `"ignoreRemoteSession": true` ([below](#scheduling-a-restart-054)) | Runs `%SystemRoot%\System32\shutdown.exe /r /t <seconds> /d p:4:1 /c <fixed warning>`. Never immediate. If Windows already has a restart or shutdown pending, it changes nothing (`restart_already_scheduled`) |
 | `windows.reboot.cancel@1` | none | Runs `shutdown.exe /a`. Reports `no_change` when nothing was pending |
 | `windows.logs.collect@1` | none | Collects the fixed sources below, redacts them, and returns them in its result. Also needs `computers:event_logs` |
 
@@ -295,8 +295,47 @@ reports). If one is open, the job ends `not_executed` (`remote_session_open`); i
 `not_executed` (`session_state_unknown`). Either way nothing changed and it is final: request it again. The check runs
 after the signed pause and before the job is journaled *executing*. It is made **once, when the restart is
 scheduled**: someone who connects during the warning period sees the Windows warning on screen but does not stop the
-restart. Console and Remote Desktop sessions are not checked; the warning is shown to them, and that is the
-safeguard.
+restart. **A signed-in user does not stop the restart. They see the 15-minute warning, and unsaved work is lost.**
+Console and Remote Desktop sessions are not checked, deliberately: people leave themselves signed in, so a rule
+that waited for them would mean a computer that never restarts. The warning is the safeguard.
+
+### Scheduling a restart (0.54)
+
+**At a date and time.** The restart form (Actions tab, the Patches tab's restart banner, and **Schedule restart…** in
+the device list's bulk bar) offers *At the next check-in* or *Schedule*: a date and time in a named zone (the
+computer's site, your profile, this browser, or UTC), up to **14 days** ahead (`SCHEDULE_TOO_FAR`, `SCHEDULE_IN_PAST`,
+`INVALID_TIMEZONE`). The portal sends it as `restartAt` and signs the plan's `notBefore` as that time minus the
+warning, so the computer restarts at the time chosen; the plan runs for at most 2 hours after that. Nothing is
+handed out before `notBefore`, the agent refuses it early by its own clock, and until it reaches the computer it is
+canceled with the existing cancel (**Automation → Tasks**, or the computer's Tasks panel).
+
+**Only if a restart is required** (`onlyIfRequired: true`). The computer decides when the plan runs, from Windows'
+own pending-restart state (Component Based Servicing, Windows Update's `RebootRequired`, pending file renames). If
+nothing is pending it reports `no_change` (`no_restart_required`) and does not restart; if it cannot read the
+registry it reports `not_executed` (`reboot_state_unknown`).
+
+**The RustDesk exception** (`ignoreRemoteSession: true`), at the owner's request: *Restart even if a technician is
+connected through RustDesk (their session is dropped)*. It reverses, for that one request, the rule above that an
+open RustDesk session stops a restart.
+
+- The checkbox is never ticked by default. The flag is in the plan only when ticked, so every other plan keeps its
+  bytes and digest.
+- The agent honours it only from the signed plan and skips only the session check. The warning always shows.
+- The result records `sessionOverride` and how many sessions were open. The audit has it on the request and the
+  result, and Tasks says *restarted although a technician was connected through RustDesk*.
+- It applies to `windows.reboot.schedule` and to a patch policy's restarts
+  ([Staged patching → Restart windows](staged-patching.md#restart-windows-054)). It does not apply to restarting the
+  RustDesk service.
+
+**Both flags need the 0.54 agent.** An older agent refuses a plan carrying either (`params_not_allowed`: its parameter
+check allows only `delayMinutes`). The portal refuses the request first, for a computer reporting an older agent
+(`ENDPOINT_NOT_READY`). Publish the 0.54 agent before using them.
+
+**Bulk and device groups.** **Schedule restart…** in the Devices list acts on the selection, or on a device group's
+members as you see them when you click (at most 200). Each computer gets its own plan, exactly as if requested from
+its Actions tab: its own scope, readiness, containment and one-at-a-time checks, its own approval in signed mode, and
+its own audit entry. One that cannot take it is refused on its own with the reason. In direct mode the fresh sign-in
+is asked once for the whole request.
 
 **Collected logs.** Fixed sources, in this order, at most 12 KB from each and 40 KB in all:
 

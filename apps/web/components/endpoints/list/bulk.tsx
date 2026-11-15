@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { Download, FolderMinus, FolderPlus, Loader2, Pencil, RefreshCw, ShieldCheck, Trash2, UploadCloud, Wrench, X } from 'lucide-react';
+import { RestartOptions, defaultRestart, restartAtBody, restartParams, type RestartValue } from '@/components/endpoints/restart-options';
+import { Download, FolderMinus, FolderPlus, Loader2, Pencil, Power, RefreshCw, ShieldCheck, Trash2, UploadCloud, Wrench, X } from 'lucide-react';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
@@ -19,6 +20,7 @@ const ACTION_LABEL: Record<BulkAction, string> = {
   'client.update': 'Queue RustDesk client update',
   'agent.update': 'Update agent',
   'agent.migrate': 'Upgrade to full agent',
+  'restart.schedule': 'Schedule restart',
 };
 
 /**
@@ -49,6 +51,10 @@ export function BulkBar({
   const [groupId, setGroupId] = React.useState('');
   const [migrateOpen, setMigrateOpen] = React.useState(false);
   const [reason, setReason] = React.useState('');
+  // 0.54: Schedule restart — one signed restart plan per computer, the Actions tab's own request.
+  const [restartOpen, setRestartOpen] = React.useState(false);
+  const [restartReason, setRestartReason] = React.useState('');
+  const [restartOpts, setRestartOpts] = React.useState<RestartValue>(() => defaultRestart({}));
   const ids = [...selected.keys()];
   const askMigrate = useAsks('agent.migrate');
   // Only a static group can be added to or removed from; a rule group's members follow its rule.
@@ -58,9 +64,11 @@ export function BulkBar({
     setBusy(action);
     try {
       const dest = action.startsWith('group.') ? groupId : undefined;
-      const why = action === 'agent.migrate' ? reason.trim() : undefined;
-      onDone(target ? await bulkApi.runOnGroup(action, target.id, dest, why) : await bulkApi.run(action, ids, dest, why));
+      const why = action === 'agent.migrate' ? reason.trim() : action === 'restart.schedule' ? restartReason.trim() : undefined;
+      const restart = action === 'restart.schedule' ? { ...restartParams(restartOpts), ...restartAtBody(restartOpts) } : undefined;
+      onDone(target ? await bulkApi.runOnGroup(action, target.id, dest, why, restart) : await bulkApi.run(action, ids, dest, why, restart));
       if (action === 'agent.migrate') { setMigrateOpen(false); setReason(''); }
+      if (action === 'restart.schedule') { setRestartOpen(false); setRestartReason(''); setRestartOpts(defaultRestart({})); }
     } catch (e) {
       toast({ title: `${ACTION_LABEL[action]} refused`, description: await refusalMessage(e, 'The request failed.'), variant: 'destructive' });
     } finally {
@@ -142,8 +150,36 @@ export function BulkBar({
             title={`Moves each standard Windows computer to the full (signed) agent. Needs ${askMigrate ? 'a fresh sign-in and ' : ''}a reason; each computer is checked on its own.`}>
             <ShieldCheck className="h-4 w-4 mr-1.5" />Upgrade to full agent…
           </Button>
+          <Button size="sm" variant="outline" className="h-8" disabled={!!busy} onClick={() => setRestartOpen(true)} data-testid="bulk-restart"
+            title="Requests an approved restart (windows.reboot.schedule) for each Windows computer, now or at a time. Each is its own signed plan, checked on its own. At most 200.">
+            <Power className="h-4 w-4 mr-1.5" />Schedule restart…
+          </Button>
         </>
       )}
+      <Dialog open={restartOpen} onOpenChange={(o) => { if (!o && busy !== 'restart.schedule') setRestartOpen(false); }}>
+        <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{target ? `Schedule a restart of the devices in ${target.name}?` : `Schedule a restart of ${selected.size} device${selected.size === 1 ? '' : 's'}?`}</DialogTitle>
+            <DialogDescription>
+              Each computer gets its own approved restart plan, exactly as if it were requested from its Actions tab: in signed mode each one
+              awaits approval on the approval signer; in direct mode it is signed at once. Computers that cannot take it (offline for too long,
+              not on the signed agent, another restart already open, a containment pause) are refused one by one with the reason. A group is
+              resolved now, as you see it, and at most 200 computers.
+            </DialogDescription>
+          </DialogHeader>
+          <RestartOptions id="bulk-restart" value={restartOpts} onChange={setRestartOpts} zones={{}} />
+          <div className="space-y-1.5">
+            <Label htmlFor="bulk-restart-reason" className="text-xs">Reason (recorded in the audit log and shown to the approvers)</Label>
+            <Input id="bulk-restart-reason" maxLength={400} value={restartReason} onChange={(e) => setRestartReason(e.target.value)} placeholder="e.g. Ticket 42: finish this month's updates" data-testid="bulk-restart-reason" />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRestartOpen(false)} disabled={busy === 'restart.schedule'}>Cancel</Button>
+            <Button onClick={() => run('restart.schedule')} disabled={restartReason.trim().length < 3 || !!busy} data-testid="bulk-restart-submit">
+              {spin('restart.schedule')}Request restarts
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={migrateOpen} onOpenChange={(o) => { if (!o && busy !== 'agent.migrate') setMigrateOpen(false); }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -193,6 +229,7 @@ export function BulkResultDialog({ result, onClose }: { result: BulkResponse | n
             {result?.action === 'client.update' && result.succeeded ? ' Each queued update goes on that computer’s next heartbeat.' : ''}
             {result?.action === 'agent.update' && result.succeeded ? ' Each one runs on that computer’s next heartbeat.' : ''}
             {result?.action === 'agent.migrate' && result.succeeded ? ' Follow them on Devices → Agent migrations.' : ''}
+            {result?.action === 'restart.schedule' && result.succeeded ? ' Follow them on Automation → Tasks; until a restart reaches its computer it can be canceled there.' : ''}
           </DialogDescription>
         </DialogHeader>
         {refused.length > 0 ? (

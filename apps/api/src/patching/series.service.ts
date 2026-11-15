@@ -10,7 +10,7 @@ import { ActionsService } from '../actions/actions.service';
 import { CAP } from '../rbac/capabilities';
 import { assertFresh } from '../security-controls/review';
 import { UPDATE_INSTALL } from '../actions/catalog';
-import { PolicyDoc, PolicyWindow, nextOccurrence } from '../actions/patch-policy';
+import { PolicyDoc, PolicyWindow, nextOccurrence, scheduleInWords } from '../actions/patch-policy';
 import { selfSignedScanKey } from '../actions/device-result';
 import { PatchingService } from './patching.service';
 import { PatchPolicyService } from './policies.service';
@@ -238,6 +238,7 @@ export class PatchSeriesService implements OnModuleInit {
       const out = await this.policies.admit(actor, {
         businessId: s.customerId, name: s.name, rings: d.rings, allow: settings.allow, soakHours: settings.soakHours, failureThreshold: settings.failureThreshold,
         window: settings.window, reboot: settings.reboot, expiresInDays: settings.expiresInDays,
+        ...(settings.restart ? { restart: settings.restart } : {}), ...(settings.ignoreRemoteSession ? { ignoreRemoteSession: true as const } : {}),
         reason: revisionReason(s.name, s.scope as SeriesScope, revision, decision.trigger, current ? added : [], removed),
       }, now, { seriesId: s.id, revision, supersedesId: current?.id ?? null });
       if (pending) await this.policies.withdraw(pending, `replaced by revision ${revision} before it took over`, { seriesId: s.id, revision: pending.revision, replacedBy: out.id }, now);
@@ -358,6 +359,7 @@ export class PatchSeriesService implements OnModuleInit {
         const out = await this.policies.admit(actor, {
           businessId, name, rings: d.rings, allow: settings.allow, soakHours: settings.soakHours, failureThreshold: settings.failureThreshold,
           window: settings.window, reboot: settings.reboot, expiresInDays: settings.expiresInDays,
+        ...(settings.restart ? { restart: settings.restart } : {}), ...(settings.ignoreRemoteSession ? { ignoreRemoteSession: true as const } : {}),
           reason: revisionReason(name, scope, 1, 'initial', [], []),
         }, now, { seriesId: s.id, revision: 1, supersedesId: null });
         first = { code: 'proposed', message: `Revision 1 proposed: ${out.status === 'ACTIVE' ? 'active at admission (direct mode)' : 'awaiting approval on the approval signer'}.` };
@@ -375,7 +377,7 @@ export class PatchSeriesService implements OnModuleInit {
     }
     await this.audit.log({
       tenantId: biz.tenantId, customerId: businessId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_POLICY_SERIES_CREATED', resource: 'patch_policy_series', resourceId: s.id,
-      meta: { scope, name, window: settings.window, reboot: settings.reboot, expiresInDays: settings.expiresInDays, canaryEndpointId: settings.canaryEndpointId ?? null, reason: settings.reason },
+      meta: { scope, name, window: settings.window, reboot: settings.reboot, restart: settings.restart ?? null, ...(settings.ignoreRemoteSession ? { ignoreRemoteSession: true } : {}), expiresInDays: settings.expiresInDays, canaryEndpointId: settings.canaryEndpointId ?? null, reason: settings.reason },
     });
     return this.one(actor, s.id);
   }
@@ -412,6 +414,8 @@ export class PatchSeriesService implements OnModuleInit {
         lastCheck: s.lastCheck,
         // 0.52: when the running revision next installs, so the list can say "next install window: Tue 02:00–04:00".
         nextWindow: nextWindowOf(s, revs.find((r) => r.id === s.currentPolicyId) ?? null),
+        // 0.54: the install and restart schedule in plain words, and the next restart window.
+        schedule: scheduleOf(s), nextRestartWindow: nextRestartWindowOf(s, revs.find((r) => r.id === s.currentPolicyId) ?? null),
         revisions: revs.map((r) => ({ id: r.id, revision: r.revision, status: r.status, expiresAt: r.expiresAt, createdAt: r.createdAt, supersededAt: r.supersededAt, approvalUrl: r.approvalUrl, running: r.id === s.currentPolicyId, computers: (r.document as unknown as PolicyDoc).rings.flat().length })),
         bounds: { revisionMinutes: revisionMinutes(), settleMinutes: settleMinutes(), maxComputers: MAX_POLICY_COMPUTERS },
         mayManage: this.mayManage(actor, s.customerId) || s.createdById === actor.userId,
@@ -544,6 +548,19 @@ export class PatchSeriesService implements OnModuleInit {
     });
     return { setting: after, changed: true };
   }
+}
+
+/** 0.54: a series' schedule in words, from its settings (the revisions carry the same). */
+function scheduleOf(s: PatchPolicySeries): string | null {
+  const st = SeriesSettings.safeParse(s.settings);
+  return st.success ? scheduleInWords(st.data) : null;
+}
+
+/** 0.54: the next occurrence of a series' restart window, inside its running revision's life. */
+function nextRestartWindowOf(s: PatchPolicySeries, current: { status: string; expiresAt: Date } | null, now = new Date()): { start: Date; end: Date } | null {
+  if (s.status !== 'active' || !current || current.status !== 'ACTIVE') return null;
+  const st = SeriesSettings.safeParse(s.settings);
+  return st.success && st.data.restart ? nextOccurrence(now, st.data.restart.window, current.expiresAt) : null;
 }
 
 /** 0.52: the next occurrence of a series' window, inside its running revision's life. */

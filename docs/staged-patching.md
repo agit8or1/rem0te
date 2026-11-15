@@ -14,7 +14,9 @@ the same approval signer, roster, signature and agent checks. This page covers o
 > **Warning.** An installed update may not stay installable *out*. Some can't be uninstalled, and uninstalling is not
 > built here. By default rem0te never restarts a computer, so an update that needs a restart is reported as
 > **restart required** until someone restarts it. With the 0.34 rule *restart if required, inside the window*, the
-> computer restarts itself after a fixed warning, unless someone is connected or the window would close first.
+> computer restarts itself after a fixed warning, unless a technician is connected through RustDesk or the window
+> would close first. From 0.54 a policy can also have a [restart window](#restart-windows-054). A signed-in user does
+> not stop the restart. They see the 15-minute warning, and unsaved work is lost.
 
 ## What can be installed
 
@@ -205,8 +207,10 @@ Now the tab's **Latest install** card follows the install from the request to th
   (`0x80240022` *all updates failed*, `0x80070005` *access denied*, and so on).
 - **Restart required**: *Installed 8 updates — restart required. The update list refreshes after the restart.* with
   **Schedule restart** and **Scan now**. Schedule restart is an ordinary `windows.reboot.schedule` plan, requested
-  like the *Schedule a restart* action — its own approvals in signed mode, its fixed warning to the signed-in user,
-  its open-session check. When that restart is reported scheduled, the portal asks for a patch scan two minutes after
+  like the *Schedule a restart* action — its own approvals in signed mode, its fixed warning to whoever is signed in,
+  and its RustDesk-session check (a technician connected through RustDesk holds it back; a signed-in user does not).
+  From 0.54 it can be given a date and time, and the RustDesk exception (see
+  [Restart windows](#restart-windows-054)). When that restart is reported scheduled, the portal asks for a patch scan two minutes after
   the restart time, so the list catches up without anyone pressing Scan now.
 - **Installed, waiting for restart**: until a scan after the install, the updates it installed are listed with that
   badge instead of a checkbox — Windows keeps offering them until the computer restarts and scans again, and
@@ -627,11 +631,12 @@ You choose the rule on a deployment, on **Install updates** from a Patches tab, 
 carries it, the approval page shows it, and the approvers sign it.
 
 **When the computer does not restart.** It reports `restart: restart_deferred` with a reason, and leaves the computer
-as it is. Nothing retries later; the update stays *restart required* and the next ring waits.
+as it is. The install plan itself does not retry; the update stays *restart required* and the next ring waits. From
+0.54, a policy with a [restart window](#restart-windows-054) asks for the restart again in that window.
 
 | Reason | When |
 |---|---|
-| `remote_session_open` | A RustDesk session was open when the install finished |
+| `remote_session_open` | A technician was connected through RustDesk when the install finished (a signed-in Windows user never counts) |
 | `session_state_unknown` | The agent could not tell whether one was. "Cannot tell" counts as open, as for maintenance actions |
 | `window_closed` | The restart, 15 minutes after the install finished, would fall after the plan's signed window closes |
 | `restart_already_scheduled` | Windows already had a restart or shutdown pending. It is not replaced |
@@ -653,6 +658,68 @@ The **Windows Update script still never restarts** (`wua.ps1`, §15); the only r
 
 > **Not proven on Windows.** The in-window restart has been tested against a simulated Windows only; it has not yet
 > run on a real Windows computer. Try it on one canary you can watch before giving it to a policy.
+
+## Restart windows (0.54)
+
+**Who stops a restart.** Only a technician connected through RustDesk (`rustdesk.exe --cm` running), or the agent
+not being able to tell. **A signed-in user does not stop the restart. They see the 15-minute warning, and unsaved
+work is lost.** People leave themselves signed in, so "someone is signed in" would mean "never restarts".
+
+A patch policy, or a company-wide or assignable one, can have a **restart window** beside its install window. It is
+part of the signed document, so the approvers approve it, and it uses the same three window shapes (weekly, monthly
+weekday, day of the month).
+
+| Restart rule | What happens inside the restart window |
+|---|---|
+| *No restart window* (the default) | Nothing. The install window's own rule (`never` / `if_required_in_window`) still applies |
+| *Restart if required* (`if_required`) | Each computer in the policy that Windows says needs a restart is asked to restart. The plan carries `onlyIfRequired`, so the computer reads Windows' pending-restart state again when the plan runs and does nothing if none is pending (`no_change`, `no_restart_required`) |
+| *Maintenance restart* (`always`) | Every computer in the policy is restarted once per window, whether or not Windows asks |
+
+**How it runs.** The policy sweep asks the approval signer for one `windows.reboot.schedule` plan per computer,
+signed under the policy, with no person approving it. The signer signs it only if all of these hold, and refuses
+with the code otherwise:
+
+- the policy has a restart window and a rule it knows (`restart_not_in_policy`, `restart_rule_unknown`);
+- the warning is the fixed 15 minutes, and `onlyIfRequired` is there exactly for *if required*
+  (`restart_params_not_allowed`);
+- the exception below only if the policy has it (`override_not_allowed`);
+- one computer the policy names, unchanged since approval (`computer_not_in_policy`), requested as the policy's
+  author (`requester_mismatch`), naming the policy and no deployment or update (`bad_display`);
+- the restart — the plan's last moment plus the warning — falls inside the restart window, and the plan runs at most
+  two hours (`outside_restart_window`);
+- no other restart plan of that computer is still open in this window, and at most three were signed in it
+  (`restart_already_signed`, `restart_retry_limit`).
+
+**A deferred restart is asked for again.** If a technician was connected through RustDesk (or the computer could not
+tell), the sweep asks again 15 minutes later in the same window, up to three attempts, and again in the next restart
+window. Each policy restart plan is valid for 15 minutes, so the previous one has closed on the signer before the
+next is asked for. A computer that is off for the whole window is tried in the next one. The policy page lists every
+attempt (**Restarts under it**). The 0.34 install-window rule is unchanged: it does not retry by itself.
+
+**The RustDesk exception.** At the owner's request ("there should be an override exception checkbox") a restart can
+carry `ignoreRemoteSession: true`: *Restart even if a technician is connected through RustDesk (their session is
+dropped)*. This reverses, for that one request, the 0.32/0.34 rule that a restart never happens while a RustDesk
+session is open.
+
+- It is never ticked by default, and is present in the plan only when ticked; plans without it keep their bytes.
+- The agent honours it only from the signed plan, and only skips the session check. The 15-minute warning always
+  shows.
+- On a policy it covers the policy's restarts in the install window and in the restart window, and the approvers see
+  it. The signer refuses it under a policy that does not have it.
+- The audit records that it was asked for (`ACTION_REQUESTED`) and used (`ACTION_RESULT`, with how many sessions were
+  open). Tasks and the policy page say *restarted although a technician was connected through RustDesk*.
+- It does not apply to the RustDesk service restart (`windows.service.restart` / `windows.service.control`), which
+  still waits for no session.
+- It needs the 0.54 agent. An older agent refuses a plan carrying it (`params_not_allowed`), and the portal refuses
+  the request first (`ENDPOINT_NOT_READY`). Publish the agent before anyone uses it.
+
+**Where it is shown.** The policy list and the company-wide list say the schedule in words, for example *Installs:
+2 days after the second Tuesday of each month 22:00–04:00 America/New_York · Restarts: if required, Sundays
+02:00–04:00 America/New_York*. The policy page shows the next restart windows and the restarts asked for. Each
+computer's Patch policy card says *Restart planned for …*, or when the next restart window opens.
+
+> **Not proven on Windows.** Restart windows, *only if required* and the exception have been tested against the
+> simulated agent only.
 
 ## Setting it up
 
@@ -688,7 +755,8 @@ There are no new server settings.
   real computer it is the same `IUpdateInstaller` call as any other update, unattended (`ForceQuiet`), but a driver
   that does stop to ask has not been seen yet.
 - The in-window restart has not yet run on a real Windows computer. Its warning is Windows' own shutdown dialog; there
-  is no other notice, no postponing by the user, and no retry once deferred.
+  is no other notice and no postponing by the user. A deferred install-window restart is retried only by a policy's
+  restart window (0.54).
 - No uninstall or rollback.
 - Rings are chosen by hand for a deployment and for a hand-made policy. A company-wide or assignable policy (0.50)
   builds them in enrolment order. There is no grouping by model, site or role, and device groups are not a policy
@@ -698,10 +766,11 @@ There are no new server settings.
 - A change of a computer's Patch policy reaches the signed policy only by revision, so it can take the debounce plus
   up to an hour (more if a deployment is running, and until two approvals in signed mode). Exclude takes effect at once.
 - The Devices list doesn't show each computer's patch policy; the Patches tab and the business's policy view do.
-- The session check sees RustDesk sessions only, once. Console and Remote Desktop users see the warning.
+- The session check sees RustDesk sessions only, once. A signed-in user, at the console or over Remote Desktop, does
+  not stop a restart: they see the warning, and unsaved work is lost.
 - A scheduled install (0.52) starts at the computer's first check-in after its time, so up to a few minutes late, and
-  not at all if the computer is off for the whole window. Scheduling has not run on real Windows. There are no monthly
-  windows, only weekly ones.
+  not at all if the computer is off for the whole window. Scheduling has not run on real Windows. (0.53 added monthly
+  windows; 0.54 restart windows.)
 - Under a policy, ring results are signed by the computers (0.34), and a forged result is refused. Each computer's
   key is trusted on first use: the first time a policy names it, approvers vouch for it, and only a fingerprint
   read-back on the computer proves it ([The trust-on-first-use window](#the-trust-on-first-use-window)).
