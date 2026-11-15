@@ -153,7 +153,7 @@ export default function PsaSettingsPage() {
   const owner = isBusinessOwner && !technician && !!businessId;
   if (!isPlatformAdmin && !owner) return <div className="p-6 text-sm text-muted-foreground">Where tickets are sent is set by a Platform Admin, or by the Business Owner for their business.</div>;
   return (
-    <div className="space-y-4 p-4 md:p-6">
+    <div className="max-w-4xl space-y-4 p-4 md:p-6">
       <Link href="/settings" className="inline-flex items-center text-sm text-muted-foreground hover:underline"><ArrowLeft className="mr-1 h-4 w-4" />Settings</Link>
       <PageHeader title="PSA / ticketing" description="Where “Create ticket” on an event-log entry or alert sends. A business's own connector wins; otherwise the platform default is used." />
       {notice && <div className={`rounded-md border p-3 text-sm ${notice.ok ? 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100' : 'border-destructive/40 bg-destructive/10 text-destructive'}`}>{notice.text}</div>}

@@ -127,7 +127,7 @@ export default function ContainmentPage() {
   const reasonOk = reason.trim().length >= 3 && (scope === 'global' || data?.may.business !== 'any' || !!target) && kinds.length > 0;
 
   return (
-    <div className="space-y-4 p-4 md:p-6">
+    <div className="max-w-4xl space-y-4 p-4 md:p-6">
       <Link href="/settings" className="inline-flex items-center text-sm text-muted-foreground hover:underline">
         <ArrowLeft className="mr-1 h-4 w-4" />Settings
       </Link>

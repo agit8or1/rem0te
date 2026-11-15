@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Copy, Loader2, Wrench } from 'lucide-react';
+import { Bot, Copy, Loader2, Wrench } from 'lucide-react';
 import { endpointsApi } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
+import { CardHeading } from '@/components/endpoints/card-heading';
 import { Row } from '@/components/endpoints/endpoint-specs';
 import { formatDate } from '@/lib/utils';
 import { useAsks } from '@/lib/confirm-policy';
@@ -186,15 +187,12 @@ export function AgentCard({ endpointId, canEdit, alerts }: { endpointId: string;
 
   return (
     <Card id="agent-card" data-testid="agent-card" className="scroll-mt-4">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between gap-2">
-          <CardTitle className="text-sm">Agent</CardTitle>
-          <span className="flex items-center gap-3">
-            <Link href="/endpoints/full-agent" className="text-xs text-muted-foreground underline-offset-2 hover:underline" data-testid="agent-card-full-agent">Full agent</Link>
-            <Link href="/endpoints/agent-migrations" className="text-xs text-muted-foreground underline-offset-2 hover:underline">Agent migrations</Link>
-          </span>
-        </div>
-      </CardHeader>
+      <CardHeading title="Agent" icon={Bot} aside={
+        <span className="flex items-center gap-3">
+          <Link href="/endpoints/full-agent" className="text-xs text-muted-foreground underline-offset-2 hover:underline" data-testid="agent-card-full-agent">Full agent</Link>
+          <Link href="/endpoints/agent-migrations" className="text-xs text-muted-foreground underline-offset-2 hover:underline">Agent migrations</Link>
+        </span>
+      } />
       <CardContent className="space-y-2.5 text-sm">
         {isLoading ? <p className="text-muted-foreground">Loading…</p> : isError || !a ? <p className="text-muted-foreground">The agent’s details could not be loaded.</p> : (
           <>

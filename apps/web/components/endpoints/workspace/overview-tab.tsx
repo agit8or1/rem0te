@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Bell, Building2, History, ShieldCheck } from 'lucide-react';
 import { notesApi } from '@/lib/api-client';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
+import { CardHeading } from '@/components/endpoints/card-heading';
 import { SeverityBadge, StateBadge } from '@/components/monitoring/alerts';
 import { EndpointSpecs, Row } from '@/components/endpoints/endpoint-specs';
 import { PatchSummaryCard, type Patches } from '@/components/endpoints/endpoint-patches';
@@ -31,15 +32,12 @@ function OpenTab({ tab, label, onOpen }: { tab: WorkspaceTab; label: string; onO
   );
 }
 
-function SummaryCard({ title, aside, children, testId }: { title: string; aside?: React.ReactNode; children: React.ReactNode; testId?: string }) {
+function SummaryCard({ title, icon, aside, children, testId }: {
+  title: string; icon: React.ComponentType<{ className?: string }>; aside?: React.ReactNode; children: React.ReactNode; testId?: string;
+}) {
   return (
     <Card data-testid={testId}>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between gap-2">
-          <CardTitle className="text-sm">{title}</CardTitle>
-          {aside}
-        </div>
-      </CardHeader>
+      <CardHeading title={title} icon={icon} aside={aside} />
       <CardContent className="space-y-2.5 text-sm">{children}</CardContent>
     </Card>
   );
@@ -86,8 +84,8 @@ export function DeviceOverviewTab({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <SummaryCard title="Assignment">
+      <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
+        <SummaryCard title="Assignment" icon={Building2}>
           <Row label="Business">{customer?.name ?? '—'}</Row>
           <Row label="Site">{site?.name ?? '—'}</Row>
           <Row label="Groups">
@@ -115,7 +113,7 @@ export function DeviceOverviewTab({
         </SummaryCard>
 
         {showAlertsAndPatches && (
-          <SummaryCard title="Key alerts" testId="overview-alerts" aside={<OpenTab tab="monitoring" label="Monitoring" onOpen={onOpenTab} />}>
+          <SummaryCard title="Key alerts" icon={Bell} testId="overview-alerts" aside={<OpenTab tab="monitoring" label="Monitoring" onOpen={onOpenTab} />}>
             {!mon ? (
               <p className="text-muted-foreground">Loading…</p>
             ) : mon.alerts === null ? (
@@ -137,17 +135,21 @@ export function DeviceOverviewTab({
         )}
 
         {showAlertsAndPatches && (
-          <div className="space-y-2" data-testid="overview-patches">
-            {patches ? <PatchSummaryCard s={patches.summary} platform={ep.platform} /> : (
-              <SummaryCard title="Patch status"><p className="text-muted-foreground">Loading…</p></SummaryCard>
+          <div className="flex flex-col [&>*]:flex-1" data-testid="overview-patches">
+            {patches ? (
+              <PatchSummaryCard s={patches.summary} platform={ep.platform} aside={<OpenTab tab="patches" label="Updates offered and history on Patches" onOpen={onOpenTab} />} />
+            ) : (
+              <SummaryCard title="Patch status" icon={ShieldCheck}><p className="text-muted-foreground">Loading…</p></SummaryCard>
             )}
-            <div className="flex justify-end"><OpenTab tab="patches" label="Updates offered and history on Patches" onOpen={onOpenTab} /></div>
           </div>
         )}
 
-        {agentCard}
+        {/* The Agent card is the tallest: it takes the right column's second
+            and third rows, so Patch status and Recent activity stack beside it
+            instead of Recent activity sitting alone under Patch status. */}
+        {agentCard && <div className="flex flex-col lg:row-span-2 [&>*]:flex-1">{agentCard}</div>}
 
-        <SummaryCard title="Recent activity" testId="overview-activity" aside={<OpenTab tab="history" label="History" onOpen={onOpenTab} />}>
+        <SummaryCard title="Recent activity" icon={History} testId="overview-activity" aside={<OpenTab tab="history" label="History" onOpen={onOpenTab} />}>
           {activity.length === 0 ? (
             <p className="text-muted-foreground">Nothing recorded yet: no sessions, notes or inventory changes.</p>
           ) : (

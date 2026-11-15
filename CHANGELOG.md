@@ -5,6 +5,82 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.50.4] — 2026-11-15 · *Roster*
+
+**A computer's Overview lines up, and nothing under Settings scrolls sideways.** Web only: no API, agent, schema or
+signer change.
+
+The owner: "dashboard for any device needs to be cleaned up, tiles arent aligned" and "settings has scroll issue,
+options are too wide".
+
+#### Fixed — a computer's page (`/endpoints/<id>`)
+Measured on the docs stack for a signed Windows computer (HARB-DISPATCH-01), a standard one (ACF-CAD-WS), a Linux one
+(CASC-FILESRV), one with an open alert (CASC-PAYROLL-01) and an offline one (HARB-WAREHOUSE-1), at 1280, 1440, 1920
+and 390 px, light and dark. None of them scrolled sideways before or after; what was wrong was the grid.
+- **Patch status sat in a wrapper with its link *under* the card**, so the card never stretched to its row. Beside the
+  Agent card at 1440 it was 274 px tall next to 632 px, with ~360 px of empty column under it, and the *Updates
+  offered and history on Patches* link floated outside any card. The link is now the card's header aside (the same
+  place as *Monitoring →* and *History →*), and the card fills its cell.
+- **Recent activity was left alone in a third row** under Patch status, half the width empty. The Agent card, the
+  tallest, now spans the right column's second and third rows (`lg:row-span-2`), so Patch status and Recent activity
+  stack beside it and both columns end on the same line (at 1440: 626–1266 on both sides). Without alerts and
+  patches (no permission) it pairs Assignment with Recent activity the same way.
+- **Five card header styles.** Assignment, Key alerts, Recent activity, Patch status and Agent had a bare title; the
+  inventory cards had an icon; a header with a ghost-button link was 4 px taller than one without, so titles in the
+  same row did not line up (Key alerts' title sat 4 px below Assignment's). One `CardHeading`
+  (`components/endpoints/card-heading.tsx`) now draws every card on the Overview and the Patches tab's Patch status:
+  icon, title, aside, `min-h-7` so a link does not change the height, and the aside wraps right-aligned under the
+  title on a phone instead of squeezing it.
+- **Updates was the seventh card of a two-column grid**, half a row empty beside it at every desktop width. It now
+  spans both columns, with Windows Update / Last checked on the left and the Rem0te agent, RustDesk and client-update
+  policy rows on the right (stacked on a phone).
+- **Patch status rows were ragged on a phone.** The label column was a fixed `w-44` in a wrapping flex row, so a short
+  value sat beside its label and a long one dropped under it. They are a grid now: stacked below 640 px, an 11 rem
+  label column above.
+- The *Collected … / Refresh / Reinstall agent* bar wraps instead of squeezing "Collected 13m ago" onto two lines at
+  390 px.
+
+Every `data-testid` is where it was (`overview-alerts`, `overview-patches`, `overview-activity`, `patch-summary`,
+`agent-card`, `agent-card-full-agent`, `device-groups` …). The Performance, Monitoring and Software tabs were checked
+the same way and needed nothing: their tiles are full-width or already equal in each row.
+
+#### Fixed — Settings
+Every page in the Settings menu (Configuration and its eight tabs, Users, Offboarding, Technician approvals, Audit log,
+Businesses, Technicians and its four tabs, Access control and its four tabs, Single sign-on, Client updates, Client
+rollouts, Email, AI, PSA / ticketing, Security and its seven tabs, System status, Updates) and the Settings sub-pages
+(API keys, Branding, Monitoring and its three tabs, Containment, Security features, Technician access and its six
+tabs, Update signing), at 1280, 1440, 1920 and 390 px with the sidebar open. Measured: the page's own sideways
+scroll (`scrollWidth − clientWidth` of the document and of `main`), anything inside `main` wider than `main`, and
+every element inside `main` that scrolls sideways.
+
+| Page | Before | After |
+|---|---|---|
+| Configuration (`/settings`), all 8 tabs | the tab strip scrolled sideways **at every width**: +164 px at 1280/1440/1920 (*Network / Ports* cut to "Network / Po", *Access Control* hidden), +670 px at 390 | the strip wraps: 0 |
+| Access control → Business Users | page scrolled +13 px at 1280 (the actions column ran past the card); +663 px at 390 | 0 at every width; at 390 the table scrolls inside its card |
+| Access control → Businesses / Platform Admins | page scrolled +305 / +161 px at 390 | 0 (table scrolls inside its card) |
+| Access control, tab strip | +131 px at 390 | wraps: 0 |
+| Security (`/admin/security`), tab strip | +410 px at 390 | wraps: 0 |
+| Security → TLS / Certs | page scrolled +84 px at 390 (status and *Renew Certificate* on one row) | wraps: 0 |
+| Technicians, tab strip | +110 px at 390 | wraps: 0 |
+| Monitoring, tab strip | +35 px at 390 | wraps: 0 |
+| AI, PSA / ticketing, Email, Containment | forms edge to edge, 1632 px wide at 1920 | capped at `max-w-4xl` (896 px) |
+| Client updates, API keys, Update signing | edge to edge at 1920 | capped at `max-w-5xl` (1024 px): they hold tables |
+| Everything else | 0 | 0 |
+
+After: no Settings page scrolls sideways at 1280, 1440, 1920 or 390, and no tab strip scrolls at any of them. Data
+tables at 390 px (Users, Technicians → People, Security features, System status, Updates, API keys, Technician
+access → Platform policy, Network / Ports) scroll inside their own bordered wrapper, as before; that is deliberate.
+
+The gallery images of this page and the changed Settings pages were recaptured with `capture-media.mjs`
+(`device-detail-light`, `device-overview-narrow-light`, `device-resources-light`, `device-specs-dark`,
+`device-linux-dark`, `device-agent-silent-light`, `device-patches-light`, `settings-dark`, `client-updates-light`,
+`settings-ai-light`, `settings-psa-dark`, `access-users-dark`). The in-app guide images from `screenshots.mjs`
+(`guide/device-overview`, `guide/device-patches`, …) were not: that script writes a temporary user, demo businesses
+and relay settings into the docs database, which another capture was using at the time. Their callouts still find
+their targets; regenerate them with the next capture run.
+
+---
+
 ## [0.50.2] — 2026-11-14 · *Roster*
 
 **The "Upgrade to full agent" button says where the upgrade is, and running a reinstall link clears a queued reinstall.**

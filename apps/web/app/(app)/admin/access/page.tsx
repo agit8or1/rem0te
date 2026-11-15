@@ -226,7 +226,7 @@ function BusinessesTab() {
       </div>
 
       <Card>
-        <CardContent className="p-0">
+        <CardContent className="p-0 overflow-x-auto">
           {isLoading ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>
           ) : businesses.length === 0 ? (
@@ -554,7 +554,7 @@ function BusinessUsersTab({ businesses }: { businesses: Business[] }) {
       </div>
 
       <Card>
-        <CardContent className="p-0">
+        <CardContent className="p-0 overflow-x-auto">
           {isLoading ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>
           ) : memberships.length === 0 ? (
@@ -599,7 +599,7 @@ function BusinessUsersTab({ businesses }: { businesses: Business[] }) {
                       </Badge>
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex justify-end gap-1">
+                      <div className="flex flex-wrap justify-end gap-1">
                         {m.accessLevel === 'Business User' && (
                           <Button size="sm" variant="outline" onClick={() => setEditing(m)}>
                             <UserCog className="mr-1.5 h-3.5 w-3.5" /> Permissions
@@ -813,7 +813,7 @@ function PlatformAdminsTab() {
       </Card>
 
       <Card>
-        <CardContent className="p-0">
+        <CardContent className="p-0 overflow-x-auto">
           {isLoading ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>
           ) : (
@@ -920,7 +920,7 @@ export default function AccessControlPage() {
       />
 
       <Tabs defaultValue="overview">
-        <TabsList>
+        <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="businesses">Businesses</TabsTrigger>
           <TabsTrigger value="users">Business Users</TabsTrigger>

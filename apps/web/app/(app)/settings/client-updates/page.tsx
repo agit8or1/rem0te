@@ -84,7 +84,7 @@ export default function ClientUpdatesPage() {
   if (!user) return null;
   const d = policy.data;
   return (
-    <div className="space-y-4 p-4 md:p-6">
+    <div className="max-w-5xl space-y-4 p-4 md:p-6">
       <Link href="/settings" className="inline-flex items-center text-sm text-muted-foreground hover:underline">
         <ArrowLeft className="mr-1 h-4 w-4" />Settings
       </Link>

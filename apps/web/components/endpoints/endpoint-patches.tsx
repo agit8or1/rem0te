@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { endpointsApi, patchingApi } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { CardHeading } from './card-heading';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -76,14 +77,14 @@ const MANAGED: Record<Summary['managedBy']['state'], string> = { rem0te_or_windo
 const age = (h: number | null) => (h == null ? '' : h < 1 ? 'under an hour old' : h < 48 ? `${Math.round(h)} h old` : `${Math.round(h / 24)} days old`);
 
 /** The evidence first: where it came from, how old it is, and who manages updates here. */
-export function PatchSummaryCard({ s, platform }: { s: Summary; platform?: unknown }) {
+export function PatchSummaryCard({ s, platform, aside, className }: { s: Summary; platform?: unknown; aside?: React.ReactNode; className?: string }) {
   // Linux and macOS (0.35): their own package manager, no KBs, and nothing rem0te deploys.
   const os = osName(platform);
   const posix = os === 'Linux' || os === 'macOS';
-  const row = (k: string, v: React.ReactNode) => (<div className="flex flex-wrap gap-x-2"><dt className="text-muted-foreground w-44 shrink-0">{k}</dt><dd className="min-w-0">{v}</dd></div>);
+  const row = (k: string, v: React.ReactNode) => (<div className="grid grid-cols-1 gap-x-2 sm:grid-cols-[11rem_minmax(0,1fr)]"><dt className="text-muted-foreground">{k}</dt><dd className="min-w-0 break-words">{v}</dd></div>);
   return (
-    <Card data-testid="patch-summary">
-      <CardHeader className="pb-3"><CardTitle className="text-sm">Patch status</CardTitle></CardHeader>
+    <Card data-testid="patch-summary" className={className}>
+      <CardHeading title="Patch status" icon={ShieldCheck} aside={aside} />
       <CardContent className="space-y-3 text-xs">
         <dl className="space-y-1.5">
           {row('Evidence', <span className="flex flex-wrap items-center gap-2">{SOURCE[s.evidence.source]}<Badge variant={FRESH[s.evidence.freshness]} className="text-[10px]">{s.evidence.freshness === 'none' ? 'unknown' : s.evidence.freshness}</Badge>{s.evidence.at && <span className="text-muted-foreground">{formatDate(s.evidence.at)} · {age(s.evidence.ageHours)}</span>}</span>)}
