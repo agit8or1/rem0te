@@ -281,6 +281,10 @@ try {
     const ids = eps.map((x) => x.id);
     await prisma.agentAutoUpdateAttempt.deleteMany({ where: { endpointId: { in: ids } } }).catch(() => {});
     await prisma.agentMigration.deleteMany({ where: { endpointId: { in: ids } } }).catch(() => {});
+    // Its standard computers were checking in a moment ago. Later suites that
+    // sweep every computer (e2e-auto-migration refuses a database where its
+    // migration would reach one) must not find them online.
+    await prisma.endpoint.updateMany({ where: { id: { in: ids } }, data: { status: 'ARCHIVED', isOnline: false, lastSeenAt: new Date(Date.now() - 24 * 3600_000) } }).catch(() => {});
   }
   await prisma.$disconnect();
 }

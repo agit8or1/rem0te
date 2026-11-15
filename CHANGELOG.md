@@ -210,6 +210,15 @@ connector and the reference, with no actor and never the text.
 - `e2e-tray.mjs` (157 checks, with a loopback PSA webhook stub on `TRAY_PSA_HOOK_PORT`, 3633–3639) and
   `unit-ai-psa.mjs` cover the support-request path.
 
+
+**Two test suites changed with the sticky rule** (CI on #141):
+
+- `e2e-staged-patching` sends signed heartbeats for `r1a`, then checks the Patches summary of "a standard computer"
+  using `r1a`. Under 0.51 `r1a` is still a signed computer for seven days, so deploying was possible and the check
+  failed. That is correct behaviour. The suite now clears `r1a`'s `signedSeenAt` before that check.
+- `e2e-dual-agent` left its standard computers online when it finished. `e2e-auto-migration` refuses a database where
+  its sweep would reach other computers, and it runs later in the same CI database. `e2e-dual-agent` now archives its
+  computers when it finishes.
 ---
 
 ## [0.50.5] — 2026-11-15 · *Roster*
