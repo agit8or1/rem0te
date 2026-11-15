@@ -219,6 +219,10 @@ connector and the reference, with no actor and never the text.
 - `e2e-dual-agent` left its standard computers online when it finished. `e2e-auto-migration` refuses a database where
   its sweep would reach other computers, and it runs later in the same CI database. `e2e-dual-agent` now archives its
   computers when it finishes.
+- The published contract schema `docs/contracts/ticket-rmm-v1/proposed/ticket-create-request-event.schema.json`
+  was not regenerated after `source_ref` gained `support:<id>` for tray requests, so CI's
+  `gen-integration-contracts.mjs --check` reported drift. It passed locally only because it reads `apps/api/dist`,
+  which was stale. The schema is regenerated; rebuild the API before running the check.
 ---
 
 ## [0.50.5] — 2026-11-15 · *Roster*
