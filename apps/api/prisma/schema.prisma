@@ -228,6 +228,7 @@ enum ActivityAction {
   AGENT_MIGRATION_REQUESTED
   AGENT_MIGRATION_CANCELLED
   AGENT_MIGRATION_COMPLETED
+  AGENT_DUAL_REPORT
   // 0.37: automatic migration to the signed agent, canary first.
   AGENT_AUTO_MIGRATION_SETTINGS_CHANGED
   AGENT_AUTO_MIGRATION_CANARY_CHOSEN
@@ -746,6 +747,17 @@ model Endpoint {
   // only whether the portal offers a signed plan — the agent verifies it.
   agentActions         String[]  @default([])
   agentSha256          String?
+  // Which agent this computer runs, sticky to signed (0.51). signedSeenAt is
+  // the last authenticated heartbeat on the signed channel; while it is
+  // recent (agent-identity.ts SIGNED_STICKY_MS) a heartbeat that does not say
+  // signed — a leftover standard heartbeat, or an installer's own check-in —
+  // writes no agent field and is handed no standard install. legacySeenAt /
+  // legacySeenVersion record the last such heartbeat that looked like a real
+  // standard heartbeat (it carried live state): the Agent card's "two agents"
+  // warning.
+  signedSeenAt         DateTime?
+  legacySeenAt         DateTime?
+  legacySeenVersion    String?
   // Staged patching (v0.27): when someone asked for a fresh Windows Update
   // scan. The heartbeat asks the agent to scan until a posture newer than
   // this arrives.

@@ -84,3 +84,40 @@ export function cleanUrl(v: unknown): string | null {
   if (typeof v !== 'string' || v.length > 512) return null;
   try { const u = new URL(v); return u.protocol === 'https:' && !u.username && !u.password ? u.toString() : null; } catch { return null; }
 }
+
+/**
+ * The ticket a tray support request becomes (0.51). The person at the
+ * computer wrote the text; the subject is that text on one line, the body
+ * says which computer, business and Windows account it came from. No
+ * connector carries files, so a screenshot or usage sample stays in Rem0te
+ * and the body links to the request there instead.
+ */
+export function buildTrayDraft(t: {
+  requestId: string; text: string; link: string; requestLink: string;
+  computer: { id: string; name: string }; business: { id: string | null; name: string | null };
+  windowsAccount: string | null; loggedOnUser: string | null; screenshot: boolean; usage: boolean;
+}): TicketDraft {
+  const text = cleanNote(t.text, NOTE_MAX);
+  const subject = oneLine(text, SUBJECT_MAX) || 'Support request from the tray';
+  const who = t.windowsAccount ? oneLine(t.windowsAccount, 128) : null;
+  const lines = [
+    `Computer: ${oneLine(t.computer.name, 128)}`,
+    `Business: ${oneLine(t.business.name ?? '—', 128)}`,
+    `Sent from the tray by: ${who ?? 'the person at the computer'}`,
+    ...(t.loggedOnUser ? [`Logged-on user: ${oneLine(t.loggedOnUser, 128)}`] : []),
+    `Portal: ${t.link}`,
+    '',
+    'Request:',
+    text,
+  ];
+  if (t.screenshot || t.usage) {
+    const kept = [t.screenshot ? 'screenshot' : null, t.usage ? 'resource-usage sample' : null].filter(Boolean).join(' and ');
+    lines.push('', `The ${kept} ${t.screenshot && t.usage ? 'are' : 'is'} kept in Rem0te (no connector carries files): ${t.requestLink}`);
+  }
+  return {
+    subject, body: lines.join('\n'), note: null, link: t.link,
+    computer: { id: t.computer.id, name: oneLine(t.computer.name, 128) }, business: t.business,
+    requestedBy: who ? `${who} (tray)` : 'the person at the computer (tray)', sourceRef: `support:${t.requestId}`,
+    event: null, alert: null, ai: null,
+  };
+}

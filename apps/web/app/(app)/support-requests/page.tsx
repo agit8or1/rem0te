@@ -81,6 +81,9 @@ const EVENT_LABEL: Record<string, string> = {
   released: 'Released back to the queue',
   completed: 'Completed',
   canceled: 'Canceled',
+  // 0.51: a tray request became a ticket in the PSA (or that failed).
+  sent_to_psa: 'Sent to the PSA as a ticket',
+  psa_failed: 'Could not be sent to the PSA',
 };
 
 const FILTERS: { value: string; label: string }[] = [
@@ -387,12 +390,13 @@ function RequestDetailDialog({ id, onClose }: { id: string; onClose: () => void 
                 {r.events.map((e) => {
                   const note = e.detail && typeof e.detail.note === 'string' ? e.detail.note : null;
                   const outcome = e.detail && typeof e.detail.outcome === 'string' ? e.detail.outcome : null;
+                  const ref = e.detail && typeof e.detail.ref === 'string' ? e.detail.ref : null;
                   return (
                     <li key={e.id} className="relative">
                       <span className="absolute -left-[21px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-background bg-primary" aria-hidden="true" />
                       <p>{EVENT_LABEL[e.event] ?? e.event}</p>
                       <p className="text-xs text-muted-foreground">
-                        {formatDate(e.createdAt)}{note ? ` · ${note}` : ''}{outcome ? ` · ${outcome}` : ''}
+                        {formatDate(e.createdAt)}{note ? ` · ${note}` : ''}{outcome ? ` · ${outcome}` : ''}{ref ? ` · ticket ${ref}` : ''}
                       </p>
                     </li>
                   );

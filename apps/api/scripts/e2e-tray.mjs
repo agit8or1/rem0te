@@ -35,6 +35,12 @@
  *   - containment: `actions` stops the elevated tools (and is recorded as a
  *     refused run), `remote` also the RustDesk restart and new chats; neither
  *     stops a support request;
+ *   - 0.51: "Open a support request" only with a PSA — the status flag is
+ *     false and a request is refused (SUPPORT_REQUEST_NOT_CONFIGURED, nothing
+ *     stored) until the business has an enabled connector; then each request
+ *     is a ticket through a loopback webhook stub (TRAY_PSA_HOOK_PORT, 3633),
+ *     with its reference returned to the tray and on the request; a
+ *     `notifications` pause stops one before anything is stored;
  *   - business A/B isolation for people and for devices;
  *   - no message text, tray key, code or device secret in the audit log.
  *
@@ -49,6 +55,7 @@ import { PrismaClient } from '@prisma/client';
 import argon2 from 'argon2';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
@@ -61,6 +68,9 @@ if (!/scratch|test/.test(dbName)) { console.error(`Refusing to run against datab
 const PORT = Number(process.env.TRAY_API_PORT ?? 3632);
 if ([3000, 3001, 4000, 4001, 443].includes(PORT)) { console.error(`Refusing port ${PORT}`); process.exit(2); }
 const API = `http://127.0.0.1:${PORT}/api/v1`;
+// 0.51: the PSA a tray request becomes a ticket in — a webhook stub on loopback.
+const HOOK_PORT = Number(process.env.TRAY_PSA_HOOK_PORT ?? 3633);
+if (HOOK_PORT < 3633 || HOOK_PORT > 3639) { console.error(`Refusing webhook port ${HOOK_PORT}: 3633–3639 only.`); process.exit(2); }
 const prisma = new PrismaClient();
 const sfx = randomBytes(3).toString('hex');
 const PW = 'tray-e2e-password-123456';
@@ -168,6 +178,16 @@ const jpeg = (w, h, pad = 0) => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0x
 const created = { businesses: [], users: [] };
 let savedDefault = null;
 
+const hookHits = [];
+const hookServer = http.createServer((rq, rs) => {
+  let b = ''; rq.on('data', (c) => { b += c; });
+  rq.on('end', () => {
+    hookHits.push({ path: rq.url, body: b });
+    rs.setHeader('content-type', 'application/json');
+    rs.end(JSON.stringify({ ticket_id: `T-${hookHits.length}${sfx}` }));
+  });
+});
+
 async function all() {
   const tenant = await prisma.tenant.findFirst({ orderBy: { createdAt: 'asc' } });
   if (!tenant) throw new Error('seed the scratch database first (prisma db seed)');
@@ -206,6 +226,7 @@ async function all() {
   for (const ep of [sPC, std, lin]) await prisma.computerAccess.create({ data: { tenantId: tenant.id, endpointId: ep.id, userId: tara.id } });
   await prisma.computerAccess.create({ data: { tenantId: tenant.id, endpointId: sPC.id, userId: vic.id } });
 
+  await new Promise((res, rej) => { hookServer.once('error', rej); hookServer.listen(HOOK_PORT, '127.0.0.1', res); });
   startApi();
   await waitUp();
   const S = { admin: await login(admin.email), owen: await login(owen.email), bea: await login(bea.email), tara: await login(tara.email), quinn: await login(quinn.email), vic: await login(vic.email) };
@@ -262,6 +283,32 @@ async function all() {
   check(r.data?.selfHelp?.length === 3 && r.data.selfHelp.every((t) => !t.elevated), 'standard: the three read-only tools only', JSON.stringify(r.data?.selfHelp));
   r = await tray.status(bPC, 'BIRCH\\carol');
   check(r.data?.businessName === birch.name && r.data.businessId === birch.id, 'Birch\'s tray is told Birch\'s name, nothing of Acme', JSON.stringify(r.data?.businessName));
+
+  // 0.51: support requests only with a PSA.
+  check(st.supportRequests === false, 'no PSA connector: the tray is told support requests are off (it hides the item)', JSON.stringify(st.supportRequests));
+  const srBefore = await prisma.supportRequest.count({ where: { endpointId: sPC.id } });
+  r = await tray.support(sPC, ALICE, `${MARK} with no PSA`);
+  check(r.status === 409 && code(r) === 'SUPPORT_REQUEST_NOT_CONFIGURED' && /has not set up support requests/.test(r.body?.message ?? ''), 'an older tray that sends one anyway: 409 SUPPORT_REQUEST_NOT_CONFIGURED, with a sentence to show', msg(r));
+  check(await prisma.supportRequest.count({ where: { endpointId: sPC.id } }) === srBefore && hookHits.length === 0, '…and nothing was stored or sent');
+  // A disabled connector is no connector.
+  await prisma.psaConnector.create({ data: { scopeKey: `b:${acme.id}`, customerId: acme.id, kind: 'webhook', enabled: false, webhookUrl: `http://127.0.0.1:${HOOK_PORT}/hook/${sfx}`, updatedById: owen.id } });
+  r = await tray.status(sPC, ALICE);
+  check(r.data?.supportRequests === false, 'a disabled connector: still off', JSON.stringify(r.data?.supportRequests));
+  await prisma.psaConnector.update({ where: { scopeKey: `b:${acme.id}` }, data: { enabled: true } });
+  r = await tray.status(sPC, ALICE);
+  check(r.data?.supportRequests === true, 'Acme\'s connector enabled: on for Acme\'s computers', JSON.stringify(r.data?.supportRequests));
+  r = await tray.status(std, ALICE);
+  check(r.data?.supportRequests === true, '…the standard tray too', JSON.stringify(r.data?.supportRequests));
+  r = await tray.status(bPC, 'BIRCH\\carol');
+  check(r.data?.supportRequests === false, 'Birch has none (and no platform default is set): off for Birch', JSON.stringify(r.data?.supportRequests));
+  if (!(await prisma.psaConnector.findUnique({ where: { scopeKey: 'global' } }))) {
+    await prisma.psaConnector.create({ data: { scopeKey: 'global', customerId: null, kind: 'webhook', enabled: true, webhookUrl: `http://127.0.0.1:${HOOK_PORT}/global/${sfx}`, updatedById: admin.id } });
+    created.globalConnector = true;
+    r = await tray.status(bPC, 'BIRCH\\carol');
+    check(r.data?.supportRequests === true, 'an enabled platform default: on for Birch too', JSON.stringify(r.data?.supportRequests));
+    await prisma.psaConnector.delete({ where: { scopeKey: 'global' } });
+    created.globalConnector = false;
+  }
 
   // ── One-time codes and the page ──────────────────────────────────────────
   section('One-time chat codes, the /assist cookie, and the page');
@@ -433,6 +480,19 @@ async function all() {
   r = await tray.support(sPC, ALICE, `${MARK} Outlook keeps freezing`, { usage, screenshot: shot.toString('base64') });
   const sr1 = r.data?.id;
   check(r.status === 201 && !!sr1, 'sent', msg(r));
+  check(r.data?.ticket?.ref === `T-1${sfx}` && r.data.ticket.system === 'Webhook', 'it became a ticket in the PSA, and the tray is given its reference', msg(r));
+  const hook1 = hookHits[0] ? JSON.parse(hookHits[0].body) : null;
+  check(hook1?.ticket?.subject === `${MARK} Outlook keeps freezing` && /Computer: FRONTDESK/.test(hook1.ticket.body) && /Sent from the tray by: ACME\\alice/.test(hook1.ticket.body)
+    && /screenshot and resource-usage sample are kept in Rem0te/.test(hook1.ticket.body) && hook1.ticket.source_ref === `support:${sr1}` && !hookHits[0].body.includes(shot.toString('base64').slice(0, 40)),
+  'the ticket: the person\'s text as the subject; computer, business and account in the body; the screenshot kept in Rem0te, not sent', hookHits[0]?.body?.slice(0, 600));
+  const pt1 = await prisma.psaTicket.findFirst({ where: { endpointId: sPC.id, sourceRef: `support:${sr1}` } });
+  check(pt1?.ref === `T-1${sfx}` && pt1.connectorKind === 'webhook' && pt1.connectorScope === 'business' && pt1.createdById === 'tray', 'a PsaTicket row records it', JSON.stringify(pt1));
+  const ev1 = await prisma.supportRequestEvent.findFirst({ where: { requestId: sr1, event: 'sent_to_psa' } });
+  check(ev1?.detail?.ref === `T-1${sfx}` && ev1.detail.ticketId === pt1?.id, 'the request in the queue says it was sent to the PSA, and as which ticket', JSON.stringify(ev1?.detail));
+  r = await req('GET', `/endpoints/${sPC.id}/tray`, { s: S.tara });
+  check(r.data?.requests?.find((q) => q.id === sr1)?.psa?.ref === `T-1${sfx}`, 'the computer\'s History shows the ticket reference next to the request', JSON.stringify(r.data?.requests));
+  const ptAudit = await prisma.activityLog.findFirst({ where: { action: 'PSA_TICKET_CREATED', resourceId: sPC.id, createdAt: { gte: startedAt } } });
+  check(ptAudit?.metadata?.source === 'tray' && ptAudit.metadata.supportRequestId === sr1 && ptAudit.actorId === null, 'PSA_TICKET_CREATED: from the tray, no person as actor', JSON.stringify(ptAudit?.metadata));
   const srRow = await prisma.supportRequest.findUnique({ where: { id: sr1 }, include: { attachments: true } });
   check(srRow.origin === 'AGENT' && srRow.endpointId === sPC.id && srRow.customerId === acme.id && srRow.status === 'WAITING' && srRow.contactName === ALICE, 'in the queue: from the tray, for this computer, signed as the Windows account', JSON.stringify({ origin: srRow.origin, contact: srRow.contactName }));
   const shotAtt = srRow.attachments.find((a) => a.kind === 'screenshot'), useAtt = srRow.attachments.find((a) => a.kind === 'usage');
@@ -554,8 +614,14 @@ async function all() {
   r = await page.start(p, `${MARK} contained`);
   check(r.status === 403 && code(r) === 'CONTAINED', 'starting one anyway: 403 CONTAINED', msg(r));
   r = await tray.support(std, BOB, `${MARK} during a pause`);
-  check(r.status === 201, 'a support request is never stopped by containment', msg(r));
+  check(r.status === 201, 'a remote pause does not stop a support request', msg(r));
   await prisma.containmentPause.update({ where: { id: pzR.id }, data: { clearedAt: new Date(), clearedById: owen.id, clearReason: 'e2e' } });
+  // 0.51: a support request is a ticket, outbound like a mail: a notifications pause stops it, before anything is stored.
+  const pzN = await prisma.containmentPause.create({ data: { scope: 'BUSINESS', customerId: acme.id, kinds: ['notifications'], reason: `tray e2e ${sfx}: notifications`, setById: owen.id, setBy: 'msp' } });
+  const nBefore = await prisma.supportRequest.count({ where: { endpointId: std.id } }), hBefore = hookHits.length;
+  r = await tray.support(std, 'ACME\\dana', `${MARK} under a notifications pause`);
+  check(r.status === 403 && code(r) === 'CONTAINED' && await prisma.supportRequest.count({ where: { endpointId: std.id } }) === nBefore && hookHits.length === hBefore, 'a notifications pause stops a tray request before anything is stored or sent', msg(r));
+  await prisma.containmentPause.update({ where: { id: pzN.id }, data: { clearedAt: new Date(), clearedById: owen.id, clearReason: 'e2e' } });
 
   // ── Isolation and the audit log ─────────────────────────────────────────
   section('Business A/B isolation for devices');
@@ -581,6 +647,7 @@ async function all() {
 
 async function cleanup() {
   await stopApi();
+  await new Promise((res) => hookServer.close(() => res()));
   try {
     const ids = created.businesses;
     const eps = (await prisma.endpoint.findMany({ where: { customerId: { in: ids } }, select: { id: true } })).map((e) => e.id);
@@ -596,6 +663,7 @@ async function cleanup() {
     await prisma.membership.deleteMany({ where: { customerId: { in: ids } } });
     await prisma.customer.deleteMany({ where: { id: { in: ids } } });
     if (created.users.length) await prisma.user.deleteMany({ where: { id: { in: created.users } } });
+    if (created.globalConnector) await prisma.psaConnector.deleteMany({ where: { scopeKey: 'global' } });
     if (savedDefault !== null) await prisma.platformSettings.updateMany({ where: { id: 'singleton' }, data: { chatRecordingDefault: savedDefault } });
   } catch (e) { console.error('cleanup:', e.message); }
   await prisma.$disconnect();

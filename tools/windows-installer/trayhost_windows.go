@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -78,7 +79,24 @@ func cmdTrayHost(args []string) int {
 		say("tray-host: lock: %v", err)
 		return 4
 	}
-	defer lock.Release()
+	relaunch := false
+	defer func() {
+		lock.Release()
+		// 0.51: a host that left because its binary was replaced (an update)
+		// or its lifetime ran out starts the next one itself, after letting
+		// go of the lock, instead of leaving every session without a tray
+		// until the next heartbeat. If heartbeats had stopped (DEWEY-WKS2022
+		// after two reinstalls) that was never.
+		if relaunch {
+			startHost(paths, say)
+		}
+	}()
+
+	// 0.51: once per host (the heartbeat starts one every few minutes; all
+	// but the first leave above), the standard agent's leftovers go.
+	if s := agent.RetireStandard(paths, wp.RetireOps()).Summary(); s != "" {
+		say("tray-host: %s", s)
+	}
 
 	traySum := installedTraySHA(paths)
 	if traySum == "" {
@@ -116,7 +134,22 @@ func cmdTrayHost(args []string) int {
 		},
 	}
 	h := &trayHost{paths: paths, core: core, traySum: traySum, logf: say, sessions: map[uint32]*hostSession{}}
-	return h.run()
+	exit := h.run()
+	relaunch = exit.Relaunch()
+	return 0
+}
+
+// startHost starts `rem0te-agent.exe tray-host` from the install directory —
+// the binary the signed install placed and verified, the same one the
+// heartbeat starts — detached, with no window.
+func startHost(paths agent.Paths, say func(string, ...any)) {
+	cmd := exec.Command(paths.AgentExe(), "tray-host")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW | windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP}
+	if err := cmd.Start(); err != nil {
+		say("tray-host: could not start the next host: %v", err)
+		return
+	}
+	_ = cmd.Process.Release()
 }
 
 // installedTraySHA is the hash the signed install recorded for the tray it
@@ -238,7 +271,7 @@ type trayHost struct {
 
 const noSession = 0xFFFFFFFF
 
-func (h *trayHost) run() int {
+func (h *trayHost) run() tray.HostExit {
 	started := time.Now()
 	self := h.paths.AgentExe()
 	selfStat, _ := os.Stat(self)
@@ -249,12 +282,12 @@ func (h *trayHost) run() int {
 	h.logf("tray-host: started")
 	for {
 		if time.Since(started) > hostLifetime {
-			h.logf("tray-host: lifetime reached; the next heartbeat starts a fresh host")
-			return 0
+			h.logf("tray-host: lifetime reached; starting a fresh host")
+			return tray.HostExitLifetime
 		}
 		if st, err := os.Stat(self); err != nil || selfStat == nil || !st.ModTime().Equal(selfStat.ModTime()) || st.Size() != selfStat.Size() {
-			h.logf("tray-host: the agent was replaced; leaving so the new one takes over")
-			return 0
+			h.logf("tray-host: the agent was replaced; starting the new one")
+			return tray.HostExitReplaced
 		}
 		if st, err := os.Stat(signal); err == nil && !st.ModTime().Equal(sigMod) {
 			sigMod = st.ModTime()

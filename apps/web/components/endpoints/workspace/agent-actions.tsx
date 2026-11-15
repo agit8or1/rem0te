@@ -49,6 +49,8 @@ export interface AgentCardData {
   };
   /** 0.36: what the server will do about this agent by itself. Null if it could not be worked out. */
   autoUpdate: null | AutoUpdateState;
+  /** 0.51: a leftover standard heartbeat is reporting beside the signed agent (seen in the last day). Null otherwise. */
+  dualAgent?: null | { signedSeenAt: string; legacySeenAt: string; legacyVersion: string | null; text: string; fix: string; command: string };
 }
 
 export interface AutoUpdateState {

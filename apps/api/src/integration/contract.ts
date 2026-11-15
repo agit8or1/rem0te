@@ -590,7 +590,7 @@ export const TicketCreateRequestEvent = z.object({
     /** Device-reported; display as text. */
     computer_name: z.string().max(128),
     /** `event:<commandId>:<index>` or `alert:<alertId>`: a rem0te reference, opaque to the peer. */
-    source_ref: z.string().max(160).regex(/^(event:[A-Za-z0-9_-]{8,64}:\d{1,3}|alert:[A-Za-z0-9_-]{8,64})$/),
+    source_ref: z.string().max(160).regex(/^(event:[A-Za-z0-9_-]{8,64}:\d{1,3}|alert:[A-Za-z0-9_-]{8,64}|support:[A-Za-z0-9_-]{8,64})$/),
     requested_by_role: z.literal('staff'),
   }).strict(),
 }).strict();

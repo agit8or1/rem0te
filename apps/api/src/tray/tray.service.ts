@@ -13,6 +13,8 @@ import { ChatService } from '../chat/chat.service';
 import { deviceName } from '../chat/chat-policy';
 import { EnrollmentService } from '../enrollment/enrollment.service';
 import { SupportRequestsService } from '../support-requests/support-requests.service';
+import { PsaService } from '../psa/psa.service';
+import { runsSignedAgent } from '../common/agent-identity';
 import {
   CODE_TTL_MS, MAX_CODES_PER_10_MIN, SELF_HELP_OUTCOMES, SELF_HELP_PER_HOUR, accent, detailLines, hashMatches, newSecret,
   newTrayKey, parseTrayKey, selfHelpTool, sha256, summaryLine, supportLine, toolsFor, type SelfHelpOutcome,
@@ -68,6 +70,7 @@ export class TrayService implements OnModuleInit, OnModuleDestroy {
     private readonly chat: ChatService,
     private readonly enrollment: EnrollmentService,
     private readonly support: SupportRequestsService,
+    private readonly psa: PsaService,
   ) {}
 
   onModuleInit() {
@@ -87,8 +90,8 @@ export class TrayService implements OnModuleInit, OnModuleDestroy {
   async identify(body: { trayKey?: string; rustdeskId?: string; agentSecret?: string }): Promise<TrayDevice> {
     if (body.trayKey !== undefined) {
       const k = parseTrayKey(body.trayKey);
-      const ep = k ? await this.prisma.endpoint.findUnique({ where: { trayKeyId: k.keyId }, select: { id: true, tenantId: true, customerId: true, trayKeyHash: true, updateChannel: true, status: true } }) : null;
-      if (!k || !ep || !hashMatches(ep.trayKeyHash, k.secret) || ep.updateChannel === 'signed' || ep.status === 'ARCHIVED') {
+      const ep = k ? await this.prisma.endpoint.findUnique({ where: { trayKeyId: k.keyId }, select: { id: true, tenantId: true, customerId: true, trayKeyHash: true, updateChannel: true, signedSeenAt: true, status: true } }) : null;
+      if (!k || !ep || !hashMatches(ep.trayKeyHash, k.secret) || runsSignedAgent(ep) || ep.status === 'ARCHIVED') {
         await this.audit.log({
           tenantId: ep?.tenantId ?? undefined, action: 'ENDPOINT_HEARTBEAT_REJECTED', resource: 'endpoint', resourceId: ep?.id,
           meta: { reason: 'tray_key_unauthenticated' },
@@ -98,9 +101,12 @@ export class TrayService implements OnModuleInit, OnModuleDestroy {
       return { endpointId: ep.id, tenantId: ep.tenantId, customerId: ep.customerId, via: 'tray_key' };
     }
     const dev = await this.enrollment.authenticateDevice(String(body.rustdeskId ?? ''), body.agentSecret, 'tray_unauthenticated');
-    const ep = await this.prisma.endpoint.findUnique({ where: { id: dev.endpointId }, select: { id: true, tenantId: true, customerId: true, updateChannel: true, status: true } });
+    const ep = await this.prisma.endpoint.findUnique({ where: { id: dev.endpointId }, select: { id: true, tenantId: true, customerId: true, updateChannel: true, signedSeenAt: true, status: true } });
     if (!ep || ep.status === 'ARCHIVED') throw new NotFoundException('This device is not attached to a computer');
-    if (ep.updateChannel !== 'signed') {
+    // 0.51 (§64): the signed agent by the sticky rule (runsSignedAgent), not
+    // by the last heartbeat's channel, which an installer's own check-in used
+    // to turn to 'legacy' for a few minutes after every signed install.
+    if (!runsSignedAgent(ep)) {
       // A standard computer's tray speaks with its tray key; its device secret
       // stays with the SYSTEM heartbeat, which uses it only to pair.
       throw new ForbiddenException({ code: 'TRAY_KEY_REQUIRED', message: 'A standard agent\'s tray authenticates with its tray key.' });
@@ -116,9 +122,9 @@ export class TrayService implements OnModuleInit, OnModuleDestroy {
    */
   async pair(body: { rustdeskId: string; agentSecret: string }) {
     const dev = await this.enrollment.authenticateDevice(body.rustdeskId, body.agentSecret, 'tray_pair_unauthenticated');
-    const ep = await this.prisma.endpoint.findUnique({ where: { id: dev.endpointId }, select: { id: true, tenantId: true, customerId: true, updateChannel: true, trayKeyId: true, status: true } });
+    const ep = await this.prisma.endpoint.findUnique({ where: { id: dev.endpointId }, select: { id: true, tenantId: true, customerId: true, updateChannel: true, signedSeenAt: true, trayKeyId: true, status: true } });
     if (!ep || ep.status === 'ARCHIVED') throw new NotFoundException('This device is not attached to a computer');
-    if (ep.updateChannel === 'signed') throw new ConflictException({ code: 'TRAY_SIGNED', message: 'The signed agent\'s tray needs no key: the agent speaks for it.' });
+    if (runsSignedAgent(ep)) throw new ConflictException({ code: 'TRAY_SIGNED', message: 'The signed agent\'s tray needs no key: the agent speaks for it.' });
     const k = newTrayKey();
     await this.prisma.endpoint.update({ where: { id: ep.id }, data: { trayKeyId: k.keyId, trayKeyHash: k.hash, trayPairedAt: new Date() } });
     await this.audit.log({
@@ -163,10 +169,11 @@ export class TrayService implements OnModuleInit, OnModuleDestroy {
   async status(dev: TrayDevice, body: { delivered?: unknown; localUser?: unknown }) {
     const localUser = deviceName(body.localUser);
     const ep = await this.context(dev);
-    const [chat, contained, recordNew] = await Promise.all([
+    const [chat, contained, recordNew, supportRequests] = await Promise.all([
       this.chat.forTray(dev.endpointId, body.delivered),
       this.pauses(dev.customerId),
       this.chat.recordingFor(ep.customer?.chatRecording),
+      this.psa.trayOffered(dev.customerId),
     ]);
     const c = chat?.conversation;
     const otherUser = !!(c?.deviceUser && localUser && c.deviceUser !== localUser);
@@ -174,6 +181,10 @@ export class TrayService implements OnModuleInit, OnModuleDestroy {
       ...this.brand(ep),
       agent: dev.via === 'signed' ? 'signed' : 'standard',
       hasBusiness: !!dev.customerId,
+      // 0.51: "Open a support request" is offered only when a PSA connector is
+      // enabled for this computer's business (or the platform default is).
+      // The server decides; the tray hides the item when this is false.
+      supportRequests,
       // The computer's own business id: the signed tray host matches it against
       // a business-scoped signed pause before an elevated tool runs.
       businessId: dev.customerId,
@@ -226,10 +237,43 @@ export class TrayService implements OnModuleInit, OnModuleDestroy {
 
   // ── POST /tray/support-requests ───────────────────────────────────────────
 
+  /**
+   * 0.51: a tray support request is a PSA ticket. Refused before anything is
+   * stored unless a connector is enabled for this computer
+   * (SUPPORT_REQUEST_NOT_CONFIGURED), the notifications pause is clear and
+   * the connector is ready. Then it is kept as a support request in Rem0te
+   * (the computer's History, the screenshot), sent through the connector,
+   * and the request's event log names the ticket. The queue entry is not a
+   * notification, so nothing is sent twice. A send that fails leaves the
+   * Rem0te request and says so (502 PSA_SEND_FAILED).
+   */
   async supportRequest(dev: TrayDevice, body: { description?: unknown; localUser?: unknown; usage?: unknown; screenshot?: unknown }) {
-    return this.support.agentSubmit({ id: dev.endpointId, tenantId: dev.tenantId, customerId: dev.customerId }, {
-      description: body.description, localUser: deviceName(body.localUser), usage: body.usage, screenshot: body.screenshot, via: dev.via,
+    const eff = await this.psa.trayPrecheck({ id: dev.endpointId, customerId: dev.customerId });
+    const localUser = deviceName(body.localUser);
+    const r = await this.support.agentSubmit({ id: dev.endpointId, tenantId: dev.tenantId, customerId: dev.customerId }, {
+      description: body.description, localUser, usage: body.usage, screenshot: body.screenshot, via: dev.via,
     });
+    const [req, ep] = await Promise.all([
+      this.prisma.supportRequest.findUniqueOrThrow({ where: { id: r.id }, select: { description: true, attachments: { select: { kind: true } } } }),
+      this.prisma.endpoint.findUniqueOrThrow({ where: { id: dev.endpointId }, select: { name: true, customer: { select: { name: true } }, inventory: { select: { loggedOnUser: true } } } }),
+    ]);
+    const kinds = new Set(req.attachments.map((a) => a.kind));
+    const sent = await this.psa.trayTicket(eff,
+      { id: dev.endpointId, tenantId: dev.tenantId, customerId: dev.customerId, name: ep.name, businessName: ep.customer?.name ?? null, loggedOnUser: ep.inventory?.loggedOnUser ?? null },
+      { id: r.id, text: req.description ?? '', windowsAccount: localUser, screenshot: kinds.has('screenshot'), usage: kinds.has('usage'), via: dev.via });
+    await this.prisma.supportRequestEvent.create({
+      data: {
+        requestId: r.id, event: sent.ok ? 'sent_to_psa' : 'psa_failed',
+        detail: sent.ok ? { connectorKind: eff.row.kind, ticketId: sent.ticketId, ref: sent.ref } : { connectorKind: eff.row.kind, status: sent.status },
+      },
+    });
+    if (!sent.ok) {
+      throw new HttpException({
+        code: 'PSA_SEND_FAILED', id: r.id,
+        message: 'Your request was saved and your IT provider can see it, but it could not be opened as a ticket in their ticketing system.',
+      }, HttpStatus.BAD_GATEWAY);
+    }
+    return { id: r.id, ticket: { ref: sent.ref, system: sent.kindLabel } };
   }
 
   // ── POST /tray/self-help/* ────────────────────────────────────────────────
@@ -351,7 +395,16 @@ export class TrayService implements OnModuleInit, OnModuleDestroy {
         })
         : Promise.resolve(null),
     ]);
-    return { tray: { kind, protocol: ep.trayProtocol, pairedAt: ep.trayPairedAt, message }, selfHelp: runs, requests };
+    // 0.51: the ticket each tray request became, if any (PsaTicket.sourceRef `support:<id>`).
+    const tickets = requests?.length
+      ? await this.prisma.psaTicket.findMany({ where: { endpointId, sourceRef: { in: requests.map((q) => `support:${q.id}`) } }, select: { sourceRef: true, connectorKind: true, ref: true } })
+      : [];
+    const byRef = new Map(tickets.map((t) => [t.sourceRef, t]));
+    const withTickets = requests?.map((q) => {
+      const t = byRef.get(`support:${q.id}`);
+      return { ...q, psa: t ? { connectorKind: t.connectorKind, ref: t.ref } : null };
+    }) ?? null;
+    return { tray: { kind, protocol: ep.trayProtocol, pairedAt: ep.trayPairedAt, message }, selfHelp: runs, requests: withTickets };
   }
 
   // ── Chat recording settings ───────────────────────────────────────────────

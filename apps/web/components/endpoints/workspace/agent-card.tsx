@@ -202,6 +202,19 @@ export function AgentCard({ endpointId, canEdit, alerts }: { endpointId: string;
                 <p className="text-muted-foreground">Remote control should still work: RustDesk is reachable. Update the agent below, or re-run the installer on the machine.</p>
               </div>
             )}
+            {a.dualAgent && (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-2 text-xs space-y-1.5" data-testid="agent-dual-warning" role="alert">
+                <p className="font-medium">{a.dualAgent.text}</p>
+                <p className="text-muted-foreground">{a.dualAgent.fix}</p>
+                <div className="flex items-start gap-2">
+                  <code className="block min-w-0 flex-1 break-all rounded bg-muted px-2 py-1.5">{a.dualAgent.command}</code>
+                  <Button size="sm" variant="ghost" className="h-7 px-2" aria-label="Copy the command" onClick={() => copy(a.dualAgent!.command)}>
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+                <p className="text-muted-foreground">Last seen: signed {ago(a.dualAgent.signedSeenAt)}, standard {ago(a.dualAgent.legacySeenAt)}.</p>
+              </div>
+            )}
             <Row label="Type"><Badge variant="secondary">{KIND_LABEL[a.kind]}</Badge></Row>
             <Row label="Version">{a.version ?? '—'}</Row>
             <Row label="Current">

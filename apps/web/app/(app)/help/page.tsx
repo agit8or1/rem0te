@@ -488,13 +488,16 @@ const SECTIONS: Section[] = [
         <p>
           Every managed Windows computer has a Rem0te icon in the notification area for each person signed in. Its menu
           has four items: <em>Chat with support</em>, <em>Open a support request</em>, <em>Self-help tools</em> and{' '}
-          <em>About</em>.
+          <em>About</em>. <em>Open a support request</em> appears only when the business, or the platform default, has
+          a PSA / ticketing connector switched on.
         </p>
         <ul className="list-disc pl-5 space-y-1">
           <li>
-            <strong className="text-foreground">Support requests</strong> from the tray arrive in the support queue,
-            already linked to the computer. The person may attach their resource usage and a screenshot; both are off
-            until they tick them. Attachments are shown only to someone who can see the computer, and are deleted after 45
+            <strong className="text-foreground">Support requests</strong> from the tray become a ticket in your PSA
+            (the person is shown its reference) and also arrive in the support queue, already linked to the computer.
+            The screenshot and usage stay in Rem0te; the ticket links to them. A <em>notifications</em> containment pause
+            stops them. The person may attach their resource usage and a screenshot; both are off until they tick
+            them. Attachments are shown only to someone who can see the computer, and are deleted after 45
             days.
           </li>
           <li>
@@ -506,6 +509,11 @@ const SECTIONS: Section[] = [
           <li>
             On a standard agent, the Windows account the tray reports is not proven. Treat the name on a chat or a
             request from a standard computer as what the computer said.
+          </li>
+          <li>
+            <strong className="text-foreground">The icon</strong> (0.51) is a white speech bubble on a navy disc inside a
+            bright ring: cyan normally, green while a chat is open, amber with a red dot for an unread message, and grey
+            when the portal cannot be reached. It follows the light or dark taskbar.
           </li>
           <li>Not yet run on real Windows. Linux and macOS have no tray.</li>
         </ul>
@@ -930,6 +938,16 @@ const SECTIONS: Section[] = [
           <em>Rename/edit computers</em> over the whole business, or the MSP. Turning it on asks you to confirm
           it is you; turning it off never does. Every change, and every computer queued automatically, is in
           the audit log.
+        </p>
+        <p className="font-medium text-foreground">&ldquo;Two agents are reporting from this computer&rdquo; (0.51)</p>
+        <p>
+          Once a computer&apos;s signed agent has reported, it stays signed for seven days after its last signed
+          heartbeat. Nothing meant for the standard agent is handed to it: no standard update, no queued reinstall,
+          no old migration. Reports from the installer and from a leftover standard heartbeat change nothing on its
+          record. When a leftover has reported in the last day, the Agent card says so and gives the one command to run
+          on the computer, in PowerShell as administrator. A leftover from 0.51 or later hands over by itself. The
+          signed agent removes the standard agent&apos;s leftover task, files and tray entry each time it installs or
+          updates. Not yet run on real Windows.
         </p>
       </div>
     ),

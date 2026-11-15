@@ -159,6 +159,14 @@ jobs:
       - name: Agent auto-update tests
         run: node apps/api/scripts/unit-agent-auto-update.mjs
 
+      # Which agent a computer runs is sticky to signed (0.51, §64): the rule,
+      # every report shape (signed heartbeat, standard heartbeat, the
+      # installers' own check-ins), the Agent card's warning, and with the
+      # runner's pwsh the scripts parsed and the standard heartbeat's hand-over
+      # run against a stub agent.
+      - name: Agent identity tests
+        run: node apps/api/scripts/unit-agent-identity.mjs
+
       # Automatic migration to the signed agent (0.37): settings and what
       # widens, the gate, the canary/soak state machine (confirmed only on the
       # published build; halted on a failure, a cancel, a missing computer or
@@ -498,6 +506,10 @@ jobs:
       - name: Signed update chain and approved-action tests
         working-directory: tools/windows-installer
         run: go test ./...
+      # The tray icons (0.51) are generated: the committed .ico files must be
+      # what the script in the repository draws.
+      - name: Tray icons match their generator
+        run: node tools/windows-installer/cmd/rem0te-tray/icons/gen-icons.mjs --check
       - name: Build for Windows
         working-directory: tools/windows-installer
         env:

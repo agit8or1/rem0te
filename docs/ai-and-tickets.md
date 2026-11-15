@@ -182,6 +182,33 @@ reference, whether the AI answer and a note were included, and the PSA's referen
 subject, note or body. `PSA_CONNECTOR_CHANGED` records the kind, an email connector's masked address
 or a webhook's host, and whether a signing secret was set — never the secret or the full URL.
 
+### From the tray (0.51)
+
+**Open a support request…** in the [tray](tray.md) appears only when the computer's business has an
+enabled connector, or the platform default is enabled. The server decides: the tray's status call
+carries `supportRequests`, and the tray hides the item (it is not greyed) when it is false. An older
+tray that sends a request anyway is refused with `409 SUPPORT_REQUEST_NOT_CONFIGURED` and a sentence
+for the person, and nothing is stored.
+
+When one is set up, each tray request becomes a ticket through the same connector:
+
+- **Subject**: the person's own text, on one line, at most 200 characters.
+- **Body**: the computer, the business, the Windows account that sent it, the logged-on user the
+  agent last reported, a link to the computer, and the text. No connector carries files, so a ticked
+  screenshot or usage sample stays in Rem0te and the body links to the request in the support queue.
+- **Reference**: `source_ref` is `support:<request id>`.
+
+The request is still kept in the [support queue](support-requests.md); its history says *Sent to the PSA
+as a ticket · <ref>* (or *Could not be sent to the PSA*), and the computer's **History → Tray** shows
+the reference. A `PsaTicket` row records it with `createdById` `tray`; there is no History note,
+because a note needs a person as its author. The tray tells the person *Ticket <ref> opened*.
+
+A `notifications` pause stops a tray request before anything is stored (`403 CONTAINED`), like any
+other ticket. A connector that is not ready is `409 PSA_NOT_READY`. A send that fails keeps the request
+(the queue still has it) and answers `502 PSA_SEND_FAILED`. On top of the support queue's own limits
+there is a backstop of 6 tickets per computer per hour (`PSA_TRAY_TICKETS_PER_HOUR`). The audit entries
+are the same two, with `source: "tray"`, the request id and no actor.
+
 ## Settings → PSA / ticketing
 
 A Platform Admin sets the **platform default**; a Business Owner may set their business's own

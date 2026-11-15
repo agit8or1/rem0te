@@ -1,5 +1,6 @@
 import { ActionsService } from '../actions/actions.service';
 import { HEARTBEAT_STALE_MS } from '../common/connectivity';
+import { DUAL_AUDIT_EVERY_MS, heartbeatKind, heartbeatMayAct, isInstallerCheckIn, type HeartbeatKind } from '../common/agent-identity';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { AgentMigrationService } from '../update-trust/agent-migration.service';
 import {
@@ -685,6 +686,18 @@ export class EnrollmentService {
       };
     }
 
+    // Which agent this computer runs, sticky to signed (0.51,
+    // common/agent-identity.ts, §64). Read before anything is written: on a
+    // computer the signed agent reports from, a heartbeat that does not say
+    // `signed` — an installer's own check-in, or a leftover standard
+    // heartbeat — keeps liveness and nothing else.
+    const now = new Date();
+    const identity = authenticated && node.endpointId
+      ? await this.prisma.endpoint.findUnique({ where: { id: node.endpointId }, select: { updateChannel: true, signedSeenAt: true, legacySeenAt: true } })
+      : null;
+    const kind: HeartbeatKind = identity ? heartbeatKind(dto, identity, now) : dto.updateChannel === 'signed' ? 'signed' : 'standard';
+    const mayAct = heartbeatMayAct(kind);
+
     // Liveness is recorded for anyone who knows the ID — it is only a
     // timestamp, and refusing it would take a fleet enrolled before device
     // secrets existed offline. Everything descriptive needs the secret.
@@ -712,7 +725,7 @@ export class EnrollmentService {
         // release, not the staged one, so an update staged for 1.5.0 that
         // installed 1.5.1 never matched exactly and re-ran the installer on
         // every heartbeat.
-        ...(authenticated &&
+        ...(authenticated && mayAct &&
         node.updateRequestedAt &&
         node.updateTargetVersion &&
         dto.rustdeskVersion &&
@@ -724,7 +737,7 @@ export class EnrollmentService {
         // the dispatch half, a repair reinstall of an already-current agent
         // would be cancelled by the very heartbeat that collected it, and the
         // installer would never run.
-        ...(authenticated &&
+        ...(authenticated && mayAct &&
         node.reinstallRequestedAt &&
         node.reinstallDispatchedAt &&
         (dto.agentVersion === this.platformVersion() || signedCheckedSince(dto, node.reinstallDispatchedAt))
@@ -737,7 +750,7 @@ export class EnrollmentService {
     // with the key id on record — otherwise the heartbeat is told to pair.
     let trayProtocol: number | null = null;
     let trayPair = false;
-    if (authenticated && node.endpointId && (dto.agentTray ?? 0) >= 1) {
+    if (authenticated && mayAct && node.endpointId && (dto.agentTray ?? 0) >= 1) {
       if (dto.updateChannel === 'signed') {
         trayProtocol = dto.agentTray!;
       } else {
@@ -757,14 +770,22 @@ export class EnrollmentService {
       // there was no column, so the device page's "Agent" row showed a dash on
       // every machine ever enrolled. It is the fastest way to see that a
       // machine's agent is too old to collect an inventory.
-      ...(authenticated && dto.agentVersion !== undefined && { agentVersion: dto.agentVersion }),
+      ...(authenticated && mayAct && dto.agentVersion !== undefined && { agentVersion: dto.agentVersion }),
       // The address decides where the machine appears on the dashboard map and
       // what the audit trail records, so it is the device's to report or nobody's.
       ...(authenticated && dto.ipAddress !== undefined && { ipAddress: dto.ipAddress }),
       // Update channel (0.24). Self-reported, and only ever used to decide what
       // the portal withholds from a legacy agent — claiming "signed" gets an
       // agent less from the portal, never more.
-      ...(authenticated && {
+      // 0.51: only a heartbeat that may act writes these (heartbeatMayAct):
+      // on a signed computer a report that does not say signed changes no
+      // agent field, so it cannot turn the computer back into a standard one.
+      ...(authenticated && kind === 'signed' && { signedSeenAt: now }),
+      ...(authenticated && kind === 'legacy_on_signed' && {
+        legacySeenAt: now,
+        legacySeenVersion: deviceText(dto.agentVersion, 32) ?? null,
+      }),
+      ...(authenticated && mayAct && {
         updateChannel: dto.updateChannel === 'signed' ? 'signed' : 'legacy',
         trustRootVersion: dto.updateChannel === 'signed' ? dto.trustRootVersion ?? null : null,
         targetsVersion: dto.updateChannel === 'signed' ? dto.targetsVersion ?? null : null,
@@ -781,7 +802,7 @@ export class EnrollmentService {
       // agent-status.json — the signed agent's, or a migrate run's on a
       // standard machine. Shown, never acted on; made inert like every other
       // device-reported string.
-      ...(authenticated && plausibleCheck(dto.agentUpdateCheckedAt) && {
+      ...(authenticated && mayAct && plausibleCheck(dto.agentUpdateCheckedAt) && {
         agentUpdateCheckedAt: new Date(dto.agentUpdateCheckedAt as string),
         agentUpdateResult: deviceText(dto.agentUpdateResult, 200) ?? null,
       }),
@@ -791,6 +812,33 @@ export class EnrollmentService {
       where: { id: node.endpointId },
       data: updateData,
     });
+
+    // 0.51 (§64): a report that does not say signed, from a computer the
+    // signed agent reports from, is answered with liveness and nothing else —
+    // no install, reinstall, migration, automatic update or RustDesk update
+    // meant for the standard path, no rotation, command, action or chat. The
+    // installer's own check-ins still get the RustDesk registration answer
+    // they wait for. A leftover standard heartbeat (it carries live state) is
+    // recorded for the Agent card, audited at most once a day, and told to
+    // hand over to the signed agent (`retireStandard`: a 0.51 standard
+    // heartbeat then runs the installed signed agent's own `update`).
+    if (authenticated && !mayAct) {
+      if (kind === 'legacy_on_signed' && (!identity?.legacySeenAt || now.getTime() - identity.legacySeenAt.getTime() > DUAL_AUDIT_EVERY_MS)) {
+        await this.audit.log({
+          tenantId: node.tenantId ?? undefined,
+          action: 'AGENT_DUAL_REPORT', resource: 'endpoint', resourceId: node.endpointId,
+          meta: { rustdeskId: dto.rustdeskId, reportedChannel: dto.updateChannel ?? null, reportedVersion: deviceText(dto.agentVersion, 32) ?? null, signedSeenAt: identity?.signedSeenAt?.toISOString() ?? null },
+        }).catch((e) => this.logger.warn(`Dual-agent audit failed for ${node.endpointId}: ${String(e)}`));
+      }
+      return {
+        found: true, endpointId: node.endpointId, authenticated,
+        rotate: null, updateRustdesk: null, reinstallAgent: null,
+        commands: [], actions: [], actionAcks: [], patchPostureAck: null, patchScan: false,
+        monitor: null, diagnostics: [], chat: null, tray: null,
+        ...(kind === 'legacy_on_signed' ? { retireStandard: true } : {}),
+        rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
+      };
+    }
 
     // If a credential rotation is pending for this node, include the new
     // plaintext in the response. The endpoint applies it via
@@ -923,7 +971,9 @@ export class EnrollmentService {
     // (agent-auto-update/schedule.ts). A signed agent may also be told it may
     // run its own periodic update check (`agentSelfCheck`).
     let agentSelfCheck = false;
-    if (authenticated && !updatesHeld) {
+    // 0.51: an installer's own check-in (isInstallerCheckIn) starts no
+    // automatic update — it reads nothing in its answer but the registration.
+    if (authenticated && !updatesHeld && !isInstallerCheckIn(dto)) {
       try {
         const auto = await this.agentAuto.forHeartbeat({
           node,
