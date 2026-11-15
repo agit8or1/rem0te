@@ -265,6 +265,11 @@ in", then "there should be an override exception checkbox".
   and it restarts 15 minutes later.
 - No "postpone" for the signed-in user, and no notice other than Windows' own shutdown warning.
 
+**CI fix:**
+
+- `unit-device-views.mjs` pinned the bulk action list at six (`exactly six actions`). 0.54 adds `restart.schedule`,
+  so CI's `check` job failed on the stacked PR. The test now expects the seven actions, in order.
+
 ## [0.53.2] — 2026-11-15 · *Almanac*
 
 **Pictures and a new walkthrough for the screens 0.51 to 0.53 added, and every existing one recaptured.**

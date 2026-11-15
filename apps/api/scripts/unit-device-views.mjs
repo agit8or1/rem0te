@@ -91,8 +91,8 @@ section('Bulk selection and actions');
   check(refusal(() => R.parseSelection([])) && refusal(() => R.parseSelection('x')) && refusal(() => R.parseSelection(['../etc'])), 'empty, non-list and non-id selections are refused');
   // The cap counts what was SENT: 250 copies of one id are still over it.
   check(refusal(() => R.parseSelection(Array(250).fill(ID1)))?.code === 'BULK_TOO_LARGE', 'the cap counts what was sent, before de-duplication');
-  // 0.34 added the Agent card's two actions.
-  check(JSON.stringify(R.BULK_ACTIONS) === JSON.stringify(['group.add', 'group.remove', 'inventory.refresh', 'client.update', 'agent.update', 'agent.migrate']), 'exactly six actions');
+  // 0.34 added the Agent card's two actions; 0.54 added restart.schedule.
+  check(JSON.stringify(R.BULK_ACTIONS) === JSON.stringify(['group.add', 'group.remove', 'inventory.refresh', 'client.update', 'agent.update', 'agent.migrate', 'restart.schedule']), 'exactly seven actions');
   check(refusal(() => R.parseBulk({ action: 'agent.migrate', endpointIds: [ID1] }))?.code === 'REASON_REQUIRED', 'agent.migrate needs a reason');
   check(R.parseBulk({ action: 'agent.migrate', endpointIds: [ID1], reason: '  pilot  ' }).reason === 'pilot', 'its reason is trimmed');
   check(refusal(() => R.parseBulk({ action: 'agent.update', endpointIds: [ID1], reason: 'abc' })) !== null, 'a reason on any other action is refused');
