@@ -46,6 +46,8 @@ interface Variant {
   updateHook: string;
   /** 0.36: the signed agent's own periodic update check; nothing on the legacy channel. */
   selfCheckHook: string;
+  /** 0.51: a standard heartbeat on a computer the signed agent reports from hands over to it (standard only). */
+  retireHook: string;
   channelReport: string;
   actionHook: string;
   /** The tray (0.36): installed by the script (standard) or by the agent (signed). */
@@ -186,6 +188,30 @@ try {
     // A standard agent is kept current by the server asking (reinstallAgent);
     // it has nothing of its own to check against.
     selfCheckHook: '# Periodic self-check: signed channel only.',
+    // 0.51: the portal answers a standard heartbeat with retireStandard when
+    // the signed agent reports from this computer too (two agents), and
+    // hands it nothing else. This heartbeat then runs the INSTALLED signed
+    // agent's own update — the binary the signed install verified and placed
+    // in Program Files\Rem0te, which the signed heartbeat itself runs — and
+    // never anything the portal sends. That reinstalls the signed heartbeat
+    // over this one. Only if agent-status.json names a signed build, and at
+    // most once every 30 minutes, like the update hook above.
+    retireHook: `try {
+    if (\$resp.data.retireStandard -eq \$true) {
+        \$agentExe = Join-Path \$env:ProgramFiles 'Rem0te\\rem0te-agent.exe'
+        \$rst = \$null
+        try { \$rst = Get-Content -Raw 'C:\\ProgramData\\Rem0te\\agent-status.json' -ErrorAction Stop | ConvertFrom-Json } catch {}
+        \$rlast = \$null
+        try { if (\$state.lastRetireAttempt) { \$rlast = [DateTime]\$state.lastRetireAttempt } } catch {}
+        if (\$rst -and ([string]\$rst.agentSha256 -cmatch '^[0-9a-f]{64}\$') -and (Test-Path -LiteralPath \$agentExe) -and (-not \$rlast -or ((Get-Date) - \$rlast).TotalMinutes -ge 30)) {
+            try {
+                \$state | Add-Member -NotePropertyName lastRetireAttempt -NotePropertyValue ((Get-Date).ToString('o')) -Force
+                \$state | ConvertTo-Json -Compress | Set-Content \$STATE_FILE -Encoding UTF8
+            } catch {}
+            try { & \$agentExe @('update') *>\$null } catch {}
+        }
+    }
+} catch {}`,
     channelReport: "$body['updateChannel'] = 'legacy'",
     // Approved actions need the signed agent; a legacy machine is never sent one.
     actionHook: '# Approved actions: not on the legacy channel.',
@@ -293,6 +319,7 @@ try {
     // sighting only schedules; a due time more than two days out (a clock
     // that jumped) is rescheduled, never acted on. It takes effect once a
     // signed release built from this template is published.
+    retireHook: '# Handing over to the signed agent: standard channel only.',
     selfCheckHook: `try {
     $agentExe = Join-Path $env:ProgramFiles 'Rem0te\\rem0te-agent.exe'
     if ($resp.data.agentSelfCheck -eq $true -and (Test-Path -LiteralPath $agentExe)) {
@@ -1868,6 +1895,7 @@ try {
     }
 } catch {}
 ${v.selfCheckHook}
+${v.retireHook}
 ${v.actionHook}
 # ---- The tray (0.36) ---------------------------------------------------------
 # Whether a chat is open, for the tray: it asks the portal often only while one
@@ -2020,7 +2048,9 @@ foreach ($d in $diag) { Log ('  ' + $d) }
 # success. Ask the server whether hbbs has genuinely seen this peer.
 # $regState: $true registered, $false definitely not, $null unknown.
 function Test-Registered([string]$id) {
-    $b = @{ rustdeskId = $id; hostname = $env:COMPUTERNAME; platform = 'Windows'; agentSecret = $AGENT_SECRET } | ConvertTo-Json -Compress
+    # 0.51: with the agent version, so the portal does not take this check-in
+    # for a 0.13-0.14 agent (which reported none) and start an update for it.
+    $b = @{ rustdeskId = $id; hostname = $env:COMPUTERNAME; platform = 'Windows'; agentSecret = $AGENT_SECRET; agentVersion = $AGENT_VERSION } | ConvertTo-Json -Compress
     try {
         $r = Invoke-RestMethod -Uri "https://$REM0TE_HOST/api/v1/enrollment/heartbeat" -Method Post -Body $b -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
         return $r.data.rustdeskRegistered

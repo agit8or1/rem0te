@@ -74,7 +74,10 @@ type Frame struct {
 	Outcome string   `json:"outcome,omitempty"`
 	Summary string   `json:"summary,omitempty"`
 	Lines   []string `json:"lines,omitempty"`
-	State   *State   `json:"state,omitempty"`
+	// Ticket (0.51) is the PSA's reference for the ticket a support request
+	// became, on the reply to a support frame. Shown as text, never a link.
+	Ticket string `json:"ticket,omitempty"`
+	State  *State `json:"state,omitempty"`
 }
 
 // State is what the tray shows: who it is for, whether a chat is open (and
@@ -89,6 +92,10 @@ type State struct {
 	Version     string      `json:"version"`
 	Portal      string      `json:"portal"`
 	HasBusiness bool        `json:"hasBusiness"`
+	// SupportRequests (0.51): the portal offers "Open a support request" only
+	// when a PSA connector is set up for this computer's business. False
+	// (the zero value, and an offline tray's default) hides the menu item.
+	SupportRequests bool `json:"supportRequests"`
 	Chat        ChatState   `json:"chat"`
 	RecordNew   bool        `json:"recordNew"`
 	Remote      string      `json:"remote,omitempty"`  // a `remote` pause, in words
@@ -197,7 +204,7 @@ func onlyFields(f Frame, allowed ...string) error {
 	present := map[string]bool{
 		"nonce": f.Nonce != "", "id": f.ID != "", "text": f.Text != "", "usage": f.Usage, "shot": f.Shot != "", "tool": f.Tool != "",
 		"ids": len(f.IDs) > 0, "ok": f.OK, "reason": f.Reason != "", "url": f.URL != "", "outcome": f.Outcome != "",
-		"summary": f.Summary != "", "lines": len(f.Lines) > 0, "state": f.State != nil,
+		"summary": f.Summary != "", "lines": len(f.Lines) > 0, "ticket": f.Ticket != "", "state": f.State != nil,
 	}
 	for k, v := range present {
 		if v && !set[k] {
@@ -290,7 +297,7 @@ func CheckFromHost(f Frame) (Frame, error) {
 		s := CleanState(*f.State)
 		f.State = &s
 	case FrameReply:
-		if err := onlyFields(f, "id", "ok", "reason", "url", "outcome", "summary", "lines"); err != nil {
+		if err := onlyFields(f, "id", "ok", "reason", "url", "outcome", "summary", "lines", "ticket"); err != nil {
 			return Frame{}, err
 		}
 		if !reqRE.MatchString(f.ID) {
@@ -298,6 +305,7 @@ func CheckFromHost(f Frame) (Frame, error) {
 		}
 		f.Reason, f.Summary = CleanLine(f.Reason, 300), CleanLine(f.Summary, 300)
 		f.Lines = cleanLines(f.Lines)
+		f.Ticket = CleanTicketRef(f.Ticket)
 		if f.Outcome != "" && f.Outcome != OutcomeSucceeded && f.Outcome != OutcomeFailed && f.Outcome != OutcomeRefused {
 			return Frame{}, fmt.Errorf("%w: outcome %q", ErrFrame, f.Outcome)
 		}
@@ -349,6 +357,33 @@ func CleanState(s State) State {
 }
 
 var accentRE = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
+
+// ticketRE is the portal's cleanRef charset (apps/api/src/psa/ticket.ts).
+var ticketRE = regexp.MustCompile(`^[A-Za-z0-9#._:/-]{1,64}$`)
+
+// CleanTicketRef is a ticket reference the tray may show, or "".
+func CleanTicketRef(s string) string {
+	if ticketRE.MatchString(s) {
+		return s
+	}
+	return ""
+}
+
+// OffersSupport is whether the menu shows "Open a support request…" (0.51):
+// only once the portal has answered, for a computer with a business, and
+// only when the portal said a PSA is set up. Otherwise the item is hidden.
+func OffersSupport(s State, have bool) bool {
+	return have && s.HasBusiness && s.SupportRequests
+}
+
+// SupportSentText is what the tray says after a support request was sent:
+// the ticket it became when the PSA named one.
+func SupportSentText(ref string) string {
+	if ref = CleanTicketRef(ref); ref != "" {
+		return "Ticket " + ref + " opened. Your IT provider will be in touch."
+	}
+	return "Your request was sent to your IT provider's ticketing system. They will be in touch."
+}
 
 func cleanLines(in []string) []string {
 	var out []string

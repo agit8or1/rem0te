@@ -121,7 +121,8 @@ func (c *Core) Refresh(ctx context.Context, user string, console bool) (State, t
 	}
 	st := State{
 		Business: ps.BusinessName, Provider: ps.ProviderName, SupportText: ps.SupportText, Accent: ps.Accent,
-		Agent: c.Agent, Version: c.Version, Portal: c.Portal, HasBusiness: ps.HasBusiness, RecordNew: ps.RecordNew, Console: console,
+		Agent: c.Agent, Version: c.Version, Portal: c.Portal, HasBusiness: ps.HasBusiness, SupportRequests: ps.SupportRequests && ps.HasBusiness,
+		RecordNew: ps.RecordNew, Console: console,
 		Chat: ChatState{Open: ps.Chat.Open, ConversationID: ps.Chat.ConversationID, StartedBy: ps.Chat.StartedBy, Recorded: ps.Chat.Recorded,
 			Unread: ps.Chat.Unread, AutoOpen: ps.Chat.AutoOpen && console, OtherUser: ps.Chat.OtherUser},
 	}
@@ -177,19 +178,19 @@ var ErrLimited = errors.New("too many requests from this computer: try again lat
 
 // Support sends a request. shot is the JPEG the tray captured and showed
 // (nil if the person did not tick the box, or removed it).
-func (c *Core) Support(ctx context.Context, user, text string, usage bool, shot []byte) (string, error) {
+func (c *Core) Support(ctx context.Context, user, text string, usage bool, shot []byte) (SupportSent, error) {
 	t, err := CleanRequestText(text)
 	if err != nil {
-		return "", err
+		return SupportSent{}, err
 	}
 	if len(shot) > MaxScreenshotBytes {
-		return "", fmt.Errorf("the screenshot is over %d KB", MaxScreenshotBytes>>10)
+		return SupportSent{}, fmt.Errorf("the screenshot is over %d KB", MaxScreenshotBytes>>10)
 	}
 	c.mu.Lock()
 	c.init()
 	c.mu.Unlock()
 	if !c.Lim.AllowSupport(user) {
-		return "", ErrLimited
+		return SupportSent{}, ErrLimited
 	}
 	var u *Usage
 	if usage && c.Sample != nil {

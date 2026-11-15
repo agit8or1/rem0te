@@ -401,6 +401,46 @@ moved — is on **Devices → Full agent**, with the command for each step that 
 not done. Details: [update-signing.md](update-signing.md#moving-computers-automatically-037).
 `AUTO_MIGRATION_SWEEP=off` stops it in one API process.
 
+## One computer, one agent (0.51)
+
+Once a computer's signed agent has reported, it **stays signed** for seven
+days after its last signed heartbeat (`signedSeenAt`), whatever else reports
+from it. Before 0.51 every authenticated report rewrote the update channel,
+and the signed install script's own check-ins (*Register*, *Test-Registered*)
+say no channel. So a signed computer read *legacy* for a moment and was handed
+standard things: a `standard_pre015` automatic update, a queued reinstall, the
+old migration again. Its signed tray host was refused as well
+(`TRAY_KEY_REQUIRED`).
+
+From 0.51, on a signed computer:
+
+- **The installer's own check-ins** change nothing about the agent and get no
+  flag. They still get `rustdeskRegistered`. No automatic update starts from
+  an installer check-in on any computer.
+- **A leftover standard heartbeat** (a standard `heartbeat.ps1` still running)
+  gets nothing and writes no agent field. It is recorded (`legacySeenAt`,
+  audited as `AGENT_DUAL_REPORT` at most once a day) and answered
+  `retireStandard`. A 0.51 standard heartbeat then runs the installed signed
+  agent's own `update` (at most every 30 minutes, and only when a signed build
+  is installed). The signed agent reinstalls its heartbeat and removes the
+  standard leftovers. A standard heartbeat older than 0.51 cannot be told; the
+  Agent card says *Two agents are reporting from this computer* and gives the
+  command to run.
+- **The signed agent removes the standard leftovers** after every successful
+  install, update or migration, and when its tray host starts. By exact name,
+  they are the `Rem0teEnrollment` task, `retry-enroll.ps1`, `enroll.dat`,
+  `tray\tray.json` and the HKLM `Run` value `Rem0teTray`. The shared
+  `Rem0teHeartbeat` task is never deleted: the signed installer has just
+  rewritten it.
+
+A computer that really went back to the standard agent is standard again
+seven days after its last signed heartbeat.
+
+**Evidence: I** (`e2e-dual-agent.mjs` through the real heartbeat, tray and
+Agent card routes; `unit-agent-identity.mjs`, with the generated PowerShell
+parsed and the hand-over run under pwsh against a stub agent; Go tests for the
+removal). It has not run on a real Windows computer.
+
 ## Signed updates (v0.24)
 
 Windows agents that run `rem0te-agent.exe` update only through the offline-signed repository this portal mirrors:

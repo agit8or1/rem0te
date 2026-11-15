@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { EnrollmentModule } from '../enrollment/enrollment.module';
+import { PsaModule } from '../psa/psa.module';
 import { AssistController, ChatRecordingController, EndpointTrayController, TrayDeviceController } from './tray.controller';
 import { TrayService } from './tray.service';
 import { AssistService } from './assist.service';
@@ -10,7 +11,7 @@ import { AssistService } from './assist.service';
 // tray panel and the chat-recording settings. ChatService, ContainmentService
 // and SupportRequestsService are global.
 @Module({
-  imports: [AuditModule, RbacModule, EnrollmentModule],
+  imports: [AuditModule, RbacModule, EnrollmentModule, PsaModule],
   controllers: [TrayDeviceController, EndpointTrayController, ChatRecordingController, AssistController],
   providers: [TrayService, AssistService],
   exports: [TrayService],

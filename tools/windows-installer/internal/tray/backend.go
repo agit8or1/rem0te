@@ -16,7 +16,9 @@ type Backend interface {
 	// Start begins delivering states to onState, until Close.
 	Start(onState func(State))
 	OpenChat(ctx context.Context) (string, error)
-	Support(ctx context.Context, text string, usage bool, shot []byte) error
+	// Support sends a support request and returns the PSA's ticket reference
+	// ("" when it named none).
+	Support(ctx context.Context, text string, usage bool, shot []byte) (string, error)
 	SelfHelp(ctx context.Context, tool string) (Result, error)
 	Seen(ids []string)
 	Kick()
@@ -117,22 +119,22 @@ func (b *PipeBackend) OpenChat(ctx context.Context) (string, error) {
 	return r.URL, nil
 }
 
-func (b *PipeBackend) Support(ctx context.Context, text string, usage bool, shot []byte) error {
+func (b *PipeBackend) Support(ctx context.Context, text string, usage bool, shot []byte) (string, error) {
 	f := Frame{T: FrameSupport, Text: text, Usage: usage}
 	if len(shot) > 0 {
 		f.Shot = base64.StdEncoding.EncodeToString(shot)
 	}
 	if _, err := CheckFromTray(Frame{T: f.T, ID: "00000000", Text: f.Text, Usage: f.Usage, Shot: f.Shot}); err != nil {
-		return err
+		return "", err
 	}
 	r, err := b.ask(ctx, f)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !r.OK {
-		return errors.New(r.Reason)
+		return "", errors.New(r.Reason)
 	}
-	return nil
+	return r.Ticket, nil
 }
 
 func (b *PipeBackend) SelfHelp(ctx context.Context, tool string) (Result, error) {
@@ -217,11 +219,12 @@ func (b *LocalBackend) OpenChat(ctx context.Context) (string, error) {
 	return u, nil
 }
 
-func (b *LocalBackend) Support(ctx context.Context, text string, usage bool, shot []byte) error {
-	if _, err := b.Core.Support(ctx, b.User, text, usage, shot); err != nil {
-		return errors.New(reason(err, "The request could not be sent"))
+func (b *LocalBackend) Support(ctx context.Context, text string, usage bool, shot []byte) (string, error) {
+	sent, err := b.Core.Support(ctx, b.User, text, usage, shot)
+	if err != nil {
+		return "", errors.New(reason(err, "The request could not be sent"))
 	}
-	return nil
+	return sent.Ticket, nil
 }
 
 func (b *LocalBackend) SelfHelp(ctx context.Context, tool string) (Result, error) {

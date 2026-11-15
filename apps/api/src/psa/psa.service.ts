@@ -13,10 +13,12 @@ import { UserBudget } from '../common/user-budget';
 import { AiService } from '../ai/ai.service';
 import { KINDS, type DriverDeps, type Kind, type PsaDriver, type Scope } from './connector';
 import { DRIVERS } from './connectors';
-import { buildDraft, defaultSubject, NOTE_MAX, SUBJECT_MAX } from './ticket';
+import { buildDraft, buildTrayDraft, defaultSubject, NOTE_MAX, SUBJECT_MAX } from './ticket';
 import { CONTROLS_ALL } from '../common/text';
 
 const ID = /^[A-Za-z0-9_-]{8,64}$/;
+/** PsaTicket.createdById for a ticket the tray asked for: there is no signed-in person. */
+export const TRAY_CREATOR = 'tray';
 
 const ConnectorInput = z.object({
   scope: z.enum(['global', 'business']),
@@ -60,6 +62,8 @@ const bad = (e: z.ZodError) => new BadRequestException({ code: 'INVALID_REQUEST'
 export class PsaService {
   private readonly deps: DriverDeps;
   private readonly budget = new UserBudget(Number(process.env.PSA_TICKETS_PER_HOUR ?? 20), 3600_000);
+  /** 0.51: tray tickets, per computer (the tray has no signed-in person to count). */
+  private readonly trayBudget = new UserBudget(Number(process.env.PSA_TRAY_TICKETS_PER_HOUR ?? 6), 3600_000);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -155,6 +159,75 @@ export class PsaService {
     }
     const g = await this.prisma.psaConnector.findUnique({ where: { scopeKey: 'global' } });
     return g?.enabled ? { row: g, scope: 'global' } : null;
+  }
+
+  // ── The tray's support request (0.51) ──────────────────────────────────────
+  //
+  // "Open a support request" in the tray is offered only when the computer's
+  // business has an enabled connector, or the platform default is enabled
+  // (trayOffered — the server decides; the tray only draws the flag). A tray
+  // request is then a ticket in that PSA, through the same connector, the
+  // same `notifications` pause and the same readiness check as "Create
+  // ticket", with a per-computer budget in place of the per-person one (there
+  // is no signed-in person). It is kept as a support request in Rem0te too, so
+  // the computer's History and the screenshot still work; the request's
+  // event log says which ticket it became.
+
+  /** Whether the tray offers support requests for a computer of this business. */
+  async trayOffered(customerId: string | null): Promise<boolean> {
+    return !!customerId && !!(await this.effective(customerId));
+  }
+
+  /**
+   * Before a tray request is stored: a connector (else
+   * SUPPORT_REQUEST_NOT_CONFIGURED — an older tray that still shows the item
+   * gets a clear answer), the notifications pause, the connector's readiness
+   * and nothing else: the per-computer budget is taken in trayTicket, after
+   * agentSubmit's own checks and caps, so a refused request costs none of
+   * it. Returns the connector to send through.
+   */
+  async trayPrecheck(ep: { id: string; customerId: string | null }) {
+    const eff = ep.customerId ? await this.effective(ep.customerId) : null;
+    if (!eff) {
+      throw new ConflictException({ code: 'SUPPORT_REQUEST_NOT_CONFIGURED', message: 'Your IT provider has not set up support requests from this computer. Contact them directly.' });
+    }
+    const pause = await activePause(this.prisma, 'notifications', ep.customerId);
+    if (pause) throw new ForbiddenException({ code: 'CONTAINED', message: pauseMessage(pause, 'notifications'), pauseId: pause.id, scope: pause.scope.toLowerCase() });
+    const ready = await this.driver(eff.row.kind).ready(eff.row, this.deps, ep.customerId);
+    if (!ready.ok) throw new ConflictException({ code: 'PSA_NOT_READY', message: 'Your IT provider\'s ticketing system cannot take requests right now. Contact them directly.' });
+    return eff;
+  }
+
+  /** Send one tray request as a ticket, after trayPrecheck and after the Rem0te request was stored. */
+  async trayTicket(
+    eff: { row: PsaConnector; scope: 'business' | 'global' },
+    ep: { id: string; tenantId: string | null; customerId: string | null; name: string; businessName: string | null; loggedOnUser: string | null },
+    req: { id: string; text: string; windowsAccount: string | null; screenshot: boolean; usage: boolean; via: string },
+  ) {
+    const drv = this.driver(eff.row.kind);
+    const web = this.urls.web();
+    const draft = buildTrayDraft({
+      requestId: req.id, text: req.text,
+      link: `${web}/endpoints/${encodeURIComponent(ep.id)}`, requestLink: `${web}/support-requests?open=${encodeURIComponent(req.id)}`,
+      computer: { id: ep.id, name: ep.name }, business: { id: ep.customerId, name: ep.businessName },
+      windowsAccount: req.windowsAccount, loggedOnUser: ep.loggedOnUser, screenshot: req.screenshot, usage: req.usage,
+    });
+    const base = { tenantId: ep.tenantId ?? undefined, customerId: ep.customerId ?? undefined, resource: 'endpoint', resourceId: ep.id };
+    const ids = { connectorKind: eff.row.kind, connectorScope: eff.scope, connectorId: eff.row.id, source: 'tray', sourceRef: draft.sourceRef, supportRequestId: req.id, via: req.via };
+    // A backstop behind agentSubmit's per-computer caps (3 an hour, 3 open).
+    const r = this.trayBudget.take(ep.id) ? await drv.send(eff.row, draft, this.deps) : ({ ok: false, status: 'rate_limited' } as const);
+    if (!r.ok) {
+      await this.audit.log({ ...base, action: 'PSA_TICKET_FAILED', meta: { ...ids, status: r.status } });
+      return { ok: false as const, status: r.status, kindLabel: drv.label };
+    }
+    const ticket = await this.prisma.psaTicket.create({
+      data: {
+        tenantId: ep.tenantId, customerId: ep.customerId, endpointId: ep.id, sourceRef: draft.sourceRef, fingerprint: draft.sourceRef,
+        connectorKind: eff.row.kind, connectorScope: eff.scope, ref: r.ref ?? null, url: r.url ?? null, createdById: TRAY_CREATOR,
+      },
+    });
+    await this.audit.log({ ...base, action: 'PSA_TICKET_CREATED', meta: { ...ids, ticketId: ticket.id, ref: ticket.ref, status: r.status } });
+    return { ok: true as const, ticketId: ticket.id, ref: ticket.ref, kindLabel: drv.label };
   }
 
   /** For the buttons: is a ticket possible from this computer, and the tickets already made. */

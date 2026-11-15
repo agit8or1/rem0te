@@ -466,6 +466,39 @@ hand:
 
 If it was the automatic migration's halted canary, **Resume** it once it reports the signed agent.
 
+## "Two agents are reporting from this computer" (0.51)
+
+The Agent card shows this when a standard heartbeat has reported in the last
+day from a computer that runs the signed agent. Two things leave one behind:
+
+- the standard installer run on a computer already on the signed agent;
+- before 0.51, a standard update handed to a signed computer during its own
+  install. Both installers register the same `Rem0teHeartbeat` task, so the
+  standard one took its place.
+
+Rem0te ignores the standard heartbeat. It changes nothing on the record and is
+handed nothing. A standard heartbeat from 0.51 or later hands over by itself
+within about half an hour. For an older one, run the card's command in an
+elevated PowerShell on the computer:
+
+```powershell
+& "$env:ProgramFiles\Rem0te\rem0te-agent.exe" update
+```
+
+That reinstalls the signed heartbeat and removes the standard leftovers. The
+warning clears a day after the last standard report. If the computer has
+stopped checking in altogether, `C:\ProgramData\Rem0te\Logs\install.log`
+and `agent-status.json` say where the last update stopped.
+
+### The tray icon disappeared after an update (before 0.51)
+
+Every signed update replaced `rem0te-agent.exe`, even with the same bytes, and
+the tray host leaves when its binary changes. Every session's icon then
+disappeared until the next heartbeat started a new host. From 0.51 an
+identical agent is not replaced, and a host that is replaced starts its
+successor itself. On an older agent, the icon comes back with the next
+heartbeat (within 3 minutes), or when the person signs in again.
+
 ## Services
 
 ```bash

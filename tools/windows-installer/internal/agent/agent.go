@@ -219,7 +219,14 @@ func stage1(o Options, p Platform, c *trust.Client) (int, error) {
 	if _, err := c.Fetch(TargetAgent, tmp); err != nil {
 		return 0, err
 	}
-	if err := p.InstallAgent(tmp, o.Paths.AgentExe()); err != nil {
+	// 0.51: an installed agent that already is the verified build is left in
+	// place. Replacing it with identical bytes still changed its timestamp,
+	// and the running tray host leaves when its binary changes — taking every
+	// session's tray icon with it until the next heartbeat started a new host
+	// (DEWEY-WKS2022: two reinstalls in seven minutes, then no icon).
+	if sameFile(tmp, o.Paths.AgentExe()) {
+		_ = os.Remove(tmp)
+	} else if err := p.InstallAgent(tmp, o.Paths.AgentExe()); err != nil {
 		return 0, fmt.Errorf("installing the verified agent binary: %w", err)
 	}
 	args := []string{string(o.Mode), "--stage2", "--portal", o.PortalHost}
@@ -376,6 +383,15 @@ func stage2(o Options, p Platform, c *trust.Client) (int, error) {
 		res = "installer failed: " + err.Error()
 	}
 	res += trayNote
+	// 0.51: after a successful install, the standard agent's leftovers go
+	// (retire.go: exact names, never the shared heartbeat task).
+	if code == 0 && err == nil {
+		if sr, ok := p.(StandardRetirer); ok {
+			if s := RetireStandard(o.Paths, sr.RetireOps()).Summary(); s != "" {
+				res += "; " + s
+			}
+		}
+	}
 	writeStatus(o, Status{Channel: "signed", TrustRoot: c.RootVersion(), TargetsVersion: c.TargetsVersion(), AgentSHA256: selfSum, LastResult: res, RelayChangeAsked: relayChange, TraySHA256: traySum})
 	return code, err
 }
@@ -489,6 +505,16 @@ func writeStatus(o Options, s Status) {
 	}
 	raw, _ := json.Marshal(s)
 	_ = os.WriteFile(o.Paths.StatusFile(), raw, 0o600)
+}
+
+// sameFile: both exist and have the same SHA-256.
+func sameFile(a, b string) bool {
+	x, err := FileSHA256(a)
+	if err != nil {
+		return false
+	}
+	y, err := FileSHA256(b)
+	return err == nil && x == y
 }
 
 func FileSHA256(p string) (string, error) {

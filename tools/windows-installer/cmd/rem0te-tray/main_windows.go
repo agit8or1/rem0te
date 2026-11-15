@@ -134,7 +134,9 @@ type app struct {
 	portalFromState bool
 	hwnd            windows.HWND
 	icon            windows.Handle
-	iconBadge       bool
+	iconState       string // icons.go: normal | connected | attention | offline
+	iconTip         string
+	lightBar        bool // the taskbar uses the light theme
 	added           bool
 
 	mu          sync.Mutex
@@ -173,7 +175,8 @@ func (a *app) run() int {
 	if a.hwnd == 0 {
 		return 5
 	}
-	a.setIcon("#3B82F6", false, "Connecting to your IT provider…")
+	a.lightBar = lightTaskbar()
+	a.setIcon(iconNormal, "Connecting to your IT provider…")
 	a.backend.Start(func(s tray.State) {
 		a.mu.Lock()
 		a.state, a.haveState = s, true
@@ -226,6 +229,13 @@ func appProc(hwnd windows.HWND, m uint32, w, l uintptr) uintptr {
 	case wmDestroy:
 		pPostQuitMessage.Call(0)
 		return 0
+	case wmSettingChange:
+		// The person switched the taskbar between light and dark: redraw
+		// with the other variant. DefWindowProc still sees the message.
+		if l := lightTaskbar(); l != a.lightBar && a.iconState != "" {
+			a.lightBar = l
+			a.setIcon(a.iconState, a.iconTip)
+		}
 	}
 	r, _, _ := pDefWindowProcW.Call(uintptr(hwnd), uintptr(m), w, l)
 	return r
@@ -256,7 +266,7 @@ func (a *app) applyState() {
 	if unread > 0 {
 		tip += fmt.Sprintf(" — %d new message(s)", unread)
 	}
-	a.setIcon(s.Accent, unread > 0, tip)
+	a.setIcon(iconStateFor(s, true), tip)
 	var fresh []string
 	for _, id := range s.Chat.Unread {
 		if !a.shownUnread[id] {
@@ -285,8 +295,10 @@ func parseHex(s string) color.RGBA {
 	return color.RGBA{0x3B, 0x82, 0xF6, 255}
 }
 
-// makeIcon draws the tray icon: a filled circle in the business's accent
-// colour with a white speech mark, and a red dot when there is something unread.
+// makeIcon draws the pre-0.51 tray icon: a filled circle in the business's
+// accent colour with a white speech mark, and a red dot when there is
+// something unread. Since 0.51 it is only the fallback for an embedded icon
+// that could not be loaded (icons_windows.go), so the tray is never iconless.
 func makeIcon(accent string, badge bool) windows.Handle {
 	const n = 32
 	img := image.NewRGBA(image.Rect(0, 0, n, n))
@@ -337,9 +349,15 @@ func (a *app) iconData() notifyIconData {
 	return d
 }
 
-func (a *app) setIcon(accent string, badge bool, tip string) {
+// setIcon shows the generated icon for state (icons.go) on this taskbar's
+// theme, with tip as the tooltip.
+func (a *app) setIcon(state, tip string) {
 	old := a.icon
-	a.icon = makeIcon(accent, badge)
+	a.iconState, a.iconTip = state, tip
+	a.icon = loadTrayIcon(state, a.lightBar)
+	if a.icon == 0 {
+		a.icon = makeIcon("#3B82F6", state == iconAttention)
+	}
 	d := a.iconData()
 	d.Flags = nifMessage | nifIcon | nifTip
 	d.CallbackMessage = wmTrayIcon
@@ -388,11 +406,11 @@ func (a *app) showMenu() {
 		chatFlags |= mfGrayed
 	}
 	appendItem(menu, chatFlags, idChat, menuLabel(s))
-	supFlags := uint32(mfString)
-	if !have || !s.HasBusiness {
-		supFlags |= mfGrayed
+	// 0.51: offered only when the portal says a PSA is set up — hidden, not
+	// greyed, otherwise (tray.OffersSupport).
+	if tray.OffersSupport(s, have) {
+		appendItem(menu, mfString, idSupport, "Open a support request…")
 	}
-	appendItem(menu, supFlags, idSupport, "Open a support request…")
 	sub, _, _ := pCreatePopupMenu.Call()
 	for i, t := range s.Tools {
 		f := uint32(mfString)
