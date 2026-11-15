@@ -259,11 +259,13 @@ export function accent(raw: string | null | undefined): string {
 }
 
 /**
- * The "technician support" line in About: the IT provider's phone and
- * e-mail as its branding records them, or a fixed sentence. Never anything a
- * device, a chat message or a request can set.
+ * The "technician support" line in the tray's menu and About: the IT
+ * provider's phone and e-mail as its branding records them, or '' when it
+ * records neither (0.53.1: was a fixed "Contact your IT provider for
+ * support.", which the menu header would have shown as if it were a
+ * contact). Never anything a device, a chat message or a request can set.
  */
 export function supportLine(b: { supportPhone?: string | null; supportEmail?: string | null } | null | undefined): string {
   const parts = [b?.supportPhone, b?.supportEmail].map((x) => summaryLine(x ?? '')?.slice(0, 120)).filter(Boolean);
-  return parts.length ? `Support: ${parts.join(' · ')}` : 'Contact your IT provider for support.';
+  return parts.length ? `Support: ${parts.join(' · ')}` : '';
 }

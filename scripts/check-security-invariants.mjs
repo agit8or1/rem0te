@@ -3605,6 +3605,34 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /onlyFields\(f, "id", "ok", "reason", "url", "outcome", "summary", "lines", "ticket"\)/.test(gproto) && /f\.Ticket = CleanTicketRef\(f\.Ticket\)/.test(gproto)
       && /onlyFields\(f, "id", "text", "usage", "shot"\)/.test(gproto),
     'OffersSupport; the menu appends idSupport only behind it; reply frames may carry ticket, cleaned; a support frame from the tray may not');
+
+  // 0.53.1: the tray's brand (business, provider, support line, accent) is
+  // the portal's records only, and the last-known copy the tray keeps holds
+  // those four fields and nothing else.
+  const gbrand = read('tools/windows-installer/internal/tray/brand.go');
+  const gbfile = read('tools/windows-installer/cmd/rem0te-tray/brandfile.go');
+  const brandFn = tsv.slice(tsv.indexOf('  brand(ep: '), tsv.indexOf('  // ── POST /tray/status'));
+  const brandStruct = (gbrand.match(/type Brand struct \{([^}]*)\}/) ?? [])[1] ?? '';
+  check('the tray brand comes from the portal\'s records and names no one it does not have: the customer\'s and tenant\'s names, the branding\'s phone/e-mail and accent, "" otherwise',
+    /from the portal's records, never\s*\n?\s*\*?\s*from a device or a message/.test(tsv)
+      && /businessName: deviceName\(ep\.customer\?\.name \?\? ''\) \?\? '',/.test(brandFn)
+      && /providerName: deviceName\(ep\.tenant\?\.name \?\? ''\) \?\? '',/.test(brandFn)
+      && /supportText: supportLine\(ep\.tenant\?\.branding\),/.test(brandFn) && /accent: accent\(ep\.tenant\?\.branding\?\.accentColor\),/.test(brandFn)
+      && !/Your IT provider|body\.|localUser|portalTitle/.test(brandFn.replace(/\/\*\*[\s*\S]*?\*\//, ''))
+      && /return parts\.length \? `Support: \$\{parts\.join\(' · '\)\}` : '';/.test(pol),
+    "brand(): customer.name / tenant.name through deviceName, else ''; supportLine(branding) is '' without a phone or e-mail; nothing from the request body");
+  check('the tray\'s last-known brand file holds exactly business, provider, supportText and accent, is per user, capped, re-cleaned on read, and anything else is no file',
+    JSON.stringify([...brandStruct.matchAll(/json:"([a-zA-Z]+)"/g)].map((m) => m[1])) === JSON.stringify(['business', 'provider', 'supportText', 'accent'])
+      && (brandStruct.match(/\n\t[A-Z]\w* +string/g) ?? []).length === 4
+      && /const MaxBrandFileBytes = 4 << 10/.test(gbrand)
+      && /if len\(raw\) > MaxBrandFileBytes \{\s*\n\s*return Brand\{\}, false/.test(gbrand)
+      && /d\.DisallowUnknownFields\(\)/.test(gbrand.slice(gbrand.indexOf('func ParseBrand(')))
+      && /return b\.Clean\(\), true/.test(gbrand) && /out, _ := json\.Marshal\(b\.Clean\(\)\)/.test(gbrand)
+      && /io\.LimitReader\(f, tray\.MaxBrandFileBytes\+1\)/.test(gbfile) && /b, ok := tray\.ParseBrand\(raw\)/.test(gbfile)
+      && /tmp\.Write\(tray\.MarshalBrand\(b\)\)/.test(gbfile) && (gbfile.match(/\.Write\(/g) ?? []).length === 1
+      && /os\.Getenv\("LOCALAPPDATA"\)/.test(gbfile) && !/ProgramData|trayDir/.test(gbfile)
+      && /return b, b != saved/.test(trayArgs) && /if !have \|\| s\.Offline \{\s*\n\s*return tray\.Brand\{\}, false/.test(trayArgs),
+    'Brand{business, provider, supportText, accent}; ParseBrand: ≤ 4 KiB, DisallowUnknownFields, Clean(); the tray writes only MarshalBrand(b) to %LOCALAPPDATA%\\Rem0te, and only from an online answer');
 }
 
 // 56. Signed releases on one host (0.37). deploy/release/ sets up, builds,

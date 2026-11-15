@@ -51,6 +51,7 @@ func (a *app) openSupport() {
 	if s.Business != "" {
 		title = "Support request — " + s.Business
 	}
+	title = clipU16(title, maxWindowTitle)
 	f := &supportForm{}
 	a.support = f
 	f.hwnd = createWindow(wsExTopmost, supportClass, title, wsOverlapped|wsCaption|wsSysMenu|wsMinimizeBox, 200, 120, 470, 520, 0, 0)
@@ -204,7 +205,8 @@ func (f *supportForm) submit() {
 				f.setStatus(err.Error())
 				return
 			}
-			msgBox(f.hwnd, tray.SupportSentText(ticket), "Support request", mbOK|mbIconInfo)
+			st, _ := theApp.snapshot()
+			msgBox(f.hwnd, tray.SupportSentText(ticket, st.Provider), "Support request", mbOK|mbIconInfo)
 			pDestroyWindow.Call(uintptr(f.hwnd))
 		})
 	}()

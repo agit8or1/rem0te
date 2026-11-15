@@ -229,7 +229,12 @@ func u16(s string) *uint16 { p, _ := windows.UTF16PtrFromString(s); return p }
 func copyU16(dst []uint16, s string) {
 	src, _ := windows.UTF16FromString(s)
 	if len(src) > len(dst) {
-		src = append(src[:len(dst)-1], 0)
+		keep := len(dst) - 1
+		// Never end on the first half of a surrogate pair (0.53.1).
+		if keep > 0 && src[keep-1] >= 0xD800 && src[keep-1] <= 0xDBFF {
+			keep--
+		}
+		src = append(src[:keep], 0)
 	}
 	copy(dst, src)
 }

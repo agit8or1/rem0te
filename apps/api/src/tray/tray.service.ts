@@ -154,11 +154,22 @@ export class TrayService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  /** The brand the tray and the page show: from the portal's records, never from a device or a message. */
+  /**
+   * The brand the tray and the page show: from the portal's records, never
+   * from a device or a message.
+   *
+   * 0.53.1: a name the records do not have is '' — the tray and /assist pick
+   * the generic wording ("support", "your IT provider") themselves. Before,
+   * a computer with no business was sent businessName 'Your IT provider', and
+   * the tray drew "Support for Your IT provider". The provider is the
+   * Tenant's name, not TenantBranding.portalTitle: that is the portal's page
+   * title, defaults to 'Remote Support Portal' for every tenant, and would
+   * read "MSP Reboot · supported by Remote Support Portal".
+   */
   brand(ep: Awaited<ReturnType<TrayService['context']>>) {
     return {
-      businessName: deviceName(ep.customer?.name ?? '') ?? 'Your IT provider',
-      providerName: deviceName(ep.tenant?.name ?? '') ?? 'Your IT provider',
+      businessName: deviceName(ep.customer?.name ?? '') ?? '',
+      providerName: deviceName(ep.tenant?.name ?? '') ?? '',
       supportText: supportLine(ep.tenant?.branding),
       accent: accent(ep.tenant?.branding?.accentColor),
     };
