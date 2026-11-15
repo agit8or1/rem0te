@@ -15,6 +15,7 @@ import { CLASS_NAMES, DEFAULT_POLICY_CLASSES, DRIVERS_CLASS, POLICY_STATUS, WEEK
 import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
 import { EFFECTIVE_LABEL, type EffectivePolicy } from '@/components/patching/patch-policy-setting';
 import { Building2, Loader2, Plus } from 'lucide-react';
+import { describeOccurrence } from '@/lib/tasks';
 
 /**
  * Company-wide and assignable patch policies (0.50), and every computer's
@@ -31,6 +32,8 @@ interface Series {
   id: string; scope: 'business' | 'assigned'; name: string; status: 'active' | 'retired'; createdAt: string; retireReason: string | null;
   settings: { window: { days: string[]; start: string; end: string; timezone: string }; reboot: string; expiresInDays: number };
   computersSetToUse: number;
+  /** 0.52: when the running revision next installs (null when nothing runs, or it expires first). */
+  nextWindow?: { start: string; end: string } | null;
   lastCheck: { at: string; code: string; message: string; members: number; rings: number[]; canary: { hostname: string; why: string } | null; leftOut: LeftOut[]; lastRingOnly: string[]; promotion?: { code: string; message: string } | null } | null;
   revisions: { id: string; revision: number; status: string; expiresAt: string; createdAt: string; running: boolean; computers: number; approvalUrl: string }[];
   bounds: { revisionMinutes: number; settleMinutes: number; maxComputers: number };
@@ -91,6 +94,7 @@ export function CompanyPoliciesCard({ businessId }: { businessId: string }) {
                 <Badge variant="outline">{s.scope === 'business' ? 'company-wide' : 'assignable'}</Badge>
                 <Badge variant={s.status === 'active' ? 'success' : 'outline'}>{s.status}</Badge>
                 <span className="text-xs text-muted-foreground">{describeWindow(s.settings.window)} · {s.settings.reboot === 'never' ? 'never restarts' : 'restarts if required, in the window'} · revisions last {s.settings.expiresInDays} days{s.scope === 'assigned' ? ` · ${s.computersSetToUse} computer(s) set to use it` : ''}</span>
+                <span className="w-full text-xs" data-testid="series-next-window">{s.nextWindow ? <>Next install window: <strong>{describeOccurrence(s.nextWindow, s.settings.window.timezone)}</strong></> : <span className="text-muted-foreground">No install window coming up{s.status === 'active' ? ' — no revision is running, or it expires first' : ''}.</span>}</span>
                 {s.status === 'active' && s.mayManage && (
                   <Button size="sm" variant="ghost" className="ml-auto" disabled={retire.isPending} onClick={() => { const reason = window.prompt('Why retire this policy? Its revisions are revoked on the approval signer.'); if (reason && reason.trim().length >= 3) retire.mutate({ id: s.id, reason: reason.trim() }); }}>Retire</Button>
                 )}

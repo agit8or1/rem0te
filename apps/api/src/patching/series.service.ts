@@ -10,7 +10,7 @@ import { ActionsService } from '../actions/actions.service';
 import { CAP } from '../rbac/capabilities';
 import { assertFresh } from '../security-controls/review';
 import { UPDATE_INSTALL } from '../actions/catalog';
-import { PolicyDoc } from '../actions/patch-policy';
+import { PolicyDoc, PolicyWindow, nextOccurrence } from '../actions/patch-policy';
 import { selfSignedScanKey } from '../actions/device-result';
 import { PatchingService } from './patching.service';
 import { PatchPolicyService } from './policies.service';
@@ -410,6 +410,8 @@ export class PatchSeriesService implements OnModuleInit {
         id: s.id, businessId: s.customerId, scope: s.scope, name: s.name, status: s.status, settings: s.settings, createdAt: s.createdAt, createdById: s.createdById,
         retiredAt: s.retiredAt, retireReason: s.retireReason, currentPolicyId: s.currentPolicyId, computersSetToUse: users,
         lastCheck: s.lastCheck,
+        // 0.52: when the running revision next installs, so the list can say "next install window: Tue 02:00–04:00".
+        nextWindow: nextWindowOf(s, revs.find((r) => r.id === s.currentPolicyId) ?? null),
         revisions: revs.map((r) => ({ id: r.id, revision: r.revision, status: r.status, expiresAt: r.expiresAt, createdAt: r.createdAt, supersededAt: r.supersededAt, approvalUrl: r.approvalUrl, running: r.id === s.currentPolicyId, computers: (r.document as unknown as PolicyDoc).rings.flat().length })),
         bounds: { revisionMinutes: revisionMinutes(), settleMinutes: settleMinutes(), maxComputers: MAX_POLICY_COMPUTERS },
         mayManage: this.mayManage(actor, s.customerId) || s.createdById === actor.userId,
@@ -493,7 +495,18 @@ export class PatchSeriesService implements OnModuleInit {
       state = 'none';
       why = 'No automatic patching: this business has no company-wide patch policy, and this computer is not set to use another policy.';
     }
-    return { setting, effective: { state, why, policy, series: covering ? { id: covering.id, name: covering.name, scope: covering.scope } : null } };
+    // 0.52: the covering policy's window, and when it next opens for this computer.
+    let window: PolicyWindow | null = null;
+    let nextWindow: { start: Date; end: Date } | null = null;
+    if (live && (state === 'covered')) {
+      const doc = await this.prisma.patchPolicy.findUnique({ where: { id: live.policy.id }, select: { document: true, expiresAt: true, status: true } });
+      const w = PolicyWindow.safeParse((doc?.document as { window?: unknown } | null)?.window);
+      if (w.success) { window = w.data; nextWindow = doc?.status === 'ACTIVE' ? nextOccurrence(new Date(), w.data, doc.expiresAt) : null; }
+    } else if (covering) {
+      const w = PolicyWindow.safeParse((covering.settings as { window?: unknown } | null)?.window);
+      if (w.success) window = w.data;
+    }
+    return { setting, effective: { state, why, policy, series: covering ? { id: covering.id, name: covering.name, scope: covering.scope } : null, window, nextWindow } };
   }
 
   /**
@@ -531,4 +544,11 @@ export class PatchSeriesService implements OnModuleInit {
     });
     return { setting: after, changed: true };
   }
+}
+
+/** 0.52: the next occurrence of a series' window, inside its running revision's life. */
+function nextWindowOf(s: PatchPolicySeries, current: { status: string; expiresAt: Date } | null, now = new Date()): { start: Date; end: Date } | null {
+  if (s.status !== 'active' || !current || current.status !== 'ACTIVE') return null;
+  const w = PolicyWindow.safeParse((s.settings as { window?: unknown } | null)?.window);
+  return w.success ? nextOccurrence(now, w.data, current.expiresAt) : null;
 }

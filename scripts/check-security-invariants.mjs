@@ -1073,9 +1073,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('e2e and docs stacks run with the sweep off unless testing it',
     /export PATCH_POLICY_SWEEP=off/.test(read('scripts/run-e2e.sh')) && /PATCH_POLICY_SWEEP=off/.test(read('docs/screenshots.md')),
     'scripts/run-e2e.sh and the docs stack (docs/screenshots.md) must set PATCH_POLICY_SWEEP=off');
-  const ins = at(psvc, 'async installOnEndpoint(', 1800);
+  const ins = at(psvc, 'async installOnEndpoint(', 2400);
   check('a manual install is a one-computer deployment whose canary still awaits two approvals',
-    /rings: \[\[endpointId\]\]/.test(ins) && /'MANUAL', null\)/.test(ins) && /this\.requestRing\(actor, d\.id, 0, \{ reason: dto\.reason, startsInMinutes: dto\.startsInMinutes \}, undefined, freshMethod\);/.test(ins) && !/underPolicy|UnderPolicy/.test(ins),
+    /rings: \[\[endpointId\]\]/.test(ins) && /'MANUAL', null\)/.test(ins) && /this\.requestRing\(actor, d\.id, 0, \{ reason: dto\.reason, startsInMinutes: dto\.startsInMinutes, \.\.\.\(dto\.schedule \? \{ schedule: dto\.schedule \} : \{\}\) \}, undefined, freshMethod\);/.test(ins) && !/underPolicy|UnderPolicy/.test(ins),
     'installOnEndpoint must not pass a policy (which would sign without approvals)');
   check('only the sweep requests a ring under a policy, and a person cannot request one beside it',
     /if \(!under && d\.origin === 'POLICY'\) throw new ConflictException/.test(psvc) && (pctl.match(/requestRing\(/g) ?? []).length === 2
@@ -4606,6 +4606,77 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'revoke() and the signer-revoked mirror must retire the series');
   check('assignment: the suites prove it', / patch-assignment /.test(read('scripts/run-e2e.sh')) && /unit-patch-assignment\.mjs/.test(read('.github/workflows/ci.yml')),
     'run-e2e.sh must run e2e-patch-assignment and CI must run unit-patch-assignment');
+}
+
+// 64. Task progress and scheduled installs (0.52). The task views are read
+//     only: the tasks module writes nothing itself (it pulls a pending
+//     approval through ActionsService.refresh, as every job read does) and
+//     has no route but GETs, and
+//     every list goes through endpointVisibilityWhere (one computer: through
+//     assertEndpointInScope with computers:view). A scheduled install is an
+//     ordinary signed plan whose window opens at the scheduled time: the plan
+//     the signer signs carries the same notBefore the portal stores, the one
+//     dispatch site hands out nothing before it, and the agent refuses a plan
+//     whose window has not opened by its own clock without consuming it.
+//     Cancelling a scheduled task is the existing cancel, which touches only
+//     a plan that reached no computer, and only its PENDING targets.
+{
+  const act = read('apps/api/src/actions/actions.service.ts');
+  const pat = read('apps/api/src/patching/patching.service.ts');
+  const tsvc = read('apps/api/src/tasks/tasks.service.ts');
+  const tctl = read('apps/api/src/tasks/tasks.controller.ts');
+  const life = read('apps/api/src/tasks/lifecycle.ts');
+  const agent = read('tools/windows-installer/internal/action/action.go');
+  const create = act.slice(act.indexOf('  async createPlan('), act.indexOf('  async view('));
+  check('schedule: the signed plan carries the notBefore the portal stores (one variable for both)',
+    /const notBefore = r\.window\?\.notBefore \?\? new Date\(now\.getTime\(\) \+ r\.startsInMinutes \* 60_000\);/.test(create)
+      && /window: \{ notBefore: notBefore\.toISOString\(\), notAfter: notAfter\.toISOString\(\) \},/.test(create)
+      && /notBefore, notAfter, plan: plan as unknown as Prisma\.InputJsonValue/.test(create),
+    'createPlan must sign plan.window from the same notBefore/notAfter it stores on ActionJob');
+  check('schedule: a schedule becomes the plan window only through scheduledWindow, never beside a policy\'s window',
+    /\.\.\.\(!under && dto\.schedule \? \{ window: scheduledWindow\(dto\.schedule, d\.windowHours\) \} : \{\}\),/.test(pat)
+      && /if \(dto\.schedule && \(under \|\| dto\.startsInMinutes\)\) this\.bad\(/.test(pat)
+      && /const notBefore = scheduledStart\(s, now\);/.test(pat) && /MAX_SCHEDULE_DAYS = 14;/.test(pat)
+      && /code: 'SCHEDULE_IN_PAST'/.test(pat) && /code: 'INVALID_TIMEZONE'/.test(pat),
+    'requestRing must build the window with scheduledWindow, refuse it under a policy or with startsInMinutes, and scheduledStart must bound it');
+  const hb = act.slice(act.indexOf('  async forHeartbeat('), act.indexOf('  private async scriptFor('));
+  const iHold = hb.indexOf('if (now < job.notBefore) continue;'), iWrite = hb.indexOf("data: { status: 'DISPATCHED', dispatchedAt: now");
+  const dispatchSites = walk('apps/api/src').filter((f) => /actionTarget\.updateMany\([^\n]*data: \{ status: 'DISPATCHED'/.test(read(f)));
+  check('schedule: nothing is handed out before notBefore — the one dispatch write comes after the check',
+    iHold > 0 && iWrite > iHold && dispatchSites.length === 1 && dispatchSites[0].endsWith('actions/actions.service.ts') && (act.match(/actionTarget\.updateMany\(\{ where: \{ id: t\.id, status: 'PENDING' \}, data: \{ status: 'DISPATCHED'/g) ?? []).length === 1,
+    `notBefore check at ${iHold}, dispatch write at ${iWrite}; dispatch sites: ${dispatchSites.join(', ')}`);
+  check('schedule: the agent refuses a plan whose window has not opened (not_yet_valid), and does not consume it',
+    /if now\.Before\(nb\) \{\s*return nil, refuse\("not_yet_valid"/.test(agent) && /if r\.Reason == "not_yet_valid" \{\s*return r, nil\s*\}/.test(agent),
+    'internal/action/action.go must refuse before notBefore and return without final() for not_yet_valid');
+  const cancel = act.slice(act.indexOf('  async cancel('), act.indexOf('  async reconcile('));
+  check('schedule: cancel touches only a plan that reached no computer, and only its PENDING targets',
+    /where: \{ id, status: \{ in: \['AWAITING_APPROVAL', 'APPROVED'\] \} \}, data: \{ status: 'CANCELED'/.test(cancel)
+      && /actionTarget\.updateMany\(\{ where: \{ jobId: id, status: 'PENDING' \}, data: \{ status: 'CANCELED', statusReason: 'plan canceled' \} \}\)/.test(cancel)
+      && /if \(!this\.mayManage\(actor, j\)\)/.test(cancel) && /action: 'ACTION_CANCELED'/.test(cancel)
+      && !/'DISPATCHED'/.test(cancel),
+    'ActionsService.cancel must stay conditional on AWAITING_APPROVAL/APPROVED, cancel PENDING targets only, check who may manage it and audit');
+  check('schedule: a task view offers cancel only before delivery',
+    (life.match(/v\.cancelJobId = /g) ?? []).length === 2 && /v\.cancelJobId = job\.status === 'APPROVED' \? job\.id : null;/.test(life),
+    'lifecycle.ts must set cancelJobId only for AWAITING_APPROVAL and for an APPROVED plan whose target is PENDING');
+  const taskFiles = walk('apps/api/src/tasks');
+  const writes = taskFiles.filter((f) => /\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(|\$executeRaw|\$queryRaw/.test(read(f)));
+  check('tasks: the module is read only — no write, no raw SQL, GET routes only; it only pulls a pending approval (ActionsService.refresh)',
+    taskFiles.length >= 4 && writes.length === 0 && !/this\.actions\.(?!refresh\()/.test(tsvc) && !/@(Post|Put|Patch|Delete)\(/.test(tctl) && (tctl.match(/@Get\(/g) ?? []).length === 3,
+    `writes in ${writes.join(', ')}`);
+  const rows = tsvc.slice(tsvc.indexOf('  private async rowsFor('), tsvc.indexOf('  private assertView('));
+  check('tasks: every read is scoped to computers the reader can see, with computers:view',
+    (rows.match(/where: \{ endpoint: where,/g) ?? []).length === 4 && /where: \{ AND: \[\{ endpoint: where \}, recentOrOpenTarget/.test(rows) && /where: \{ AND: \[where, \{ patchScanRequestedAt: \{ not: null \} \}\] \}/.test(rows)
+      && /async forEndpoint\([^]*?this\.assertView\(actor\);\s*await this\.acl\.assertEndpointInScope\(actor, endpointId, CAP\.COMPUTERS_VIEW\);\s*const tasks = await this\.build\(await this\.rowsFor\(\{ id: endpointId \}/.test(tsvc)
+      && /async list\([^]*?this\.assertView\(actor\);[^]*?const where = this\.acl\.endpointVisibilityWhere\(actor, q\.businessId \?\? null\);/.test(tsvc)
+      && /async mine\([^]*?this\.assertView\(actor\);[^]*?const where = this\.acl\.endpointVisibilityWhere\(actor\);[^]*?requestedById: actor\.userId/.test(tsvc)
+      && /this\.acl\.assertCapability\(actor, CAP\.COMPUTERS_VIEW\);/.test(tsvc),
+    'TasksService.rowsFor must filter every table by the visibility where; forEndpoint, list and mine must check computers:view first');
+  check('tasks: a restart scheduled after an install asks only for a scan, and only once it succeeded',
+    /const rebootAt = t\.job\.actionId === REBOOT_SCHEDULE\.id && r\.outcome === 'succeeded' \? Date\.parse\(r\.observed\?\.scheduledFor \?\? ''\) : NaN;/.test(act)
+      && /data: \{ patchScanRequestedAt: new Date\(rebootAt \+ 2 \* 60_000\) \}/.test(act),
+    'recordResults may only set patchScanRequestedAt from a succeeded windows.reboot.schedule result');
+  check('tasks: the suites prove it', / task-progress[ ;]/.test(read('scripts/run-e2e.sh')) && /unit-task-progress\.mjs/.test(read('.github/workflows/ci.yml')),
+    'run-e2e.sh must run e2e-task-progress and CI must run unit-task-progress');
 }
 
 if (failures.length > 0) {

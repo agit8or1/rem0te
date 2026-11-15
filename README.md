@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.50.4-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.52.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -66,7 +66,7 @@ it, its default and its limits: **Settings → Security → Security Features**,
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
 
-## What's new in 0.40 to 0.50
+## What's new in 0.40 to 0.52
 
 Every change on a computer below (services, processes, installing and removing software) needs the full (signed)
 Windows agent and an approval signer, and none of those changes has yet run on a real Windows computer: they have
@@ -74,6 +74,13 @@ been tested against a simulated one. Ask AI and Create ticket have been tested o
 real provider or PSA. [What each agent can do](docs/capabilities.md)
 says what is proven and what is not.
 
+- **See where every task is, and schedule update installs (0.52).** Every action, install, restart, script,
+  snapshot, scan and agent upgrade you send shows its steps — scheduled, waiting for approval, queued for the next
+  check-in, handed out, running, done — with per-update results, on the computer page, on Automation → Tasks and in
+  a toast when yours finishes. After an install that needs a restart the Patches tab says so and offers *Schedule
+  restart*. *Install updates* and a deployment's next ring can start at a date and time in a named zone, signed into
+  the plan; scheduling has been tested against a simulated agent only.
+  [Staged patching](docs/staged-patching.md#scheduled-installs)
 - **Patch policies for a whole business, changed per computer (0.50).** A company-wide patch policy covers every
   Windows computer of a business on the signed agent: the portal picks the canary, puts the rest in rings of at most
   25, and lists any computer it left out with the reason. Each computer's *Patch policy* is *Inherit*, *Exclude* or

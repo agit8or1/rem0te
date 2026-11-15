@@ -1,6 +1,6 @@
 {
   "name": "reboot-remote",
-  "version": "0.50.4",
+  "version": "0.52.0",
   "private": true,
   "packageManager": "pnpm@11.27.0",
   "engines": {
