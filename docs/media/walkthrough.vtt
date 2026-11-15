@@ -1,437 +1,580 @@
 WEBVTT
 
 NOTE
-Captions for the Rem0te walkthrough (media/walkthrough.mp4, 10:58).
+Captions for the Rem0te walkthrough (media/walkthrough.mp4, 14:35).
 The video is caption-led and has no narration or audio track; these cues are
 the on-screen captions, timed from the recorder's own log
 (scripts/video-captions.mjs).
 
 1
-00:00:01.080 --> 00:00:07.080
+00:00:00.850 --> 00:00:06.860
 Rem0te — Self-hosted remote support and management
 for the computers of your customer businesses, built
 on RustDesk. — A captioned tour of every feature ·
-v0.50
+v0.53
 
 2
-00:00:07.680 --> 00:00:22.040
+00:00:07.390 --> 00:00:16.630
 A demo environment: every business, person and
 computer here is fictitious
 
 3
-00:00:22.090 --> 00:00:25.680
+00:00:16.680 --> 00:00:20.260
 The computers report through a simulated agent:
 nothing shown here ran on a real Windows PC
 
 4
-00:00:30.290 --> 00:00:36.430
+00:00:23.720 --> 00:00:28.490
 The dashboard: what needs attention now, across
 every customer business
 
 5
-00:00:36.480 --> 00:00:42.430
+00:00:28.540 --> 00:00:33.170
 A site outage is grouped into one alert instead of
 one per computer
 
 6
-00:00:42.480 --> 00:00:48.540
+00:00:33.220 --> 00:00:37.900
 Counts, customers affected and patch status, each a
 link into the detail
 
 7
-00:00:53.400 --> 00:00:59.530
+00:00:41.080 --> 00:00:45.890
 Devices: every enrolled computer you may see, with
 health, agent and patches
 
 8
-00:00:59.580 --> 00:01:08.400
+00:00:45.940 --> 00:00:52.520
 Search by name, host, IP, user or business
 
 9
-00:01:08.450 --> 00:01:18.510
+00:00:52.570 --> 00:01:00.020
 Filters for business, site, group, online state,
 alerts and agent
 
 10
-00:01:18.560 --> 00:01:24.410
+00:01:00.070 --> 00:01:04.840
 Views save a filter set, private or shared with the
 team
 
 11
-00:01:24.460 --> 00:01:30.230
+00:01:04.890 --> 00:01:09.720
 Columns come in at the window widths where they fit
 
 12
-00:01:30.280 --> 00:01:40.250
+00:01:09.770 --> 00:01:19.370
 Tick computers for bulk actions: update, reinstall,
 tags, groups, export
 
 13
-00:01:43.690 --> 00:01:48.450
+00:01:22.440 --> 00:01:27.050
 One computer's workspace: status, the actions you
 may take, and a tab per job
 
 14
-00:01:48.500 --> 00:01:52.900
+00:01:27.100 --> 00:01:31.500
 The header says what is wrong at a glance: alerts,
 pending updates, which agent
 
 15
-00:01:52.950 --> 00:01:57.880
+00:01:31.550 --> 00:01:38.540
+The Tasks panel: everything sent to this computer,
+and where each one is
+
+16
+00:01:38.590 --> 00:01:45.990
+Recent tasks stay listed for two weeks, each with
+its steps and its result
+
+17
+00:01:46.040 --> 00:01:51.770
 The Agent card: version, channel, and automatic
 agent updates
 
-16
-00:01:57.930 --> 00:02:02.530
+18
+00:01:51.820 --> 00:01:57.460
 Automatic updates can be set per computer: Inherit,
 On or Off
 
-17
-00:02:02.580 --> 00:02:09.130
+19
+00:01:57.510 --> 00:02:03.530
 This demo server runs with automatic agent updates
 switched off, which wins over the computer's On
 
-18
-00:02:09.180 --> 00:02:15.290
+20
+00:02:03.580 --> 00:02:10.680
 Inventory: hardware, operating system, disks and the
 logged-on user
 
-19
-00:02:15.340 --> 00:02:20.540
+21
+00:02:10.730 --> 00:02:16.960
 Performance: processor, memory and disk over up to
 30 days
 
-20
-00:02:20.590 --> 00:02:21.820
+22
+00:02:17.010 --> 00:02:18.260
 Software: the catalog, ready to install, and every
 installed program
 
-21
-00:02:21.870 --> 00:02:31.040
+23
+00:02:18.310 --> 00:02:29.290
 Install a package from the catalog: one signed plan
 for this computer
 
-22
-00:02:31.090 --> 00:02:41.110
+24
+00:02:29.340 --> 00:02:41.480
 Remove an installed program: the agent reads the
 uninstall entry itself and decides how
 
-23
-00:02:41.160 --> 00:02:48.930
+25
+00:02:41.530 --> 00:02:51.270
 Rem0te and RustDesk are protected and never offered
 for removal
 
-24
-00:02:48.980 --> 00:02:59.390
+26
+00:02:51.320 --> 00:03:03.400
 Services: start, stop, restart, or change the
 startup type
 
-25
-00:02:59.440 --> 00:03:08.130
+27
+00:03:03.450 --> 00:03:12.320
 Each change is a signed plan; the agent checks the
 service again before it acts
 
-26
-00:03:08.180 --> 00:03:20.550
+28
+00:03:12.370 --> 00:03:26.250
 Processes: end one process, matched by name and
 start time, never a reused PID
 
-27
-00:03:20.600 --> 00:03:24.700
+29
+00:03:26.300 --> 00:03:31.490
 Event logs, with Ask AI and Create ticket on any
 entry
 
-28
-00:03:24.750 --> 00:03:32.250
+30
+00:03:31.540 --> 00:03:39.180
 Ask AI explains an entry in plain language. Here the
 provider is a local stand-in
 
-29
-00:03:32.300 --> 00:03:45.640
+31
+00:03:39.230 --> 00:03:54.170
 Create ticket sends the entry to your PSA, with the
 AI explanation if you want it
 
-30
-00:03:45.690 --> 00:03:51.960
+32
+00:03:54.220 --> 00:04:00.740
 The ticket number comes back from the PSA (a
 loopback stand-in in this demo)
 
-31
-00:03:52.010 --> 00:03:57.280
+33
+00:04:00.790 --> 00:04:05.800
 Patches: the signed agent's last Windows Update
 scan, and what it offers
 
-32
-00:03:57.330 --> 00:04:09.330
-Tick updates to install them on this computer now
+34
+00:04:05.850 --> 00:04:15.310
+The Latest install follows an install from the
+request to the scan after it
 
-33
-00:04:09.380 --> 00:04:18.110
+35
+00:04:15.360 --> 00:04:20.660
+One row per update, with Windows' own error code and
+what it means
+
+36
+00:04:20.710 --> 00:04:25.590
+Windows wants a restart: Schedule restart warns the
+signed-in user first, and never interrupts a session
+
+37
+00:04:25.640 --> 00:04:29.870
+Scan now, or let the scan two minutes after the
+restart refresh the list
+
+38
+00:04:29.920 --> 00:04:35.480
+Updates that install put on the computer wait for
+the restart instead of being offered again
+
+39
+00:04:35.530 --> 00:04:38.380
+Tick the update that failed to try it again
+
+40
+00:04:38.430 --> 00:04:49.170
+Install now, or Schedule it: a date, a time and a
+time zone, up to 14 days ahead
+
+41
+00:04:49.220 --> 00:04:58.340
+Or start at the next opening of this computer's
+patch policy window
+
+42
+00:04:58.390 --> 00:05:03.350
+Nothing is handed to the computer before then, and
+until it starts it can be canceled
+
+43
+00:05:03.400 --> 00:05:08.620
 Each computer's Patch policy: Inherit the
 company-wide policy, Exclude, or use another policy
 
-34
-00:04:18.160 --> 00:04:25.030
+44
+00:05:08.670 --> 00:05:16.810
+It says when the policy's window next opens
+
+45
+00:05:16.860 --> 00:05:24.070
 Exclude stops automatic patching at once; Install
 updates on this tab still works
 
-35
-00:04:25.080 --> 00:04:30.670
+46
+00:05:24.120 --> 00:05:29.770
 Monitoring: this computer's alerts, and which
 monitors apply to it
 
-36
-00:04:30.720 --> 00:04:38.340
+47
+00:05:29.820 --> 00:05:37.630
 Actions: approved maintenance, like starting the
 Print Spooler, with its current state
 
-37
-00:04:38.390 --> 00:04:43.980
+48
+00:05:37.680 --> 00:05:43.280
 Diagnostics: a fixed catalog of read-only checks,
 run on the computer
 
-38
-00:04:44.030 --> 00:04:45.110
+49
+00:05:43.330 --> 00:05:44.400
 Chat with the person at the computer, in the tray on
 their screen
 
-39
-00:04:45.160 --> 00:04:49.870
+50
+00:05:44.450 --> 00:05:49.170
 Pictures and files go both ways; a picture is shown
 only if its bytes really are one
 
-40
-00:04:49.920 --> 00:05:11.570
+51
+00:05:49.220 --> 00:06:07.380
 A built-in emoji picker
 
-41
-00:05:11.620 --> 00:05:23.690
+52
+00:06:07.430 --> 00:06:16.200
 Unread replies from every computer collect in the
 header's chat inbox
 
-42
-00:05:23.740 --> 00:05:26.680
+53
+00:06:16.250 --> 00:06:19.120
 History: sessions, changes and actions on this
 computer, newest first
 
-43
-00:05:26.730 --> 00:05:32.480
+54
+00:06:19.170 --> 00:06:27.950
+The number in the top bar is your tasks in progress,
+on every page
+
+55
+00:06:28.000 --> 00:06:36.800
+Automation → Tasks: every task on every computer you
+can see
+
+56
+00:06:36.850 --> 00:06:41.880
+Queued for the next check-in, handed out, scheduled,
+held, or done
+
+57
+00:06:41.930 --> 00:06:47.810
+Overdue when it takes longer than its kind usually
+does, with what that usually means
+
+58
+00:06:47.860 --> 00:06:54.440
+A scheduled install, held until its time; it can be
+canceled until then
+
+59
+00:06:54.490 --> 00:07:01.520
+Filter by state and by type
+
+60
+00:07:01.570 --> 00:07:26.140
+Now the gatehouse install answers. A task you
+started finishing shows a toast, wherever you are
+
+61
+00:07:26.190 --> 00:07:32.330
+Done, with each update's result
+
+62
+00:07:36.390 --> 00:07:41.560
 Connect opens RustDesk on your computer, configured
 for this server
 
-44
-00:05:32.530 --> 00:05:40.130
+63
+00:07:41.610 --> 00:07:48.290
 It releases the computer's password, so it asks you
 to confirm it is you first
 
-45
-00:05:44.510 --> 00:05:51.070
+64
+00:07:51.810 --> 00:07:57.830
 A computer that has gone quiet says so under its
 buttons, with a link to reinstall its agent
 
-46
-00:05:51.120 --> 00:06:04.770
+65
+00:07:57.880 --> 00:08:09.940
 The same is under More → Reinstall manually
 (download link)
 
-47
-00:06:04.820 --> 00:06:11.170
+66
+00:08:09.990 --> 00:08:15.490
 The link re-attaches to the same record: history,
 site and settings kept, no duplicate
 
-48
-00:06:14.280 --> 00:06:26.240
+67
+00:08:17.960 --> 00:08:27.580
 Add device: choose where the computer lands, and who
 may connect to it
 
-49
-00:06:26.290 --> 00:06:33.440
+68
+00:08:27.630 --> 00:08:33.890
 The business is fixed into the link; the computer
 that runs it cannot choose another
 
-50
-00:06:33.490 --> 00:06:36.530
+69
+00:08:33.940 --> 00:08:37.000
 Then pick the operating system and make a one-time
 install link
 
-51
-00:06:36.580 --> 00:06:44.600
+70
+00:08:37.050 --> 00:08:45.860
 Light and dark themes ship with the product
 
-52
-00:06:44.650 --> 00:06:48.830
+71
+00:08:45.910 --> 00:08:50.320
 Patching: Windows updates a canary first, then
 rings, inside a maintenance window
 
-53
-00:06:48.880 --> 00:06:53.900
+72
+00:08:50.370 --> 00:08:55.480
 The pre-flight reads what signed patching needs and
 says what is missing
 
-54
-00:06:53.950 --> 00:06:59.640
+73
+00:08:55.530 --> 00:09:01.240
 A company-wide policy covers every computer set to
 Inherit
 
-55
-00:06:59.690 --> 00:07:04.730
+74
+00:09:01.290 --> 00:09:06.440
 The portal builds the rings: a canary that checks in
 reliably, then rings of at most 25
 
-56
-00:07:04.780 --> 00:07:10.330
+75
+00:09:06.490 --> 00:09:12.050
 A computer that cannot be patched is listed with the
 reason
 
-57
-00:07:10.380 --> 00:07:14.960
+76
+00:09:12.100 --> 00:09:16.810
 When computers join or leave, a new revision is
 proposed and signed like any policy
 
-58
-00:07:15.010 --> 00:07:20.340
+77
+00:09:16.860 --> 00:09:22.850
 An assignable policy covers only the computers set
-to use it, here the depots on Sunday morning
+to use it: here the depots, monthly
 
-59
-00:07:20.390 --> 00:07:26.410
+78
+00:09:22.900 --> 00:09:27.860
+Two days after Patch Tuesday, and it says when its
+window next opens
+
+79
+00:09:27.910 --> 00:09:33.890
 Every computer's setting in one place: Inherit,
 Exclude or Use policy
 
-60
-00:07:26.460 --> 00:07:38.700
+80
+00:09:33.940 --> 00:09:46.670
 A new policy chooses its classes, window, soak
 between rings, restart rule and canary
 
-61
-00:07:38.750 --> 00:07:44.920
+81
+00:09:46.720 --> 00:09:59.610
+A policy's maintenance window is weekly or monthly
+
+82
+00:09:59.660 --> 00:10:06.840
+The nth or last weekday of the month, plus up to 14
+days: second Tuesday + 2 is the Thursday after Patch
+Tuesday
+
+83
+00:10:06.890 --> 00:10:12.840
+Its next three openings come from the server, worked
+out exactly as the approval signer checks them
+
+84
+00:10:12.890 --> 00:10:24.350
+Or a day of the month, 1 to 28, so it opens every
+month, February included
+
+85
+00:10:27.190 --> 00:10:39.050
+A deployment's next ring can start now or at a time
+too
+
+86
+00:10:39.100 --> 00:10:46.490
+The time becomes the signed plan's start, and the
+agent refuses it early. Not sent in this demo
+
+87
+00:10:46.540 --> 00:10:51.490
+A scheduled ring shows when it starts, and can be
+canceled until then
+
+88
+00:10:51.540 --> 00:10:57.630
 The patch compliance report, by business and by
 computer
 
-62
-00:07:47.590 --> 00:07:50.100
+89
+00:11:00.290 --> 00:11:02.810
 The software catalog: approved packages with the
 installer's hash pinned
 
-63
-00:07:50.150 --> 00:08:09.220
+90
+00:11:02.860 --> 00:11:21.210
 Browse the winget community index and add packages
 by selection
 
-64
-00:08:12.240 --> 00:08:18.640
+91
+00:11:23.820 --> 00:11:30.170
 The script library: versioned PowerShell, reviewed
 before it can run anywhere
 
-65
-00:08:18.690 --> 00:08:23.700
+92
+00:11:30.220 --> 00:11:35.330
 Each version shows its content hash and static
 checks, and needs approving
 
-66
-00:08:26.290 --> 00:08:31.120
+93
+00:11:37.980 --> 00:11:42.800
 Alerts from every monitor, grouped and filtered
 
-67
-00:08:31.170 --> 00:08:36.690
+94
+00:11:42.850 --> 00:11:48.310
 An outage lists the computers in it; acknowledge or
 resolve it with a note
 
-68
-00:08:36.740 --> 00:08:42.940
+95
+00:11:48.360 --> 00:11:55.460
 Monitors are set globally, per business, site, group
 or computer, the most specific winning
 
-69
-00:08:45.650 --> 00:08:51.230
+96
+00:11:58.880 --> 00:12:05.010
 Reports: patch status, offline time, alerts, agent
 coverage and software
 
-70
-00:08:51.280 --> 00:08:54.180
+97
+00:12:05.060 --> 00:12:07.970
 Each one can be exported as CSV, or emailed on a
 schedule
 
-71
-00:08:56.910 --> 00:09:02.270
+98
+00:12:11.620 --> 00:12:17.850
 Businesses: each customer owns its computers,
 people, sites and history
 
-72
-00:09:02.320 --> 00:09:07.510
+99
+00:12:17.900 --> 00:12:23.990
 Automatic agent updates per business: Inherit, On,
 Off or in its maintenance window
 
-73
-00:09:10.560 --> 00:09:15.170
+100
+00:12:27.910 --> 00:12:33.430
 Confirm it is you: choose, function by function,
 which changes ask again after sign-in
 
-74
-00:09:15.220 --> 00:09:25.870
+101
+00:12:33.480 --> 00:12:45.800
 Here the everyday changes are set to Don't ask;
 install links and security changes still ask
 
-75
-00:09:25.920 --> 00:09:34.500
+102
+00:12:45.850 --> 00:12:55.920
 Some always ask: your password, authenticator and
 passkeys, and turning a confirmation off
 
-76
-00:09:34.550 --> 00:09:40.340
+103
+00:12:55.970 --> 00:13:02.360
 AI: your own provider and key. This demo answers
 from a local stand-in, with a fake key
 
-77
-00:09:40.390 --> 00:09:45.960
+104
+00:13:02.410 --> 00:13:08.160
 PSA / ticketing: a connector per business or for the
 whole platform
 
-78
-00:09:46.010 --> 00:09:51.780
+105
+00:13:08.210 --> 00:13:13.920
 Email: your SMTP relay for alerts and scheduled
 reports, to confirmed recipients only
 
-79
-00:09:51.830 --> 00:09:57.060
+106
+00:13:13.970 --> 00:13:19.270
 Access control: Platform Admin, Business Owner and
 Business User
 
-80
-00:09:57.110 --> 00:10:02.450
+107
+00:13:19.320 --> 00:13:24.650
 Each user holds exactly the capabilities granted to
 them
 
-81
-00:10:02.500 --> 00:10:09.530
+108
+00:13:24.700 --> 00:13:30.810
 Users: invitations, roles, MFA status and
 offboarding
 
-82
-00:10:09.580 --> 00:10:12.650
+109
+00:13:30.860 --> 00:13:33.940
 Security: what protects the server, read from the
 server itself
 
-83
-00:10:16.650 --> 00:10:20.230
+110
+00:13:36.820 --> 00:13:40.390
 Every change is in the audit log, in a hash chain
 that shows any deletion
 
-84
-00:10:24.620 --> 00:10:36.460
+111
+00:13:43.160 --> 00:13:57.980
 The full documentation is built into the app, with
 search
 
-85
-00:10:36.510 --> 00:10:39.410
+112
+00:13:58.030 --> 00:14:06.050
+The tray runs on Windows. These are its generated
+icons; its menu has not been photographed on Windows
+
+113
+00:14:06.100 --> 00:14:15.840
+Its menu opens with the business and its IT
+provider, and offers a support request only when a
+PSA is set up
+
+114
+00:14:15.890 --> 00:14:18.780
 Help: short answers for technicians, in the app
 
-86
-00:10:48.640 --> 00:10:52.230
+115
+00:14:25.160 --> 00:14:28.730
 Self-hosted. Open source. No RustDesk Pro required.
 
-87
-00:10:52.670 --> 00:10:58.620
+116
+00:14:29.170 --> 00:14:35.130
 Rem0te — Self-hosted remote support and management,
 built on RustDesk. Install guide, docs and source on
 GitHub. — github.com/agit8or1/rem0te · mspreboot.com

@@ -188,11 +188,13 @@ Then:
 ![Patching for one business: the pre-flight checks and the policies](screenshots/guide/patch-policies.png)
 
 1. **Business** — policies belong to one business.
-2. **Pre-flight** — each requirement in this guide, checked against the server as it is. On this demo server every
-   check fails (no signer, sweep off), which is what it should say.
+2. **Pre-flight** — each requirement in this guide, checked against the server as it is. On this demo server only
+   the policy sweep fails (it is off in the docs stack), which is what it should say.
 3. **Check again** — re-runs them.
-4. **Awaiting approval** — proposed, not yet approved by two people on the signer.
-5. **Active** — approved; it acts only inside its windows.
+4. **Company-wide patch policy** — one policy for every computer of the business set to *Inherit*, plus
+   assignable ones for a named group (see [Or: one policy for the whole business](#or-one-policy-for-the-whole-business-050) below).
+5. **Active** — approved; it acts only inside its windows. In two-person mode a new policy is *awaiting
+   approval* until two people on the signer approve it.
 6. **New policy** — needs a fresh sign-in.
 
 From then on, inside each open window:
@@ -239,8 +241,9 @@ and why. Device groups aren't a scope: use an assignable policy. See
 
 1. **Where it stands** — patched automatically, pending a revision, left out, excluded or none.
 2. **Open the policy** that patches it.
-3. **Inherit / Exclude / Use policy X.**
-4. **Save.**
+3. **Next install window** (0.52) — when it next opens, and the window in words.
+4. **Inherit / Exclude / Use policy X.**
+5. **Save.**
 
 **Revoking** is one-way: **Revoke** on the policy's page (fresh sign-in), or on the signer host (`$S` as in
 [Approved actions → Setting it up](approved-actions.md#setting-it-up), step 2):

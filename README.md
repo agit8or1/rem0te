@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.53.1-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.53.2-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -21,7 +21,7 @@ server that keeps them organised and separate.
 
 <a href="docs/images/github/dashboard-light.png"><img src="docs/images/github/dashboard-light.png" alt="The Rem0te dashboard: a site-outage strip for one customer's warehouse, tiles for devices, critical alerts, failed actions, approvals, restart pending, patch compliance and active sessions, a ranked Work on next list and the customers affected." width="100%"></a>
 
-<sub><i>The operator's view — every customer business, computer and session in one place. <a href="docs/images/github/dashboard-light.png">Full size</a> · <a href="docs/screenshots.md">55 more screenshots</a></i></sub>
+<sub><i>The operator's view — every customer business, computer and session in one place. <a href="docs/images/github/dashboard-light.png">Full size</a> · <a href="docs/screenshots.md">90 more screenshots</a></i></sub>
 
 ---
 
@@ -90,7 +90,9 @@ says what is proven and what is not.
   even when the standard agent's leftovers still check in: those reports are ignored for everything that acts, and
   the signed agent removes the leftovers by exact name. The tray icon is a speech bubble inside a bright ring whose colour gives
   the state, and *Open a support request* appears only when a PSA connector is set up, becoming a ticket there. Neither the clean-up nor
-  the icon has run on real Windows yet. [Capabilities](docs/capabilities.md)
+  the icon has run on real Windows yet. From 0.53.1 the menu starts with who it is for — the business, the
+  provider and its support phone and e-mail — and the tooltip and chat window use the same names instead of fixed
+  text; the menu has not been photographed on Windows. [Capabilities](docs/capabilities.md)
 - **Patch policies for a whole business, changed per computer (0.50).** A company-wide patch policy covers every
   Windows computer of a business on the signed agent: the portal picks the canary, puts the rest in rings of at most
   25, and lists any computer it left out with the reason. Each computer's *Patch policy* is *Inherit*, *Exclude* or
@@ -298,26 +300,29 @@ dot.
 </tr>
 </table>
 
-**[→ See all 69 screenshots](docs/screenshots.md)** — the dashboard, search, the device list and
-every device tab, Ask AI and Create ticket, chat, reports, the script library, the winget catalog, patching,
-administration and configuration, in light and dark and at phone width. Captured from v0.36 to v0.48.
+**[→ See all 91 screenshots](docs/screenshots.md)** — the dashboard, search, the device list and
+every device tab, Ask AI and Create ticket, chat, task progress and the Tasks page, the latest install and
+scheduling one, reports, the script library, the winget catalog, patching and monthly windows, administration and
+configuration, in light and dark and at phone width. All captured at v0.53.2.
 
 ---
 
 ## Watch the walkthrough
 
-A captioned tour of every feature, recorded at **v0.50**: the dashboard, the
+A captioned tour of every feature, recorded at **v0.53**: the dashboard, the
 Devices list, one computer's workspace tab by tab (agent auto-update, software,
-services, processes, event logs with Ask AI and Create ticket, patches and each
-computer's Patch policy, actions, diagnostics, chat), Connect, the reinstall
-link, Add device, company-wide patch policies, the software catalog, scripts,
-monitoring, reports, businesses, *Confirm it is you* and the other settings,
-the audit log, and the built-in docs.
+services, processes, event logs with Ask AI and Create ticket, patches with the
+latest install, its restart and a scheduled install, each computer's Patch
+policy, actions, diagnostics, chat), Automation → Tasks and the toast when a
+task finishes, Connect, the reinstall link, Add device, company-wide patch
+policies, monthly patch windows, scheduled deployment rings, the software
+catalog, scripts, monitoring, reports, businesses, *Confirm it is you* and the
+other settings, the audit log, and the built-in docs.
 
-<a href="https://github.com/agit8or1/rem0te/releases/download/v0.50.5/walkthrough.mp4"><img src="https://github.com/agit8or1/rem0te/releases/download/v0.50.5/poster.png" alt="Play the Rem0te walkthrough: a 10 minute 58 second captioned tour of every feature in v0.50, from the dashboard and one computer's workspace to company-wide patch policies, settings and the audit log." width="100%"></a>
+<a href="https://github.com/agit8or1/rem0te/releases/download/v0.53.2/walkthrough.mp4"><img src="https://github.com/agit8or1/rem0te/releases/download/v0.53.2/poster.png" alt="Play the Rem0te walkthrough: a 14 minute 35 second captioned tour of every feature in v0.53, from the dashboard and one computer's workspace to task progress, scheduled installs, monthly patch windows, settings and the audit log." width="100%"></a>
 
-**[▶ Watch the walkthrough](https://github.com/agit8or1/rem0te/releases/download/v0.50.5/walkthrough.mp4)** (10 min 58 s)
- · [61-second highlight](https://github.com/agit8or1/rem0te/releases/download/v0.50.5/highlight.mp4)
+**[▶ Watch the walkthrough](https://github.com/agit8or1/rem0te/releases/download/v0.53.2/walkthrough.mp4)** (14 min 35 s)
+ · [81-second highlight](https://github.com/agit8or1/rem0te/releases/download/v0.53.2/highlight.mp4)
  · [transcript and chapters](docs/media/walkthrough-script.md)
  · [captions](docs/media/walkthrough.vtt)
 

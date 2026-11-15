@@ -212,6 +212,17 @@ Now the tab's **Latest install** card follows the install from the request to th
   badge instead of a checkbox — Windows keeps offering them until the computer restarts and scans again, and
   installing them a second time would do nothing.
 
+![The Latest install card on HARB-DISPATCH-01's Patches tab: three updates installed and one failed with 0x800f0922, a restart required, and the updates it installed marked as waiting for the restart](screenshots/guide/patch-latest-install.png)
+
+1. **State** — *Restart required* here; *Queued*, *Handed to the computer*, *Scheduled*, *Overdue* and so on while it
+   moves.
+2. **Steps** — scheduled, approval, queued, handed out, running, done, with the sentence under them saying where it is.
+3. **The restart banner** — how many installed and failed, and that the list refreshes after the restart.
+4. **Schedule restart** — a `windows.reboot.schedule` plan with the warning chosen beside it.
+5. **Scan now** — asks the computer for a new Windows Update scan.
+6. **Results** — one row per update; a failure has its HRESULT and what it means.
+7. **Installed, waiting for restart** — an update this install put on the computer, no longer offered for install.
+
 The same task appears in the computer's **Tasks** panel and on **Automation → Tasks**; see
 [Following a task](approved-actions.md#following-a-task-052).
 
@@ -225,6 +236,28 @@ by a patch policy, the form also offers **Start at the next opening of this comp
 in that opening's start, as a wall-clock time in the zone chosen in the form, and sets the run window to the policy
 window's length (1–24 hours). It is offered greyed out, with the reason, while that window is open (install now) or
 more than 14 days away. It is an ordinary one-computer install that starts at that time, not a ring under the policy.
+
+![Install updates on HARB-DISPATCH-01 set to Schedule, with the next opening of its patch policy window filled in: Tuesday 22:00 in America/Los_Angeles](screenshots/guide/patch-schedule.png)
+
+1. **Schedule** — instead of *Install now*.
+2. **Start at the next opening of this computer's patch policy window** (0.53) — with that opening in brackets. It
+   fills in the date and time below and sets the run window to the policy window's length.
+3. **Date and time** — a wall-clock time, up to 14 days ahead.
+4. **Time zone** — the computer's site zone, your profile's, this browser's or UTC; the sentence under it repeats the
+   time and the zone.
+5. **Schedule 1 selected** — the button says *Schedule* rather than *Install* (in signed mode, *Request approval for
+   the scheduled install*).
+
+A deployment's next ring has the same choice:
+
+![The page of a hand-made deployment, Defender and MSRT — depots, whose canary is about to be scheduled](screenshots/guide/deployment-schedule.png)
+
+1. **Why** — recorded in the audit log (shown to the approvers in signed mode).
+2. **Schedule** — instead of *Start now*.
+3. **Date and time** and
+4. **Time zone**, as above.
+5. **Schedule canary** — or *Schedule ring n*. A ring proposed by a patch policy has no schedule: it runs in the
+   policy's own window.
 
 What happens:
 
@@ -308,6 +341,23 @@ the local clock across a DST change. The editor (the policy form and the company
 words and its **next three openings** in the chosen zone, before the expiry. They are not worked out in the browser:
 they come from `POST /patching/window-preview`, which runs the same functions the approval signer holds every ring
 plan to. The policy page and the signer's approval page show the next openings too.
+
+![The patch policy form with a monthly window: the second Tuesday of each month plus 2 days, 22:00–04:00, and its next three openings](screenshots/guide/policy-window-monthly.png)
+
+1. **Monthly** — instead of *Weekly*.
+2. **On the second Tuesday** — the week (*first*…*fourth*, *last*) and the weekday.
+3. **plus 2 day(s)** — 0 to 14; *second Tuesday + 2* is the Thursday after Patch Tuesday.
+4. **On day …** — the other monthly kind, a day of the month from 1 to 28.
+5. **The preview** — the window in words and its next three openings before the expiry, from the server.
+
+The company-wide and assignable policy form has the same editor:
+
+![The assignable policy form with a monthly window on day 5 of each month, and its next three openings](screenshots/guide/company-policy-monthly.png)
+
+1. **Monthly**.
+2. **On day 5** of each month.
+3. **Starts / Ends / Time zone** — as for a weekly window; an end at or before the start ends the next day.
+4. **The preview** — the next three openings before a revision expires.
 
 **Expiry still applies.** A policy expires at most 90 days after it is proposed, and its window must open at least
 once before then, or the policy is refused (`window_never_opens`) by the portal and by the signer. A monthly window
@@ -442,8 +492,10 @@ stands: *patched automatically*, *pending a revision*, *left out* (and why), *ex
 
 1. **State** — *Patched automatically* here, with which policy, revision and ring.
 2. **Open the policy** — the running revision's page.
-3. **The setting** — *Inherit* (naming the company-wide policy), *Exclude*, or *Use policy* for each assignable one.
-4. **Save** — offered once the choice differs from the saved one; needs **Edit computers** and, unless *A computer's
+3. **Next install window** (0.52) — the next opening of the running revision's signed window, and (0.53) the window
+   in words, weekly or monthly.
+4. **The setting** — *Inherit* (naming the company-wide policy), *Exclude*, or *Use policy* for each assignable one.
+5. **Save** — offered once the choice differs from the saved one; needs **Edit computers** and, unless *A computer's
    patch policy* is set to *Don't ask*, a fresh sign-in.
 
 A company-wide policy's settings (classes, window, soak, threshold, restart rule, how long each revision lasts,

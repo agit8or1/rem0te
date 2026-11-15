@@ -572,7 +572,7 @@ const CALLOUT_PAGES = [
   },
   {
     name: 'guide/patch-policies',
-    height: 1100,
+    height: 1760,
     path: '/patching',
     before: async (page) => {
       await page.waitForSelector('[data-testid="patching-preflight"]', { timeout: 15_000 });
@@ -584,7 +584,7 @@ const CALLOUT_PAGES = [
       { find: 'main select' },
       { find: '[data-testid="patching-preflight"]' },
       { find: { text: 'Check again', tag: 'button' } },
-      { find: { text: 'awaiting approval' } },
+      { find: { text: 'Company-wide patch policy' } },
       { find: { text: 'active', exact: true } },
       { find: { text: 'New policy', tag: 'button' } },
     ],
@@ -832,6 +832,8 @@ const CALLOUT_PAGES = [
     callouts: [
       { find: { text: 'Patched automatically', tag: 'div' }, within: '[data-testid="patch-policy-setting"]' },
       { find: { text: 'Open the policy', tag: 'a' } },
+      // 0.52: the next opening of the window it patches in, and (0.53) the window in words.
+      { find: '[data-testid="policy-next-window"]' },
       { find: '[data-testid="patch-policy-setting"] select' },
       { find: { text: 'Save', tag: 'button', exact: true }, within: '[data-testid="patch-policy-setting"]' },
     ],
@@ -920,6 +922,154 @@ const CALLOUT_PAGES = [
       { find: { text: 'Who may connect', tag: 'legend' } },
     ],
   },
+  // ── 0.51–0.53 ───────────────────────────────────────────────────────────
+  // prisma/_docs-demo-almanac.ts seeds what these show: tasks in every state
+  // (all requested by Morgan Reyes), HARB-DISPATCH-01's answered install with a
+  // restart required, a scheduled install on HARB-DISPATCH-02, a hand-made
+  // depots deployment whose canary is not requested yet, and (in the roster
+  // module) the depots' monthly window. The tray (0.51, 0.53.1) runs only on
+  // Windows and is not captured; docs/tray.md shows its generated icons.
+  {
+    name: 'guide/device-tasks',
+    height: 1000,
+    path: '@endpoint:HARB-GATEHOUSE',
+    before: async (page) => { await page.waitForSelector('[data-testid="device-tasks"] [data-testid="task-row"]', { timeout: 15_000 }); await page.waitForTimeout(800); },
+    callouts: [
+      { find: '[data-testid="device-tasks-chip"]' },
+      { find: '[data-testid="device-tasks"] [data-testid="task-steps"]' },
+      { find: '[data-testid="device-tasks"] [data-testid="task-text"]' },
+      { find: '[data-testid="device-tasks"] [data-testid="tasks-checked"]' },
+      { find: '[data-testid="device-tasks-toggle"]' },
+      { find: { text: 'All tasks', tag: 'a', exact: true }, within: '[data-testid="device-tasks"]' },
+    ],
+  },
+  {
+    name: 'guide/tasks-page',
+    height: 1500,
+    path: '/automation/tasks',
+    before: async (page) => { await page.waitForSelector('[data-testid="tasks-list"]', { timeout: 15_000 }); await page.waitForTimeout(800); },
+    callouts: [
+      { find: '[data-section-tabs] a[href="/automation/tasks"]' },
+      { find: '#tasks-state' },
+      { find: '#tasks-type' },
+      { find: '[data-testid="tasks-in-flight"]' },
+      { find: '[data-testid="task-overdue"]' },
+      { find: '[data-testid="task-cancel"]' },
+      { find: '[data-testid="task-row"][data-state="restart_required"] [data-testid="task-state"]' },
+    ],
+  },
+  {
+    name: 'guide/patch-latest-install',
+    height: 1500,
+    path: '@endpoint:HARB-DISPATCH-01?tab=patches',
+    before: async (page) => {
+      await page.waitForSelector('[data-testid="patch-after-install"]', { timeout: 15_000 });
+      // To the top of the scroller, clear of the sticky top bar.
+      await page.evaluate(() => {
+        const el = document.querySelector('[data-testid="patch-after-install"]');
+        el.scrollIntoView({ block: 'start' });
+        let m = el.parentElement; while (m && !(m.scrollHeight > m.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(m).overflowY))) m = m.parentElement;
+        (m ?? document.scrollingElement).scrollBy(0, -60);
+      });
+      await page.waitForTimeout(800);
+    },
+    callouts: [
+      { find: '[data-testid="patch-after-state"]' },
+      { find: '[data-testid="patch-after-install"] [data-testid="task-steps"]' },
+      { find: '[data-testid="patch-restart-banner"] p' },
+      { find: '[data-testid="patch-schedule-restart"]' },
+      { find: '[data-testid="patch-after-scan"]' },
+      { find: '[data-testid="patch-after-results"]' },
+      { find: '[data-testid="patch-installed-waiting"]' },
+    ],
+  },
+  {
+    name: 'guide/patch-schedule',
+    height: 1100,
+    path: '@endpoint:HARB-DISPATCH-01?tab=patches',
+    before: async (page) => {
+      await page.waitForSelector('[data-testid="schedule-use-policy-window"]', { timeout: 15_000 });
+      // The one update still installable (its install failed), then the policy window's next opening.
+      await page.click('label:has-text("KB5070112") input[type="checkbox"]');
+      await page.click('[data-testid="schedule-use-policy-window"]');
+      await page.evaluate(() => document.querySelector('[data-testid="schedule-choice"]').scrollIntoView({ block: 'center' }));
+      await page.waitForTimeout(800);
+    },
+    callouts: [
+      { find: '[data-testid="schedule-later"]' },
+      { find: '[data-testid="schedule-use-policy-window"]' },
+      { find: '[data-testid="schedule-at"]' },
+      { find: '[data-testid="schedule-tz"]' },
+      { find: '[data-testid="patch-install-go"]' },
+    ],
+  },
+  {
+    name: 'guide/deployment-schedule',
+    height: 1100,
+    path: '@deployment:Defender and MSRT — depots',
+    before: async (page) => {
+      await page.waitForSelector('[data-testid="schedule-choice"]', { timeout: 15_000 });
+      await page.fill('#ring-reason', 'Defender and MSRT for both depots, after the morning scan run');
+      await page.click('[data-testid="schedule-later"]');
+      await page.waitForTimeout(800);
+    },
+    callouts: [
+      { find: '#ring-reason' },
+      { find: '[data-testid="schedule-later"]' },
+      { find: '[data-testid="schedule-at"]' },
+      { find: '[data-testid="schedule-tz"]' },
+      { find: { text: 'Schedule canary', tag: 'button' } },
+    ],
+  },
+  {
+    name: 'guide/policy-window-monthly',
+    height: 1200,
+    path: '/patching',
+    before: async (page) => {
+      await page.waitForSelector('[data-testid="patching-preflight"]', { timeout: 15_000 });
+      await page.selectOption('main select >> nth=0', { label: 'Harbor Logistics' });
+      await page.click('button:has-text("New policy")');
+      await page.waitForSelector('[data-testid="pol-monthly"]', { timeout: 10_000 });
+      await page.click('[data-testid="pol-monthly"]');
+      await page.fill('[data-testid="pol-offset"]', '2');
+      await page.fill('input[type="number"][max="90"]', '90');
+      await page.waitForSelector('[data-testid="pol-occurrence"] >> nth=2', { timeout: 10_000 });
+      await page.evaluate(() => document.querySelector('[data-testid="pol-window"]').scrollIntoView({ block: 'center' }));
+      await page.waitForTimeout(800);
+    },
+    callouts: [
+      { find: '[data-testid="pol-monthly"]' },
+      { find: '[data-testid="pol-week"]' },
+      { find: '[data-testid="pol-offset"]' },
+      { find: '[data-testid="pol-monthly-day"]' },
+      { find: '[data-testid="pol-preview"]' },
+    ],
+  },
+  {
+    name: 'guide/company-policy-monthly',
+    height: 1200,
+    path: '/patching',
+    before: async (page) => {
+      await page.waitForSelector('[data-testid="patching-preflight"]', { timeout: 15_000 });
+      await page.selectOption('main select >> nth=0', { label: 'Harbor Logistics' });
+      await page.click('button:has-text("Assignable policy")');
+      await page.waitForSelector('[data-testid="ser-monthly"]', { timeout: 10_000 });
+      await page.fill('#ser-name', 'Harbor servers — day 5');
+      await page.click('[data-testid="ser-monthly"]');
+      await page.click('[data-testid="ser-monthly-day"]');
+      await page.fill('[data-testid="ser-day"]', '5');
+      await page.fill('input[type="number"][max="90"]', '90');
+      await page.waitForSelector('[data-testid="ser-occurrence"] >> nth=2', { timeout: 10_000 });
+      await page.evaluate(() => document.querySelector('[data-testid="ser-window"]').scrollIntoView({ block: 'center' }));
+      await page.waitForTimeout(800);
+    },
+    callouts: [
+      { find: '[data-testid="ser-monthly"]' },
+      { find: '[data-testid="ser-day"]' },
+      { find: '#ser-start' },
+      { find: '[data-testid="ser-preview"]' },
+    ],
+  },
 ];
 // The throwaway admin's password, for the one capture that has to confirm a
 // step-up (making an install link). Set in main(); never a real credential.
@@ -983,6 +1133,13 @@ async function captureWithCallouts(page, spec, outDir, theme) {
     const e = await prisma.endpoint.findFirst({ where: { name: rm[1] }, select: { id: true, customerId: true } });
     if (!e) throw new Error(`demo computer ${rm[1]} not found`);
     target = `/endpoints/enroll?endpointId=${e.id}&businessId=${e.customerId}`;
+  }
+  // "@deployment:<name>" resolves to that patch deployment's page (0.52).
+  const dm = /^@deployment:(.+)$/.exec(target);
+  if (dm) {
+    const d = await prisma.patchDeployment.findFirst({ where: { name: dm[1] }, select: { id: true } });
+    if (!d) throw new Error(`demo deployment ${dm[1]} not found`);
+    target = `/patching/${d.id}`;
   }
   // "@script:<name>" resolves to that demo script's page.
   const sm = /^@script:(.+)$/.exec(target);

@@ -676,6 +676,28 @@ so a plan approved there shows as approved here. **Cancel**, on a scheduled or s
 
 Snapshots taken automatically and the 12-hourly inventory scan are not listed: nobody asked for them.
 
+![The Tasks panel on HARB-GATEHOUSE's page: an update install handed to the computer two deliveries ago, with its steps](screenshots/guide/device-tasks.png)
+
+1. **In progress** — how many of this computer's tasks are moving; *None in progress* otherwise.
+2. **Steps** — where each task is.
+3. **The sentence** — where it is in words: when it was handed out, how many deliveries, what it waits for.
+4. **Last checked** — when the panel last read, and how often it reads.
+5. **Show recent** — the last two weeks, finished ones included; *Show in progress only* folds them away.
+6. **All tasks** — Automation → Tasks.
+
+![Automation → Tasks: tasks across every Harbor computer, queued, overdue, handed out, scheduled, held and done](screenshots/guide/tasks-page.png)
+
+1. **Tasks** — under Automation.
+2. **Show** — in progress, scheduled, failed or overdue, finished, or everything in the last 14 days.
+3. **Type** — update installs, restarts, software, services and processes, scripts, logs, snapshots and the rest.
+4. **In progress** — with how many are scheduled and overdue beside it.
+5. **Overdue** — longer than its kind usually takes, with what that usually means underneath.
+6. **Cancel** — on a task scheduled or awaiting approval that has reached no computer.
+7. **The outcome** — here *Restart required*; *Results* opens the per-update rows.
+
+The count beside the chat icon in the top bar is your own tasks in progress, and links to this page filtered to
+them.
+
 ## Refusal codes
 
 | Code | Meaning |

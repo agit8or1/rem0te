@@ -20,6 +20,8 @@
  */
 import { chromium } from 'playwright';
 import { mkdir, writeFile, readFile } from 'fs/promises';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { applyMasks } from './capture-masks.mjs';
@@ -45,6 +47,27 @@ const STILL = `*,*::before,*::after{animation:none!important;transition:none!imp
 
 /** Narrow captures: a phone-width viewport, for the responsive layout. */
 const NARROW = { width: 390, height: 844 };
+
+/**
+ * 0.52's toast fires when one of your tasks finishes while the console is
+ * open. TASK_FINISH_CMD answers the demo's running install (the docs stack's
+ * `_docs-demo-almanac.ts finish`, against reboot_remote_docs only); without
+ * it the toast shots are skipped. They run only when named in ONLY, because
+ * answering the install changes what the other task shots show.
+ */
+async function finishTask() {
+  const cmd = process.env.TASK_FINISH_CMD;
+  if (!cmd) throw new Error('TASK_FINISH_CMD is not set');
+  await promisify(execFile)('/bin/sh', ['-c', cmd], { timeout: 120000 });
+}
+
+/** Scroll the app's own scroller so `sel` sits at the top, clear of the sticky header. */
+const toTop = (sel) => (p) => p.evaluate((q) => {
+  const el = document.querySelector(q); if (!el) return;
+  el.scrollIntoView({ block: 'start' });
+  let m = el.parentElement; while (m && !(m.scrollHeight > m.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(m).overflowY))) m = m.parentElement;
+  (m ?? document.scrollingElement).scrollBy(0, -80);
+}, sel);
 
 /** Pick a business in the page's first <select> (pages that start with "Choose a business…"). */
 const pickBusiness = (sel, label) => async (p) => {
@@ -235,6 +258,43 @@ export const SHOTS = [
       await p.waitForSelector('[data-testid="patch-policy-setting"]', { timeout: 15000 });
       await p.evaluate(() => document.querySelector('[data-testid="patch-policy-setting"]').scrollIntoView({ block: 'center' }));
     } })),
+  // 0.52: task progress — Automation → Tasks, a computer's Tasks panel, and the
+  // Patches tab's Latest install card; scheduled installs. 0.53: a monthly
+  // policy window. prisma/_docs-demo-almanac.ts seeds what these show.
+  ...['light', 'dark'].map((theme) => ({ name: `tasks-${theme}`, path: '/automation/tasks', theme, height: 1300, wait: '[data-testid="tasks-list"]', settle: 1500 })),
+  ...['light', 'dark'].map((theme) => ({ name: `device-tasks-${theme}`, path: '@endpoint:HARB-GATEHOUSE', theme, settle: 1200, clip: '@element', element: '[data-testid="device-tasks"]',
+    before: async (p) => {
+      await p.waitForSelector('[data-testid="device-tasks"] [data-testid="task-row"]', { timeout: 15000 });
+      await p.click('[data-testid="device-tasks-toggle"]');
+    } })),
+  ...['light', 'dark'].map((theme) => ({ name: `latest-install-${theme}`, path: '@endpoint:HARB-DISPATCH-01?tab=patches', theme, height: 1200, settle: 1200, clip: '@element', element: '[data-testid="patch-after-install"]',
+    before: async (p) => { await p.waitForSelector('[data-testid="patch-after-install"]', { timeout: 15000 }); await toTop('[data-testid="patch-after-install"]')(p); } })),
+  ...['light', 'dark'].map((theme) => ({ name: `schedule-install-${theme}`, path: '@endpoint:HARB-DISPATCH-01?tab=patches', theme, height: 1400, settle: 1200, clip: '@element',
+    element: 'div.rounded-xl:has(> div [data-testid="schedule-choice"]), div.rounded-lg:has(> div [data-testid="schedule-choice"])',
+    before: async (p) => {
+      await p.waitForSelector('[data-testid="schedule-use-policy-window"]', { timeout: 15000 });
+      await p.click('label:has-text("KB5070112") input[type="checkbox"]');
+      await p.click('[data-testid="schedule-use-policy-window"]');
+      await p.fill('#inst-reason', 'November .NET update again, in the dispatch desk\'s window');
+    } })),
+  ...['light', 'dark'].map((theme) => ({ name: `monthly-window-${theme}`, path: '/patching', theme, height: 1300, settle: 1500, clip: '@element', element: '[data-testid="pol-window"]',
+    before: async (p) => {
+      await pickBusiness('main select', 'Harbor Logistics')(p);
+      await p.click('button:has-text("New policy")');
+      await p.waitForSelector('[data-testid="pol-monthly"]', { timeout: 10000 });
+      await p.click('[data-testid="pol-monthly"]');
+      await p.fill('[data-testid="pol-offset"]', '2');
+      await p.fill('input[type="number"][max="90"]', '90');
+      await p.waitForSelector('[data-testid="pol-occurrence"] >> nth=2', { timeout: 10000 });
+      await toTop('[data-testid="pol-window"]')(p);
+    } })),
+  // The toast: run only when named (see finishTask).
+  ...['light', 'dark'].map((theme) => ({ name: `task-toast-${theme}`, path: '/automation/tasks', theme, height: 1000, wait: '[data-testid="tasks-list"]', settle: 800, explicit: true,
+    before: async (p) => {
+      await p.waitForTimeout(6000); // the watcher's first answer sets where it reads from
+      await finishTask();
+      await p.waitForSelector('[data-testid="task-toast"]', { timeout: 30000 });
+    } })),
   // 0.49: Settings → Confirm it is you.
   ...['light', 'dark'].map((theme) => ({ name: `confirm-it-is-you-${theme}`, path: '/settings?tab=confirm', theme, height: 1300, wait: '[data-testid="confirm-policy"]', settle: 1200 })),
   // 0.48.2: the reinstall link, from the More menu, and Add device bound to the computer.
@@ -298,7 +358,7 @@ async function makeContext(browser, theme, viewport = VIEWPORT) {
 async function run() {
   await mkdir(OUT, { recursive: true });
   const only = process.env.ONLY?.split(',').map((s) => s.trim()).filter(Boolean);
-  const shots = only?.length ? SHOTS.filter((s) => only.includes(s.name)) : SHOTS;
+  const shots = only?.length ? SHOTS.filter((s) => only.includes(s.name)) : SHOTS.filter((s) => !s.explicit);
 
   const browser = await chromium.launch();
   const manifest = [];
@@ -498,7 +558,7 @@ async function run() {
 
   await writeFile(manifestPath,
     JSON.stringify({ viewport: VIEWPORT, deviceScaleFactor: SCALE,
-      demoData: 'apps/api/prisma/_docs-demo-data.ts, _docs-demo-monitoring.ts, _docs-demo-workbench.ts, _docs-demo-dispatch.ts and _docs-demo-roster.ts against reboot_remote_docs',
+      demoData: 'apps/api/prisma/_docs-demo-data.ts, _docs-demo-monitoring.ts, _docs-demo-workbench.ts, _docs-demo-dispatch.ts, _docs-demo-roster.ts and _docs-demo-almanac.ts against reboot_remote_docs',
       shots: merged }, null, 2) + '\n');
   console.log(`\n${manifest.length} captured -> ${OUT}`);
   await browser.close();
