@@ -16,7 +16,7 @@ import { PUBLISH_COMMAND } from '../update-trust/agent-migration';
 import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, UPDATE_INSTALL, UpdateReboot } from '../actions/catalog';
 import {
   MAX_POLICY_DAYS, MAX_POLICY_RINGS, POLICY_SCHEMA, PolicyAllow, PolicyDoc, PolicyWindow,
-  allowParams, localTime, nextOccurrence, occurrenceAt, policyAllowsUpdate, policyDigest, validatePolicyDoc,
+  allowParams, describePolicyWindow, localTime, nextOccurrence, nextOccurrences, occurrenceAt, policyAllowsUpdate, policyDigest, validatePolicyDoc, windowKind,
 } from '../actions/patch-policy';
 import { resultKeyFingerprint, selfSignedScanKey } from '../actions/device-result';
 import { MANAGER_LABEL, eligibility, type Posture } from './posture';
@@ -65,6 +65,8 @@ export const CreatePolicyDto = z.object({
 }).strict();
 
 const ReasonDto = z.object({ reason: z.string().trim().min(3).max(300) }).strict();
+/** 0.53: the window to preview, checked as PolicyWindow inside, and the expiry it must open before. */
+const WindowPreviewDto = z.object({ window: z.unknown(), expiresInDays: z.number().int().min(1).max(MAX_POLICY_DAYS).optional() }).strict();
 
 /** Less than this left in a window and nothing new is proposed in it. */
 const MIN_WINDOW_MS = 15 * 60_000;
@@ -497,6 +499,24 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     return r;
   }
 
+  /**
+   * 0.53: what a window would be — its description and its next openings —
+   * computed by the same functions the signer runs, so the editor shows what
+   * the signer will hold the policy to. Reads nothing and writes nothing.
+   */
+  previewWindow(raw: unknown, now = new Date()) {
+    const parsed = WindowPreviewDto.safeParse(raw);
+    if (!parsed.success) this.bad('INVALID_REQUEST', parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
+    const w = PolicyWindow.safeParse(parsed.data.window);
+    if (!w.success) return { valid: false, message: w.error.issues.slice(0, 3).map((i) => `${['window', ...i.path].join('.')}: ${i.message}`).join('; '), occurrences: [] };
+    const until = parsed.data.expiresInDays ? new Date(now.getTime() + parsed.data.expiresInDays * 86_400_000) : undefined;
+    const occurrences = nextOccurrences(now, w.data, 3, until);
+    return {
+      valid: true, kind: windowKind(w.data), description: describePolicyWindow(w.data), occurrences,
+      opensBeforeExpiry: until ? occurrences.length > 0 : null,
+    };
+  }
+
   async list(actor: ActorContext, businessId: string, now = new Date()) {
     if (!Id.safeParse(businessId).success) this.bad('INVALID_REQUEST', 'businessId is required');
     const rows = await this.prisma.patchPolicy.findMany({ where: { customerId: businessId }, orderBy: { createdAt: 'desc' }, take: 50 });
@@ -532,6 +552,9 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
       resultKeys: Object.fromEntries(doc.rings.flat().map((c) => [c.endpointId, c.resultKey ? resultKeyFingerprint(c.resultKey) : null])),
       currentWindow: r.status === 'ACTIVE' ? occurrenceAt(now, doc.window) : null,
       nextWindow: r.status === 'ACTIVE' ? nextOccurrence(now, doc.window, r.expiresAt) : null,
+      // 0.53: the window in words and its next three openings before expiry, from the signer's own functions.
+      windowDescription: describePolicyWindow(doc.window),
+      upcomingWindows: r.status === 'ACTIVE' ? nextOccurrences(now, doc.window, 3, r.expiresAt) : [],
       lastProposal: r.lastProposal,
       // 0.40: activated in direct mode, with no approvals (the signer's word).
       direct: signer?.status === 200 && signer.body.direct === true,

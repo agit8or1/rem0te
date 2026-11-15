@@ -5,6 +5,124 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.53.0] — 2026-11-15 · *Almanac*
+
+**Monthly patch windows: a patch policy can install on the nth or last weekday of each month, some days after it, or
+on a day of the month.**
+
+The owner asked "add monthly patch schedules too". Until now a patch policy's maintenance window was weekly only —
+days of the week, a start and an end in one zone — and 0.52's notes listed "no monthly schedules (*second Tuesday*)"
+as not done, because a monthly window changes the signed policy document and the approval signer. MSPs patch around
+Patch Tuesday: the second Tuesday, or a few days after it once other people have reported what broke. A weekly window
+cannot say that; the closest was "every Thursday", which installs four times a month.
+
+#### Added
+- **Monthly windows** in the policy document, as an addition to the closed window schema
+  (`apps/api/src/actions/patch-policy.ts`). `PolicyWindow` is now a union of exactly three strict shapes:
+  | Shape | Fields |
+  |---|---|
+  | Weekly (unchanged) | `days`, `start`, `end`, `timezone` |
+  | Monthly, nth weekday | `kind: "monthly"`, `week` (`first` … `fourth`, `last`), `weekday`, `offsetDays` 0–14, `start`, `end`, `timezone` |
+  | Monthly, day of month | `kind: "monthly"`, `day` 1–28, `start`, `end`, `timezone` |
+  - *Second Tuesday + 2* is the Thursday after Patch Tuesday. An offset may carry the opening into the next month
+    (*last Saturday + 7*); it still belongs to the month it was counted from, so there is one opening a month.
+  - *Last* is the fifth weekday where a month has five, and equals *fourth* where it has four.
+  - A day of the month stops at **28**, so it opens in every month, February included, and nothing has to define
+    what the 31st means in April.
+  - Start, end and zone work as for weekly: an end at or before the start ends the next day (across midnight and the
+    end of a month), and the local clock is followed across DST.
+- **One occurrence function for the portal and the signer.** `occurrenceAt`, `nextOccurrence` and the new
+  `nextOccurrences`, `monthlyDate`, `windowKind` and `describePolicyWindow` live only in `patch-policy.ts`, which the
+  approval signer's install already bundles. The portal's sweep, the signer's admission (`validatePolicyDoc`,
+  `window_never_opens`) and its ring-plan check (`evaluatePolicyPlan`, `outside_window`) call the same code. The reason
+  codes are unchanged. Monthly policies are signed and auto-signed exactly like weekly ones.
+- **`POST /patching/window-preview`** (signed in, throttled at 120 a minute; reads and writes nothing): a window's
+  description and its next three openings before an optional expiry, from those functions. The editors use it, so the
+  browser never works out an opening of its own.
+- **The editors.** The patch policy form and the company-wide (and assignable) policy form have *Weekly* / *Monthly*.
+  Monthly offers *On the [first…last] [weekday] of each month, plus [0–14] day(s)*, or *On day [1–28]*. Both forms
+  show the window in words and its **next three openings** in the chosen zone. If none falls before the expiry they
+  say the policy would be refused (`window_never_opens`) before you propose it. One shared component,
+  `components/patching/window-editor.tsx`.
+- **Where a window is shown**, monthly reads correctly:
+  - the policy list and the policy page (with its next three openings);
+  - the company-wide policy list;
+  - each computer's Patch policy card (its *Next install window*, and the window in words);
+  - the approval signer's approval page, which now lists the next openings for weekly policies too.
+- **Scheduled installs can start at the policy window.** On the Patches tab, when the computer is covered by a
+  policy, 0.52's schedule picker offers *Start at the next opening of this computer's patch policy window*. It fills
+  in that opening as a wall-clock time in the zone chosen in the form, the same instant, and sets the run window to
+  the policy window's length (1–24 h). It is greyed out, with the reason, while the window is open or more than
+  14 days away. It is still an ordinary one-computer install, not a ring under the policy.
+
+#### Unchanged, deliberately
+- **Weekly documents are byte-for-byte what they were.** A weekly window carries no `kind`, so a weekly policy's
+  canonical bytes, digest and approvals are unchanged. Every policy already signed and live keeps verifying and running.
+  `unit-monthly-window.mjs` pins one weekly document's digest to the value the 0.52 build computed
+  (`466423a5…f99b`).
+- **Unknown kinds fail closed.**
+  - Another `kind`, a weekly window with a `kind`, a monthly one with `days`, a day and a week together, a 29th or an
+    offset of 15 match none of the three shapes. The portal refuses them with `400`, the signer at admission with
+    `invalid_policy`.
+  - `windowKind` returns null for any other shape, and `occurrenceAt` / `nextOccurrence` return null for it. A stored
+    document with an unrecognised window signs nothing (`outside_window`) and is never read as weekly.
+- **The agent is unchanged.** `tools/windows-installer` never reads a policy window. It checks only its plan's own
+  `notBefore` / `notAfter`, which the signer has already held to the window. No agent build and no signed release.
+
+#### Deploying
+- **The approval signer must be rebuilt and redeployed** from 0.53 (`apps/api/scripts/build-approval-signer.mjs`)
+  before it accepts a monthly policy. A 0.52 signer's schema is weekly-only, so it refuses a monthly policy at
+  admission (`invalid_policy`): fail closed, nothing is signed. Weekly policies work on either signer.
+- No migration. The window lives inside the policy document and the series' settings (both JSON).
+
+#### Invariants
+- **§66** in `scripts/check-security-invariants.mjs`:
+  - the window is exactly the three strict shapes, with their fields, the 14-day and 28-day bounds and the five weeks;
+  - no other API file defines a function over a policy window, and the web defines no occurrence function (the
+    editor calls the preview);
+  - the signer's ring check and admission call `occurrenceAt` / `nextOccurrence`;
+  - `windowKind` refuses any other shape, and both occurrence functions return null for it;
+  - the weekly digest is pinned in a CI-run test, and the agent's action package has no policy-window code.
+
+#### Tests
+- `apps/api/scripts/unit-monthly-window.mjs` (79 checks, in CI as *Monthly patch window tests*):
+  - the schema and its refusals;
+  - Patch Tuesday for every month of 2026;
+  - *last* in months with four and five of a weekday, and in February and a leap February;
+  - offsets into the next month and the next year;
+  - each month counted from its own month;
+  - the 28th 22:00–02:00 crossing into 1 March (and 29 February in a leap year);
+  - the last Saturday of October 2026 23:00–03:00 New York, across the month end and fall-back (5 real hours);
+  - spring-forward in New York and in Sydney (2 hours), and CDT against CST;
+  - no gap over five weeks from any day of a year;
+  - expiry (`window_never_opens` with 14 days, opening with 30, three openings in 90, `expiry_too_far`);
+  - the signer admitting a monthly policy and refusing an unknown kind, a 31st and a window that never opens;
+  - plans inside signed, and outside refused: past the end, a week later, on Patch Tuesday itself, and a tampered
+    stored kind;
+  - next month's opening signed;
+  - the approval page;
+  - the weekly digest.
+- `unit-patch-assignment.mjs` (+3): series settings accept monthly windows exactly, 1–28 only, and refuse unknown
+  kinds.
+- `e2e-patch-policies.mjs` (+13, 114 in all), a new section:
+  - the portal's preview gives the signer's instants, refuses an unknown kind and needs a signed-in person;
+  - the portal refuses an unknown kind and a 31st;
+  - the signer refuses an unknown kind (`invalid_policy`) and a window that never opens (`window_never_opens`);
+  - it admits a monthly policy, and its approval page says monthly with the next openings;
+  - after two approvals, a ring plan a week later and one running past the end are `outside_window`, and one inside
+    is signed with no person approving it.
+- `e2e-patch-assignment.mjs` (+4, 72 in all): an assignable policy two days after Patch Tuesday is created with its
+  window kept, listed as monthly, an unknown kind refused, and retired.
+- `apps/web/scripts/e2e-ui.mjs`: the policy editor at both widths and in both themes. Weekly by default, then
+  Monthly: *second Tuesday + 2* previews the openings the signer's function gives, and a day past 28 is held at 28
+  (1,076 checks in all, 0 failed).
+- `e2e-staged-patching`, `e2e-task-progress` and `e2e-approved-action` still pass.
+
+#### Not done
+- **Nothing has run on real Windows.** Monthly policies are proven against the signer and the simulated agent only,
+  like every patch policy.
+- No "every other week" or yearly window, and no 29th–31st. A day of the month stops at 28.
+
 ## [0.52.0] — 2026-11-15 · *Stopwatch*
 
 **Every task sent to a computer shows where it is, and update installs can be scheduled.**

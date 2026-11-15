@@ -11,7 +11,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { directApproved } from '@/lib/direct-mode';
-import { CLASS_NAMES, DEPLOYMENT_STATUS, POLICY_STATUS, describeWindow } from '@/lib/patching';
+import { CLASS_NAMES, DEPLOYMENT_STATUS, POLICY_STATUS, describeWindow, type PolicyWindowInput } from '@/lib/patching';
+import { describeOccurrence } from '@/lib/tasks';
 import { AlertTriangle, ArrowLeft, ExternalLink } from 'lucide-react';
 import { rebootSummary } from '@/components/patching/patch-reboot-choice';
 
@@ -26,7 +27,7 @@ interface PolicyDoc {
   name: string; businessName: string; reason: string; createdAt: string; expiresAt: string; createdBy: { name: string };
   rings: { endpointId: string; hostname: string }[][];
   allow: { classifications: string[]; severities?: string[]; excludeKbs?: string[] };
-  soakHours: number; failureThreshold: number; window: { days: string[]; start: string; end: string; timezone: string }; reboot: 'never' | 'if_required_in_window';
+  soakHours: number; failureThreshold: number; window: PolicyWindowInput; reboot: 'never' | 'if_required_in_window';
 }
 interface Policy {
   id: string; name: string; status: string; digest: string; approvalUrl: string; expiresAt: string; createdAt: string;
@@ -34,6 +35,8 @@ interface Policy {
   revokedAt: string | null; revokeReason: string | null; signerConfirmedRevocation: boolean;
   document: PolicyDoc;
   currentWindow: { start: string; end: string } | null; nextWindow: { start: string; end: string } | null;
+  /** 0.53: the next three openings before expiry, from the signer's own occurrence functions. */
+  upcomingWindows?: { start: string; end: string }[];
   lastProposal: { at: string; windowKey: string | null; ok: boolean; code: string; message: string; deploymentId?: string | null } | null;
   signer: { reachable: boolean; status: string | null; signedPlans: number | null; refusals: { at: string; jobId: string; code: string; message: string }[] };
   deployments: { id: string; name: string; status: string; windowKey: string | null; pausedReason: string | null; createdAt: string }[];
@@ -105,7 +108,7 @@ export default function PolicyPage() {
             {row('Classes', d.allow.classifications.map((c) => CLASS_NAMES[c] ?? c).join(', '))}
             {row('Severities', d.allow.severities?.join(', ') ?? 'any')}
             {row('Never installs', d.allow.excludeKbs?.join(', ') ?? 'nothing excluded')}
-            {row('Window', describeWindow(d.window))}
+            {row('Window', <span data-testid="policy-window">{describeWindow(d.window)}{(p.upcomingWindows?.length ?? 0) > 0 && <span className="block text-muted-foreground">Next openings: {p.upcomingWindows!.map((o) => describeOccurrence(o, d.window.timezone)).join('; ')}</span>}</span>)}
             {row('Soak between rings', `${d.soakHours} h`)}
             {row('Failures allowed per ring', String(d.failureThreshold))}
             {row('Restart', rebootSummary(d.reboot))}

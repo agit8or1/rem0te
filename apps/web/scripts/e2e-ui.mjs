@@ -74,6 +74,11 @@
  * a technician's reply drawn as text, receipts, Enter to send, ending, and
  * the used-link page on going back.
  *
+ * 0.53 adds the patch policy editor's maintenance window: Weekly by default,
+ * then Monthly — "second Tuesday + 2" previews the next openings the signer's
+ * own occurrence function gives, and a day of the month is held at 28 — at
+ * both widths and in both themes, cancelled before anything is proposed.
+ *
  * Any console error, uncaught exception, or unexpected failed request on a
  * page fails that page's check. The only failures expected are the 403
  * STEP_UP_REQUIRED answers the step-up flows provoke on purpose.
@@ -1904,7 +1909,46 @@ async function retentionCard(page, label, vp) {
   await cleanCheck(page, `${label} Data retention card`);
 }
 
+/**
+ * 0.53: the patch policy editor's maintenance window, Weekly or Monthly. The
+ * monthly form (an nth or last weekday plus an offset, or a day of the month)
+ * shows the next three openings, which come from the API's window preview —
+ * the signer's own functions — and must be the instants those functions give.
+ * Nothing is proposed: the form is cancelled, so no step-up and no policy.
+ */
+async function patchWindowEditor(page, f, vp, label) {
+  const pp = apiRequire(path.join(API_DIR, 'dist/actions/patch-policy.js'));
+  await go(page, '/patching');
+  await page.locator('main select').first().selectOption(f.A.id);
+  await settled(page);
+  await page.getByRole('button', { name: 'New policy' }).click();
+  const editor = page.locator('[data-testid="pol-window"]');
+  await editor.waitFor({ timeout: 20_000 });
+  check(await page.locator('[data-testid="pol-weekly"]').isChecked(), `${label}: a new policy's window starts weekly`);
+  await page.locator('[data-testid="pol-monthly"]').check();
+  await page.locator('[data-testid="pol-week"]').selectOption('second');
+  await page.locator('[data-testid="pol-weekday"]').selectOption('tue');
+  await page.locator('[data-testid="pol-offset"]').fill('2');
+  const tz = await page.locator('#pol-tz').inputValue();
+  const want = pp.nextOccurrences(new Date(), { kind: 'monthly', week: 'second', weekday: 'tue', offsetDays: 2, start: '22:00', end: '04:00', timezone: tz }, 3, new Date(Date.now() + 30 * 86_400_000));
+  await page.waitForFunction((n) => document.querySelectorAll('[data-testid="pol-occurrence"]').length === n && /2 days after the second Tuesday/.test(document.querySelector('[data-testid="pol-preview"]')?.textContent ?? ''), want.length, { timeout: 15_000 }).catch(() => {});
+  const preview = await page.locator('[data-testid="pol-preview"]').innerText();
+  const day = (d) => new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short' }).format(d);
+  check(want.length >= 1 && /2 days after the second Tuesday of each month/.test(preview) && want.every((o) => preview.includes(day(o.start))),
+    `${label}: "second Tuesday + 2" previews the openings the signer's function gives (${want.map((o) => day(o.start)).join('; ')}), in ${tz}`, preview);
+  await page.locator('[data-testid="pol-monthly-day"]').check();
+  await page.locator('[data-testid="pol-day"]').fill('31');
+  check(await page.locator('[data-testid="pol-day"]').inputValue() === '28', `${label}: a day of the month past 28 is held at 28`, await page.locator('[data-testid="pol-day"]').inputValue());
+  await page.waitForFunction(() => /the 28th of each month/.test(document.querySelector('[data-testid="pol-preview"]')?.textContent ?? ''), null, { timeout: 15_000 }).catch(() => {});
+  check(/the 28th of each month/.test(await page.locator('[data-testid="pol-preview"]').innerText()), `${label}: the day-of-month form previews the 28th`, await page.locator('[data-testid="pol-preview"]').innerText());
+  if (vp === 'phone') await noSideScroll(page, `${label} patch policy window`);
+  await shot(page, `${label}-patch-policy-monthly`);
+  await page.getByRole('button', { name: 'Cancel' }).first().click();
+  await cleanCheck(page, `${label} patch policy editor`);
+}
+
 async function coverage035(page, f, vp, label) {
+  await patchWindowEditor(page, f, vp, label);
   await chatTab(page, f, vp, label);
   await scriptRunPanel(page, f, vp, label);
   await softwareCatalog(page, f, vp, label);

@@ -65,6 +65,14 @@ export class PatchingController {
     return { success: true, data: await this.policies.create(actor, body) };
   }
 
+  /** 0.53: a window's description and next openings, by the signer's own functions. Pure: reads and writes nothing. */
+  @Post('patching/window-preview')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(120)
+  windowPreview(@Body() body: unknown) {
+    return { success: true, data: this.policies.previewWindow(body) };
+  }
+
   @Get('patching/policies/:id')
   async getPolicy(@Actor() actor: ActorContext, @Param('id') id: string) {
     return { success: true, data: await this.policies.detail(actor, id) };

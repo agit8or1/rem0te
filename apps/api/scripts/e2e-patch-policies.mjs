@@ -544,6 +544,59 @@ async function all() {
     check(less.status === 201, 'and so is one asking for less (never)', JSON.stringify(less.body));
   }
 
+  section('A monthly window (0.53): previewed by the portal, admitted and signed inside by the signer, refused outside');
+  {
+    // The window opens an hour ago today (UTC), as "N days after the nth weekday" counted from two days earlier.
+    const open = new Date(Date.now() - 3600_000);
+    const base = new Date(open.getTime() - 2 * 86_400_000);
+    const WD = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+    const nth = Math.floor((base.getUTCDate() - 1) / 7);
+    const monthly = { kind: 'monthly', week: ['first', 'second', 'third', 'fourth', 'last'][nth], weekday: WD[base.getUTCDay()], offsetDays: 2, start: hhmm(open), end: hhmm(new Date(open.getTime() + 4 * 3600_000)), timezone: 'UTC' };
+    // Days 29–31 hold a fifth weekday, which is always the month's last.
+    let r = await req('POST', '/patching/window-preview', { s: S.owen, body: { window: monthly, expiresInDays: 30 } });
+    const occ = r.body?.data?.occurrences ?? [];
+    const mine = pp.nextOccurrences(new Date(), monthly, 3, new Date(Date.now() + 30 * 86_400_000));
+    check(r.status === 200 && r.body.data.valid === true && r.body.data.kind === 'monthly' && occ.length === mine.length && occ.every((o, i) => o.start === mine[i].start.toISOString()),
+      'the portal previews a monthly window\'s next openings, the same instants the signer\'s function gives', msg(r));
+    check(occ.length > 0 && Date.parse(occ[0].start) === Math.floor(open.getTime() / 60_000) * 60_000, 'the first opening is the one open now', JSON.stringify(occ[0]));
+    r = await req('POST', '/patching/window-preview', { s: S.owen, body: { window: { ...monthly, kind: 'quarterly' } } });
+    check(r.status === 200 && r.body.data.valid === false && r.body.data.occurrences.length === 0, 'an unknown window kind previews as invalid, with no openings', msg(r));
+    r = await req('POST', '/patching/window-preview', { body: { window: monthly } });
+    check(r.status === 401, 'the preview needs a signed-in person', msg(r));
+    r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, rings: [[outsider.id]], name: 'Acme quarterly', window: { ...monthly, kind: 'quarterly' } } });
+    check(r.status === 400, 'the portal refuses a policy with an unknown window kind', msg(r));
+    r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...body, rings: [[outsider.id]], name: 'Acme on the 31st', window: { kind: 'monthly', day: 31, start: '02:00', end: '04:00', timezone: 'UTC' } } });
+    check(r.status === 400, 'and a day of the month past 28', msg(r));
+
+    // Straight to the signer, as the portal would send it.
+    const t0 = new Date();
+    const doc = { ...pol.document, policyId: hex(16), name: 'Monthly, two days after', window: monthly, createdAt: t0.toISOString(), expiresAt: new Date(t0.getTime() + 30 * 86_400_000).toISOString() };
+    let sub = await sj(`${INTERNAL}/internal/v1/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy: { ...doc, policyId: hex(16), window: { ...monthly, kind: 'quarterly' } } }) });
+    check(sub.status >= 400 && sub.status < 500 && sub.body?.error === 'invalid_policy', 'the signer refuses an unknown window kind (invalid_policy)', JSON.stringify(sub.body));
+    // A window whose first opening is ten days out, on a policy that expires in two.
+    const later = new Date(Date.now() + 10 * 86_400_000);
+    const never = { kind: 'monthly', week: ['first', 'second', 'third', 'fourth', 'last'][Math.floor((later.getUTCDate() - 1) / 7)], weekday: WD[later.getUTCDay()], offsetDays: 0, start: '01:00', end: '03:00', timezone: 'UTC' };
+    sub = await sj(`${INTERNAL}/internal/v1/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy: { ...doc, policyId: hex(16), window: never, expiresAt: new Date(t0.getTime() + 2 * 86_400_000).toISOString() } }) });
+    check(sub.status >= 400 && sub.status < 500 && sub.body?.error === 'window_never_opens', 'the signer refuses a monthly policy whose window never opens before it expires (window_never_opens)', JSON.stringify(sub.body));
+    sub = await sj(`${INTERNAL}/internal/v1/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy: doc }) });
+    check(sub.status === 201, 'the signer admits a monthly policy', JSON.stringify(sub.body));
+    const page = await (await fetch(`${ORIGIN}/approve/policy/${doc.policyId}`)).text();
+    check(page.includes('<strong>monthly</strong>') && page.includes('2 days after the') && page.includes('Next openings before it expires'), 'its approval page says monthly, in words, with the next openings', page.match(/<th>Window<\/th><td>.*?<\/td>/s)?.[0] ?? page.slice(0, 200));
+    await approvePolicy(doc.policyId, pk.olivia); const a = await approvePolicy(doc.policyId, pk.quinn);
+    check(a.body?.status === 'ACTIVE', 'approved by two', JSON.stringify(a.body).slice(0, 200));
+    const under = (over = {}) => craft(canaryJob.plan, {
+      display: { ...canaryJob.plan.display, policy: { id: doc.policyId, name: doc.name, digest: sub.body.digest }, deployment: { ...canaryJob.plan.display.deployment, id: `mo${hex(8)}` } },
+      ...over,
+    });
+    const at = (t, h = 1) => ({ window: { notBefore: new Date(t).toISOString(), notAfter: new Date(t + h * 3600_000).toISOString() } });
+    let p = await underPolicy(doc.policyId, { plan: under(at(Date.now() + 7 * 86_400_000)), policyDigest: sub.body.digest, evidence: null });
+    check(p.status === 409 && p.body?.error === 'outside_window', 'a ring plan on the same weekday and hour next week (a weekly window would allow it) → outside_window', JSON.stringify(p.body));
+    p = await underPolicy(doc.policyId, { plan: under(at(Date.now(), 4)), policyDigest: sub.body.digest, evidence: null });
+    check(p.status === 409 && p.body?.error === 'outside_window', 'a ring plan running past the window\'s end → outside_window', JSON.stringify(p.body));
+    p = await underPolicy(doc.policyId, { plan: under(at(Date.now(), 1)), policyDigest: sub.body.digest, evidence: null });
+    check(p.status === 201 && /^[0-9a-f]{32}$/.test(p.body?.jobId ?? ''), 'a ring plan inside the monthly window is signed under it, with no person approving it', JSON.stringify(p.body));
+  }
+
   section('Revoke: one-way, and it reaches the signer');
   {
     let r = await req('POST', `/patching/policies/${pol.id}/revoke`, { s: S.owen, business: acme.id, body: { reason: 'pausing for the holidays' } });

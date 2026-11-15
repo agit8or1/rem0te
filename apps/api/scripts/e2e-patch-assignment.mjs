@@ -361,6 +361,21 @@ async function all() {
     check(e?.effective?.state === 'covered' && /Set to use "Acme servers" — revision 1, the canary/.test(e.effective.why), 'the tab: set to use "Acme servers", revision 1', JSON.stringify(e?.effective));
   }
 
+  section('A monthly assignable policy (0.53)');
+  {
+    const pt = { kind: 'monthly', week: 'second', weekday: 'tue', offsetDays: 2, start: '22:00', end: '04:00', timezone: 'America/Chicago' };
+    let r = await req('POST', '/patching/series', { s: Ses.owenF, business: acme.id, body: { businessId: acme.id, scope: 'assigned', name: 'Acme after Patch Tuesday', ...settings, window: { ...pt, kind: 'yearly' } } });
+    check(r.status === 400, 'an unknown window kind is refused for a company-wide or assignable policy', msg(r));
+    r = await req('POST', '/patching/series', { s: Ses.owenF, business: acme.id, body: { businessId: acme.id, scope: 'assigned', name: 'Acme after Patch Tuesday', ...settings, window: pt } });
+    const mo = r.body?.data;
+    const canon = (o) => JSON.stringify(Object.fromEntries(Object.entries(o ?? {}).sort(([x], [y]) => x.localeCompare(y))));
+    check(r.status === 201 && canon(mo?.settings?.window) === canon(pt), 'an assignable policy two days after Patch Tuesday is created, its window kept exactly (jsonb orders the keys)', msg(r));
+    const listed = (await req('GET', `/patching/series?businessId=${acme.id}`, { s: Ses.owen, business: acme.id })).body?.data?.series?.find((x) => x.id === mo?.id);
+    check(listed?.settings?.window?.kind === 'monthly' && listed.nextWindow === null, 'the list shows it monthly, with no install window until a revision runs', JSON.stringify(listed?.settings));
+    r = await req('POST', `/patching/series/${mo?.id}/retire`, { s: Ses.owenF, business: acme.id, body: { reason: 'monthly check done' } });
+    check(r.status === 200, 'retired again (no computer used it)', msg(r));
+  }
+
   section('Nothing is revised while a deployment is in progress');
   let rev5;
   {

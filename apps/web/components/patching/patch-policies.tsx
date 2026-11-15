@@ -13,7 +13,8 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { useAsks } from '@/lib/confirm-policy';
-import { POLICY_STATUS, WEEKDAYS, CLASS_NAMES, DEFAULT_POLICY_CLASSES, DRIVERS_CLASS, SEVERITIES, describeWindow } from '@/lib/patching';
+import { POLICY_STATUS, CLASS_NAMES, DEFAULT_POLICY_CLASSES, DRIVERS_CLASS, SEVERITIES, describeWindow, type PolicyWindowInput } from '@/lib/patching';
+import { WindowEditor, defaultWindowDraft, draftReady, windowFromDraft } from '@/components/patching/window-editor';
 import { AlertTriangle, CheckCircle2, Loader2, Plus, ScrollText, XCircle } from 'lucide-react';
 import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
 
@@ -22,7 +23,7 @@ import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboo
  *
  * A policy is a bounded document — computers in fixed rings with a
  * one-computer canary, the classes and severities it installs, KBs it never
- * installs, a weekly maintenance window, soak and failure threshold, never
+ * installs, a weekly or (0.53) monthly maintenance window, soak and failure threshold, never
  * restart, an expiry within 90 days — approved once by two people on the
  * approval signer. After that the signer signs each ring inside it without
  * further approval. Nothing here approves anything.
@@ -65,7 +66,7 @@ export function PreflightCard() {
   );
 }
 
-interface PolicyRow { id: string; name: string; status: string; expiresAt: string; createdAt: string; computers: number; rings: number; window: { days: string[]; start: string; end: string; timezone: string }; nextWindow: { start: string; end: string } | null; lastProposal: { at: string; ok: boolean; code: string; message: string } | null }
+interface PolicyRow { id: string; name: string; status: string; expiresAt: string; createdAt: string; computers: number; rings: number; window: PolicyWindowInput; nextWindow: { start: string; end: string } | null; lastProposal: { at: string; ok: boolean; code: string; message: string } | null }
 
 export function PoliciesCard({ businessId }: { businessId: string }) {
   const [creating, setCreating] = useState(false);
@@ -118,10 +119,7 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
   const [classes, setClasses] = useState<Set<string>>(new Set(DEFAULT_POLICY_CLASSES));
   const [severities, setSeverities] = useState<Set<string>>(new Set());
   const [excludeKbs, setExcludeKbs] = useState('');
-  const [days, setDays] = useState<Set<string>>(new Set(['sat']));
-  const [start, setStart] = useState('22:00');
-  const [end, setEnd] = useState('04:00');
-  const [timezone, setTimezone] = useState(() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return 'UTC'; } });
+  const [win, setWin] = useState(defaultWindowDraft);
   const [soakHours, setSoakHours] = useState(24);
   const [failureThreshold, setFailureThreshold] = useState(0);
   const [expiresInDays, setExpiresInDays] = useState(30);
@@ -143,7 +141,7 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
     mutationFn: () => patchingApi.createPolicy({
       businessId, name: name.trim(), rings, soakHours, failureThreshold, expiresInDays, reason: reason.trim(), reboot,
       allow: { classifications: [...classes], ...(severities.size ? { severities: [...severities] } : {}), ...(kbs.length ? { excludeKbs: [...new Set(kbs)] } : {}) },
-      window: { days: WEEKDAYS.filter((d) => days.has(d.id)).map((d) => d.id), start, end, timezone },
+      window: windowFromDraft(win),
     }),
     onSuccess: (r) => {
       // 0.40: in direct mode the signer makes it active at once.
@@ -156,7 +154,7 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
 
   if (isLoading || !c) return <Card className="mb-4"><CardContent className="pt-6 text-sm text-muted-foreground">Loading the computers…</CardContent></Card>;
   const toggle = (set: Set<string>, v: string, on: boolean) => { const n = new Set(set); if (on) n.add(v); else n.delete(v); return n; };
-  const ok = name.trim().length >= 3 && ringsOk && classes.size > 0 && days.size > 0 && start !== end && kbsOk && reason.trim().length >= 3;
+  const ok = name.trim().length >= 3 && ringsOk && classes.size > 0 && draftReady(win) && kbsOk && reason.trim().length >= 3;
 
   return (
     <Card className="mb-4">
@@ -204,17 +202,7 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
           </div>
         </div>
 
-        <div className="space-y-2">
-          <p className="text-xs font-medium">Maintenance window</p>
-          <div className="flex flex-wrap gap-3 text-xs">
-            {WEEKDAYS.map((d) => <label key={d.id} className="flex items-center gap-1"><input type="checkbox" checked={days.has(d.id)} onChange={(e) => setDays((s) => toggle(s, d.id, e.target.checked))} />{d.label}</label>)}
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl">
-            <div className="space-y-1"><Label className="text-xs">Starts (local)</Label><Input type="time" value={start} onChange={(e) => setStart(e.target.value)} /></div>
-            <div className="space-y-1"><Label className="text-xs">Ends (local; earlier = next day)</Label><Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
-            <div className="space-y-1"><Label className="text-xs">Time zone (IANA)</Label><Input value={timezone} onChange={(e) => setTimezone(e.target.value)} /></div>
-          </div>
-        </div>
+        <WindowEditor id="pol" value={win} onChange={setWin} expiresInDays={expiresInDays} />
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl">
           <div className="space-y-1"><Label className="text-xs">Soak between rings (hours)</Label><Input type="number" min={0} max={168} value={soakHours} onChange={(e) => setSoakHours(Number(e.target.value))} /></div>

@@ -137,6 +137,13 @@ const docOf = (plan, cs) => {
   check('settings: at most 90 days', !A.SeriesSettings.safeParse({ ...s, expiresInDays: 91 }).success);
   check('settings: the restart rule is the closed pair', !A.SeriesSettings.safeParse({ ...s, reboot: 'always' }).success);
   check('settings: nothing unknown', !A.SeriesSettings.safeParse({ ...s, rings: [] }).success);
+  // 0.53: a company-wide or assignable policy may be monthly; each revision carries the window as given.
+  const pt = { kind: 'monthly', week: 'second', weekday: 'tue', offsetDays: 3, start: '22:00', end: '04:00', timezone: 'America/Chicago' };
+  const m = A.SeriesSettings.safeParse({ ...s, window: pt });
+  check('settings: a monthly window (Patch Tuesday + 3) is accepted and kept exactly', m.success && JSON.stringify(m.data.window) === JSON.stringify(pt));
+  check('settings: a day-of-month window is accepted, 1–28 only', A.SeriesSettings.safeParse({ ...s, window: { kind: 'monthly', day: 28, start: '01:00', end: '03:00', timezone: 'UTC' } }).success
+    && !A.SeriesSettings.safeParse({ ...s, window: { kind: 'monthly', day: 29, start: '01:00', end: '03:00', timezone: 'UTC' } }).success);
+  check('settings: an unknown window kind is refused', !A.SeriesSettings.safeParse({ ...s, window: { ...pt, kind: 'yearly' } }).success && !A.SeriesSettings.safeParse({ ...s, window: { ...s.window, kind: 'weekly' } }).success);
 }
 
 if (failures.length) {

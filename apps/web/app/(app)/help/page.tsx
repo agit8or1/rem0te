@@ -1235,6 +1235,18 @@ const SECTIONS: Section[] = [
           <Link href="/docs/staged-patching#scheduled-installs" className="underline text-foreground">Staged patching</Link>.
         </p>
         <p>
+          From 0.53, a patch policy&apos;s maintenance window can be{' '}
+          <strong className="text-foreground">monthly</strong> as well as weekly: the first, second, third, fourth or
+          last weekday of each month plus 0–14 days (Patch Tuesday is the second Tuesday, so &ldquo;second Tuesday + 2&rdquo;
+          is the Thursday after it), or a day of the month from 1 to 28, so it opens in every month. The start, end and
+          time zone work as for a weekly window, across midnight and daylight-saving time. The policy form and the
+          company-wide policy form show the next three openings before the policy expires; a window that never opens
+          before then is refused. Policies approved before 0.53 are weekly and keep working unchanged. The approval
+          signer must be updated to 0.53 before it accepts a monthly policy. On the <em>Patches</em> tab, a scheduled
+          install can start at the next opening of the computer&apos;s policy window. More in{' '}
+          <Link href="/docs/staged-patching#monthly-windows-053" className="underline text-foreground">Staged patching</Link>.
+        </p>
+        <p>
           From 0.34, a deployment, an <em>Install updates</em> request and a patch policy each have a{' '}
           <strong className="text-foreground">restart rule</strong>: <em>Never restart</em> (the default) or{' '}
           <em>Restart if required, inside the window</em>. With the second, a computer that Windows says needs a restart

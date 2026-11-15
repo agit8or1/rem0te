@@ -11,7 +11,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
-import { CLASS_NAMES, DEFAULT_POLICY_CLASSES, DRIVERS_CLASS, POLICY_STATUS, WEEKDAYS, describeWindow } from '@/lib/patching';
+import { CLASS_NAMES, DEFAULT_POLICY_CLASSES, DRIVERS_CLASS, POLICY_STATUS, describeWindow, type PolicyWindowInput } from '@/lib/patching';
+import { WindowEditor, defaultWindowDraft, draftReady, windowFromDraft } from '@/components/patching/window-editor';
 import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
 import { EFFECTIVE_LABEL, type EffectivePolicy } from '@/components/patching/patch-policy-setting';
 import { Building2, Loader2, Plus } from 'lucide-react';
@@ -30,7 +31,7 @@ import { describeOccurrence } from '@/lib/tasks';
 interface LeftOut { endpointId: string; hostname: string; code: string; message: string }
 interface Series {
   id: string; scope: 'business' | 'assigned'; name: string; status: 'active' | 'retired'; createdAt: string; retireReason: string | null;
-  settings: { window: { days: string[]; start: string; end: string; timezone: string }; reboot: string; expiresInDays: number };
+  settings: { window: PolicyWindowInput; reboot: string; expiresInDays: number };
   computersSetToUse: number;
   /** 0.52: when the running revision next installs (null when nothing runs, or it expires first). */
   nextWindow?: { start: string; end: string } | null;
@@ -163,10 +164,7 @@ function CreateSeries({ businessId, scope, computers, onDone }: { businessId: st
   const { toast } = useToast();
   const [name, setName] = useState('');
   const [classes, setClasses] = useState<Set<string>>(new Set(DEFAULT_POLICY_CLASSES));
-  const [days, setDays] = useState<Set<string>>(new Set(['sat']));
-  const [start, setStart] = useState('22:00');
-  const [end, setEnd] = useState('04:00');
-  const [timezone, setTimezone] = useState(() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return 'UTC'; } });
+  const [win, setWin] = useState(defaultWindowDraft);
   const [soakHours, setSoakHours] = useState(24);
   const [failureThreshold, setFailureThreshold] = useState(0);
   const [expiresInDays, setExpiresInDays] = useState(30);
@@ -177,12 +175,12 @@ function CreateSeries({ businessId, scope, computers, onDone }: { businessId: st
   const create = useMutation({
     mutationFn: () => patchingApi.createSeries({
       businessId, scope, name: name.trim(), allow: { classifications: [...classes] }, soakHours, failureThreshold, expiresInDays, reboot, reason: reason.trim(),
-      window: { days: WEEKDAYS.filter((d) => days.has(d.id)).map((d) => d.id), start, end, timezone }, ...(canary ? { canaryEndpointId: canary } : {}),
+      window: windowFromDraft(win), ...(canary ? { canaryEndpointId: canary } : {}),
     }),
     onSuccess: () => { toast({ title: scope === 'business' ? 'Company-wide policy created' : 'Assignable policy created', description: scope === 'business' ? 'Revision 1 was proposed on the approval signer.' : 'Set computers to use it; its first revision follows.' }); onDone(); },
     onError: (e) => toast({ title: 'Not created', description: apiMessage(e, 'Refused.'), variant: 'destructive' }),
   });
-  const ok = name.trim().length >= 3 && classes.size > 0 && days.size > 0 && start !== end && reason.trim().length >= 3;
+  const ok = name.trim().length >= 3 && classes.size > 0 && draftReady(win) && reason.trim().length >= 3;
   return (
     <Card className="mb-4">
       <CardHeader className="pb-3"><CardTitle className="text-sm">{scope === 'business' ? 'New company-wide patch policy' : 'New assignable patch policy'}</CardTitle></CardHeader>
@@ -193,15 +191,7 @@ function CreateSeries({ businessId, scope, computers, onDone }: { businessId: st
           {Object.entries(CLASS_NAMES).map(([id, n]) => <label key={id} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={classes.has(id)} onChange={(e) => setClasses((s) => toggle(s, id, e.target.checked))} />{n}</label>)}
           {classes.has(DRIVERS_CLASS) && <p className="text-xs text-muted-foreground">Drivers install as Windows Update offers them, on every computer in each ring. Needs the 0.42 agent.</p>}
         </div>
-        <div className="space-y-2">
-          <p className="text-xs font-medium">Maintenance window</p>
-          <div className="flex flex-wrap gap-3 text-xs">{WEEKDAYS.map((d) => <label key={d.id} className="flex items-center gap-1"><input type="checkbox" checked={days.has(d.id)} onChange={(e) => setDays((s) => toggle(s, d.id, e.target.checked))} />{d.label}</label>)}</div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl">
-            <div className="space-y-1"><Label className="text-xs">Starts (local)</Label><Input type="time" value={start} onChange={(e) => setStart(e.target.value)} /></div>
-            <div className="space-y-1"><Label className="text-xs">Ends (local; earlier = next day)</Label><Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
-            <div className="space-y-1"><Label className="text-xs">Time zone (IANA)</Label><Input value={timezone} onChange={(e) => setTimezone(e.target.value)} /></div>
-          </div>
-        </div>
+        <WindowEditor id="ser" value={win} onChange={setWin} expiresInDays={expiresInDays} />
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl">
           <div className="space-y-1"><Label className="text-xs">Soak between rings (hours)</Label><Input type="number" min={0} max={168} value={soakHours} onChange={(e) => setSoakHours(Number(e.target.value))} /></div>
           <div className="space-y-1"><Label className="text-xs">Failed computers allowed per ring</Label><Input type="number" min={0} max={25} value={failureThreshold} onChange={(e) => setFailureThreshold(Number(e.target.value))} /></div>

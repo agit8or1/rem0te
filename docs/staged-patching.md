@@ -220,7 +220,11 @@ The same task appears in the computer's **Tasks** panel and on **Automation → 
 From 0.52, **Install updates** on the Patches tab and a deployment's **next ring** can start at a time instead of now.
 Choose **Schedule**, a date and time, and a time zone. The form offers the computer's site zone, your profile's zone,
 this browser's and UTC, and says which one the time is in. Up to 14 days ahead; for a regular schedule, use a
-[patch policy](#patch-policies) and its weekly maintenance window.
+[patch policy](#patch-policies) and its weekly or monthly maintenance window. From 0.53, when the computer is covered
+by a patch policy, the form also offers **Start at the next opening of this computer's patch policy window**: it fills
+in that opening's start, as a wall-clock time in the zone chosen in the form, and sets the run window to the policy
+window's length (1–24 hours). It is offered greyed out, with the reason, while that window is open (install now) or
+more than 14 days away. It is an ordinary one-computer install that starts at that time, not a ring under the policy.
 
 What happens:
 
@@ -246,9 +250,8 @@ runs at the next check-in. A ring under a patch policy cannot be given a schedul
 its clock moved). It has not run on a real Windows computer.
 
 Patch policies show their **next install window** — on the company-wide policy list and on each computer's Patch
-policy card — computed from the running revision's signed window. Windows are weekly (days of the week, a start and an
-end, in one zone). There is no monthly schedule such as *the second Tuesday*: that would change the signed policy
-document and the approval signer, and has not been done.
+policy card — computed from the running revision's signed window. From 0.53 a window may be weekly or
+[monthly](#monthly-windows-053).
 
 ## Patch policies
 
@@ -264,7 +267,7 @@ itself**, not the portal, signs each ring plan, but only if the plan falls insid
 | 0.34: each computer's **result key**, the key its agent signs its results with | Every result and scan that opens a later ring ([Signed results](#signed-results-034)) |
 | The rings, in order. Ring 0 is one canary; later rings hold at most 25 | The signer's own ledger of what it signed. Ring *n* needs ring *n − 1* of the same deployment signed first |
 | Classes, severities, excluded KBs | Each update shown in the plan. The plan also carries the filter as `params.allow`, and **each computer applies it** to Windows Update's own answer, so a mislabelled update can't slip past |
-| The maintenance window: days, local start and end, IANA time zone | The plan's window must lie inside one occurrence. DST is honoured |
+| The maintenance window: weekly days, or (0.53) a monthly day; local start and end; IANA time zone | The plan's window must lie inside one occurrence. DST is honoured |
 | Soak and failure threshold | The ring gate, re-run by the signer (below) |
 | The restart rule: *never*, or *restart if required, inside the window* (0.34) | The plan's `params.reboot`. A plan may ask for no more than the policy: under a *never* policy, a plan asking to restart is refused (`reboot_not_allowed`); under an in-window policy, a plan may ask for either |
 | Expiry, at most 90 days | Every plan, and the plan's window end |
@@ -284,6 +287,57 @@ refused (below).
 **What it can do** is withhold or delay results, so the next ring starts late or never; and, before a computer's
 first policy is approved, propose a result key that isn't the computer's
 ([the trust-on-first-use window](#the-trust-on-first-use-window)).
+
+### Monthly windows (0.53)
+
+A policy's maintenance window is **weekly** (days of the week) or **monthly**. A monthly window opens once a month, on
+one of:
+
+- **the nth or last weekday** — *first*, *second*, *third*, *fourth* or *last* Monday…Sunday — plus an optional
+  **offset of 0–14 days**. Patch Tuesday is *the second Tuesday*. *Second Tuesday + 2* is the Thursday after it, and
+  *second Tuesday + 7* the Tuesday a week later, which gives the canary a week of other people's reports first. An
+  offset may carry the window into the next month (*the last Saturday + 7*); that opening still belongs to the month
+  it was counted from, so there is exactly one a month. *Last* is the fifth weekday in a month that has five, and the
+  same as *fourth* in a month that has four.
+- **a day of the month, 1 to 28.** There is no 29th to 31st: every month has a 28th, so a day-of-month window opens
+  every month, February included, and nothing has to define what "the 31st" means in April.
+
+The start, end and time zone work exactly as for a weekly window: wall-clock times in a named IANA zone, an end at or
+before the start ends on the next day (so a window can cross midnight, and the end of a month), and the length follows
+the local clock across a DST change. The editor (the policy form and the company-wide policy form) shows the window in
+words and its **next three openings** in the chosen zone, before the expiry. They are not worked out in the browser:
+they come from `POST /patching/window-preview`, which runs the same functions the approval signer holds every ring
+plan to. The policy page and the signer's approval page show the next openings too.
+
+**Expiry still applies.** A policy expires at most 90 days after it is proposed, and its window must open at least
+once before then, or the policy is refused (`window_never_opens`) by the portal and by the signer. A monthly window
+proposed just after its day, with a 14-day expiry, never opens; the editor says so before you propose.
+
+**What it is in the signed document.** The window is a closed union of three shapes, each strict:
+
+| Shape | Fields |
+|---|---|
+| Weekly (unchanged since 0.32) | `days`, `start`, `end`, `timezone` |
+| Monthly, nth weekday | `kind: "monthly"`, `week` (`first`…`fourth`, `last`), `weekday` (`sun`…`sat`), `offsetDays` (0–14), `start`, `end`, `timezone` |
+| Monthly, day of month | `kind: "monthly"`, `day` (1–28), `start`, `end`, `timezone` |
+
+A weekly window carries no `kind`, so a weekly document's bytes, digest and approvals are exactly what they were
+before 0.53: policies approved earlier keep verifying and running unchanged. Anything else — another `kind`, a weekly
+window with a `kind`, a day and a weekday together, a day past 28, an offset past 14 — matches none of the three and
+is refused by the portal (`400`) and by the signer at admission (`invalid_policy`). Every occurrence function also
+treats an unknown shape as a window that never opens, so a stored document could not be read as weekly by mistake.
+The occurrence arithmetic is one set of functions in `apps/api/src/actions/patch-policy.ts`, which the approval
+signer's install includes; the portal's sweep, its preview and the signer's ring-plan check all call it
+(security invariant §66).
+
+**Deploying it.** The approval signer is a separate install: until it is rebuilt and redeployed from 0.53
+(`apps/api/scripts/build-approval-signer.mjs`), it refuses a monthly policy at admission (`invalid_policy`, its schema
+is still weekly-only), and weekly policies carry on as before. The agent needs nothing: it never reads a policy's
+window, only its plan's own `notBefore` and `notAfter`, which the signer has already checked against the window.
+
+Monthly windows are tested against the simulated agent and the signer (`unit-monthly-window.mjs`,
+`e2e-patch-policies.mjs`, `e2e-patch-assignment.mjs`). Like every patch policy, they have not run on a real Windows
+computer.
 
 ### Company-wide policies and each computer's Patch policy (0.50)
 

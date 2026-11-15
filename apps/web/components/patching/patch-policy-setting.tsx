@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { CalendarClock, Loader2 } from 'lucide-react';
 import { describeOccurrence } from '@/lib/tasks';
+import { describeWindow, type PolicyWindowInput } from '@/lib/patching';
 
 /**
  * One computer's Patch policy setting (0.50), on its Patches tab and in the
@@ -23,8 +24,8 @@ import { describeOccurrence } from '@/lib/tasks';
 export interface EffectivePolicy {
   setting: { mode: 'inherit' | 'exclude' | 'policy'; seriesId: string | null; seriesName: string | null };
   effective: { state: 'covered' | 'pending' | 'left_out' | 'excluded' | 'none'; why: string; policy: { id: string; name: string; revision: number | null; ring: number } | null; series: { id: string; name: string; scope: string } | null;
-    /** 0.52: the covering policy's weekly window, and when it next opens. */
-    window?: { days: string[]; start: string; end: string; timezone: string } | null; nextWindow?: { start: string; end: string } | null };
+    /** 0.52: the covering policy's window (0.53: weekly or monthly), and when it next opens. */
+    window?: PolicyWindowInput | null; nextWindow?: { start: string; end: string } | null };
   choices: { id: string; name: string }[];
   companyWide: { id: string; name: string } | null;
   mayEdit: boolean;
@@ -71,6 +72,7 @@ export function PatchPolicySetting({ endpointId }: { endpointId: string }) {
         {p.effective.window && (
           <p className="text-xs" data-testid="policy-next-window">
             {p.effective.nextWindow ? <>Next install window: <strong>{describeOccurrence(p.effective.nextWindow, p.effective.window.timezone)}</strong></> : <span className="text-muted-foreground">No install window coming up for this computer.</span>}
+            <span className="block text-muted-foreground">Window: {describeWindow(p.effective.window)}</span>
           </p>
         )}
         <div className="flex flex-wrap items-center gap-2">

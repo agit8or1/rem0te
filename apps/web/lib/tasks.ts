@@ -63,7 +63,11 @@ export function browserTimeZone(): string {
 
 /** A wall-clock "YYYY-MM-DDTHH:MM" in `tz`, `minutes` from now (for a sensible default). */
 export function localIn(tz: string, minutes = 60): string {
-  const t = new Date(Date.now() + minutes * 60_000);
+  return localAt(tz, new Date(Date.now() + minutes * 60_000));
+}
+
+/** 0.53: the wall-clock "YYYY-MM-DDTHH:MM" in `tz` at instant `t` (a policy window's opening, for the schedule picker). */
+export function localAt(tz: string, t: Date): string {
   try {
     const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
       .formatToParts(t).filter((x) => x.type !== 'literal').map((x) => [x.type, x.value]));
