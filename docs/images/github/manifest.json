@@ -4,7 +4,7 @@
     "height": 1000
   },
   "deviceScaleFactor": 2,
-  "demoData": "apps/api/prisma/_docs-demo-data.ts, _docs-demo-monitoring.ts and _docs-demo-workbench.ts against reboot_remote_docs",
+  "demoData": "apps/api/prisma/_docs-demo-data.ts, _docs-demo-monitoring.ts, _docs-demo-workbench.ts, _docs-demo-dispatch.ts and _docs-demo-roster.ts against reboot_remote_docs",
   "shots": [
     {
       "name": "dashboard-light",
@@ -417,6 +417,66 @@
     {
       "name": "settings-psa-dark",
       "route": "/settings/psa",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "company-policy-light",
+      "route": "/patching",
+      "theme": "light",
+      "viewport": "1440x1500@2x"
+    },
+    {
+      "name": "patch-policy-setting-light",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=patches",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "confirm-it-is-you-light",
+      "route": "/settings?tab=confirm",
+      "theme": "light",
+      "viewport": "1440x1300@2x"
+    },
+    {
+      "name": "reinstall-banner-light",
+      "route": "/endpoints/enroll?endpointId=cmwdpnws9005snivnr5kzqhna&businessId=cmwdpnwoe004nnivnv57k9nl0",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "agent-auto-update-light",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3",
+      "theme": "light",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "company-policy-dark",
+      "route": "/patching",
+      "theme": "dark",
+      "viewport": "1440x1500@2x"
+    },
+    {
+      "name": "patch-policy-setting-dark",
+      "route": "/endpoints/cmwdpnwpb004ynivn00aql9i3?tab=patches",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "confirm-it-is-you-dark",
+      "route": "/settings?tab=confirm",
+      "theme": "dark",
+      "viewport": "1440x1300@2x"
+    },
+    {
+      "name": "reinstall-menu-dark",
+      "route": "/endpoints/cmwdpnws9005snivnr5kzqhna",
+      "theme": "dark",
+      "viewport": "1440x1000@2x"
+    },
+    {
+      "name": "business-agent-auto-update-dark",
+      "route": "/businesses/cmwdpnwoe004nnivnv57k9nl0",
       "theme": "dark",
       "viewport": "1440x1000@2x"
     }

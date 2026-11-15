@@ -220,6 +220,36 @@ export const SHOTS = [
     before: pickBusiness('#cu-business', 'Harbor Logistics') },
   { name: 'patch-policies-dark', path: '/patching', theme: 'dark', settle: 2000,
     before: pickBusiness('main select', 'Harbor Logistics') },
+  // 0.50: the business's company-wide and assignable policies, and each
+  // computer's Patch policy (prisma/_docs-demo-roster.ts).
+  ...['light', 'dark'].map((theme) => ({ name: `company-policy-${theme}`, path: '/patching', theme, height: 1500, settle: 1200,
+    before: async (p) => {
+      await pickBusiness('main select', 'Harbor Logistics')(p);
+      await p.waitForSelector('[data-testid="company-policies"] summary', { timeout: 10000 });
+      await p.click('[data-testid="company-policies"] summary:has-text("Left out")');
+      await p.click('[data-testid="company-policies"] summary:has-text("Each computer")');
+      await p.evaluate(() => document.querySelector('[data-testid="company-policies"]').scrollIntoView({ block: 'start' }));
+    } })),
+  ...['light', 'dark'].map((theme) => ({ name: `patch-policy-setting-${theme}`, path: '@endpoint:HARB-DISPATCH-01?tab=patches', theme, settle: 1000,
+    before: async (p) => {
+      await p.waitForSelector('[data-testid="patch-policy-setting"]', { timeout: 15000 });
+      await p.evaluate(() => document.querySelector('[data-testid="patch-policy-setting"]').scrollIntoView({ block: 'center' }));
+    } })),
+  // 0.49: Settings → Confirm it is you.
+  ...['light', 'dark'].map((theme) => ({ name: `confirm-it-is-you-${theme}`, path: '/settings?tab=confirm', theme, height: 1300, wait: '[data-testid="confirm-policy"]', settle: 1200 })),
+  // 0.48.2: the reinstall link, from the More menu, and Add device bound to the computer.
+  { name: 'reinstall-menu-dark', maxHeight: 700, path: '@endpoint:HARB-WAREHOUSE-2', theme: 'dark', wait: '[data-testid="header-reinstall-hint"]', settle: 800,
+    before: async (p) => {
+      await p.waitForSelector('[data-testid="header-reinstall-hint"]', { timeout: 15000 });
+      await p.click('button:has-text("More")');
+      await p.waitForSelector('[data-testid="action-reinstall-link"]', { timeout: 10000 });
+    } },
+  { name: 'reinstall-banner-light', path: '@reinstall:HARB-WAREHOUSE-2', theme: 'light', wait: '[data-testid="reinstall-banner"]', settle: 1500 },
+  // 0.46: automatic agent updates per computer (the Agent card) and per business.
+  { name: 'agent-auto-update-light', path: '@endpoint:HARB-DISPATCH-01', theme: 'light', settle: 1200, clip: '@element',
+    element: 'div.rounded-xl:has([data-testid="agent-auto-update"]), div.rounded-lg:has([data-testid="agent-auto-update"])',
+    before: async (p) => { await p.waitForSelector('[data-testid="agent-auto-update-select"]', { timeout: 15000 }); } },
+  { name: 'business-agent-auto-update-dark', maxHeight: 960, path: '@business', theme: 'dark', wait: '[data-testid="business-agent-auto-update"]', settle: 1200 },
 
   // ── Access and administration ──────────────────────────────────────────
   { name: 'access-model-light', path: '/admin/access', theme: 'light', settle: 3000 },
@@ -319,6 +349,15 @@ async function run() {
           return l.find((x) => x.name === n)?.id ?? null;
         }, [kind, name]);
         target = `${kind === 'endpoint' ? '/endpoints' : '/automation/scripts'}/${id}${q ?? ''}`;
+      }
+      const ri = /^@reinstall:(.+)$/.exec(target);
+      if (ri) {
+        const r = await page.evaluate(async (n) => {
+          const x = await fetch(`/api/v1/endpoints?search=${encodeURIComponent(n)}&pageSize=25`).then((y) => y.json()).catch(() => null);
+          const e = (x?.data?.endpoints ?? x?.data?.items ?? []).find((y) => y.name === n);
+          return e ? { id: e.id, businessId: e.customerId ?? e.business?.id ?? null } : null;
+        }, ri[1]);
+        target = `/endpoints/enroll?endpointId=${r?.id}&businessId=${r?.businessId}`;
       }
       target = target
         .replace('@business', `/businesses/${businessId}`)
@@ -459,7 +498,7 @@ async function run() {
 
   await writeFile(manifestPath,
     JSON.stringify({ viewport: VIEWPORT, deviceScaleFactor: SCALE,
-      demoData: 'apps/api/prisma/_docs-demo-data.ts, _docs-demo-monitoring.ts and _docs-demo-workbench.ts against reboot_remote_docs',
+      demoData: 'apps/api/prisma/_docs-demo-data.ts, _docs-demo-monitoring.ts, _docs-demo-workbench.ts, _docs-demo-dispatch.ts and _docs-demo-roster.ts against reboot_remote_docs',
       shots: merged }, null, 2) + '\n');
   console.log(`\n${manifest.length} captured -> ${OUT}`);
   await browser.close();

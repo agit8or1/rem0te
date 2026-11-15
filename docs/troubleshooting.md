@@ -296,6 +296,23 @@ duplicate appears in the list. A reinstall on a new RustDesk ID moves the
 record to the new ID. Making the link needs **Add computers**, the same
 permission as adding a new one.
 
+![A computer that is offline: the line under its buttons with the reinstall link](screenshots/guide/reinstall-hint.png)
+
+1. **Its connectivity** — offline here, for six hours.
+2. **make a reinstall link for <name>** — shown while the computer is not online.
+
+![The More menu on a computer's page](screenshots/guide/reinstall-menu.png)
+
+1. **More.**
+2. **Reinstall manually (download link)…** — always offered to someone with **Add computers**, online or not.
+3. **Reinstall agent at next check-in…** — the heartbeat-based one, which needs the agent to be checking in.
+
+![Add device opened from a reinstall link](screenshots/guide/reinstall-banner.png)
+
+1. **The banner** — names the computer the link is for, and says it works once and expires after 24 hours.
+2. **Business and site** — fixed to the computer's own.
+3. **Who may connect** — filled in from the computer's current access.
+
 ---
 
 ## A computer went offline right after Update or Reinstall agent
