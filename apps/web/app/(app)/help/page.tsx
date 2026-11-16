@@ -844,17 +844,30 @@ const SECTIONS: Section[] = [
         <p>
           Anyone who may edit the computer can <strong className="text-foreground">enter the warranty dates by hand</strong>.
           The change is audited, and a vendor lookup never overwrites it. A Platform Admin can switch on an automatic
-          lookup for <strong className="text-foreground">Dell</strong> or <strong className="text-foreground">Lenovo</strong> under{' '}
+          lookup for <strong className="text-foreground">Dell</strong>, <strong className="text-foreground">Lenovo</strong>,{' '}
+          <strong className="text-foreground">HP</strong> (from 0.61) or <strong className="text-foreground">Apple</strong> (from 0.61, Macs in
+          your Apple Business Manager) under{' '}
           <Link href="/settings/warranty" className="underline text-foreground">Settings → Warranty</Link>. It is off by
           default, and when it is on, each computer&apos;s serial number is sent to that vendor (nothing else is).
           The lookup checks each computer at most every 30 days, with an hourly limit, and stops under an
-          <em> integration</em> containment pause.
+          <em> integration</em> containment pause. HPE, Microsoft Surface, ASUS and Acer publish no warranty API, so their
+          dates are entered by hand.
+        </p>
+        <p>
+          <strong className="text-foreground">HP credentials:</strong> create an account at developers.hp.com, submit the CSS API
+          enrolment form, wait for HP to confirm the Warranty API is enabled on your account, then create an app and paste its
+          API key and secret into Settings → Warranty.
+        </p>
+        <p>
+          <strong className="text-foreground">Why is there no date?</strong> From 0.61 every computer without one says why, on its
+          card and in the report: the vendor has no lookup, the lookup is not switched on, the serial is missing, the vendor has
+          not been asked yet, the vendor had no record, or the lookup failed (with the reason).
         </p>
         <p>
           The device list has a Warranty column and filter (expired, ends within 30/60/90 days, unknown).{' '}
           <Link href="/reports/warranty" className="underline text-foreground">Reports → Warranty</Link> and the dashboard tile count
-          them. To be alerted, add a <em>Warranty expiring</em> monitor in Settings → Monitoring. It is not added for you. The Dell and Lenovo
-          lookups have been tested only against a stand-in, never the real vendor APIs.{' '}
+          them. To be alerted, add a <em>Warranty expiring</em> monitor in Settings → Monitoring. It is not added for you. The Dell, Lenovo,
+          HP and Apple lookups have been tested only against a stand-in, never the real vendor APIs.{' '}
           <Link href="/docs/warranty" className="underline text-foreground">Hardware warranty</Link>.
         </p>
       </div>

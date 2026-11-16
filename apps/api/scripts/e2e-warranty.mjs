@@ -189,7 +189,7 @@ async function all() {
   check(r.status === 200 && r.data.support.links[0].url === `https://www.dell.com/support/home/en-us/product-support/servicetag/${TAG1}/overview` && r.data.warranty.state === 'unknown' && r.data.lookup.implemented && !r.data.lookup.enabled,
     'Dell: the service tag is in the support link; no date yet; lookup implemented but off', msg(r));
   r = await req('GET', `/endpoints/${hp1.id}/warranty`, { s: S.viewer });
-  check(r.status === 200 && r.data.support.vendorLabel === 'HP' && r.data.support.links.every((l) => !l.url.includes(sfx)) && r.data.lookup.implemented === false, 'HP: fixed pages, the serial not in any URL, no automatic lookup', msg(r));
+  check(r.status === 200 && r.data.support.vendorLabel === 'HP' && r.data.support.links.every((l) => !l.url.includes(sfx)) && r.data.lookup.implemented === true && r.data.lookup.enabled === false && r.data.gap?.reason === 'not_configured', 'HP: fixed pages, the serial not in any URL; from 0.61 a lookup exists but is off, and the card says so', msg(r));
   r = await req('GET', `/endpoints/${vm1.id}/warranty`, { s: S.viewer });
   check(r.status === 200 && r.data.support.maker.kind === 'virtual' && r.data.support.links.length === 0 && /no hardware warranty/.test(r.data.support.note), 'VMware: "virtual machine — no hardware warranty", no links', msg(r));
   r = await req('GET', `/endpoints/${dellB.id}/warranty`, { s: S.ownerA });
@@ -218,13 +218,13 @@ async function all() {
   r = await req('GET', '/warranty/settings', { s: S.ownerA });
   check(r.status === 403, 'a Business Owner cannot read the settings', msg(r));
   r = await req('GET', '/warranty/settings', { s: S.admin });
-  check(r.status === 200 && r.data.vendors.length === 2 && r.data.vendors.every((v) => !v.enabled && !v.secretSet) && r.data.manualOnly.length === 6, 'off by default: Dell and Lenovo can be switched on, six vendors are manual only', msg(r));
+  check(r.status === 200 && r.data.vendors.length === 4 && r.data.vendors.every((v) => !v.enabled && !v.secretSet) && r.data.manualOnly.length === 4, 'off by default: Dell, Lenovo, HP and Apple can be switched on (0.61), four vendors are manual only', msg(r));
   r = await req('PUT', '/warranty/settings/lenovo', { s: S.admin, body: { enabled: true, secret: LENOVO_SECRET } });
   check(r.status === 401 || r.status === 403, 'saving without a fresh sign-in is refused', msg(r));
   r = await req('PUT', '/warranty/settings/lenovo', { s: up.ownerA, body: { enabled: true, secret: LENOVO_SECRET } });
   check(r.status === 403, 'a Business Owner, even freshly signed in, cannot save', msg(r));
-  r = await req('PUT', '/warranty/settings/hp', { s: up.admin, body: { enabled: true, secret: 'abcdefgh1234' } });
-  check(r.status === 400 && code(r) === 'UNKNOWN_VENDOR', 'HP has no lookup to switch on', msg(r));
+  r = await req('PUT', '/warranty/settings/hpe', { s: up.admin, body: { enabled: true, secret: 'abcdefgh1234' } });
+  check(r.status === 400 && code(r) === 'UNKNOWN_VENDOR', 'HPE has no lookup to switch on', msg(r));
   r = await req('PUT', '/warranty/settings/dell', { s: up.admin, body: { enabled: true, secret: DELL_SECRET } });
   check(r.status === 400 && code(r) === 'CLIENT_ID_REQUIRED', 'Dell needs its client id', msg(r));
   r = await req('PUT', '/warranty/settings/lenovo', { s: up.admin, body: { enabled: true, secret: LENOVO_SECRET } });
@@ -232,7 +232,7 @@ async function all() {
   r = await req('PUT', '/warranty/settings/dell', { s: up.admin, body: { enabled: true, clientId: DELL_ID, secret: DELL_SECRET } });
   check(r.status === 200 && r.data.enabled && r.data.clientId === DELL_ID && !r.text.includes(DELL_SECRET), 'Dell on', msg(r));
   r = await req('GET', '/warranty/settings', { s: S.admin });
-  check(!r.text.includes(DELL_SECRET) && !r.text.includes(LENOVO_SECRET) && r.data.vendors.every((v) => v.enabled && v.secretSet), 'reading the settings never returns a key', msg(r));
+  check(!r.text.includes(DELL_SECRET) && !r.text.includes(LENOVO_SECRET) && r.data.vendors.filter((v) => v.vendor === 'dell' || v.vendor === 'lenovo').every((v) => v.enabled && v.secretSet), 'reading the settings never returns a key', msg(r));
   const row = await prisma.warrantyVendor.findUnique({ where: { vendor: 'dell' } });
   check(!!row?.secretEnc && !row.secretEnc.includes(DELL_SECRET) && row.secretLast4 === DELL_SECRET.slice(-4), 'the database holds the key sealed, with only its last four in the clear');
   check(hits.length === 0, 'saving the settings sent nothing to a vendor');

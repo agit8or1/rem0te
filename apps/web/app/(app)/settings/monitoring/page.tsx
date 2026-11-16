@@ -104,7 +104,7 @@ const KIND: Record<MonitorKindId, { label: string; hint: string; fields: { k: st
   // 0.56. Never on by default and not in “Add recommended”: add it here.
   WARRANTY_EXPIRING: {
     label: 'Hardware warranty ending',
-    hint: 'The computer’s stored warranty end date (entered on its device page, or read from Dell or Lenovo when that lookup is on) is within this many days, or has passed. One alert per computer; it clears when the date moves out of the window and is raised again, naming the new date, when the date changes. A computer with no date stored never alerts.',
+    hint: 'The computer’s stored warranty end date (entered on its device page, or read from Dell, Lenovo, HP or Apple when that lookup is on) is within this many days, or has passed. One alert per computer; it clears when the date moves out of the window and is raised again, naming the new date, when the date changes. A computer with no date stored never alerts.',
     fields: [{ k: 'daysBefore', label: 'Days before the end date', type: 'int', def: 30 }],
   },
 };

@@ -5166,8 +5166,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     files.filter((f) => /\bsafeGet\(/.test(read(f)) && !f.endsWith('common/safe-https.ts')).every((f) => f === 'apps/api/src/warranty/client.ts')
       && /export const WARRANTY_TIMEOUT_MS = 20_000;/.test(cl) && /export const WARRANTY_MAX_RESPONSE = 256 \* 1024;/.test(cl)
       && /const OPTS = \{ timeoutMs: WARRANTY_TIMEOUT_MS, maxBytes: WARRANTY_MAX_RESPONSE \};/.test(cl)
-      && (cl.match(/safe(Get|Post)\([^;]*OPTS\)/g) ?? []).length === 3 && callers.includes('apps/api/src/warranty/client.ts'),
-    'client.ts: three vendor requests (Dell token, Dell entitlements, Lenovo), each with OPTS');
+      && (cl.match(/\bsafe(Get|Post)\(/g) ?? []).length === 9 && (cl.match(/safe(Get|Post)\([^;]*OPTS\)/g) ?? []).length === 9 && callers.includes('apps/api/src/warranty/client.ts'),
+    'client.ts: nine vendor requests (Dell token + entitlements, Lenovo; 0.61: HP token, job, status, results; Apple token, coverage), each with OPTS');
   const sh = read('apps/api/src/common/safe-https.ts');
   const req = sh.slice(sh.indexOf('async function safeRequest('));
   check('safe-https: safeGet goes through the same checked request as safePost (no second client)',
@@ -5183,7 +5183,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /\/PROD\/sbil\/eapi\/v5\/asset-entitlements\?servicetags=\$\{encodeURIComponent\(serial\)\}`/.test(cl)
       && /\/v2\.5\/warranty\?Serial=\$\{encodeURIComponent\(serial\)\}`/.test(cl)
       && /new URLSearchParams\(\{ grant_type: 'client_credentials', client_id: c\.clientId, client_secret: c\.secret \}\)/.test(cl)
-      && !/endpoint|hostname|customer|business/i.test(strip(cl).replace(/asset-entitlements/g, '')),
+      // 0.61: Apple's host and scope name "business"; nothing else may.
+      && !/endpoint|hostname|customer|business/i.test(strip(cl).replace(/asset-entitlements|api-business\.apple\.com|'business\.api'/g, '')),
     'client.ts must not take or send anything but the serial (and the vendor credential)');
   const svc = read('apps/api/src/warranty/warranty.service.ts');
   const lookCalls = [...svc.matchAll(/await lookup\(([^)]*)\)/g)].map((m) => m[1]);
@@ -5191,7 +5192,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     lookCalls.length === 1 && lookCalls[0] === 'vendor, creds, serial' && files.filter((f) => (f.startsWith('apps/api/src/warranty/') && /from '\.\/client'/.test(read(f))) || /from '[./]*warranty\/client'/.test(read(f))).every((f) => f === 'apps/api/src/warranty/warranty.service.ts'),
     `lookup calls: ${lookCalls.join(' | ')}`);
   check('warranty: the credential is sealed with its own purpose; only its last four characters are kept in the clear',
-    /secretEnc = sealSecret\(this\.encKey, 'rem0te-warranty-key-v1', d\.data\.secret\); secretLast4 = last4\(d\.data\.secret\);/.test(svc)
+    /secretEnc = sealSecret\(this\.encKey, 'rem0te-warranty-key-v1', given\); secretLast4 = last4\(given\);/.test(svc)
+      && /const last4 = \(s: string\) => s\.replace\(\/-----\[A-Z \]\+-----\|\\s\/g, ''\)\.slice\(-4\);/.test(svc)
+      && (svc.match(/sealSecret\(/g) ?? []).length === 1
       && /openSecret\(this\.encKey, 'rem0te-warranty-key-v1', v\.secretEnc\)/.test(svc)
       && /'rem0te-warranty-key-v1'/.test(read('apps/api/src/common/secret-box.ts')),
     'warranty.service putVendor()/credentials()');
@@ -5200,7 +5203,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('warranty: no response carries the credential or its ciphertext; the audit says only whether it changed',
     vview.length > 100 && !/secretEnc:|secret:|\.\.\.v\b/.test(vview) && /secretSet: !!v\?\.secretEnc, secretLast4: v\?\.secretEnc \? v\.secretLast4 : null/.test(vview)
       && /meta: \{ vendor, before: pub\(cur\), after: pub\(row\), key: keyChange \}/.test(putV)
-      && /const pub = \(s: WarrantyVendor \| null\) => s && \{ enabled: s\.enabled, clientIdSet: !!s\.clientId \};/.test(putV),
+      && /const pub = \(s: WarrantyVendor \| null\) => s && \{ enabled: s\.enabled, clientIdSet: !!s\.clientId, keyIdSet: !!s\.keyId \};/.test(putV),
     'vendorView() / WARRANTY_SETTINGS_CHANGED meta');
   check('warranty: nothing in warranty/ logs a credential or a serial (the one Logger prints only the sweep error message)',
     wFiles.every((f) => !/console\./.test(read(f))) && (svc.match(/this\.logger\.\w+\(/g) ?? []).length === 1 && /this\.logger\.error\(`warranty sweep: \$\{\(e as Error\)\.message\}`\)/.test(svc),
@@ -5245,9 +5248,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('0077 CHECKs the source, the dates, the coverage charset and the vendor list',
     /CHECK \("warrantySource" IS NULL OR "warrantySource" IN \('manual', 'dell', 'lenovo'\)\)/.test(mig)
       && /"warrantyStartsAt" <= "warrantyEndsAt"/.test(mig) && /char_length\("warrantyCoverage"\) <= 200/.test(mig)
-      && /CHECK \("vendor" IN \('dell', 'lenovo'\)\)/.test(mig) && /CHECK \(NOT "enabled" OR "secretEnc" IS NOT NULL\)/.test(mig)
-      && /export const LOOKUP_VENDORS = \['dell', 'lenovo'\] as const;/.test(cl),
-    'migration 0077');
+      && /CHECK \("vendor" IN \('dell', 'lenovo'\)\)/.test(mig) && /CHECK \(NOT "enabled" OR "secretEnc" IS NOT NULL\)/.test(mig),
+    'migration 0077 (0082 widens the two vendor lists to exactly LOOKUP_VENDORS: § 74)');
   const rep = read('apps/api/src/reports/reports.service.ts');
   const wr = rep.slice(rep.indexOf('  private async warrantyRows('), rep.indexOf('  async warranty('));
   check('warranty: the report reads only the caller\'s visible computers (devicesWhere → endpointVisibilityWhere)',
@@ -5700,6 +5702,99 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('restart windows: the suites run',
     /unit-restart-window-settings\.mjs/.test(read('.github/workflows/ci.yml')) && /run restart-window-settings node scripts\/e2e-restart-window-settings\.mjs/.test(read('scripts/run-e2e.sh')),
     'unit-restart-window-settings.mjs in CI; e2e-restart-window-settings.mjs in run-e2e.sh');
+}
+
+// 74. Warranty vendors (0.61): HP Inc. and Apple lookups, and "why is there
+//     no date". § 69 still holds for every vendor; this adds:
+//       - one lookup list (vendors.ts LOOKUP_VENDORS: dell, lenovo, hp,
+//         apple), re-exported by the client, and 0082's CHECKs naming exactly
+//         it; the vendors with no lookup (HPE, Microsoft, ASUS, Acer) each
+//         carry a stated reason, and no vendor is both;
+//       - every https URL in warranty/client.ts is on its LOOKUP_HOSTS, and
+//         the new hosts appear nowhere else in the API;
+//       - HP is sent the serial alone ([{ sn }] — no product number, no
+//         country), its job id is checked before it is put in a URL, and its
+//         polling is bounded (HP_MAX_POLLS) with an unfinished job transient;
+//       - Apple's private key is checked to be EC P-256 before it is sealed,
+//         its client assertion lives five minutes, and a key id moves the
+//         credential like a client id does (0082 CHECKs the key id is Apple's);
+//       - bearer tokens are kept only in an unexported in-memory map keyed by
+//         a hash of the credential;
+//       - the report and the dashboard read only the enabled vendors' names,
+//         never a credential; the gap reasons come from one pure function;
+//       - the console says HP and Apple were tested only against a stand-in.
+{
+  console.log('\n§74 warranty vendors');
+  // Comments out, but never the // of a URL.
+  const strip74 = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+  const vApi = read('apps/api/src/warranty/vendors.ts');
+  const cl = read('apps/api/src/warranty/client.ts');
+  const svc = read('apps/api/src/warranty/warranty.service.ts');
+  const mig = read('apps/api/prisma/migrations/0082_warranty_vendors/migration.sql');
+  check('warranty vendors: one lookup list — Dell, Lenovo, HP, Apple — re-exported by the client',
+    /export const LOOKUP_VENDORS = \['dell', 'lenovo', 'hp', 'apple'\] as const;/.test(vApi)
+      && /import \{ cleanCoverage, LOOKUP_VENDORS, type LookupVendor \} from '\.\/vendors';/.test(cl) && /export \{ LOOKUP_VENDORS, type LookupVendor \};/.test(cl)
+      && !/const LOOKUP_VENDORS|LOOKUP_VENDORS = \[/.test(cl),
+    'vendors.ts LOOKUP_VENDORS; client.ts imports and re-exports it');
+  const noLookup = (vApi.match(/export const NO_LOOKUP_REASON: Record<Exclude<VendorKey, LookupVendor>, string> = \{([\s\S]*?)\n\};/) ?? [])[1] ?? '';
+  check('warranty vendors: HPE, Microsoft, ASUS and Acer have no lookup, each with a stated reason',
+    ['hpe', 'microsoft', 'asus', 'acer'].every((k) => new RegExp(`\\n  ${k}: '[^']{40,}',`).test(noLookup)) && [...noLookup.matchAll(/\n  ([a-z]+): /g)].length === 4,
+    'vendors.ts NO_LOOKUP_REASON');
+  check('0082: both vendor lists name exactly LOOKUP_VENDORS; the key id is Apple\'s alone; a client id only for Dell, HP and Apple',
+    /CHECK \("warrantySource" IS NULL OR "warrantySource" IN \('manual', 'dell', 'lenovo', 'hp', 'apple'\)\)/.test(mig)
+      && /CHECK \("vendor" IN \('dell', 'lenovo', 'hp', 'apple'\)\)/.test(mig)
+      && /CHECK \("keyId" IS NULL OR \("vendor" = 'apple' AND "keyId" ~ '\^\[A-Za-z0-9\._-\]\{4,100\}\$'\)\)/.test(mig)
+      && /CHECK \("clientId" IS NULL OR \("vendor" IN \('dell', 'hp', 'apple'\)/.test(mig),
+    'migration 0082');
+  const hosts = ((cl.match(/export const LOOKUP_HOSTS = \[([^\]]*)\] as const;/) ?? [])[1] ?? '').match(/'[a-z0-9.-]+'/g)?.map((h) => h.slice(1, -1)) ?? [];
+  const urls = [...strip74(cl).matchAll(/'(https?:\/\/[^'`$]+)'/g)].map((m) => m[1]);
+  const off = urls.filter((u) => { try { const x = new URL(u); return x.protocol !== 'https:' || !hosts.includes(x.hostname); } catch { return true; } });
+  check('warranty vendors: every vendor URL in client.ts is https to a host on LOOKUP_HOSTS (five hosts)',
+    hosts.length === 5 && urls.length === 6 && off.length === 0, `hosts ${hosts.join(', ')}; off-list: ${off.join(', ')}`);
+  const elsewhere = walk('apps/api/src').filter((f) => f !== 'apps/api/src/warranty/client.ts' && /warranty\.api\.hp\.com|api-business\.apple\.com|account\.apple\.com|HP_BASE|APPLE_(AUTH|API)_BASE/.test(strip74(read(f))));
+  check('warranty vendors: the HP and Apple API hosts appear only in warranty/client.ts', elsewhere.length === 0, elsewhere.join(', '));
+  const hpFn = cl.slice(cl.indexOf('async function hp('), cl.indexOf('// ── Apple'));
+  check('warranty vendors: HP is sent the serial alone — no product number, no country',
+    /JSON\.stringify\(\[\{ sn: serial \}\]\)/.test(hpFn) && !/\bpn\b|\bcc\b|countryCode/.test(strip74(hpFn).replace(/r\.sn/g, '')),
+    'client.ts hp(): the job body is [{ sn: serial }]');
+  check('warranty vendors: HP\'s job id is checked before it is put in a URL, and polling is bounded',
+    /if \(!job \|\| typeof job\.jobId !== 'string' \|\| !JOB_ID_RE\.test\(job\.jobId\)\) return INVALID;\s*\n\s*const id = encodeURIComponent\(job\.jobId\);/.test(hpFn)
+      && /const JOB_ID_RE = \/\^\[A-Za-z0-9-\]\{8,64\}\$\/;/.test(cl) && /export const HP_MAX_POLLS = 6;/.test(cl)
+      && /for \(let i = 0; i < HP_MAX_POLLS && !done; i\+\+\)/.test(hpFn) && /if \(!done\) return \{ ok: false, code: 'VENDOR_PENDING', transient: true \};/.test(hpFn),
+    'client.ts hp()');
+  check('warranty vendors: Apple\'s key is EC P-256 before it is sealed; the assertion lives five minutes',
+    /k\.asymmetricKeyType !== 'ec' \|\| k\.asymmetricKeyDetails\?\.namedCurve !== 'prime256v1'/.test(cl)
+      && /exp: now \+ 300, jti: randomUUID\(\)/.test(cl) && /alg: 'ES256', kid: c\.keyId/.test(cl)
+      && svc.indexOf("given = vendor === 'apple' ? normaliseApplePrivateKey(given)") > 0
+      && svc.indexOf("given = vendor === 'apple' ? normaliseApplePrivateKey(given)") < svc.indexOf("sealSecret(this.encKey, 'rem0te-warranty-key-v1', given)"),
+    'client.ts normaliseApplePrivateKey / appleAssertion; warranty.service putVendor');
+  check('warranty vendors: a changed client id or key id drops the saved secret',
+    /const moved = !!cur && \(\(cur\.clientId \?\? null\) !== clientId \|\| \(cur\.keyId \?\? null\) !== keyId\);/.test(svc)
+      && /else if \(cur\?\.secretEnc && moved\) \{ secretEnc = null; secretLast4 = null; keyChange = 'cleared_client_changed'; \}/.test(svc),
+    'warranty.service putVendor()');
+  check('warranty vendors: bearer tokens live only in an unexported in-memory map keyed by a hash of the credential',
+    /^const tokens = new Map<string, \{ token: string; until: number \}>\(\);$/m.test(cl) && !/export const tokens|export \{[^}]*tokens/.test(cl)
+      && /createHash\('sha256'\)\.update\(`\$\{c\.clientId \?\? ''\}\\n\$\{c\.keyId \?\? ''\}\\n\$\{c\.secret\}`\)/.test(cl)
+      && !/token/i.test((cl.match(/this\.logger|console\./g) ?? []).join('')),
+    'client.ts tokens / tokenKey');
+  const rep = read('apps/api/src/reports/reports.service.ts');
+  const ov = read('apps/api/src/dashboard/overview.service.ts');
+  const vendorReads = [rep, ov].flatMap((s) => [...s.matchAll(/this\.prisma\.warrantyVendor\.findMany\(([^;]*)\)/g)].map((m) => m[1]));
+  check('warranty vendors: the report and the dashboard read only the enabled vendors\' names, never a credential',
+    vendorReads.length === 2 && vendorReads.every((a) => /where: \{ enabled: true, secretEnc: \{ not: null \} \}, select: \{ vendor: true \}/.test(a)),
+    vendorReads.join(' | '));
+  check('warranty vendors: "why is there no date" is one pure function, used by the device page, the report and the dashboard',
+    /export function warrantyGap\(g: GapInput\): WarrantyGap \{/.test(vApi)
+      && [svc, rep, ov].every((s) => /warrantyGap\(\{/.test(s)) && read('apps/web/components/endpoints/warranty-card.tsx').includes('data.gap.text'),
+    'vendors.ts warrantyGap; warranty.service view(); reports.service warrantyRows; overview.service');
+  const page = read('apps/web/app/(app)/settings/warranty/page.tsx');
+  check('warranty vendors: the console and the docs say HP and Apple were tested only against a stand-in',
+    /hp: \{[\s\S]*?standIn: true,/.test(page) && /apple: \{[\s\S]*?standIn: true,/.test(page) && /tested only against a stand-in/.test(page)
+      && /tested only against a stand-in/i.test(read('docs/warranty.md')),
+    'settings/warranty/page.tsx HELP.standIn; docs/warranty.md');
+  check('warranty vendors: the suites run',
+    /unit-warranty-vendors\.mjs/.test(read('.github/workflows/ci.yml')) && / warranty-vendors[ ;]/.test(read('scripts/run-e2e.sh')),
+    'unit-warranty-vendors.mjs in CI; e2e-warranty-vendors.mjs in run-e2e.sh');
 }
 
 // ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──
