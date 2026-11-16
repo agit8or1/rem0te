@@ -19,11 +19,12 @@ import {
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { CheckCircle, Info, KeyRound, Loader2, Plus, Trash2, XCircle } from 'lucide-react';
+import { BreakGlassCard, EnforcementCard, LinkSuggestionsCard, ProviderTrustSection, type ProviderTrust } from '@/components/sso/identity-settings';
 
 // ─── Shapes (apps/api/src/sso/sso.service.ts → view()) ───────────────────────
 
 interface GroupMapping { id: string; groupValue: string; customerId: string; capabilities: string[] }
-interface Provider {
+interface Provider extends ProviderTrust {
   id: string; name: string; issuer: string; clientId: string; hasClientSecret: boolean;
   redirectUri: string; scopes: string; enabled: boolean; allowProvisioning: boolean;
   groupsClaim: string | null; groupMappings: GroupMapping[]; linkedAccounts: number;
@@ -31,6 +32,7 @@ interface Provider {
 }
 interface TestResult {
   ok: boolean; issuer?: string; authorizationEndpoint?: string; tokenEndpoint?: string; pkce?: boolean; error?: string;
+  endSession?: boolean; backchannelLogout?: boolean; privateKeyJwt?: boolean; acrValues?: string[];
 }
 interface CapabilityGroup { group: string; items: { key: string; label: string; description: string }[] }
 interface Business { id: string; name: string }
@@ -437,6 +439,8 @@ function ProviderCard({
                 <p className="break-all">Authorization endpoint: {test.authorizationEndpoint}</p>
                 <p className="break-all">Token endpoint: {test.tokenEndpoint}</p>
                 <p>PKCE (S256) advertised: {test.pkce ? 'yes' : 'no — sign-in may fail if the provider does not accept PKCE'}</p>
+                <p>End-session (RP-initiated logout): {test.endSession ? 'yes' : 'no'} · Back-channel logout: {test.backchannelLogout ? 'yes' : 'no'} · private_key_jwt: {test.privateKeyJwt ? 'yes' : 'no'}</p>
+                {test.acrValues && test.acrValues.length > 0 && <p className="break-all">acr values advertised: {test.acrValues.join(', ')}</p>}
                 <p className="text-xs opacity-80">This only checks discovery. It does not sign anyone in; try a real sign-in before relying on it.</p>
               </div>
             ) : (
@@ -444,6 +448,8 @@ function ProviderCard({
             )}
           </div>
         )}
+
+        <ProviderTrustSection provider={provider} />
 
         <GroupMappings provider={provider} businesses={businesses} catalog={catalog} />
       </CardContent>
@@ -525,7 +531,11 @@ export default function SsoAdminPage() {
               verified email that no existing account uses. That account has <strong className="text-foreground">no access</strong> unless
               a group mapping grants it membership in exactly one business.
             </li>
-            <li>Password sign-in always remains available, whatever is configured here. Two-factor rules still apply to SSO sign-ins.</li>
+            <li>
+              Password sign-in remains available unless a business (or staff) is set to <strong className="text-foreground">Required</strong> below.
+              Rem0te&apos;s own two-factor rules still apply to SSO sign-ins unless a provider&apos;s MFA is trusted.
+            </li>
+            <li>A Platform Admin cannot sign in through a provider unless that provider allows it, and then only with a passkey there.</li>
             <li>
               If a provider misbehaves, disable every provider from the server, in the API directory:
               {' '}<code className="text-xs bg-muted rounded px-1">node dist/cli/auth-recovery.js --disable-sso --yes</code>
@@ -555,6 +565,14 @@ export default function SsoAdminPage() {
             />
           ))}
         </div>
+      )}
+
+      {isPlatformAdmin && (
+        <>
+          <LinkSuggestionsCard />
+          <EnforcementCard />
+          <BreakGlassCard />
+        </>
       )}
 
       <ProviderDialog

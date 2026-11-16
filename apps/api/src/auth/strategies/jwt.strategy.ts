@@ -9,6 +9,7 @@ import {
   ACTIVE_BUSINESS_COOKIE, ACTIVE_BUSINESS_HEADER, ActorResolverService, type TechnicianContext,
 } from '../../rbac/actor-resolver.service';
 import type { Request } from 'express';
+import { foreignSessionPayload } from '../../sso/identity-policy';
 
 export interface JwtPayload {
   sub: string;
@@ -56,6 +57,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       ]),
       ignoreExpiration: false,
       secretOrKey: config.get<string>('JWT_SECRET')!,
+      // 0.59: a session is HS256 under JWT_SECRET and nothing else. An
+      // integration JWS (EdDSA) or an identity provider's token (RS256,
+      // ES256…) is refused before its payload is looked at.
+      algorithms: ['HS256'],
     });
   }
 
@@ -73,6 +78,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     // consume one, and it verifies it against its own key.
     if (payload.partial) {
       throw new UnauthorizedException('Multi-factor authentication is not complete');
+    }
+    // 0.59: and nothing that carries an issuer, audience, jti or scope is a
+    // Rem0te session, whatever key it verified under — not an integration
+    // delegation token, not an ID, access or logout token.
+    if (foreignSessionPayload(payload)) {
+      throw new UnauthorizedException('Not a Rem0te session');
     }
 
     const user = await this.prisma.user.findUnique({

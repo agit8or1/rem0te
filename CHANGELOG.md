@@ -5,6 +5,213 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.59.0] — 2026-11-16 · *Passport*
+
+**Agit8or Identity P0: the groundwork for trusting a self-hosted Keycloak.**
+
+This release changes code only. Nothing is deployed and no service is installed. **Nothing changes for an existing
+installation until a Platform Admin configures it.** Every new provider setting starts at its safest value. No
+business or staff is set to *Required*. There are no break-glass accounts. The one behaviour that changes with
+nothing configured is the login lockout, which now lives in the database (G-R5 below).
+
+The review behind this release found six gaps between 0.20's single sign-on and what trusting Keycloak for a whole
+MSP needs (G-R1 to G-R6).
+
+- **G-R1: Platform Admins through SSO.** Any linked account signed in through any provider, a Platform Admin
+  included. A provider that let its users set their own MFA (or none) was then as strong as the weakest admin there.
+- **G-R2: sign-out at the provider meant nothing here.** There was no `sid` or `auth_time` on record, no back-channel
+  logout and no RP-initiated logout. A person disabled in the provider kept their Rem0te session for up to eight
+  hours.
+- **G-R3: no step-up for SSO-only accounts.** An account provisioned through SSO has no password. *Confirm it is you*
+  offered only a password, a code or a Rem0te passkey, so such an account could never do anything that asks.
+- **G-R4: the provider's MFA could not count.** SSO never skipped Rem0te's TOTP, and nothing read `acr` or `amr`.
+- **G-R5: the lockout was in memory.** Failed passwords were counted in a `Map` in one API process. A restart
+  (deploys, the nightly unattended reboot) forgot them.
+- **G-R6: SSO could not be required.** Password sign-in always worked for every account. Nothing kept anyone in
+  when a provider was down if it ever were required.
+
+#### Added
+- **How far a provider is trusted.** These are set per provider on *Settings → Single sign-on*, under **Trust and
+  sign-out**. Platform Admin only, and every change asks for `sso.configure`.
+  - **acr values** for the password, MFA and passkey levels. A sign-in's level is its `acr`, **lowered until `amr`
+    corroborates it**. MFA needs a second factor in `amr`; passkey needs `hwk`, `swk` or `pop`. An unknown `acr` is
+    *none*. It is decided in `sso/identity-policy.ts` (`assessLevel`), a module with no imports.
+  - **Trust the provider's MFA** (`trustIdpMfa`, off). When on, a sign-in at MFA or above skips TOTP and the session
+    is MFA-verified (G-R4).
+  - **Trust the provider's passkeys** (`trustIdpPasskey`, off). See *step-up* below.
+  - **Platform Admins** (`allowPlatformAdmin`, **off**). An admin is refused (`admin_not_allowed`). When on, an
+    admin is admitted only at the passkey level (`admin_needs_passkey`) (G-R1).
+  - **Organization** (`bindOrgId`). The ID token's `organization` claim must name it, as Keycloak 26 sends it: an
+    array of aliases, an object keyed by alias or carrying `id`, or a string. Otherwise the sign-in is refused
+    (`org_mismatch`). It is a gate only and grants nothing.
+  - **private_key_jwt.** *Generate key* makes a P-256 key with an RFC 7638 `kid`. The private half is sealed with
+    secret-box (`rem0te-oidc-client-key-v1`) and is in no response. The public JWK is shown and served at
+    `GET /api/v1/auth/sso/<id>/jwks.json` for the provider to fetch. 0080 refuses `private_key_jwt` without a key.
+  - **If the provider cannot be reached** (`sessionCheckFailMode`, `open` by default). See the safety net below.
+  - **Test discovery** now also reports the end-session endpoint, back-channel logout, `private_key_jwt` and the
+    advertised `acr` values.
+- **SSO sessions (G-R2).** Each SSO sign-in writes an `SsoSession` row. It holds `sid`, `acr`, `amr`,
+  `auth_time`, the level, the Rem0te session's `iat`, and the refresh and ID tokens sealed under their own purposes.
+- **Back-channel logout** (`POST /api/v1/auth/sso/backchannel-logout`, public, rate-limited). The provider is
+  chosen by `iss` only to know whose keys to try.
+  - The signature is checked against the provider's JWKS first. Only RS256, PS256, ES256 and EdDSA are accepted;
+    `none` and HS256 are not. The JWKS is cached for 10 minutes and refetched for an unknown `kid` at most once a
+    minute.
+  - Then the claims: audience, `iat` within 5 minutes (60 s skew), `exp`, the back-channel event, **no `nonce`**,
+    and a `jti`. The `jti` is single-use through `SsoLogoutReplay` (the key is sha256 of provider and jti).
+  - Then it ends every Rem0te session of the account named by `sid` (or `sub`). Rem0te's revocation is per
+    account, so one provider session ending ends all of that account's sessions here.
+  - It answers 200 or 400 and never gives a reason. Accepted and signed-but-refused tokens are audited
+    `SSO_BACKCHANNEL_LOGOUT`.
+- **RP-initiated logout.** `POST /auth/logout` of an SSO session returns `redirectTo`: the provider's
+  `end_session_endpoint` with `id_token_hint`, `client_id` and the post-logout redirect (default
+  `/login?signed_out=1`). Audited `SSO_LOGOUT`. The sidebar follows it.
+- **The session safety net** (`SSO_SESSION_SWEEP`). Every minute it checks each SSO session at most every 10
+  minutes, at most 50 per pass. Each row is claimed with a conditional write.
+  - It uses the session's refresh token and stores the rotated one.
+  - `invalid_grant` ends the session, audited `SSO_SESSION_REVOKED`.
+  - If the provider cannot be reached and it fails *open*, the session is kept, a warning is logged, and a
+    `sso_session_check_failed` security alert is raised at most hourly per provider. If it fails *closed*, the
+    session is ended.
+  - A disabled provider's sessions are not checked.
+  - `SSO_SESSION_SWEEP=off` (exact) stops it. It is exported by `run-e2e.sh` and set by `e2e-ui.mjs`. Never set it
+    in production.
+- **Step-up through the provider (G-R3).** *Confirm it is you* offers *Confirm with <provider>* to a linked
+  account. `GET` / `POST /auth/sso/step-up` start a round trip with `max_age=0`, `prompt=login` and the `acr` of
+  the level needed.
+  - Coming back, `stepUpDecision` requires all of these: the identity linked to the signed-in account, an
+    `auth_time` no earlier than the round trip's start (5 s skew), and the MFA level, or the passkey level for an
+    action that needs one.
+  - The refusals are `step_up_wrong_identity`, `step_up_no_auth_time`, `step_up_not_fresh`, `step_up_too_weak`
+    and `step_up_passkey_not_trusted`.
+  - It issues the step-up cookie for the session recorded when the round trip started. The session cookie is
+    `SameSite=Strict` and does not come back on the provider's redirect.
+  - The method is `sso-mfa`, or `sso-passkey` only from a provider with `trustIdpPasskey`. `assertFresh` accepts
+    `sso-passkey` where a passkey is required (`PHISHING_RESISTANT_METHODS`). No catalog key was added for it.
+  - The request that asked is not replayed across the round trip. The person does it again; the page says so.
+- **Suggested links, confirmed by an admin.** An unlinked identity with a **verified** email matching an active
+  account is still refused. Now it also records an `SsoLinkSuggestion`, capped at 500 pending. Suggestions never
+  name Platform Admin or break-glass accounts.
+  - *Settings → Single sign-on → Suggested links* lets a Platform Admin link one (`sso.configure`, audited
+    `SSO_LINKED {by: 'admin'}`) or dismiss one (`SSO_LINK_SUGGESTION_DISMISSED`).
+  - The account holder is emailed only when their address is a confirmed mail recipient (§42).
+  - Nothing is ever linked automatically.
+- **Who must use single sign-on (G-R6).** `Customer.ssoMode` and `PlatformSettings.staffSsoMode` take `off`,
+  `optional` or `required`; 0080 CHECKs them.
+  - *Required* refuses password and passkey sign-in for an account **linked** to a provider (`403 SSO_REQUIRED`).
+    The refusal comes after the password is checked, so a wrong password still says only *invalid credentials*.
+  - An account in several businesses takes the strictest mode. Staff means no active business membership.
+  - Setting *Required* needs an enabled provider and every active account in scope linked (the page shows the
+    unlinked count). Staff also need a break-glass account, and a provider allowing admins if any non-break-glass
+    admin exists.
+  - Tightening needs `sso.enforce`, a new catalog key. Lowering never asks. Audited `SSO_MODE_CHANGED`.
+  - The last linked identity cannot be unlinked under required (`SSO_REQUIRED_KEEP_LINK`).
+  - *Optional* signs in exactly like *off*. My Account asks unlinked people to link.
+  - The recovery CLI lowers a mode: `auth-recovery.js --sso-mode <off|optional> <business id | staff>`. It never
+    sets required. `--status` shows the modes and the break-glass accounts.
+- **Break-glass accounts.** `User.breakGlass` is for Platform Admins only (0080 CHECK). There are at most two,
+  enforced by a 0080 trigger under an advisory lock.
+  - An account needs TOTP **and** a passkey enrolled before it can be marked.
+  - Setting or clearing it needs `breakglass.manage`, a new catalog key, and is audited `BREAK_GLASS_CHANGED`.
+  - A break-glass account cannot be demoted until the flag is cleared. It is exempt from *Required*.
+  - Every sign-in first writes a sealed `BREAK_GLASS_LOGIN` with `logOrFail`; if that write fails there is no
+    session. It then raises a `break_glass_login` security alert and emails Platform Admins whose address is a
+    confirmed global recipient.
+  - It shows on *Access control → Platform Admins* and on the Single sign-on page. The runbook is
+    `docs/break-glass.md`.
+- **Session, integration and IdP tokens are kept apart.** IdP tokens, integration delegation tokens and Rem0te
+  session tokens are each refused where another kind is expected.
+  - **Session tokens.** `JwtStrategy` accepts HS256 only. It refuses a payload carrying any of `iss`, `aud`, `jti`,
+    `scope`, `nonce`, `azp`, `events`, `req_sha256` or `org` (`foreignSessionPayload`). Before this, an integration
+    JWS could not verify under the session key anyway; now its shape is refused too.
+  - **Integration API.** The integration guard refuses any `Authorization` header, before it reads the signature
+    headers.
+  - **Delegation tokens.** The delegation check refuses anything that looks like an IdP token (`looksLikeIdpToken`)
+    before its own checks.
+- **Docs.** `docs/sso-keycloak.md` (new) covers PKCE S256 required, private_key_jwt with Rem0te's JWKS URL,
+  back-channel logout, ACR to LoA mapping and the organization claim. It has not been run against a real Keycloak.
+  `docs/break-glass.md` (new) is the runbook. `docs/sign-in.md` and `/help` are updated. Both new pages are in the
+  docs bundle's `ORDER`.
+
+#### Changed
+- **The login lockout is in the database (G-R5).** `LoginLockout` keeps one row per account. The count is
+  incremented in one statement (`INSERT … ON CONFLICT … RETURNING`), so concurrent failures are not lost. Rows
+  idle for 24 hours are pruned hourly. Settings are unchanged (`maxLoginAttempts`, `lockoutMinutes`). A
+  lock now survives an API restart, and every process sees it.
+- **Sign-out** responds `{ data: { redirectTo } }`. It is `null` for a non-SSO session.
+- The `sso.configure` description now includes confirming a suggested link.
+
+#### Fixed
+- **A second revocation in the same second did not end a session minted after the first.** Revocation is per
+  second: `revokeSessions` set `sessionsValidAfter` to the next whole second, and a session signed in after it is
+  minted with that same `iat` (`issueAt`). So a revocation, a sign-in and another revocation inside one second left
+  the new session alive. The e2e suite hit it with a back-channel logout straight after an SSO sign-in.
+  `AuthService.revokeSessions` now always moves the point strictly past the previous one
+  (`GREATEST(now, previous + 1 s)` in one statement). The other `revocationInstant()` callers (in `users`,
+  `businesses` and `mfa`) are unchanged.
+
+#### Schema
+Migration **0080_sso_identity**:
+- **OidcProvider:** `tokenAuth`, `clientKeyEnc`, `clientKeyKid`, `clientPublicJwk`, `bindOrgId`, `acrPassword`,
+  `acrMfa`, `acrPasskey`, `trustIdpMfa`, `trustIdpPasskey`, `allowPlatformAdmin`, `sessionCheckFailMode`,
+  `postLogoutRedirectUri`, with CHECKs.
+- **OidcLoginState:** `requiredLevel` and `sessionIat`. Purpose `STEP_UP`, with a CHECK that a step-up row names
+  its user, level and session.
+- **New tables:** `SsoSession`, `SsoLogoutReplay`, `SsoLinkSuggestion` and `LoginLockout`.
+- **Sign-in mode:** `Customer.ssoMode` and `PlatformSettings.staffSsoMode`.
+- **Break-glass:** `User.breakGlass`, with its CHECK and limit trigger.
+- **ActivityAction values:** `SSO_BACKCHANNEL_LOGOUT`, `SSO_SESSION_REVOKED`, `SSO_LOGOUT`, `SSO_STEP_UP`,
+  `SSO_MODE_CHANGED`, `SSO_LINK_SUGGESTION_DISMISSED`, `BREAK_GLASS_CHANGED` and `BREAK_GLASS_LOGIN`.
+
+The schema changed, so the deploy needs `prisma migrate deploy` and `prisma generate` at the target. No production
+dependency changed: JWKS verification uses `node:crypto`.
+
+#### Security invariants
+**§72** covers the following:
+- claim decisions in one module with no imports;
+- the Platform Admin rule;
+- `sso-passkey` only from a trusted provider, and the phishing-resistant set;
+- the step-up's `max_age=0`, its own start and its account;
+- back-channel signature before claims, then the replay row, then revocation;
+- sealed tokens and key;
+- the exact sweep switch;
+- links confirmed only by an admin;
+- *Required* checked only after the credential;
+- the CLI only lowering;
+- the break-glass CHECK, trigger, factors, key and `logOrFail`;
+- token separation;
+- the suites running.
+
+§62's `SITE_KEYS` adds `sso/sso-identity.controller.ts` (`breakglass.manage`, `sso.configure`, `sso.enforce`).
+
+#### Tests
+- `apps/api/scripts/unit-sso-identity.mjs` (61 checks, in CI) covers the identity-policy decisions, `assertFresh`'s
+  phishing-resistant set, the new catalog keys and token separation.
+- `apps/api/scripts/e2e-sso-identity.mjs` (127 checks, ports 3851–3852, in `run-e2e.sh`) runs against a loopback
+  mock provider. The mock issues acr/amr/auth_time/sid and organization claims, verifies `private_key_jwt`
+  assertions against Rem0te's JWKS, rotates refresh tokens, answers `invalid_grant` on demand, and signs
+  logout tokens. The suite covers every gap above, including:
+  - a Platform Admin refused;
+  - the wrong organization refused;
+  - a replayed `logout_token` refused;
+  - a step-up with too low an `acr` refused;
+  - enforcement, the recovery CLI and break-glass;
+  - the lockout surviving a restart;
+  - an integration JWS and an IdP ID token refused as sessions.
+
+#### Not verified
+- **No real identity provider was called.** The Keycloak steps in `docs/sso-keycloak.md`, including how Keycloak
+  emits `amr` and the organization claim, are from its documentation and untried.
+- The new console screens were type-checked and linted, not driven in a browser.
+
+---
+
+**Test safety: no suite falls back to production's API any more.** Twelve behavioural suites (`e2e-smoke`, `e2e-full`, `e2e-session-mutations`, `e2e-security-audit`, `e2e-sso-passkeys`, `security-regression` and six others) defaulted to `http://127.0.0.1:3001` — production on this host — when `API_BASE` was unset. `run-e2e.sh` always sets it, so CI was never affected, but run by hand with only `DATABASE_URL` set, `e2e-session-mutations` wrote its fixtures to the scratch database and then tried to sign in against the live API. Production refused it (`user_not_found`) and recorded one `LOGIN_FAILURE` audit row for a `test.invalid` address; nothing else was written. All twelve now take their address from `lib/test-api-base.mjs`, which has no default, requires loopback http and refuses ports 3000, 3001, 3201, 3202, 443, 4000 and 4001. A new check after §72 fails if any script under `apps/api/scripts` defaults to a production address again.
+
+**Test fix: `e2e-sso-identity` read the newest `SSO_SESSION_REVOKED` row too early.** It took the newest row by `createdAt` as soon as the session answered 401, so it sometimes saw the previous `check_failed` row (the 401 can come before the audit row, and two rows can share a timestamp). It now waits for the row, ordered by the audit chain's `seq`.
+
+**Schema: the warranty index is now in `schema.prisma`.** 0.56's migration 0077 created `Endpoint_warrantyEndsAt_idx`, but the schema never named it, so `prisma migrate diff` against a migrated database proposed dropping it. `@@index([warrantyEndsAt])` makes the two agree; no migration, since the index already exists.
+
 ## [0.58.0] — 2026-11-16 · *Metronome*
 
 **Scripts and software can run on a schedule, approved once on the signer and signed run by run.**

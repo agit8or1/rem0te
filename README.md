@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.58.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.59.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -66,7 +66,7 @@ it, its default and its limits: **Settings → Security → Security Features**,
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
 
-## What's new in 0.40 to 0.58
+## What's new in 0.40 to 0.59
 
 Every change on a computer below (services, processes, installing and removing software) needs the full (signed)
 Windows agent and an approval signer, and none of those changes has yet run on a real Windows computer: they have
@@ -74,6 +74,14 @@ been tested against a simulated one. Ask AI and Create ticket have been tested o
 real provider or PSA. [What each agent can do](docs/capabilities.md)
 says what is proven and what is not.
 
+- **Groundwork for trusting a self-hosted Keycloak (0.59).** Each sign-in provider now has trust settings that
+  start off: whether its MFA counts as Rem0te's second factor (from `acr`, checked against `amr`), whether its
+  passkeys count as a passkey, whether Platform Admins may use it (only with a passkey there), an organization it
+  must name, and `private_key_jwt` with a key kept sealed here. Signing out at the provider ends the session here
+  (back-channel logout), and signing out here ends it there. SSO-only accounts can confirm it is them through the
+  provider. A business can be set to **SSO required** once everyone in it is linked, with up to two **break-glass**
+  admin accounts that can always sign in, and the login lockout now survives a restart. Tested against a mock
+  provider only. [sso-keycloak.md](docs/sso-keycloak.md) · [break-glass.md](docs/break-glass.md)
 - **Automation schedules (0.58).** An approved library script or a software catalog package can run every few
   hours, daily, weekly or monthly, on up to 25 named computers or on a device group with a cap
   (*Automation → Schedules*). Two passkey approvers approve the schedule once on the approval signer, never its

@@ -26,9 +26,23 @@ const MESSAGES: Record<string, string> = {
   already_linked:
     'Your account is already linked to a different identity at that provider. Unlink it from My Account first, then link again.',
   failed: 'Single sign-on did not complete. Try again, or sign in with your password.',
+  // 0.59
+  org_mismatch: 'That identity is not in the organization this provider is bound to, so it cannot sign in here. Ask an administrator.',
+  admin_not_allowed: 'Platform Admins cannot sign in through this provider. Sign in with your password and passkey.',
+  admin_needs_passkey: 'A Platform Admin must sign in to this provider with a passkey or security key. Try again with one.',
+  step_up_session_ended: 'Your session ended before the confirmation finished. Sign in again.',
+  step_up_wrong_identity: 'The provider confirmed a different account from the one signed in here. Sign out of the provider and try again as yourself.',
+  step_up_no_auth_time: 'The provider did not say when you signed in, so the confirmation could not be accepted. Ask an administrator to check the provider.',
+  step_up_not_fresh: 'The provider did not ask you to sign in again, so the confirmation could not be accepted. Try again.',
+  step_up_too_weak: 'The provider confirmed you with a weaker method than this needs (for example a password where a second factor or passkey is required). Try again with a stronger one.',
+  step_up_passkey_not_trusted: 'This needs a passkey, and this provider is not trusted to confirm passkeys. Use a passkey registered here instead.',
 };
 
-/** A friendly message for an `sso_error` code, or null when there is none. */
+/** 0.59: why a password or passkey sign-in was refused under "SSO required". */
+export const SSO_REQUIRED_MESSAGE =
+  'Your organization requires single sign-on. Use the sign-in provider button on this page.';
+
+/** A friendly message for an `sso_error` (or `sso_step_up_error`) code, or null when there is none. */
 export function ssoErrorMessage(code: string | null | undefined): string | null {
   if (!code) return null;
   return MESSAGES[code] ?? MESSAGES.failed;

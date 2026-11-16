@@ -24,9 +24,10 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'crypto';
+import { testApiBase } from './lib/test-api-base.mjs';
 
 /* global URL */
-const API = process.env.API_BASE || 'http://127.0.0.1:3001/api/v1';
+const API = testApiBase();
 if (/:3001\b|:443\b|^https:/.test(API) && process.env.I_KNOW_THIS_IS_NOT_PRODUCTION !== '1') {
   console.error(`Refusing to run against ${API}: this suite writes fixtures. Use a scratch stack.`);
   process.exit(2);
