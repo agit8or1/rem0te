@@ -129,6 +129,8 @@ vite 8.3.8, marked 18.2.0.
 
 ---
 
+**Test fix: `e2e-warranty-vendors` assumed it had the hourly lookup budget to itself.** Its sweep run set `WARRANTY_LOOKUPS_PER_HOUR=1`, but the budget counts every computer looked up in the last hour across the database, and under `run-e2e.sh` the preceding `e2e-warranty` suite had already used it, so the sweep asked nothing. It now sets the budget to what is already counted plus one, which still proves the cap.
+
 ## [0.60.0] — 2026-11-16 · *Nightshift*
 
 **A simple restart window: "restart if Windows needs it, nightly 02:00–04:00" on a business, a device group or one
