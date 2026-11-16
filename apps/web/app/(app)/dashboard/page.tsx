@@ -184,11 +184,11 @@ export default function DashboardPage() {
             title={d.alerts.suppressed ? `${d.alerts.suppressed} more are in a maintenance window and not counted as critical` : undefined} />
         )}
         {d.restart && (
-          <Tile href="/patching" icon={RotateCcw} label="Restart pending" value={d.restart.devices}
+          <Tile href="/endpoints?restartPending=true" icon={RotateCcw} label="Restart pending" value={d.restart.devices}
             sub={d.restart.list.some((r) => r.stale) ? 'some from stale scans' : 'from scans and alerts'} tone={d.restart.devices ? 'warn' : undefined} />
         )}
         {d.patch && (
-          <Tile href="/patching" icon={ShieldCheck} label="Patch compliance"
+          <Tile href="/reports/patch-compliance" icon={ShieldCheck} label="Patch compliance"
             value={d.patch.compliancePercent === null ? 'No data' : `${d.patch.compliancePercent}%`}
             sub={d.patch.compliancePercent === null ? `no scan under ${d.patch.staleAfterHours} h` : `${d.patch.fresh} of ${d.patch.total} devices scanned`}
             title={d.patch.definition} />
@@ -200,11 +200,11 @@ export default function DashboardPage() {
             title={`Hardware warranties: ${d.warranty.expired} expired, ${d.warranty.within30} ending within 30 days, ${d.warranty.within90} within 90 days, ${d.warranty.unknown} with no date stored.`} />
         )}
         {d.actions && (
-          <Tile href="#work-next" icon={XCircle} label="Failed actions" value={failedActions}
+          <Tile href="/automation/tasks?state=problem" icon={XCircle} label="Failed actions" value={failedActions}
             sub={d.actions.uncertain ? `${d.actions.uncertain} outcome unknown · 7 days` : 'last 7 days'} tone={failedActions ? 'bad' : undefined} />
         )}
         {d.actions && (
-          <Tile href="#work-next" icon={Hourglass} label="Awaiting approval" value={d.actions.awaitingApproval}
+          <Tile href="/automation/tasks?state=approval" icon={Hourglass} label="Awaiting approval" value={d.actions.awaitingApproval}
             sub="approved on the signer, not here" />
         )}
         {d.sessions && (
