@@ -59,6 +59,10 @@ function doc(over = {}) {
   };
 }
 const target = (c, biz = BIZ_A) => ({ endpointId: c.endpointId, businessId: biz, businessName: 'Acme', hostname: c.hostname, deviceClass: 'WORKSTATION', rustdeskId: c.rustdeskId, deviceSecretSha256: c.deviceSecretSha256 });
+// A plan valid 10 minutes, but never past the hour: the hourly window closes
+// on the hour, and the signer (which reads the real clock) refuses a plan that
+// outlives it. In the last 10 minutes of an hour the plan is simply shorter.
+const tenMinutesInWindow = () => { const t = Date.now(); return new Date(Math.min(t + 10 * 60_000, Math.ceil(t / 3_600_000) * 3_600_000 - 1_000)); };
 function planFor(d, digest, { targets = [C1, C2].map((c) => target(c)), notBefore = new Date(), notAfter, ...over } = {}) {
   const t = d.task;
   if (!notAfter) { const occ = A.automationOccurrenceAt(new Date(notBefore), d.recurrence); notAfter = occ ? A.latestNotAfter(d, occ, new Date(notBefore)) : new Date(new Date(notBefore).getTime() + 30 * 60_000); }
@@ -306,7 +310,7 @@ try {
   await post('/internal/v1/automations', { policy: d2 });
   await decide(d2.policyId, people.olivia); await decide(d2.policyId, people.quinn);
   const dg2 = A.automationDigest(d2);
-  r = await post(`/internal/v1/automations/${d2.policyId}/plans`, { plan: planFor(d2, dg2, { notAfter: new Date(Date.now() + 10 * 60_000) }), policyDigest: dg2 });
+  r = await post(`/internal/v1/automations/${d2.policyId}/plans`, { plan: planFor(d2, dg2, { notAfter: tenMinutesInWindow() }), policyDigest: dg2 });
   check('a skip-if-offline plan of 10 minutes is signed', r.status === 201, JSON.stringify(r.body));
   await post(`/internal/v1/software/${SWD.entryId}/revoke`, { reason: 'archived in test' });
   const d2b = doc();
@@ -338,7 +342,7 @@ try {
   await decide(ds.policyId, people.olivia); r = await decide(ds.policyId, people.quinn);
   check('two other approvers make the script schedule ACTIVE', r.body?.status === 'ACTIVE', JSON.stringify(r.body));
   const dgs = A.automationDigest(ds);
-  const sp1 = planFor(ds, dgs, { notAfter: new Date(Date.now() + 10 * 60_000) });
+  const sp1 = planFor(ds, dgs, { notAfter: tenMinutesInWindow() });
   r = await post(`/internal/v1/automations/${ds.policyId}/plans`, { plan: sp1, policyDigest: dgs });
   check('a script occurrence plan is signed', r.status === 201, JSON.stringify(r.body));
   r = await post(`/internal/v1/scripts/${prop.allowlistId}/revoke`, { reason: 'bug found' });

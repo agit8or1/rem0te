@@ -266,7 +266,7 @@ async function all() {
   check(r.status === 401, 'an unknown tray key: 401', msg(r));
   const rej = await prisma.activityLog.findFirst({ where: { action: 'ENDPOINT_HEARTBEAT_REJECTED', createdAt: { gte: startedAt }, metadata: { path: ['reason'], equals: 'tray_key_unauthenticated' } } });
   check(!!rej && !JSON.stringify(rej.metadata).includes('AAAA'), 'refused tray keys are audited, without the key', JSON.stringify(rej?.metadata));
-  const paired = await prisma.activityLog.findMany({ where: { action: 'TRAY_PAIRED', resourceId: std.id } });
+  const paired = await prisma.activityLog.findMany({ where: { action: 'TRAY_PAIRED', resourceId: std.id }, orderBy: { seq: 'asc' } });
   check(paired.length === 2 && paired[1].metadata.replaced === true && paired.every((a) => !JSON.stringify(a.metadata).includes(key2.split('.')[1])), 'TRAY_PAIRED twice (the second "replaced"), never with the secret', JSON.stringify(paired.map((a) => a.metadata)));
   r = await req('POST', '/tray/status', { body: { rustdeskId: sPC.rid, agentSecret: randomBytes(24).toString('hex') } });
   check(r.status === 401, 'the signed tray host with the wrong device secret: 401', msg(r));
