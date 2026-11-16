@@ -792,6 +792,18 @@ export const ssoApi = {
   addMapping: (id: string, data: { groupValue: string; businessId: string; capabilities?: string[] }) =>
     api.post(`/sso/providers/${id}/mappings`, data),
   removeMapping: (id: string, mappingId: string) => api.delete(`/sso/providers/${id}/mappings/${mappingId}`),
+  // 0.59 "Agit8or Identity P0"
+  generateClientKey: (id: string) => api.post(`/sso/providers/${id}/client-key`),
+  jwksUrl: (id: string) => `${BASE_URL}/auth/sso/${encodeURIComponent(id)}/jwks.json`,
+  stepUpOptions: () => api.get('/auth/sso/step-up'),
+  stepUpStart: (data: { providerId?: string; phishingResistant?: boolean; returnTo?: string }) => api.post('/auth/sso/step-up', data),
+  suggestions: () => api.get('/sso/link-suggestions'),
+  confirmSuggestion: (id: string) => api.post(`/sso/link-suggestions/${id}/confirm`),
+  dismissSuggestion: (id: string) => api.post(`/sso/link-suggestions/${id}/dismiss`),
+  enforcement: () => api.get('/sso/enforcement'),
+  setMode: (scope: string, mode: 'off' | 'optional' | 'required') => api.put(`/sso/enforcement/${encodeURIComponent(scope)}`, { mode }),
+  setBreakGlass: (userId: string, breakGlass: boolean) => api.put(`/sso/break-glass/${userId}`, { breakGlass }),
+  mode: () => api.get('/auth/sso/mode'),
 };
 
 export const passkeysApi = {

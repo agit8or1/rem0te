@@ -173,9 +173,11 @@ export class AuthController {
     // Clearing the cookie alone left the token itself valid for the rest of
     // its eight hours, wherever a copy of it had got to. Sign-out ends every
     // session the account holds; there is no per-token record to end just one.
-    await this.authService.revokeSessions(user.sub);
+    // 0.59: an SSO sign-in is also ended at its provider (RP-initiated
+    // logout): the browser follows `redirectTo` when there is one.
+    const { redirectTo } = await this.authService.logout(user.sub, user.iat);
     res.clearCookie('access_token');
-    return { success: true };
+    return { success: true, data: { redirectTo } };
   }
 
   /** Re-authenticate for a sensitive action. See step-up.service.ts. */

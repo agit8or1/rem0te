@@ -50,11 +50,14 @@ export function Sidebar({ className }: { className?: string } = {}) {
   const { portalTitle, logoUrl, accentColor, ink } = useBrandAccent();
 
   async function handleLogout() {
+    // 0.59: a session that came from single sign-on is also ended at the
+    // provider (RP-initiated logout); the API hands back where to go.
+    let redirectTo: string | null = null;
     try {
-      await authApi.logout();
-    } finally {
-      router.push('/login');
-    }
+      redirectTo = (await authApi.logout()).data?.data?.redirectTo ?? null;
+    } catch { /* signed out here or not, the login page is next */ }
+    if (redirectTo && /^https?:\/\//.test(redirectTo)) window.location.assign(redirectTo);
+    else router.push('/login');
   }
 
   // A toggle should toggle. This used to cycle light → dark → system, so getting

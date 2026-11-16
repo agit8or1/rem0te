@@ -4508,6 +4508,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'security-controls/temporary-access.service.ts': ['temporary.access'],
     'software/software.service.ts': ['software.catalog'],
     'sso/sso.controller.ts': ['sso.configure'],
+    'sso/sso-identity.controller.ts': ['breakglass.manage', 'sso.configure', 'sso.enforce'],
     'technicians/technicians.controller.ts': ['permissions.change', 'technicians.manage'],
     'tray/tray.controller.ts': ['chat.recording'],
     'update-trust/update-trust.controller.ts': ['update.trust'],
@@ -5487,6 +5488,128 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('automation schedules: the suites run',
     read('.github/workflows/ci.yml').includes('unit-automation-schedule.mjs') && read('scripts/run-e2e.sh').includes('scripts/e2e-automation-schedule.mjs'),
     'unit-automation-schedule.mjs in CI, e2e-automation-schedule.mjs in run-e2e.sh');
+}
+
+// 72. Agit8or Identity P0 (0.59): the groundwork for trusting a self-hosted
+//     Keycloak. Every decision made from a provider's claims is one pure
+//     module, sso/identity-policy.ts, with no imports. A Platform Admin signs
+//     in through SSO only when the provider allows it, and then only at the
+//     passkey level; a level is the acr, lowered until amr corroborates it.
+//     An organization binding is a gate, never a grant. The SSO step-up asks
+//     max_age=0 with acr_values, checks auth_time against the start of the
+//     round trip and the linked account, and issues sso-passkey (phishing-
+//     resistant) only from a provider trusted for passkeys. Back-channel
+//     logout is verified against the provider's keys before any claim is
+//     acted on, refuses a nonce, an unknown alg or a used jti, and revokes the
+//     account. Refresh and ID tokens and the private_key_jwt key are sealed;
+//     the key's private half is in no view. SSO_SESSION_SWEEP=off is exact.
+//     Link suggestions are never acted on automatically and never name a
+//     Platform Admin or break-glass account. ssoMode=required refuses a
+//     linked account's password and passkey sign-in after the credential
+//     verifies; required needs every account linked and sso.enforce; the
+//     recovery CLI only lowers. Break-glass: Platform Admins only (0080
+//     CHECK), at most two (trigger), TOTP and a passkey, breakglass.manage,
+//     and each use is a sealed BREAK_GLASS_LOGIN written before the session.
+//     Session, integration and IdP tokens are kept apart.
+{
+  const pol = read('apps/api/src/sso/identity-policy.ts');
+  const svc = read('apps/api/src/sso/sso.service.ts');
+  const sess = read('apps/api/src/sso/sso-session.service.ts');
+  const idsvc = read('apps/api/src/sso/sso-identity.service.ts');
+  const idctl = read('apps/api/src/sso/sso-identity.controller.ts');
+  const ctl = read('apps/api/src/sso/sso.controller.ts');
+  const auth = read('apps/api/src/auth/auth.service.ts');
+  const rev = read('apps/api/src/security-controls/review.ts');
+  const cli = read('apps/api/src/cli/auth-recovery.ts');
+  const sql = read('apps/api/prisma/migrations/0080_sso_identity/migration.sql');
+  const strip = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  check('identity: every claim decision is one pure module with no imports',
+    !/^\s*import\b|require\(/m.test(pol)
+      && /export function platformAdminDecision\(/.test(pol) && /export function stepUpDecision\(/.test(pol) && /export function logoutClaimsDecision\(/.test(pol)
+      && /platformAdminDecision\(/.test(svc) && /stepUpDecision\(/.test(svc) && /logoutClaimsDecision\(/.test(sess),
+    'identity-policy.ts imports nothing; sso.service and sso-session.service decide through it');
+  check('identity: a Platform Admin through SSO only when allowed, and then only at the passkey level',
+    /if \(!p\.allowPlatformAdmin\) return \{ ok: false, code: 'admin_not_allowed' \};/.test(pol) && /if \(!meets\(level, 'passkey'\)\) return \{ ok: false, code: 'admin_needs_passkey' \};/.test(pol)
+      && /"allowPlatformAdmin" BOOLEAN NOT NULL DEFAULT false/.test(sql),
+    'platformAdminDecision; 0080 defaults allowPlatformAdmin to false');
+  check('identity: sso-passkey only from a provider trusted for passkeys; sso-passkey and passkey are the only phishing-resistant methods',
+    /if \(meets\(level, 'passkey'\) && p\.trustIdpPasskey\) return 'sso-passkey';/.test(pol)
+      && /export const PHISHING_RESISTANT_METHODS: ReadonlySet<string> = new Set\(\['passkey', 'sso-passkey'\]\);/.test(rev)
+      && /if \(opts\.phishingResistant && !PHISHING_RESISTANT_METHODS\.has\(method\)\)/.test(rev),
+    'stepUpMethod, review.ts PHISHING_RESISTANT_METHODS');
+  check('identity: the SSO step-up asks max_age=0 and the acr, and is judged against the round trip\'s own start and account',
+    /max_age: '0'/.test(svc) && /acr_values/.test(svc) && /startedAt: row\.createdAt\.getTime\(\)/.test(svc)
+      && /"purpose" <> 'STEP_UP' OR \("userId" IS NOT NULL AND "requiredLevel" IS NOT NULL AND "sessionIat" IS NOT NULL\)/.test(sql),
+    'start() for STEP_UP; finishStepUp passes the row\'s createdAt; 0080 CHECKs a step-up row');
+  const bc = sess.slice(sess.indexOf('async backchannelLogout('), sess.indexOf('\n  }\n', sess.indexOf('async backchannelLogout(')));
+  check('identity: back-channel logout verifies the signature before acting on a claim, and a jti once',
+    bc.indexOf('this.signatureOk(') > 0 && bc.indexOf("if (!sigOk) return") > bc.indexOf('this.signatureOk(')
+      && bc.indexOf('ssoLogoutReplay.create') > bc.indexOf('if (!sigOk) return') && bc.indexOf('revokeSessions(') > bc.indexOf('ssoLogoutReplay.create')
+      && /if \('nonce' in claims\) return \{ ok: false, reason: 'nonce' \};/.test(pol)
+      && /export const LOGOUT_ALGS/.test(pol) && !/'none'|HS256/.test((pol.match(/export const LOGOUT_ALGS[^\n]*/) ?? [''])[0])
+      && /@Public\(\)\s*@Post\('backchannel-logout'\)\s*@RateLimit\(\d+\)/.test(ctl),
+    'signatureOk, then the replay row, then revokeSessions; no nonce; asymmetric algorithms only; rate-limited public route');
+  check('identity: tokens and the client key are sealed, and the private key is in no view',
+    /refreshTokenEnc: tokens\.refreshToken \? sealSecret\(this\.encKey, 'rem0te-oidc-refresh-v1'/.test(svc)
+      && /idTokenEnc: tokens\.idToken \? sealSecret\(this\.encKey, 'rem0te-oidc-id-token-v1'/.test(svc)
+      && /clientKeyEnc: sealSecret\(this\.encKey, 'rem0te-oidc-client-key-v1'/.test(svc)
+      && /refreshTokenEnc: sealSecret\(this\.encKey, 'rem0te-oidc-refresh-v1', next\)/.test(sess)
+      && !/clientKeyEnc: p\.clientKeyEnc|refreshTokenEnc: s\./.test(svc),
+    'sealSecret with the three purposes; view() names only hasClientKey');
+  check('identity: SSO_SESSION_SWEEP=off is exact, exported by run-e2e.sh and invalid_grant ends the session',
+    /if \(process\.env\.SSO_SESSION_SWEEP === 'off'\) return;/.test(sess) && /^export SSO_SESSION_SWEEP=off$/m.test(read('scripts/run-e2e.sh'))
+      && /if \(e instanceof oidc\.ResponseBodyError && err\.error === 'invalid_grant'\) \{\s*await this\.end\(s, 'invalid_grant'\);/.test(sess),
+    'sso-session.service.ts; scripts/run-e2e.sh');
+  const creates = (s) => (strip(s).match(/externalIdentity\.create\(/g) ?? []).length;
+  const sug = svc.slice(svc.indexOf('private async suggest('), svc.indexOf('\n  }\n', svc.indexOf('private async suggest(')));
+  check('identity: a link suggestion is only ever confirmed by a Platform Admin, never for an admin or break-glass account',
+    creates(idsvc) === 1 && /if \(!u \|\| u\.status !== 'ACTIVE' \|\| u\.isPlatformAdmin \|\| u\.breakGlass\) return;/.test(sug) && !/externalIdentity/.test(sug.replace(/externalIdentity\.count/g, ''))
+      && /assertFresh\(this\.method\(req\), \{ action: 'sso\.configure' \}\);/.test(idctl),
+    'one ExternalIdentity insert in SsoIdentityService (confirm); suggest() writes suggestions only');
+  const login = auth.slice(auth.indexOf('async login('), auth.indexOf('\n  }\n', auth.indexOf('async login(')));
+  check('identity: required refuses a linked account\'s local sign-in only after the credential verifies; break-glass is exempt',
+    login.indexOf('argon2.verify(') > 0 && login.indexOf("assertLocalSignInAllowed(user, 'password', ip)") > login.indexOf('argon2.verify(')
+      && /if \(method === 'passkey'\) await this\.assertLocalSignInAllowed\(user, 'passkey', ip\);/.test(auth)
+      && /return x\.mode === 'required' && x\.linked && !x\.breakGlass;/.test(pol),
+    'login(): argon2.verify then assertLocalSignInAllowed; signInVerifiedUser for passkeys; localSignInRefused');
+  check('identity: required needs sso.enforce when tightening and every account linked; the recovery CLI only lowers',
+    /action: 'sso\.enforce'/.test(idctl) && /SSO_ENFORCE_UNLINKED/.test(idsvc)
+      && /if \(mode !== 'off' && mode !== 'optional'\) throw new UsageError/.test(cli)
+      && /CHECK \("ssoMode" IN \('off', 'optional', 'required'\)\)/.test(sql) && /CHECK \("staffSsoMode" IN \('off', 'optional', 'required'\)\)/.test(sql),
+    'sso-identity.controller/service; auth-recovery --sso-mode; 0080 CHECKs');
+  check('identity: break-glass is Platform Admin only, at most two, both factors, breakglass.manage, and each use is audited before the session',
+    /CHECK \(NOT "breakGlass" OR "isPlatformAdmin"\)/.test(sql) && /pg_advisory_xact_lock\(hashtext\('rem0te_break_glass'\)\)/.test(sql) && /"id" <> NEW\."id"\) >= 2 THEN/.test(sql)
+      && /export const MAX_BREAK_GLASS = 2;/.test(pol)
+      && /m\.type === 'TOTP'/.test(idsvc) && /m\.type === 'WEBAUTHN'/.test(idsvc) && /action: 'breakglass\.manage'/.test(idctl)
+      && /await this\.audit\.logOrFail\(\{ action: 'BREAK_GLASS_LOGIN'/.test(auth),
+    '0080 CHECK and trigger; planBreakGlass; breakGlassUsed logOrFail');
+  check('identity: session, integration and IdP tokens are kept apart',
+    /algorithms: \['HS256'\]/.test(read('apps/api/src/auth/strategies/jwt.strategy.ts')) && /foreignSessionPayload\(payload\)/.test(read('apps/api/src/auth/strategies/jwt.strategy.ts'))
+      && /if \(req\.headers\.authorization !== undefined\) throw E\.unauthenticated/.test(read('apps/api/src/integration/integration-auth.guard.ts'))
+      && /looksLikeIdpToken\(/.test(read('apps/api/src/integration/delegation.service.ts')),
+    'JwtStrategy HS256 + foreignSessionPayload; integration guard refuses bearer; delegation refuses IdP tokens');
+  check('identity: the suites run',
+    /unit-sso-identity\.mjs/.test(read('.github/workflows/ci.yml')) && /^for t in credentials [^\n]* sso-identity[ ;][^\n]*do run/m.test(read('scripts/run-e2e.sh'))
+      && /section\('G-R1: a Platform Admin through SSO'\)/.test(read('apps/api/scripts/e2e-sso-identity.mjs')),
+    'unit-sso-identity.mjs in CI; e2e-sso-identity.mjs in run-e2e.sh');
+}
+
+// ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──
+//     A dozen suites fell back to http://127.0.0.1:3001 when API_BASE was
+//     unset. Run by hand with only DATABASE_URL set, one wrote its fixtures to
+//     the scratch database and then tried to sign in against the live API.
+//     There is now no default: lib/test-api-base.mjs requires API_BASE and
+//     refuses https, a non-loopback host and the production ports.
+{
+  const dir = 'apps/api/scripts';
+  const guard = read(`${dir}/lib/test-api-base.mjs`);
+  const suites = readdirSync(join(ROOT, dir)).filter((f) => f.endsWith('.mjs'));
+  const defaulting = suites.filter((f) => /process\.env\.API_BASE\s*(\|\||\?\?)\s*['"`]https?:\/\/(127\.0\.0\.1|localhost):(3000|3001|3201|3202|443|4000|4001)\b/.test(read(`${dir}/${f}`)));
+  check('test suites: none falls back to a production API address when API_BASE is unset',
+    defaulting.length === 0
+      && /const REFUSED_PORTS = new Set\(\['3000', '3001', '3201', '3202', '443', '4000', '4001'\]\);/.test(guard)
+      && /if \(!raw\) \{/.test(guard) && /u\.protocol !== 'http:'/.test(guard),
+    defaulting.length ? `default to production: ${defaulting.join(', ')}` : 'lib/test-api-base.mjs: no default, loopback http only, production ports refused');
 }
 
 if (failures.length > 0) {

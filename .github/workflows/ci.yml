@@ -330,6 +330,14 @@ jobs:
       - name: Confirm policy tests
         run: node apps/api/scripts/unit-confirm-policy.mjs
 
+      # Agit8or Identity P0 (0.59): the decisions made from an identity
+      # provider's claims (levels from acr corroborated by amr, the
+      # organization gate, Platform Admin, step-up freshness, back-channel
+      # logout claims, enforcement), the phishing-resistant method set and the
+      # separation of session, integration and IdP tokens.
+      - name: SSO identity tests
+        run: node apps/api/scripts/unit-sso-identity.mjs
+
       # AI summary through ClientSt0r (0.34): redaction of every free-text field
       # before it leaves, the payload's field list, the proposed request and
       # response schemas, and the peers file's optional capabilitiesUrl.

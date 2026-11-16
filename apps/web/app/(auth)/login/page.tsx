@@ -7,7 +7,7 @@ import axios from 'axios';
 import { useQuery } from '@tanstack/react-query';
 import { authApi, passkeysApi, ssoApi } from '@/lib/api-client';
 import { getPasskey, passkeysSupported, errorMessage } from '@/lib/webauthn';
-import { ssoErrorMessage } from '@/lib/sso-errors';
+import { SSO_REQUIRED_MESSAGE, ssoErrorMessage } from '@/lib/sso-errors';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -82,7 +82,8 @@ function LoginForm() {
       }
       router.push(returnTo);
     } catch (err: unknown) {
-      setError(errorMessage(err, 'Passkey sign-in failed'));
+      const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code;
+      setError(code === 'SSO_REQUIRED' ? SSO_REQUIRED_MESSAGE : errorMessage(err, 'Passkey sign-in failed'));
     } finally {
       setPasskeyLoading(false);
     }
@@ -104,9 +105,9 @@ function LoginForm() {
 
       router.push(returnTo);
     } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        'Invalid credentials';
+      const body = (err as { response?: { data?: { message?: string; code?: string } } })?.response?.data;
+      // 0.59: an account whose organization requires single sign-on.
+      const msg = body?.code === 'SSO_REQUIRED' ? SSO_REQUIRED_MESSAGE : (body?.message ?? 'Invalid credentials');
       setError(msg);
     } finally {
       setLoading(false);

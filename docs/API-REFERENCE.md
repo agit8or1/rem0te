@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **571** of them across
-**87** controllers.
+integration, under `/api/integration/v1`). There are **583** of them across
+**88** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -965,12 +965,30 @@ Admins and Business Owners are not confined by it; see
 
 | Method | Path | Access | Capability |
 |---|---|---|---|
+| `GET` | `/api/v1/auth/sso/:id/jwks.json` | public, throttled | — |
 | `POST` | `/api/v1/auth/sso/:id/link` | signed in, throttled | — |
 | `GET` | `/api/v1/auth/sso/:id/start` | public, throttled | — |
+| `POST` | `/api/v1/auth/sso/backchannel-logout` | public, throttled | — |
 | `GET` | `/api/v1/auth/sso/callback` | public, throttled | — |
 | `GET` | `/api/v1/auth/sso/identities` | signed in | — |
 | `DELETE` | `/api/v1/auth/sso/identities/:id` | signed in | — |
+| `GET` | `/api/v1/auth/sso/mode` | signed in | — |
 | `GET` | `/api/v1/auth/sso/providers` | public, throttled | — |
+| `GET` | `/api/v1/auth/sso/step-up` | signed in | — |
+| `POST` | `/api/v1/auth/sso/step-up` | signed in, throttled | — |
+
+## Sso identity
+
+`apps/api/src/sso/sso-identity.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `PUT` | `/api/v1/sso/break-glass/:userId` | signed in | — |
+| `GET` | `/api/v1/sso/enforcement` | signed in | — |
+| `PUT` | `/api/v1/sso/enforcement/:scope` | signed in | — |
+| `GET` | `/api/v1/sso/link-suggestions` | signed in | — |
+| `POST` | `/api/v1/sso/link-suggestions/:id/confirm` | signed in, throttled | — |
+| `POST` | `/api/v1/sso/link-suggestions/:id/dismiss` | signed in | — |
 
 ## Sso ssoproviders
 
@@ -982,6 +1000,7 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/sso/providers` | signed in | — |
 | `PATCH` | `/api/v1/sso/providers/:id` | signed in | — |
 | `DELETE` | `/api/v1/sso/providers/:id` | signed in | — |
+| `POST` | `/api/v1/sso/providers/:id/client-key` | signed in | — |
 | `POST` | `/api/v1/sso/providers/:id/mappings` | signed in | — |
 | `DELETE` | `/api/v1/sso/providers/:id/mappings/:mappingId` | signed in | — |
 | `POST` | `/api/v1/sso/providers/:id/test` | signed in, throttled | — |

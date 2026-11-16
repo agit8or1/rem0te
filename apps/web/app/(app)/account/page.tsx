@@ -553,6 +553,12 @@ function SsoTab() {
     queryFn: () => ssoApi.providers().then((r) => r.data?.data ?? []),
   });
 
+  // 0.59: the account's sign-in mode (its strictest business, or staff).
+  const { data: mode } = useQuery<{ mode: 'off' | 'optional' | 'required' }>({
+    queryKey: ['sso-mode'],
+    queryFn: () => ssoApi.mode().then((r) => r.data?.data),
+  });
+
   const linkedProviderIds = new Set(identities.map((i) => i.provider.id));
   const linkable = providers.filter((p) => !linkedProviderIds.has(p.id));
 
@@ -586,10 +592,18 @@ function SsoTab() {
         <CardDescription>
           Link an identity from your organisation&apos;s sign-in provider so you can use it here.
           The link is made only by signing in at the provider from this page — never by matching email addresses.
-          Your password keeps working either way.
+          {mode?.mode === 'required'
+            ? ' Your organization requires single sign-on: once an identity is linked, you sign in only through the provider.'
+            : ' Your password keeps working either way.'}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {!isLoading && identities.length === 0 && (mode?.mode === 'optional' || mode?.mode === 'required') && (
+          <p role="status" className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm" data-testid="sso-link-prompt">
+            Your organization {mode.mode === 'required' ? 'requires' : 'uses'} single sign-on. Link your identity below
+            {mode.mode === 'required' ? '; until you do, your password still works.' : '.'}
+          </p>
+        )}
         {isLoading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : identities.length === 0 ? (

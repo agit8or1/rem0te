@@ -1,14 +1,16 @@
 'use client';
 
 import * as React from 'react';
-import { KeyRound, ShieldCheck } from 'lucide-react';
+import { KeyRound, LogIn, ShieldCheck } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { registerStepUpHandler, stepUpApi } from '@/lib/api-client';
+import { registerStepUpHandler, ssoApi, stepUpApi } from '@/lib/api-client';
+import { useToast } from '@/hooks/use-toast';
+import { ssoErrorMessage } from '@/lib/sso-errors';
 import { useConfirmPolicy } from '@/lib/confirm-policy';
 import { errorMessage, getPasskey, passkeysSupported } from '@/lib/webauthn';
 
@@ -20,6 +22,8 @@ const ALWAYS_ASK_LABEL: Record<string, string> = {
   'fresh.auth.passkey': 'activate a protected-device exception',
   'confirm.relax': 'turn a confirmation off',
 };
+
+type SsoStepUpProvider = { id: string; name: string; mfa: boolean; passkey: boolean };
 
 /**
  * Mounted once in the app layout. When the API answers STEP_UP_REQUIRED, the
@@ -37,6 +41,10 @@ export function StepUpDialog() {
   // step-up, so do not offer it.
   const [totpOnly, setTotpOnly] = React.useState(false);
   const resolver = React.useRef<((ok: boolean) => void) | null>(null);
+  // 0.59: providers this account can confirm through (GET /auth/sso/step-up).
+  // An SSO-only account has no password, so this is its only way to step up.
+  const [sso, setSso] = React.useState<{ ssoOnly: boolean; providers: SsoStepUpProvider[] }>({ ssoOnly: false, providers: [] });
+  const { toast } = useToast();
   const { data: policy } = useConfirmPolicy();
   const label = action ? (policy?.catalog.find((f) => f.key === action)?.prompt ?? ALWAYS_ASK_LABEL[action]) : undefined;
 
@@ -46,12 +54,26 @@ export function StepUpDialog() {
       const prev = resolver.current;
       resolver.current = (ok) => { prev?.(ok); resolve(ok); };
       setAction(a); setValue(''); setError(null); setMode('password'); setTotpOnly(false); setOpen(true);
+      ssoApi.stepUpOptions().then((r) => setSso(r.data?.data ?? { ssoOnly: false, providers: [] })).catch(() => setSso({ ssoOnly: false, providers: [] }));
       stepUpApi.status().then((r) => {
         if (r.data?.data?.totpRequired) { setTotpOnly(true); setMode('totp'); }
       }).catch(() => { /* the server still decides; the form just offers less */ });
     }));
     return () => registerStepUpHandler(null);
   }, []);
+
+  // 0.59: coming back from a step-up at the provider. The request that asked
+  // for it was not kept across the round trip, so the person does it again.
+  React.useEffect(() => {
+    const url = new URL(window.location.href);
+    const ok = url.searchParams.get('sso_step_up');
+    const err = url.searchParams.get('sso_step_up_error');
+    if (!ok && !err) return;
+    url.searchParams.delete('sso_step_up'); url.searchParams.delete('sso_step_up_error');
+    window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+    if (ok === 'ok') toast({ title: 'Confirmed', description: 'Your provider confirmed it is you. Do what you were doing again; this lasts 10 minutes.' });
+    else toast({ title: 'Not confirmed', description: ssoErrorMessage(err) ?? 'The provider did not confirm it is you.', variant: 'destructive' });
+  }, [toast]);
 
   // A protected-device exception accepts only a passkey; offering a password
   // there would succeed here and then be refused by the retried request.
@@ -75,6 +97,35 @@ export function StepUpDialog() {
       setError(errorMessage(err, 'That did not match. Try again.'));
     } finally { setBusy(false); }
   }
+
+  async function confirmWithSso(providerId: string) {
+    setBusy(true); setError(null);
+    try {
+      const returnTo = window.location.pathname + window.location.search;
+      const url = (await ssoApi.stepUpStart({ providerId, phishingResistant: passkeyOnly, returnTo })).data?.data?.url;
+      if (!url) throw new Error('no url');
+      // The page is left for the provider; the waiting request is let go.
+      finish(false);
+      window.location.assign(url);
+    } catch (err) {
+      setError(errorMessage(err, 'That provider could not be reached.'));
+      setBusy(false);
+    }
+  }
+
+  const ssoChoices = sso.providers.filter((p) => (passkeyOnly ? p.passkey : p.mfa));
+  const ssoButtons = ssoChoices.length > 0 && (
+    <div className="space-y-2 border-t pt-3">
+      <p className="text-xs text-muted-foreground">
+        {sso.ssoOnly ? 'Your account signs in through single sign-on, so confirm it there.' : 'Or confirm through your single sign-on provider.'}
+      </p>
+      {ssoChoices.map((p) => (
+        <Button key={p.id} type="button" variant="outline" className="w-full" onClick={() => confirmWithSso(p.id)} disabled={busy} data-testid="step-up-sso">
+          <LogIn className="mr-2 h-4 w-4" />Confirm with {p.name}
+        </Button>
+      ))}
+    </div>
+  );
 
   async function usePasskey() {
     setBusy(true); setError(null);
@@ -109,6 +160,7 @@ export function StepUpDialog() {
                 <KeyRound className="mr-2 h-4 w-4" />{busy ? 'Checking…' : 'Use a passkey'}
               </Button>
             </DialogFooter>
+            {ssoButtons}
           </div>
         ) : (
         <form onSubmit={submit} className="space-y-3">
@@ -137,6 +189,7 @@ export function StepUpDialog() {
             )}
             <Button type="submit" disabled={busy || !value}>{busy ? 'Checking…' : 'Confirm'}</Button>
           </DialogFooter>
+          {ssoButtons}
         </form>
         )}
       </DialogContent>

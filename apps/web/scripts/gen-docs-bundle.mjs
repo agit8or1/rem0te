@@ -69,6 +69,8 @@ const ORDER = [
   ['access-control.md', 'Access control', 'People and access', 'Roles, capabilities and what each permission allows.'],
   ['security-model.md', 'Security model: who can reach a computer', 'People and access', 'The portal / RustDesk / endpoint boundary and what evidence you will have.'],
   ['sign-in.md', 'Sign-in, SSO and passkeys', 'People and access', 'Passwords, MFA, single sign-on, passkeys, step-up and which functions ask for it.'],
+  ['sso-keycloak.md', 'Single sign-on with Keycloak', 'People and access', 'PKCE, private_key_jwt, back-channel logout, ACR to LoA levels and the organization claim, for a self-hosted Keycloak.'],
+  ['break-glass.md', 'Break-glass accounts', 'People and access', 'The two accounts that can always sign in, how to set them up, and what to do when one is used.'],
   ['offboarding.md', 'Access review and offboarding', 'People and access', 'Reviewing who can reach what, and removing someone cleanly.'],
   ['containment.md', 'Containment and audit integrity', 'Security and incidents', 'Stop writes during an incident; the sealed, verifiable audit log.'],
   ['incident-recovery.md', 'Incident recovery', 'Security and incidents', 'What to do, in order, when you suspect a compromise.'],

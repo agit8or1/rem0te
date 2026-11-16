@@ -1664,8 +1664,21 @@ const SECTIONS: Section[] = [
         </p>
         <p>
           You can add passkeys and link a single sign-on provider from{' '}
-          <Link href="/account" className="underline text-foreground">My Account</Link>. Password sign-in always remains
-          available.
+          <Link href="/account" className="underline text-foreground">My Account</Link>. Password sign-in remains
+          available unless your business requires single sign-on and your account is linked to the provider.
+        </p>
+        <p>
+          With single sign-on, a Platform Admin decides on{' '}
+          <Link href="/admin/sso" className="underline text-foreground">Single sign-on</Link> how far each provider is
+          trusted: whether its MFA counts as your second factor, whether its passkeys count as a passkey, and whether
+          Platform Admins may use it (only with a passkey there). Signing out of the provider signs you out here, and
+          signing out here signs you out there. If you sign in only through a provider, &quot;Confirm it is you&quot; offers
+          <strong className="text-foreground"> Confirm with</strong> the provider; it asks you to sign in there again, and
+          you then repeat what you were doing. A business can be set to <strong className="text-foreground">Required</strong>{' '}
+          once everyone in it is linked; up to two <strong className="text-foreground">break-glass</strong> Platform Admin
+          accounts can always sign in with a password, an authenticator code and a passkey, and every such sign-in raises
+          an alert. See Sign-in, SSO and passkeys, Single sign-on with Keycloak and Break-glass accounts in{' '}
+          <Link href="/docs" className="underline text-foreground">Docs</Link>.
         </p>
         <p>
           When someone leaves, <strong className="text-foreground">Offboarding</strong> removes their access and lists

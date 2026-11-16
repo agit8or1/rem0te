@@ -17,6 +17,7 @@
 
 import { PrismaClient } from '@prisma/client';
 import { randomBytes } from 'crypto';
+import { testApiBase } from './lib/test-api-base.mjs';
 
 const prisma = new PrismaClient();
 
@@ -128,7 +129,7 @@ async function main() {
   // harmless), but the same slip in an executable line would send the
   // installer to the wrong path. ESLint cannot see through the template, so
   // assert on the real output instead.
-  const API_BASE = process.env.API_BASE ?? 'http://127.0.0.1:3001/api/v1';
+  const API_BASE = testApiBase();
   for (const script of ['windows.ps1', 'linux.sh', 'macos.sh']) {
     try {
       const res = await fetch(`${API_BASE}/public/install/${script}`);

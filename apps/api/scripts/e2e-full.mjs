@@ -22,9 +22,10 @@
 import { PrismaClient } from '@prisma/client';
 import argon2 from 'argon2';
 import { randomBytes } from 'crypto';
+import { testApiBase } from './lib/test-api-base.mjs';
 
 const prisma = new PrismaClient();
-const API = process.env.API_BASE || 'http://127.0.0.1:3001/api/v1';
+const API = testApiBase();
 // Every suite writes fixtures into DATABASE_URL and then talks to API: if the
 // two point at different stacks it silently mixes a scratch database with a
 // live API. Refuse the production address unless told otherwise.

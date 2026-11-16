@@ -87,6 +87,9 @@ export WARRANTY_SWEEP=off
 # 0.58: the automation sweep asks for a plan for every active automation
 # schedule in the database. e2e-automation-schedule turns it on for its own API.
 export AUTOMATION_SWEEP=off
+# 0.59: the SSO session safety-net would ask a provider about every SSO session.
+# e2e-sso-identity turns it on, fast, for its own API.
+export SSO_SESSION_SWEEP=off
 export ENCRYPTION_KEY="${ENCRYPTION_KEY:-$(openssl rand -hex 32)}"
 export SEED_ADMIN_EMAIL="${SEED_ADMIN_EMAIL:-e2e-admin@example.com}"
 export SEED_ADMIN_PASSWORD="${SEED_ADMIN_PASSWORD:-$(openssl rand -base64 18)}"
@@ -111,7 +114,7 @@ run() { # name, command...
 }
 
 echo "── self-starting suites"
-for t in credentials security-features presets monitoring integration dashboard diagnostics-catalog system-inventory device-list endpoint-visibility device-views dynamic-groups add-device auto-updates group-policies reports script-library linux-agent macos-agent enrol-stepup search metric-history retention presence-cache ai-timeline ai-psa email chat tray chat-attachments polish auto-snapshots agent-health agent-auto-update dual-agent software-browse confirm-policy alert-tickets warranty adoption; do run "$t" node "scripts/e2e-$t.mjs"; done
+for t in credentials security-features presets monitoring integration dashboard diagnostics-catalog system-inventory device-list endpoint-visibility device-views dynamic-groups add-device auto-updates group-policies reports script-library linux-agent macos-agent enrol-stepup search metric-history retention presence-cache ai-timeline ai-psa email chat tray chat-attachments polish auto-snapshots agent-health agent-auto-update dual-agent software-browse confirm-policy sso-identity alert-tickets warranty adoption; do run "$t" node "scripts/e2e-$t.mjs"; done
 for t in containment approved-action staged-patching maintenance-actions patch-policies patch-assignment software-deploy software-catalog signed-updates ticket-workflow agent-upgrade auto-migration service-process task-progress restart-windows; do
   if [[ -n "${RELEASE_BIN:-}" && -n "${ACTION_SIM:-}" ]]; then run "$t" node "scripts/e2e-$t.mjs"
   else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM not set)\n' "$t"; skipped+=("$t"); fi
@@ -145,7 +148,7 @@ for t in smoke full business-access offboarding public-api public-address rollou
   # offboarding failed "fetch failed" this way on a re-run).
   : > "$OUT/api-$t.log"
   env PORT=$PORT HBBS_PRESENCE_HOST=127.0.0.2 OIDC_ALLOW_INSECURE_LOOPBACK=true PUBLIC_API_URL="http://scratch.example.com:$PORT" \
-    JWT_SECRET="$(openssl rand -hex 32)" LAUNCHER_TOKEN_SECRET="$(openssl rand -hex 32)" MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off METRIC_SWEEP=off RETENTION_SWEEP=off REPORT_SCHEDULE_SWEEP=off CHAT_RETENTION_SWEEP=off TRAY_SWEEP=off SCRIPT_OUTPUT_SWEEP=off AUTO_MIGRATION_SWEEP=off WINGET_INDEX_SWEEP=off WARRANTY_SWEEP=off AUTOMATION_SWEEP=off \
+    JWT_SECRET="$(openssl rand -hex 32)" LAUNCHER_TOKEN_SECRET="$(openssl rand -hex 32)" MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off METRIC_SWEEP=off RETENTION_SWEEP=off REPORT_SCHEDULE_SWEEP=off CHAT_RETENTION_SWEEP=off TRAY_SWEEP=off SCRIPT_OUTPUT_SWEEP=off AUTO_MIGRATION_SWEEP=off WINGET_INDEX_SWEEP=off WARRANTY_SWEEP=off AUTOMATION_SWEEP=off SSO_SESSION_SWEEP=off \
     VERSION_FILE="$ROOT/version.json" node dist/main.js > "$OUT/api-$t.log" 2>&1 &
   pid=$!
   for _ in $(seq 1 180); do grep -q "listening on" "$OUT/api-$t.log" 2>/dev/null && break; sleep 1; done
