@@ -27,7 +27,7 @@
  *   - minting needs a fresh re-authentication (0.33): a stale session gets
  *     STEP_UP_REQUIRED and writes nothing, and a scope refusal comes first.
  *
- * Self-starting: it runs its own API from dist/ on ADDDEVICE_API_PORT (3201)
+ * Self-starting: it runs its own API from dist/ on ADDDEVICE_API_PORT (3861)
  * against DATABASE_URL, which must name a scratch/test database. Fixtures are
  * namespaced and removed at the end.
  *
@@ -46,8 +46,8 @@ const dist = path.join(here, '..', 'dist');
 const DB = process.env.DATABASE_URL ?? '';
 const dbName = DB.split('/').pop()?.split('?')[0] ?? '';
 if (!/scratch|test/.test(dbName)) { console.error(`Refusing to run against database "${dbName}": name must contain "scratch" or "test".`); process.exit(2); }
-const PORT = Number(process.env.ADDDEVICE_API_PORT ?? 3201);
-if ([3000, 3001, 443, 4000, 4001].includes(PORT)) { console.error(`Refusing port ${PORT}: production or the shared docs stack.`); process.exit(2); }
+const PORT = Number(process.env.ADDDEVICE_API_PORT ?? 3861);
+if ([3000, 3001, 3201, 3202, 443, 4000, 4001].includes(PORT)) { console.error(`Refusing port ${PORT}: production or the shared docs stack.`); process.exit(2); }
 const API = `http://127.0.0.1:${PORT}/api/v1`;
 const VERSION_FILE = path.resolve(here, '..', '..', '..', 'version.json');
 const AGENT_VERSION = JSON.parse(readFileSync(VERSION_FILE, 'utf8')).version;
@@ -150,7 +150,8 @@ async function all() {
   await prisma.membership.create({ data: { userId: addOnlyA.id, tenantId: tenant.id, customerId: A.id, roleId: roleUser.id, capabilities: ['computers:add'] } });
   check(true, 'created A (4 sites), B (1 site), 8 users');
 
-  // 3201 is also the approval signer's documented public port
+  // 3201 is the approval signer's public port on this host, which is why the
+  // default moved off it in 0.56.
   // (docs/approved-actions.md). If anything already answers there, this suite
   // would be talking to it rather than to the API it starts: refuse.
   const busy = await fetch(`${API}/health`).then(() => true, () => false);
