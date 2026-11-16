@@ -184,7 +184,7 @@ export class DeviceGroupsService {
     // their alerts — monitors raise alerts, so it would decide its own scope.
     if (rule && ruleNeedsAlerts(ruleFilters(rule))) {
       const n = await this.policiesOn(g.id);
-      if (n) throw new ConflictException({ code: 'GROUP_HAS_POLICIES', message: `This group carries ${n} polic${n === 1 ? 'y' : 'ies'} (monitors or client updates). A rule on alerts cannot scope a policy; remove ${n === 1 ? 'it' : 'them'} first.` });
+      if (n) throw new ConflictException({ code: 'GROUP_HAS_POLICIES', message: `This group carries ${n} polic${n === 1 ? 'y' : 'ies'} (monitors, client updates or a restart window). A rule on alerts cannot scope a policy; remove ${n === 1 ? 'it' : 'them'} first.` });
     }
     let after;
     try {
@@ -214,13 +214,14 @@ export class DeviceGroupsService {
   }
 
   /** Deleting a group removes its members from it (they keep their other groups) and is audited with how many. */
-  /** 0.35: monitors and client-update policies scoped to this group. */
+  /** 0.35: monitors and client-update policies scoped to this group; 0.60: and its restart window. */
   private async policiesOn(groupId: string): Promise<number> {
-    const [m, c] = await Promise.all([
+    const [m, c, r] = await Promise.all([
       this.prisma.monitorRule.count({ where: { groupId } }),
       this.prisma.clientUpdatePolicy.count({ where: { groupId } }),
+      this.prisma.restartWindowSetting.count({ where: { groupId } }),
     ]);
-    return m + c;
+    return m + c + r;
   }
 
   async remove(a: ActorContext, id: string) {
@@ -229,7 +230,7 @@ export class DeviceGroupsService {
     // client-update group policy needs fresh authentication — it can hand the
     // computers to an enabled one — so deleting the group is not a way round it.
     const held = await this.policiesOn(g.id);
-    if (held) throw new ConflictException({ code: 'GROUP_HAS_POLICIES', message: `This group carries ${held} polic${held === 1 ? 'y' : 'ies'} (monitors or client updates). Remove ${held === 1 ? 'it' : 'them'} first, under Settings → Monitoring and Settings → Client updates.` });
+    if (held) throw new ConflictException({ code: 'GROUP_HAS_POLICIES', message: `This group carries ${held} polic${held === 1 ? 'y' : 'ies'} (monitors, client updates or a restart window). Remove ${held === 1 ? 'it' : 'them'} first, under Settings → Monitoring, Settings → Client updates, or the business's Restart window card.` });
     const released = await this.prisma.$transaction(async (tx) => {
       const r = await tx.endpointGroupMember.deleteMany({ where: { endpointGroupId: g.id } });
       await tx.endpointGroup.delete({ where: { id: g.id } });

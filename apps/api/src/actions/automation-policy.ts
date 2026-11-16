@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { canonicalJson } from '../integration/crypto';
-import { APPROVALS_REQUIRED, MAX_RING_TARGETS, MAX_WINDOW_HOURS, SoftwareDisplay, SoftwareParams, type Plan } from './catalog';
+import { APPROVALS_REQUIRED, MAX_RING_TARGETS, MAX_WINDOW_HOURS, REBOOT_SCHEDULE, SoftwareDisplay, SoftwareParams, type Plan } from './catalog';
 import { SCRIPT_RUN_ACTION, ScriptBlock, ScriptRunParams, argumentsProblem, canonical, definitionSha256 } from './script-run';
-import { MAX_POLICY_DAYS, POLICY_PROPOSAL_DAYS, PolicyWindow, describePolicyWindow, localTime, nextOccurrence, occurrenceAt, validTimezone, windowKind, zonedToUtc } from './patch-policy';
+import { MAX_POLICY_DAYS, MAX_RESTART_PLAN_HOURS, POLICY_PROPOSAL_DAYS, POLICY_RESTART_DELAY_MINUTES, PolicyWindow, RESTART_RULES, describePolicyWindow, localTime, nextOccurrence, occurrenceAt, validTimezone, windowKind, zonedToUtc } from './patch-policy';
 
 /**
  * Automation policies (0.58): a library script or a catalog software package,
@@ -31,6 +31,18 @@ import { MAX_POLICY_DAYS, POLICY_PROPOSAL_DAYS, PolicyWindow, describePolicyWind
  *               occurrence opens, carried into each plan as its signed
  *               notAfter;
  *   limits      plans per occurrence, and an expiry at most 90 days out.
+ *
+ * 0.60 adds a third task, `restart` (the simple restart window): a
+ * windows.reboot.schedule@1 of one computer at a time, inside a daily,
+ * weekly or monthly window, under "only if Windows needs a restart" or
+ * "always", with the fixed 15-minute warning. Its targets may also be the
+ * whole business, or every member of one device group, because a restart
+ * window is a business's (or a group's) default. Those two target kinds are
+ * for the restart task only, and the restart task is decided by its own
+ * function (evaluateAutomationRestart): one computer per plan, at most
+ * `maxRunsPerOccurrence` plans per computer per occurrence, none while that
+ * computer's earlier plan is still open — never the script/software rule
+ * that runs never overlap across computers.
  *
  * After that the signer — not the portal — signs each occurrence's plan,
  * but only if `evaluateAutomationPlan` finds it inside the document AND the
@@ -84,11 +96,40 @@ export const SoftwareTask = z.object({
   params: SoftwareParams,
   display: SoftwareDisplay,
 }).strict();
-export const AutomationTask = z.discriminatedUnion('kind', [ScriptTask, SoftwareTask]);
+/**
+ * 0.60: restart computers inside the schedule's windows (the simple restart
+ * window). `if_required`: only a computer Windows says needs a restart is
+ * planned, and the plan carries onlyIfRequired, so the agent decides again
+ * from Windows' own state. `always`: a maintenance restart, once per window.
+ * `ignoreRemoteSession` is present only when true and only if a person ticked
+ * it (never by default, §67); the 15-minute warning always shows.
+ */
+export const RestartTask = z.object({
+  kind: z.literal('restart'),
+  rule: z.enum(RESTART_RULES),
+  ignoreRemoteSession: z.literal(true).optional(),
+}).strict();
+export type RestartTask = z.infer<typeof RestartTask>;
+export const AutomationTask = z.discriminatedUnion('kind', [ScriptTask, SoftwareTask, RestartTask]);
 export type AutomationTask = z.infer<typeof AutomationTask>;
+
+/** The fixed warning before a restart window's restart: the update restart's 15 minutes. The signer accepts no other. */
+export const RESTART_WINDOW_DELAY_MINUTES = POLICY_RESTART_DELAY_MINUTES;
+/** A restart window shorter than this cannot fit a plan and its warning; it is refused. */
+export const MIN_RESTART_WINDOW_MINUTES = 30;
+
+/** The exact windows.reboot.schedule params a restart task's plans carry. The signer compares them canonically. */
+export function restartParamsFor(t: Pick<RestartTask, 'rule' | 'ignoreRemoteSession'>): { delayMinutes: number; onlyIfRequired?: true; ignoreRemoteSession?: true } {
+  return {
+    delayMinutes: RESTART_WINDOW_DELAY_MINUTES,
+    ...(t.rule === 'if_required' ? { onlyIfRequired: true as const } : {}),
+    ...(t.ignoreRemoteSession === true ? { ignoreRemoteSession: true as const } : {}),
+  };
+}
 
 /** The catalog action a task's plans name. */
 export function taskAction(t: Pick<AutomationTask, 'kind'> & { operation?: string }): { id: string; version: 1 } {
+  if (t.kind === 'restart') return { id: REBOOT_SCHEDULE.id, version: 1 };
   if (t.kind === 'script') return { id: SCRIPT_RUN_ACTION, version: 1 };
   return { id: t.operation === 'uninstall' ? 'windows.software.uninstall' : 'windows.software.install', version: 1 };
 }
@@ -120,7 +161,25 @@ export const GroupTarget = z.object({
   groupName: z.string().min(1).max(120),
   maxTargets: z.number().int().min(1).max(MAX_AUTOMATION_TARGETS),
 }).strict();
-export const AutomationTargets = z.discriminatedUnion('kind', [ComputersTarget, GroupTarget]);
+/**
+ * 0.60, restart task only: every computer of the policy's business. The
+ * portal decides which of them this window governs (a computer's own
+ * setting, then a device group's, then the business's); the signer checks
+ * only that the computer is of this business. The approval page says so.
+ */
+export const BusinessTarget = z.object({ kind: z.literal('business') }).strict();
+/**
+ * 0.60, restart task only: every member of one device group, with no
+ * per-run cap (a restart plan names one computer, and a group may be larger
+ * than 25). The signer cannot see the group; it checks the business only.
+ */
+export const GroupMembersTarget = z.object({
+  kind: z.literal('group_members'),
+  groupId: Id,
+  groupName: z.string().min(1).max(120),
+}).strict();
+export const RESTART_ONLY_TARGETS = ['business', 'group_members'] as const;
+export const AutomationTargets = z.discriminatedUnion('kind', [ComputersTarget, GroupTarget, BusinessTarget, GroupMembersTarget]);
 export type AutomationTargets = z.infer<typeof AutomationTargets>;
 
 // ── The recurrence ──────────────────────────────────────────────────────────
@@ -333,6 +392,19 @@ export function validateAutomationDoc(doc: AutomationDoc, now: Date): Problem {
     const cs = doc.targets.computers;
     if (new Set(cs.map((c) => c.endpointId)).size !== cs.length || new Set(cs.map((c) => c.rustdeskId)).size !== cs.length) return bad('duplicate_target', 'A computer is named twice.');
   }
+  // 0.60: the restart task and its two target kinds go together, and only together.
+  const restartOnly = (RESTART_ONLY_TARGETS as readonly string[]).includes(doc.targets.kind);
+  if (t.kind !== 'restart') {
+    if (restartOnly) return bad('target_restart_only', 'Only a restart window may name a whole business or every member of a group.');
+    return { ok: true };
+  }
+  if (doc.targets.kind === 'group') return bad('restart_target_kind', 'A restart window names computers, a business, or every member of a group (group_members).');
+  if (recurrenceKind(doc.recurrence) === 'hourly') return bad('restart_schedule_kind', 'A restart window is daily, weekly or monthly, never hourly.');
+  if (doc.offline.mode !== 'run_when_online') return bad('restart_offline_rule', 'A restart window\'s plans are bounded by the window and the warning; its offline rule is run_when_online.');
+  const first = automationNextOccurrence(now, doc.recurrence, new Date(exp));
+  if (first && first.end.getTime() - first.start.getTime() < MIN_RESTART_WINDOW_MINUTES * 60_000) {
+    return bad('restart_window_too_short', `A restart window is at least ${MIN_RESTART_WINDOW_MINUTES} minutes long: the computer picks the plan up and then warns for ${RESTART_WINDOW_DELAY_MINUTES} minutes, and the restart must fall inside the window.`);
+  }
   return { ok: true };
 }
 
@@ -393,6 +465,8 @@ export function evaluateAutomationPlan(s: AutomationState, r: AutomationPlanRequ
   if (!automationQuorum(doc, s.approvals, false, opts.direct === true)) return no('policy_not_approved', 'This policy does not carry two approvals from people other than its author (a policy activated in direct mode stops counting when the business leaves direct mode).');
   if (!automationQuorum(doc, s.approvals, opts.customerSignoff, opts.direct === true)) return no('policy_mismatch', 'This business now requires customer sign-off, which this policy was not approved with. Approve a new policy.');
   if (Date.parse(p.window.notAfter) > Date.parse(doc.expiresAt)) return no('policy_expired', 'The plan would run past the policy\'s expiry.');
+  // 0.60: a restart window is decided by its own rules, after the same standing checks.
+  if (doc.task.kind === 'restart') return evaluateAutomationRestart(s, r, now);
 
   // The task: exactly the signed one.
   const want = taskAction(doc.task);
@@ -401,10 +475,10 @@ export function evaluateAutomationPlan(s: AutomationState, r: AutomationPlanRequ
   if (doc.task.kind === 'script') {
     if (!p.script || canonical(p.script) !== canonical(doc.task.script)) return no('script_not_in_policy', 'The plan does not run the script version this policy names.');
     if (p.display?.software) return no('bad_display', 'A script plan names no software.');
-  } else {
+  } else if (doc.task.kind === 'software') {
     if (p.script) return no('script_not_in_policy', 'A software plan runs no script.');
     if (!p.display?.software || canonical(p.display.software) !== canonical(doc.task.display)) return no('software_not_in_policy', 'The plan does not name the catalog entry and revision this policy names.');
-  }
+  } else return no('action_not_in_policy', 'The policy\'s task is not one this signer knows.');
   if (p.display?.policy?.id !== doc.policyId || p.display.policy.digest !== s.digest) return no('bad_display', 'The plan must name this policy.');
   if (p.display.deployment || (p.display.updates ?? []).length) return no('bad_display', 'An automation plan names no deployment and no update.');
   if (p.requestedBy.userId !== doc.createdBy.userId) return no('requester_mismatch', 'An automation plan is requested on behalf of the policy\'s author.');
@@ -445,6 +519,60 @@ export function evaluateAutomationPlan(s: AutomationState, r: AutomationPlanRequ
   return { ok: true, occurrence: key };
 }
 
+/**
+ * 0.60: a restart plan under a restart window. Reached only from
+ * evaluateAutomationPlan, after the policy's own standing (revocation,
+ * digest, expiry, status, signature, quorum). Every refusal is its own code.
+ *
+ * One computer per plan, with exactly the rule's params (the fixed warning,
+ * onlyIfRequired under "if required", the RustDesk exception only if the
+ * document has it); a computer of this business (or, for named computers,
+ * that enrolled identity); received by notAfter and restarted the warning
+ * later, still inside the window; at most MAX_RESTART_PLAN_HOURS long; never
+ * while that computer's earlier plan is open; and at most
+ * `maxRunsPerOccurrence` plans per computer per occurrence — the retry
+ * budget. The next occurrence starts afresh.
+ */
+export function evaluateAutomationRestart(s: AutomationState, r: AutomationPlanRequest, now: Date): AutomationDecision {
+  const { doc } = s, p = r.plan;
+  const t = doc.task as { kind: string; rule?: unknown; ignoreRemoteSession?: unknown };
+  if (t.kind !== 'restart' || !(RESTART_RULES as readonly unknown[]).includes(t.rule)) return no('restart_rule_unknown', 'The restart rule is not one this signer knows; nothing is restarted under it.');
+  if (p.action.id !== REBOOT_SCHEDULE.id || p.action.version !== REBOOT_SCHEDULE.version) return no('action_not_in_policy', 'A restart window signs windows.reboot.schedule@1 only.');
+  const want = restartParamsFor({ rule: t.rule as RestartTask['rule'], ignoreRemoteSession: t.ignoreRemoteSession === true ? true : undefined });
+  const got = p.params as Record<string, unknown>;
+  if (got.ignoreRemoteSession !== undefined && want.ignoreRemoteSession !== true) return no('override_not_allowed', 'The plan asks to restart even with a technician connected through RustDesk, which this restart window does not allow.');
+  if (canonical(got) !== canonical(want)) return no('restart_params_not_allowed', `A restart window's plan gives the fixed ${RESTART_WINDOW_DELAY_MINUTES}-minute warning${want.onlyIfRequired ? ', asks the computer to restart only if Windows needs it (onlyIfRequired),' : ''} and nothing else.`);
+  if (p.script) return no('script_not_in_policy', 'A restart plan runs no script.');
+  if (p.display?.software || p.display?.deployment || (p.display?.updates ?? []).length) return no('bad_display', 'A restart plan names no software, deployment or update.');
+  if (p.display?.policy?.id !== doc.policyId || p.display.policy.digest !== s.digest) return no('bad_display', 'The plan must name this restart window.');
+  if (p.requestedBy.userId !== doc.createdBy.userId) return no('requester_mismatch', 'A restart window\'s plan is requested on behalf of the person who set the window.');
+  if (p.targets.length !== 1) return no('computer_not_in_policy', 'A restart plan names one computer.');
+  const tg = p.targets[0];
+  if (tg.businessId !== doc.businessId) return no('computer_not_in_policy', `${tg.hostname} is not a computer of ${doc.businessName}.`);
+  if (doc.targets.kind === 'computers') {
+    const c = doc.targets.computers.find((x) => x.endpointId === tg.endpointId);
+    if (!c || tg.rustdeskId !== c.rustdeskId || tg.deviceSecretSha256 !== c.deviceSecretSha256) return no('computer_not_in_policy', `${tg.hostname} is not named by this restart window, or is not the computer that was approved (its enrolled identity differs).`);
+  } else if (doc.targets.kind !== 'business' && doc.targets.kind !== 'group_members') {
+    return no('computer_not_in_policy', 'The restart window\'s targets are not a kind this signer knows.');
+  }
+  // Inside the window: picked up by notAfter at the latest, restarted the fixed warning later, before the window closes.
+  const nb = new Date(p.window.notBefore), na = new Date(p.window.notAfter);
+  const occ = recurrenceKind(doc.recurrence) === 'hourly' ? null : automationOccurrenceAt(nb, doc.recurrence);
+  if (!occ || na.getTime() + RESTART_WINDOW_DELAY_MINUTES * 60_000 > occ.end.getTime()) return no('outside_restart_window', `The restart must happen inside the restart window (${recurrenceInWords(doc.recurrence)}).`);
+  if (nb.getTime() < now.getTime() - CLOCK_SKEW_MS) return no('outside_restart_window', 'The plan starts in the past.');
+  if (nb.getTime() > now.getTime() + CLOCK_SKEW_MS) return no('outside_restart_window', 'A restart window\'s plan starts when it is signed, not later.');
+  if (!(na > nb) || na.getTime() - nb.getTime() > MAX_RESTART_PLAN_HOURS * 3_600_000) return no('outside_restart_window', `A restart plan runs for at most ${MAX_RESTART_PLAN_HOURS} hours.`);
+  // Per computer, from this signer's own ledger.
+  const key = occ.start.toISOString();
+  const mine = s.ledger.filter((e) => e.occurrence === key && e.endpointIds.includes(tg.endpointId));
+  if (mine.some((e) => Date.parse(e.notAfter) > now.getTime())) return no('restart_already_signed', `A restart of ${tg.hostname} in this window is already signed and its plan is still open.`);
+  if (mine.length >= doc.maxRunsPerOccurrence) return no('restart_retry_limit', `${tg.hostname} has had ${mine.length} restart plan(s) signed in this window; the window allows ${doc.maxRunsPerOccurrence}. The next window tries again.`);
+  return { ok: true, occurrence: key };
+}
+
+/** 0.60: a restart window's ledger keeps this long; its decisions never look further back than one occurrence (at most a day). */
+export const RESTART_LEDGER_KEEP_DAYS = 8;
+
 /** The ledger entry the signer appends when it signs a plan under a policy. */
 export function automationLedgerEntry(p: Plan, occurrence: string, signedAt: Date, planSha256: string): AutomationLedgerEntry {
   return { jobId: p.jobId, occurrence, signedAt: signedAt.toISOString(), notBefore: p.window.notBefore, notAfter: p.window.notAfter, endpointIds: p.targets.map((t) => t.endpointId), planSha256 };
@@ -452,9 +580,26 @@ export function automationLedgerEntry(p: Plan, occurrence: string, signedAt: Dat
 
 /** The task in words for the approval page and the portal's list. */
 export function taskInWords(t: AutomationTask): string {
+  if (t.kind === 'restart') {
+    const base = t.rule === 'if_required'
+      ? `Restart a computer if Windows says it needs a restart (the computer checks again first), with the fixed ${RESTART_WINDOW_DELAY_MINUTES}-minute warning`
+      : t.rule === 'always'
+        ? `Restart every computer once in each window, whether or not Windows asks for it (maintenance restart), with the fixed ${RESTART_WINDOW_DELAY_MINUTES}-minute warning`
+        : 'an unrecognised restart rule (nothing is restarted)';
+    return `${base}${t.ignoreRemoteSession === true ? '; it restarts even if a technician is connected through RustDesk (their session is dropped)' : '; never while a technician is connected through RustDesk'}`;
+  }
   if (t.kind === 'script') {
     const args = Object.entries(t.params.parameters);
     return `Run "${t.script.name}" v${t.script.version} (SHA-256 ${t.script.contentSha256.slice(0, 12)}…)${args.length ? ` with ${args.map(([k, v]) => `-${k} ${JSON.stringify(v)}`).join(' ')}` : ''}, timeout ${t.params.timeoutMinutes} min`;
   }
   return `${t.operation === 'install' ? 'Install' : 'Uninstall'} ${t.display.name} ${t.params.version} (winget ${t.params.packageId})`;
+}
+
+/** 0.60: the targets in words, for the approval page and the portal. */
+export function targetsInWords(t: AutomationTargets, businessName: string): string {
+  if (t.kind === 'computers') return t.computers.length === 1 ? t.computers[0].hostname : `${t.computers.length} named computers`;
+  if (t.kind === 'group') return `group "${t.groupName}" (at most ${t.maxTargets} per run)`;
+  if (t.kind === 'business') return `every computer of ${businessName} that this window governs`;
+  if (t.kind === 'group_members') return `every member of group "${t.groupName}" that this window governs`;
+  return 'unrecognised targets';
 }

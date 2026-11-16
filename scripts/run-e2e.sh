@@ -87,6 +87,9 @@ export WARRANTY_SWEEP=off
 # 0.58: the automation sweep asks for a plan for every active automation
 # schedule in the database. e2e-automation-schedule turns it on for its own API.
 export AUTOMATION_SWEEP=off
+# 0.60: the restart-window sweep asks for a restart plan for every computer a
+# restart window governs. e2e-restart-window-settings turns it on for its own API.
+export RESTART_WINDOW_SWEEP=off
 # 0.59: the SSO session safety-net would ask a provider about every SSO session.
 # e2e-sso-identity turns it on, fast, for its own API.
 export SSO_SESSION_SWEEP=off
@@ -129,6 +132,9 @@ else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM / pwsh not available)\n' re
 # Automation schedules (0.58) run a library script and a catalog package on a schedule, under the agent: the same three.
 if [[ -n "${RELEASE_BIN:-}" && -n "${ACTION_SIM:-}" ]] && { [[ -n "${PWSH:-}" ]] || command -v pwsh >/dev/null; }; then run automation-schedule node scripts/e2e-automation-schedule.mjs
 else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM / pwsh not available)\n' automation-schedule; skipped+=(automation-schedule); fi
+# Restart windows (0.60): business, group and computer windows, each restart a signed plan the sim decides. No pwsh.
+if [[ -n "${RELEASE_BIN:-}" && -n "${ACTION_SIM:-}" ]]; then run restart-window-settings node scripts/e2e-restart-window-settings.mjs
+else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM not available)\n' restart-window-settings; skipped+=(restart-window-settings); fi
 
 # Signed releases on one host (0.37) run deploy/release/ in a temporary prefix
 # and build the agent with Go themselves: they need Go (GO, go on PATH, or
@@ -148,7 +154,7 @@ for t in smoke full business-access offboarding public-api public-address rollou
   # offboarding failed "fetch failed" this way on a re-run).
   : > "$OUT/api-$t.log"
   env PORT=$PORT HBBS_PRESENCE_HOST=127.0.0.2 OIDC_ALLOW_INSECURE_LOOPBACK=true PUBLIC_API_URL="http://scratch.example.com:$PORT" \
-    JWT_SECRET="$(openssl rand -hex 32)" LAUNCHER_TOKEN_SECRET="$(openssl rand -hex 32)" MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off METRIC_SWEEP=off RETENTION_SWEEP=off REPORT_SCHEDULE_SWEEP=off CHAT_RETENTION_SWEEP=off TRAY_SWEEP=off SCRIPT_OUTPUT_SWEEP=off AUTO_MIGRATION_SWEEP=off WINGET_INDEX_SWEEP=off WARRANTY_SWEEP=off AUTOMATION_SWEEP=off SSO_SESSION_SWEEP=off \
+    JWT_SECRET="$(openssl rand -hex 32)" LAUNCHER_TOKEN_SECRET="$(openssl rand -hex 32)" MONITOR_SWEEP=off CLIENT_UPDATE_SWEEP=off PATCH_POLICY_SWEEP=off METRIC_SWEEP=off RETENTION_SWEEP=off REPORT_SCHEDULE_SWEEP=off CHAT_RETENTION_SWEEP=off TRAY_SWEEP=off SCRIPT_OUTPUT_SWEEP=off AUTO_MIGRATION_SWEEP=off WINGET_INDEX_SWEEP=off WARRANTY_SWEEP=off AUTOMATION_SWEEP=off RESTART_WINDOW_SWEEP=off SSO_SESSION_SWEEP=off \
     VERSION_FILE="$ROOT/version.json" node dist/main.js > "$OUT/api-$t.log" 2>&1 &
   pid=$!
   for _ in $(seq 1 180); do grep -q "listening on" "$OUT/api-$t.log" 2>/dev/null && break; sleep 1; done

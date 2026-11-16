@@ -10,5 +10,7 @@ import { AutomationService } from './automation.service';
   imports: [AuditModule, ScriptRunModule, SoftwareModule],
   controllers: [AutomationController],
   providers: [AutomationService],
+  // 0.60: restart windows are automation policies.
+  exports: [AutomationService],
 })
 export class AutomationModule {}

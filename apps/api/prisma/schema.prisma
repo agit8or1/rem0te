@@ -122,6 +122,9 @@ enum ActivityAction {
   AUTOMATION_POLICY_SUPERSEDED
   AUTOMATION_RUN_PROPOSED
   AUTOMATION_RUN_REFUSED
+  // 0.60: the simple restart window (set or changed; cleared or set to no automatic restarts).
+  RESTART_WINDOW_SET
+  RESTART_WINDOW_CLEARED
   PATCH_INSTALL_REQUESTED
   CONTAINMENT_PAUSED
   CONTAINMENT_CLEARED
@@ -691,6 +694,8 @@ model Customer {
   monitorSuppressions  MonitorSuppression[]
   monitorTicketPolicies MonitorTicketPolicy[]
   clientUpdatePolicies ClientUpdatePolicy[]
+  /// 0.60: restart window settings of this business, its groups and its computers.
+  restartWindowSettings RestartWindowSetting[]
   scripts              Script[]
   softwareEntries      SoftwareCatalogEntry[]
   softwareDeployments  SoftwareDeployment[]
@@ -841,6 +846,9 @@ model Endpoint {
   patchPolicyMembers   PatchPolicyComputer[]
   // 0.54: restarts a patch policy's restart rule proposed for this computer.
   patchPolicyRestarts  PatchPolicyRestart[]
+  /// 0.60: this computer's own restart window setting, and the restart plans restart windows asked for.
+  restartWindowSetting  RestartWindowSetting?
+  restartWindowAttempts RestartWindowAttempt[]
   // Chat (0.34): the chat protocol the signed agent says it speaks (1), from
   // agent-status.json via an authenticated heartbeat. Null = this agent can't
   // chat. Self-reported: it decides only whether the portal offers a chat.
@@ -1056,6 +1064,8 @@ model EndpointGroup {
   /// 0.35: policies scoped to this group. They keep the group from being deleted.
   monitorRules         MonitorRule[]
   clientUpdatePolicies ClientUpdatePolicy[]
+  /// 0.60: this group's restart window setting. It keeps the group from being deleted.
+  restartWindowSetting RestartWindowSetting?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4383,7 +4393,7 @@ model AutomationPolicy {
   tenantId        String?
   customerId      String
   name            String
-  /// 'script' or 'software' (CHECK).
+  /// 'script', 'software' or (0.60) 'restart' (CHECK).
   taskKind        String
   /// The exact document the approvers sign (rem0te-automation-policy/1).
   document        Json
@@ -4412,6 +4422,10 @@ model AutomationPolicy {
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
   occurrences     AutomationOccurrence[]
+  /// 0.60: restart window settings standing on this policy, or waiting for it to be approved.
+  restartSettings        RestartWindowSetting[] @relation("RestartWindowPolicy")
+  pendingRestartSettings RestartWindowSetting[] @relation("RestartWindowPending")
+  restartAttempts        RestartWindowAttempt[]
 
   @@index([customerId, createdAt])
   @@index([status])
@@ -4442,4 +4456,65 @@ model AutomationOccurrence {
   @@unique([policyId, occurrenceKey, attempt])
   @@index([policyId, createdAt])
   @@index([jobId])
+}
+
+/// 0.60: the simple restart window (restart-windows/, docs/restart-windows.md).
+/// One row per business, device group or computer that has a setting.
+/// Precedence is computer > group (priority, 1 first) > business.
+///
+/// mode `window`: a restart window. It is carried by an automation policy
+/// whose task is `restart`, approved on the approval signer (or active at
+/// creation in direct mode): `policyId` is the policy this setting stands on
+/// (the one in force, or before its first approval the one awaiting it), and
+/// `pendingPolicyId` a change waiting for approval while `policyId` stays in
+/// force. mode `off` (group or computer only): no automatic restarts, at once,
+/// with nothing signed (it only narrows). CHECKs and triggers in 0081.
+model RestartWindowSetting {
+  id              String            @id @default(cuid())
+  tenantId        String?
+  customerId      String
+  customer        Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// business | group | computer
+  scope           String
+  groupId         String?           @unique
+  group           EndpointGroup?    @relation(fields: [groupId], references: [id], onDelete: NoAction)
+  endpointId      String?           @unique
+  endpoint        Endpoint?         @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  /// Group settings only: 1–999, 1 first; unique per business among group settings.
+  priority        Int?
+  /// window | off
+  mode            String
+  policyId        String?
+  policy          AutomationPolicy? @relation("RestartWindowPolicy", fields: [policyId], references: [id], onDelete: SetNull)
+  pendingPolicyId String?
+  pendingPolicy   AutomationPolicy? @relation("RestartWindowPending", fields: [pendingPolicyId], references: [id], onDelete: SetNull)
+  updatedById     String
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([customerId])
+  @@index([policyId])
+}
+
+/// 0.60: one restart plan a restart window asked the signer for: per
+/// computer, occurrence (`windowKey`, its UTC start) and attempt 1–3. The
+/// sweep claims an attempt by inserting its row before it asks.
+model RestartWindowAttempt {
+  id         String           @id @default(cuid())
+  policyId   String
+  policy     AutomationPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  endpointId String
+  endpoint   Endpoint         @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  customerId String
+  windowKey  String
+  attempt    Int
+  jobId      String?
+  code       String
+  message    String
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@unique([policyId, endpointId, windowKey, attempt])
+  @@index([endpointId, createdAt])
+  @@index([customerId, createdAt])
 }

@@ -1192,3 +1192,23 @@ export const automationApi = {
   revoke: (id: string, reason: string) => api.post(`/automation/schedules/${id}/revoke`, { reason }),
   groups: (businessId: string) => api.get('/device-groups', { params: { businessId } }),
 };
+
+// Restart windows (0.60): a business's, a device group's and one computer's.
+// Setting a window, or removing a group's or computer's own setting (so it
+// inherits one), needs fresh authentication (restart.window; the interceptor
+// prompts and retries). "No automatic restarts" and removing a business's
+// window never do. A window is approved on the approval signer, never here.
+export type RestartWindowBody =
+  | { mode: 'window'; rule: 'if_required' | 'always'; window: PolicyWindowInput; ignoreRemoteSession?: true; priority?: number; expiresInDays?: number; reason?: string }
+  | { mode: 'off'; priority?: number; reason?: string };
+export const restartWindowsApi = {
+  business: (businessId: string) => api.get(`/restart-windows/businesses/${encodeURIComponent(businessId)}`),
+  setBusiness: (businessId: string, body: RestartWindowBody) => api.put(`/restart-windows/businesses/${encodeURIComponent(businessId)}`, body),
+  clearBusiness: (businessId: string) => api.delete(`/restart-windows/businesses/${encodeURIComponent(businessId)}`, { data: {} }),
+  setGroup: (businessId: string, groupId: string, body: RestartWindowBody) => api.put(`/restart-windows/businesses/${encodeURIComponent(businessId)}/groups/${encodeURIComponent(groupId)}`, body),
+  clearGroup: (businessId: string, groupId: string) => api.delete(`/restart-windows/businesses/${encodeURIComponent(businessId)}/groups/${encodeURIComponent(groupId)}`, { data: {} }),
+  computer: (endpointId: string) => api.get(`/restart-windows/computers/${encodeURIComponent(endpointId)}`),
+  setComputer: (endpointId: string, body: RestartWindowBody) => api.put(`/restart-windows/computers/${encodeURIComponent(endpointId)}`, body),
+  clearComputer: (endpointId: string) => api.delete(`/restart-windows/computers/${encodeURIComponent(endpointId)}`, { data: {} }),
+  bulk: (endpointIds: string[], mode: 'off' | 'inherit') => api.post('/restart-windows/computers/bulk', { endpointIds, mode }),
+};

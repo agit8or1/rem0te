@@ -24,6 +24,7 @@ import { RestartOptions, defaultRestart, restartAtBody, restartParams, type Rest
 import { ScheduleChoice, defaultSchedule, scheduleBody, type ScheduleValue } from '@/components/patching/schedule-choice';
 import { CancelTask, TaskItems, TaskSteps } from '@/components/tasks/task-ui';
 import { STATE_LABEL, STATE_VARIANT, type TaskView } from '@/lib/tasks';
+import { ComputerRestartWindowCard, RestartWindowSentence } from '@/components/restart-windows/restart-window-card';
 
 /**
  * Windows Update posture of one computer (v0.27), as its signed agent's
@@ -352,6 +353,7 @@ function AfterInstallCard({ endpointId, a, checkedAt, onScan, scanning, zones }:
               <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-yellow-600" />
               <span>Installed {a.installed} update{a.installed === 1 ? '' : 's'}{a.failed ? `, ${a.failed} failed` : ''} — restart required. The update list refreshes after the restart.</span>
             </p>
+            <RestartWindowSentence endpointId={endpointId} className="text-xs" />
             {a.restart && (
               <p data-testid="patch-restart-task">Restart: <strong>{STATE_LABEL[a.restart.state] ?? a.restart.state}</strong> — {a.restart.text}</p>
             )}
@@ -421,6 +423,7 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
         <PatchSummaryCard s={p.summary} platform={platform} />
         <InstallUpdates endpointId={endpointId} p={p} onOpenAgentCard={onOpenAgentCard} />
         {os !== 'Linux' && os !== 'macOS' && <PatchPolicySetting endpointId={endpointId} />}
+        {os !== 'Linux' && os !== 'macOS' && <ComputerRestartWindowCard endpointId={endpointId} />}
         <Card>
           <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />{source}</CardTitle>
@@ -433,8 +436,9 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
               {b?.checkedAt ? `Last scanned ${formatDate(b.checkedAt)}` : 'Not scanned yet — the agent scans automatically within 12 hours of its first check-in.'}
             </p>
             {b?.rebootRequired && (
-              <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending. Rem0te restarts a computer only through an approved restart: one requested from the Actions tab or the device list, or a patch policy’s restart rule.</p>
+              <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending. Rem0te restarts a computer only through an approved restart: one requested from the Actions tab or the device list, a restart window, or a patch policy’s restart rule.</p>
             )}
+            {b?.rebootRequired && <RestartWindowSentence endpointId={endpointId} className="text-xs pl-5" />}
             {b?.checkedAt && <p className="text-xs">{b.updates.length === 0 ? (os === 'Windows' ? 'Windows Update offers nothing.' : 'No pending updates reported.') : `${b.updates.length} update${b.updates.length === 1 ? '' : 's'} offered.`}</p>}
             <p className="text-xs text-muted-foreground">
               {os === 'Linux' || os === 'macOS' ? (
@@ -471,6 +475,7 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
       {p.afterInstall && <AfterInstallCard endpointId={endpointId} zones={p.timeZones ?? {}} a={p.afterInstall} checkedAt={dataUpdatedAt} onScan={() => rescan.mutate()} scanning={rescan.isPending || p.scanPending} />}
       <InstallUpdates endpointId={endpointId} p={p} onOpenAgentCard={onOpenAgentCard} />
       <PatchPolicySetting endpointId={endpointId} />
+      <ComputerRestartWindowCard endpointId={endpointId} />
       <Card>
         <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Windows Update</CardTitle>
@@ -491,8 +496,9 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
             </div>
           )}
           {p.reboot?.pending && (
-            <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending ({p.reboot.sources.map((s) => REBOOT_SOURCE[s] ?? s).join(', ')}). Installed updates take effect after a restart: someone restarts it, an approved restart is requested, or a patch policy’s restart rule does it.</p>
+            <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending ({p.reboot.sources.map((s) => REBOOT_SOURCE[s] ?? s).join(', ')}). Installed updates take effect after a restart: someone restarts it, an approved restart is requested, its restart window does it, or a patch policy’s restart rule does.</p>
           )}
+          {p.reboot?.pending && <RestartWindowSentence endpointId={endpointId} className="text-xs pl-5" />}
           <p className="text-xs">
             {p.updates.length === 0 ? 'Windows Update offers nothing.' : `${p.updates.length} offered, ${installable.length} installable by a deployment.`}{' '}
             <Link className="underline" href="/patching">Patch deployments</Link>
