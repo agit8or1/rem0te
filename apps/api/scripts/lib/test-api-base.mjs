@@ -3,6 +3,8 @@
 // so a suite run by hand with only DATABASE_URL set wrote its fixtures to the
 // scratch database and then signed in against the live API. run-e2e.sh always
 // sets API_BASE to its own scratch API; anyone else must too.
+import { URL } from 'node:url';
+
 const REFUSED_PORTS = new Set(['3000', '3001', '3201', '3202', '443', '4000', '4001']);
 
 export function testApiBase() {
