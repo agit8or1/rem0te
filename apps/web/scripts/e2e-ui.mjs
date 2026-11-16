@@ -1979,7 +1979,73 @@ async function patchWindowEditor(page, f, vp, label) {
   await cleanCheck(page, `${label} patch policy editor`);
 }
 
+/**
+ * 0.57: Devices → Unassigned and Devices → Deploy agents, as a Platform Admin.
+ * A pooled computer (no tenant, no business) is listed with how it arrived,
+ * its source address and its hardware, but not who is signed in. Assigning it
+ * to A asks to confirm it is you and moves it. A deployment key asks too, is
+ * shown once, is stored only as its hash, and fills in the instructions in the
+ * browser. Both businesses cascade at clean-up, keys with them.
+ */
+async function adoptionScreens(page, f, vp, label) {
+  const name = `${TAG}-POOL-${label.replace(/[^a-z]/g, '-')}`;
+  const ep = await prisma.endpoint.create({ data: {
+    name, hostname: name, platform: 'Windows', status: 'PENDING_ENROLLMENT', arrivedVia: 'heartbeat', sourceIp: '198.51.100.23', lastSeenAt: new Date(), isOnline: true,
+    inventory: { create: { manufacturer: 'Contoso Ltd', model: 'Field Laptop 7', domain: 'pool.example.com', loggedOnUser: 'POOL\\someone' } },
+  } });
+  try {
+    await go(page, '/admin/unassigned');
+    const row = page.locator('[data-testid="unassigned-table"] tr').filter({ hasText: name });
+    await row.waitFor({ timeout: 15_000 }).catch(() => {});
+    const text = await row.innerText().catch(() => '');
+    check(/Agent check-in/.test(text) && text.includes('198.51.100.23') && /Contoso Ltd Field Laptop 7/.test(text), `${label}: Unassigned lists the pooled computer with how it arrived, its source address and hardware`, text);
+    await row.getByRole('button', { name }).click();
+    const all = await page.locator('main').innerText();
+    check(/pool\.example\.com/.test(all) && !/someone/.test(all), `${label}: its details show the domain and never who is signed in`);
+    if (vp === 'phone') await noSideScroll(page, `${label} Unassigned`);
+    await shot(page, `${label}-unassigned`);
+    await row.getByRole('checkbox').check();
+    await page.locator('#adopt-business').selectOption(f.A.id);
+    await forgetStepUp(page);
+    await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
+    await page.locator('[data-testid="adoption-bulk"]').getByRole('button', { name: 'Assign', exact: true }).click();
+    await confirmStepUp(page, label, 'assigning a computer');
+    let moved = null;
+    for (let i = 0; i < 30 && !moved; i++) { await sleep(300); moved = (await prisma.endpoint.findUnique({ where: { id: ep.id } }))?.customerId === f.A.id ? true : null; }
+    const audit = await prisma.activityLog.findFirst({ where: { action: 'ENDPOINT_ADOPTED', resourceId: ep.id } });
+    check(!!moved && audit?.actorId === f.admin.id, `${label}: Assign moved it into A, audited with the approver`, JSON.stringify(audit?.metadata ?? null));
+    await cleanCheck(page, `${label} Unassigned`, stepUp403);
+
+    await go(page, '/admin/deploy');
+    if (vp === 'phone') await noSideScroll(page, `${label} Deploy agents`);
+    const keyName = `${TAG} key ${label}`;
+    await page.locator('#key-business').selectOption(f.A.id);
+    await page.getByPlaceholder('Acme GPO rollout, November').fill(keyName);
+    await forgetStepUp(page);
+    await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
+    await page.getByRole('button', { name: 'Create key' }).click();
+    await confirmStepUp(page, label, 'creating a deployment key');
+    const once = page.locator('[data-testid="deployment-key-once"]');
+    await once.waitFor({ timeout: 15_000 }).catch(() => {});
+    const shown = ((await once.locator('code').innerText().catch(() => '')) || '').trim();
+    const row2 = await prisma.deploymentKey.findFirst({ where: { customerId: f.A.id, name: keyName } });
+    check(/^[0-9a-f]{96}$/.test(shown) && row2?.keyHash === sha256(shown) && row2?.mode === 'review', `${label}: the key is shown once, stored only as its hash, review by default`, shown.slice(0, 12));
+    const gpo = await page.locator('pre').first().innerText().catch(() => '');
+    check(gpo.includes(`/api/v1/public/install/win/${shown}`) && /Rem0teHeartbeat/.test(gpo), `${label}: the Group Policy script has the key filled in by the browser`);
+    await shot(page, `${label}-deploy-agents`);
+    await once.getByRole('button', { name: 'I have stored it' }).click();
+    await page.getByPlaceholder(/Paste a deployment key/).fill('');
+    check((await page.locator('pre').first().innerText()).includes('<DEPLOYMENT-KEY>'), `${label}: with no key entered the commands show the placeholder`);
+    await cleanCheck(page, `${label} Deploy agents`, stepUp403);
+  } finally {
+    await prisma.endpointGroupMember.deleteMany({ where: { endpointId: ep.id } }).catch(() => {});
+    await prisma.endpointInventory.deleteMany({ where: { endpointId: ep.id } }).catch(() => {});
+    await prisma.endpoint.deleteMany({ where: { id: ep.id } }).catch(() => {});
+  }
+}
+
 async function coverage035(page, f, vp, label) {
+  await adoptionScreens(page, f, vp, label);
   await patchWindowEditor(page, f, vp, label);
   await chatTab(page, f, vp, label);
   await scriptRunPanel(page, f, vp, label);

@@ -1,4 +1,5 @@
 import { AccessPolicyService } from '../security-controls/access-policy.service';
+import { assertAssigned } from '../common/unassigned';
 import { AbuseGuardService } from '../security-controls/abuse-guard.service';
 import {
   BadRequestException,
@@ -140,6 +141,18 @@ export class QuickConnectService {
     return status;
   }
 
+  /**
+   * 0.57 (§70): Quick Connect is for a stranger's machine, not a way round
+   * the unassigned pool. A Remote ID that belongs to a pooled computer is
+   * refused, here and on the launcher's ad-hoc path; it is adopted first.
+   */
+  async refusePooled(rustdeskId: string): Promise<void> {
+    const node = await this.prisma.rustdeskNode.findUnique({
+      where: { rustdeskId }, select: { endpoint: { select: { customerId: true, tenantId: true } } },
+    });
+    if (node?.endpoint) assertAssigned(node.endpoint);
+  }
+
   // ── Connect ───────────────────────────────────────────────────────────────
 
   /**
@@ -157,6 +170,7 @@ export class QuickConnectService {
     if (!RUSTDESK_ID_RE.test(rustdeskId)) {
       throw new BadRequestException('That does not look like a Remote ID. It should be the 9-digit number shown by the Quick Connect client.');
     }
+    await this.refusePooled(rustdeskId);
     if (!dto.password || dto.password.length < 4 || dto.password.length > 128) {
       throw new BadRequestException('Enter the password shown by the Quick Connect client.');
     }

@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
+import { assertAssigned } from '../common/unassigned';
 import { Prisma, type ActionJob, type ActionTarget, type SoftwareCatalogEntry, type SoftwareDeployment } from '@prisma/client';
 import { z } from 'zod';
 import { PrismaService } from '../prisma/prisma.service';
@@ -368,6 +369,8 @@ export class SoftwareService {
     if (!p.success) bad(p.error);
     await this.acl.assertEndpointInScope(actor, endpointId);
     const ep = await this.actions.endpointFor(endpointId);
+    // 0.57 (§70): nothing is installed on or removed from an unassigned computer.
+    if (ep) assertAssigned(ep);
     if (!ep?.customerId) throw new NotFoundException('Computer not found');
     const st = await this.availability(actor, ep, ACTIONS[operation]);
     if (!st.possible) throw new ConflictException({ code: 'SOFTWARE_NOT_POSSIBLE', message: st.reason, fix: st.fix });
@@ -639,6 +642,8 @@ export class SoftwareService {
     const d = p.data;
     await this.acl.assertEndpointInScope(actor, endpointId);
     const ep = await this.actions.endpointFor(endpointId);
+    // 0.57 (§70): nothing is installed on or removed from an unassigned computer.
+    if (ep) assertAssigned(ep);
     if (!ep?.customerId) throw new NotFoundException('Computer not found');
     const st = await this.availability(actor, ep, SOFTWARE_INSTALL);
     if (!st.possible) throw new ConflictException({ code: 'SOFTWARE_NOT_POSSIBLE', message: st.reason, fix: st.fix });
@@ -668,6 +673,8 @@ export class SoftwareService {
     const d = p.data;
     await this.acl.assertEndpointInScope(actor, endpointId);
     const ep = await this.actions.endpointFor(endpointId);
+    // 0.57 (§70): nothing is installed on or removed from an unassigned computer.
+    if (ep) assertAssigned(ep);
     if (!ep?.customerId) throw new NotFoundException('Computer not found');
     const st = await this.availability(actor, ep, SOFTWARE_REMOVE);
     if (!st.possible) throw new ConflictException({ code: 'SOFTWARE_NOT_POSSIBLE', message: st.reason, fix: st.fix });
@@ -709,6 +716,8 @@ export class SoftwareService {
     for (const id of all) {
       await this.acl.assertEndpointInScope(actor, id);
       const ep = await this.actions.endpointFor(id);
+      // 0.57 (§70): no install or uninstall on an unassigned computer.
+      if (ep) assertAssigned(ep);
       if (!ep || !ep.customerId || ep.status === 'ARCHIVED' || !(await this.acl.canReachEndpoint(actor, ep))) throw new NotFoundException('Computer not found');
       if (business && ep.customerId !== business) throw new BadRequestException({ code: 'BAD_TARGETS', message: 'A deployment names computers of one business only.' });
       business = ep.customerId;

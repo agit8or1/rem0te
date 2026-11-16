@@ -149,6 +149,14 @@ enum ActivityAction {
   ENDPOINT_UPDATED
   ENDPOINT_ARCHIVED
   ENDPOINT_CLAIMED
+  // 0.57 discovery and adoption.
+  ENDPOINT_ADOPTED
+  ENDPOINT_FORGOTTEN
+  DEPLOYMENT_KEY_CREATED
+  DEPLOYMENT_KEY_REVOKED
+  DEPLOYMENT_KEY_USED
+  ADOPTION_MAPPING_CREATED
+  ADOPTION_MAPPING_DELETED
   ENDPOINT_ENROLLED
   ENDPOINT_UNASSIGNED
   ENDPOINT_ACCESS_GRANTED
@@ -851,6 +859,19 @@ model Endpoint {
 
   aiTimeline String?
 
+  // Discovery and adoption (0.57). How a computer reached the unassigned pool
+  // ('heartbeat', 'install_script' or 'deployment_key', CHECK in 0078), the
+  // deployment key it enrolled with, the address the server saw its requests
+  // come from while it was pooled, and who adopted it into a business and
+  // when. A pooled computer is handed no work (enrollment.service heartbeat)
+  // and refuses every remote and action path (common/unassigned.ts).
+  deploymentKeyId String?
+  deploymentKey   DeploymentKey? @relation(fields: [deploymentKeyId], references: [id], onDelete: SetNull)
+  arrivedVia      String?
+  sourceIp        String?
+  adoptedAt       DateTime?
+  adoptedById     String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -858,6 +879,67 @@ model Endpoint {
   @@index([customerId])
   @@index([status])
   @@index([tenantId, status])
+  @@index([deploymentKeyId])
+}
+
+// A multi-use enrolment key for fleet rollout (0.57): GPO, Intune, an
+// existing RMM, a Linux or macOS script. Bound to one business (and optionally
+// a site and a static group) when it is made; the computer that redeems it has
+// no say. Only the SHA-256 is stored, plus the last four hex characters to
+// tell keys apart. `mode` 'review' (the default) puts an enrolling computer in
+// the unassigned pool tagged with the key; 'active' puts it straight into the
+// business. Expiry at most 90 days after creation, uses capped (CHECKs in
+// 0078); the site and group are the business's own (trigger in 0078).
+// customerId, siteId and endpointGroupId are foreign keys in SQL with no
+// Prisma relation, so the shared models need no back-relation.
+model DeploymentKey {
+  id              String             @id @default(cuid())
+  tenantId        String
+  customerId      String
+  siteId          String?
+  endpointGroupId String?
+  name            String
+  keyHash         String             @unique
+  keyHint         String
+  mode            String             @default("review")
+  accessMode      EndpointAccessMode @default(ASSIGNED_USERS)
+  maxUses         Int
+  useCount        Int                @default(0)
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  revokedById     String?
+  lastUsedAt      DateTime?
+  createdById     String
+  createdAt       DateTime           @default(now())
+
+  endpoints Endpoint[]
+  mappings  AdoptionMapping[]
+
+  @@index([customerId])
+}
+
+// An explicitly configured rule suggesting a business (and site) for an
+// unassigned computer (0.57): by deployment key, AD domain (the inventory's
+// `domain`), the source address the server saw (CIDR), or a hostname prefix.
+// Never by user name or e-mail address. A suggestion only: nothing applies
+// one by itself (adoption/mapping.ts). customerId and siteId are foreign keys
+// in SQL with no Prisma relation.
+model AdoptionMapping {
+  id              String         @id @default(cuid())
+  tenantId        String
+  customerId      String
+  siteId          String?
+  kind            String
+  value           String
+  deploymentKeyId String?
+  deploymentKey   DeploymentKey? @relation(fields: [deploymentKeyId], references: [id], onDelete: Cascade)
+  priority        Int            @default(100)
+  note            String?
+  createdById     String
+  createdAt       DateTime       @default(now())
+
+  @@unique([kind, value])
+  @@index([customerId])
 }
 
 // Which users have been granted remote access to which computers.
