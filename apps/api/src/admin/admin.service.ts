@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Injectable, ForbiddenException } from '@nestjs/common';
 import { spawn } from 'child_process';
 import * as os from 'os';
 import { PrismaService } from '../prisma/prisma.service';
@@ -70,44 +70,6 @@ export class AdminService {
       },
       orderBy: { createdAt: 'desc' },
     });
-  }
-
-  /** Move an unassigned device into a business. Platform Admin only. */
-  async assignDevice(actor: ActorContext, id: string, businessId: string) {
-    this.acl.assertPlatformAdmin(actor);
-
-    const endpoint = await this.prisma.endpoint.findFirst({
-      where: { id, OR: [{ tenantId: null }, { customerId: null }] },
-      include: { rustdeskNode: true },
-    });
-    if (!endpoint) throw new NotFoundException('That computer is not unassigned');
-
-    const business = await this.prisma.customer.findUnique({
-      where: { id: businessId },
-      select: { id: true, tenantId: true, name: true, isArchived: true },
-    });
-    if (!business || business.isArchived) throw new NotFoundException('Business not found');
-
-    const updated = await this.prisma.endpoint.update({
-      where: { id },
-      data: { tenantId: business.tenantId, customerId: business.id, status: 'ACTIVE' },
-    });
-
-    if (endpoint.rustdeskNode) {
-      await this.prisma.rustdeskNode.update({
-        where: { id: endpoint.rustdeskNode.id },
-        data: { tenantId: business.tenantId },
-      });
-    }
-
-    await this.audit.log({
-      tenantId: business.tenantId, customerId: business.id,
-      actorId: actor.userId, actorIp: actor.ip,
-      action: 'ENDPOINT_UPDATED', resource: 'endpoint', resourceId: id,
-      meta: { assignedToBusiness: business.name },
-    });
-
-    return updated;
   }
 
   private runAsync(cmd: string, args: string[], timeoutMs: number): Promise<string> {

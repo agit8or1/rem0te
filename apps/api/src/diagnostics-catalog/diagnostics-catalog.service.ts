@@ -1,3 +1,4 @@
+import { assertAssigned } from '../common/unassigned';
 import {
   BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus,
   Injectable, Logger, NotFoundException,
@@ -125,6 +126,8 @@ export class DiagnosticsCatalogService {
     const endpoint = await this.assertVisible(actor, endpointId, cap);
     this.acl.assertCapability(actor, cap);
     if (endpoint.status === 'ARCHIVED') throw new BadRequestException({ code: 'ENDPOINT_ARCHIVED', message: 'This computer is archived.' });
+    // 0.57 (§70): nothing runs on a computer in the unassigned pool.
+    assertAssigned(endpoint);
 
     const [ep, node] = await Promise.all([
       this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { platform: true } }),

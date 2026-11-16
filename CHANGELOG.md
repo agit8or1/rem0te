@@ -5,6 +5,198 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.57.0] — 2026-11-16 · *Muster*
+
+**Deploying agents to a fleet, and adopting the computers that arrive.**
+
+This is Phase 4 of the owner's expanded-RMM directive, "Device discovery and adoption". Until now a computer could be
+enrolled only one at a time, from **Add device**, with a single-use code. A computer that checked in without one
+landed in a bare list, *Admin → Unassigned*. That list showed a name, a Remote ID and a *last seen*, and had one
+**Assign** button. Behind the button, `POST /admin/unassigned-devices/:id/assign` set `customerId` and wrote one audit
+row. It did not ask the person to confirm it was them, set no site, and took no group. It would also move any
+computer, whether it was in the pool or not. Nor could the business page's "Move an unassigned computer here" card
+be trusted: it went through `PATCH /endpoints/:id`, which set the business and left `tenantId` null.
+
+#### The gap: an unassigned computer could be reached
+A Platform Admin could open a remote session to a pooled computer. `SessionsService.create()` checked scope, and a
+Platform Admin passes every scope check, so a computer that no business owned and nobody had approved could be
+connected to like any other. The same was true of Connect and its `.cmd`, the launcher (by computer and by
+Remote ID), Quick Connect to an enrolled computer's Remote ID, password reveal, set and rotation, reinstall, agent
+update, and the RustDesk update staging.
+
+Each path now refuses with `403 ENDPOINT_UNASSIGNED`. All except Quick Connect use the one check, `assertAssigned`
+in `common/unassigned.ts`; Quick Connect uses `refusePooled`. The pool is `tenantId` null **or** `customerId` null.
+The check sits in:
+
+- `sessions.create`;
+- `authorizeConnect` (Connect, the `.cmd` and the launcher, as `endpoint_unassigned`);
+- `admitWrite` (password, rotate, reinstall, accept the device secret, agent update and migrate);
+- `ActionsService.createPlan` (actions, scripts, patch rings, service and process control);
+- diagnostics, device control, software (single, one-click, remove and rings) and patch install;
+- the tray: pairing, self-help and support requests;
+- Quick Connect `connect()` and the launcher's ad-hoc path (`refusePooled`).
+
+RustDesk update staging now skips pooled computers. Chat already refused one (`CHAT_UNSUPPORTED`). Patch
+deployments and policies already refused one through the business check.
+
+The heartbeat was the other half. A pooled computer's heartbeat went down the full path, so a queued rotation,
+reinstall or update was handed to it. It now takes `if (authenticated && pooled)` before rotation. That branch
+records live state, hands out only the automatic inventory and update scan (so the Unassigned page has hardware to
+show), and returns every other flag null with `pending: true`.
+
+#### Added
+- **Devices → Unassigned**, rewritten. Platform Admins only.
+  - Each computer shows hostname, Remote ID, platform, how it arrived (*Deployment key*, *Install script* or *Agent
+    check-in*, the new `Endpoint.arrivedVia`) and with which key, the source address the server saw
+    (`Endpoint.sourceIp`), first and last seen, and its hardware once the first inventory arrives. Who is signed in
+    is never shown.
+  - Filters: text, arrival, platform, and suggestion (has one, none, rules disagree).
+  - Select many and assign them to a business, an optional site and up to ten static groups. The person must confirm
+    it is them (`devices.adopt`).
+  - **Accept** on a row takes its suggestion.
+  - **Forget** deletes pooled junk, with the same confirmation, audited as `ENDPOINT_FORGOTTEN`.
+- **Adoption is conditional and audited per computer.** One transaction runs `updateMany` from `UNASSIGNED_WHERE`,
+  sets the node's tenant, adds the groups and writes `ENDPOINT_ADOPTED`. The entry names the approver, before and
+  after (business, site, status), the deployment key, the rule that suggested it, the groups and the step-up method.
+  A computer that left the pool meanwhile is `not_unassigned`, never moved twice. `PATCH /endpoints/:id` now refuses
+  to move a pooled computer (`USE_ADOPTION`). `POST /admin/unassigned-devices/:id/assign` is **removed**.
+- **Deployment keys** (*Devices → Deploy agents*). A key is a multi-use enrolment key for one business, with an
+  optional site and static group.
+  - It allows 1 to 10,000 uses and expires after at most 90 days.
+  - Mode *review* (the default) holds each computer in Unassigned, tagged with the key, with the key's business
+    suggested. Mode *active* puts it straight into the business.
+  - It is 96 hex characters. Every installer's existing 16–128-hex token check accepts it in the place a claim token
+    goes, so **no installer changed**. That covers the Windows script, `windows.exe`, `rem0te-agent.exe install
+    --token`, `linux.sh` and `macos.sh`.
+  - The claim looks a token up as a claim token first.
+  - Only its SHA-256 and the last four characters are stored. The key is returned once, from create.
+  - Creating one asks the person to confirm it is them (`deployment.keys`). Create, use and revoke are audited:
+    `DEPLOYMENT_KEY_CREATED`, `_USED` and `_REVOKED`.
+  - A use is one conditional `UPDATE … WHERE "useCount" < "maxUses"`, so parallel claims never pass the ceiling.
+  - A re-run on an enrolled computer (a GPO startup script on every boot) is a no-op that uses nothing.
+  - An existing node must prove its device secret. A computer in another business is refused, so a key for A cannot
+    take, move or reveal a computer of B.
+- **Instructions** on Deploy agents, generated in the browser with the key put in client-side, for six methods:
+  - a Group Policy startup script, idempotent on `Rem0teHeartbeat`;
+  - Intune (a platform script, or a Win32 app with a detection script);
+  - an existing RMM (Windows, Linux and macOS one-liners);
+  - manual;
+  - Linux, with download, checksum and read guidance, and a button that computes the served script's SHA-256;
+  - macOS, as an MDM script. The page says why there is no `.pkg`: building, signing and notarising one needs Apple's
+    tools and a Developer ID, which this Linux host lacks.
+- **Assignment rules** (*Unassigned → Assignment rules*). Platform Admin only. Creating one asks the person to
+  confirm it is them (`adoption.mappings`); deleting one does not. Both are audited.
+  - A rule maps one explicit fact to a business and site: a deployment key, an AD/DNS domain, a CIDR range (/8 or
+    narrower; IPv6 /32), or a hostname prefix.
+  - There is **no rule on who is signed in, a user name or an e-mail address**. The facts a rule can read
+    (`PoolFacts`) do not include them.
+  - `WORKGROUP`, `local` and `localdomain` are refused.
+  - Rules are **suggestions only**. Nothing applies one by itself. The only automatic placement is an *active*
+    deployment key, into its own business.
+  - Ranking: a rule on the key, then the key's own business, then domain, hostname prefix and address. Within a kind,
+    priority wins, then specificity. Rules that disagree are flagged and have no Accept button.
+- Three confirm-catalog keys in *Devices & enrolment*: `devices.adopt`, `deployment.keys` and `adoption.mappings`.
+  Each defaults to *ask*.
+- Routes (`AdoptionController`, Platform Admin):
+  - `GET /adoption/devices`
+  - `POST /adoption/devices/assign`
+  - `POST /adoption/devices/forget`
+  - `GET`, `POST /adoption/mappings` and `DELETE /adoption/mappings/:id`
+  - `GET`, `POST /adoption/deployment-keys` and `POST /adoption/deployment-keys/:id/revoke`
+
+  `docs/API-REFERENCE.md` is regenerated (554 routes) and checked against the runtime route table.
+- Docs:
+  - `docs/deployment.md` is new and in the bundle's ORDER;
+  - updated: `docs/clients.md`, `docs/README.md`, `docs/access-control.md`, the in-app `/help` and the README's
+    *What's new*.
+
+#### Database — migration 0078 (`device_adoption`)
+- `DeploymentKey`, with CHECKs on mode, a 64-hex hash, a 4-hex hint, name length, `1 ≤ maxUses ≤ 10000`,
+  `0 ≤ useCount ≤ maxUses`, and `expiresAt ≤ createdAt + 90 days`.
+- `AdoptionMapping`, with CHECKs on the kind, key-iff-`deployment_key`, value length and priority, and a unique
+  `(kind, value)`.
+- Triggers keep a key's site and group, and a rule's site and key, inside their business.
+- `Endpoint` gains `deploymentKeyId`, `arrivedVia` (CHECKed), `sourceIp`, `adoptedAt` and `adoptedById`.
+- `Endpoint_business_has_tenant_check` is **NOT VALID**. It refuses new rows with a business and no tenant, which is
+  what the old update path made, without failing on any such row already in production.
+- Seven `ActivityAction` values.
+
+#### Deploying
+- **Migration 0078.** Run `prisma migrate deploy`, copy `prisma/` to the target and run `prisma generate` there, or
+  the API throws `Unknown field`.
+- No agent or installer change, no signer change and no new dependency. No signed publish is needed for this
+  release.
+- Before deploying, it is worth listing production rows that a pooled heartbeat would now stop serving:
+  `SELECT id, name FROM "Endpoint" WHERE "tenantId" IS NULL OR "customerId" IS NULL`. Rows with a business but no
+  tenant (from the old business-page card) count as pooled now. Adopt them from Unassigned.
+
+#### Invariants
+- **§70** (new):
+  - the pool's definition and refusal;
+  - every choke point above (a mutant without the session check fails it);
+  - the pooled heartbeat branch, before rotation, with every flag null;
+  - Platform Admin on every adoption method, and the three step-up keys;
+  - conditional adopt and forget, with their audit entries;
+  - key limits, the hash-only storage and the conditional use;
+  - a key never crossing businesses, and node secret proof;
+  - four rule kinds, `PoolFacts` exactly four facts, and no user or e-mail anywhere in the adoption code;
+  - the 0078 CHECKs and triggers;
+  - the old assign route gone, and the suites wired in.
+- **Changed:**
+  - §62 `SITE_KEYS` adds `adoption/adoption.service.ts` (`adoption.mappings`, `devices.adopt`) and
+    `adoption/deployment-keys.service.ts` (`deployment.keys`);
+  - the group-membership writers list adds `adoption.service.ts`;
+  - §64's heartbeat-identity read matches the select that now also takes `customerId` and `tenantId`.
+
+#### Tests
+- `apps/api/scripts/unit-adoption.mjs` (**86 checks**, in CI as *Device adoption tests*):
+  - the pool rule;
+  - key shape, hash, hint, state order and create-schema limits;
+  - the four rule kinds, and every user or e-mail kind refused;
+  - value normalisation (domains, prefixes, CIDR including `::ffff:`);
+  - matching, ranking, conflicts and the key binding.
+- `apps/api/scripts/e2e-adoption.mjs` (**178 checks**, port 3831, in `run-e2e.sh`). It runs against the real API on a
+  scratch database:
+  - pool creation by heartbeat and by an installer check-in;
+  - a pooled heartbeat handed nothing, with a rotation, reinstall and update queued;
+  - 18 routes refused with `ENDPOINT_UNASSIGNED` for a Platform Admin with a fresh sign-in, plus chat, RustDesk
+    staging, bulk agent update, the device edit and three tray routes, with nothing written;
+  - the pool invisible to both owners, a Business User, a technician and an API key (list, `businessId=null`,
+    detail, search, the adoption routes, `/pub/v1`);
+  - keys: refusals, shown once, hash only, the install scripts carrying a usable key and not an unknown or used-up
+    one;
+  - review and active claims, re-runs, a key for A refused on B's computer and B's key on A's;
+  - five parallel claims on a two-use key giving exactly two;
+  - revoked and expired keys, and the 90-day CHECK;
+  - a single-use claim token unchanged;
+  - rule refusals, including username, email and logged_on_user kinds;
+  - suggestions, conflicts and the key binding;
+  - adoption refusals, conditional bulk adoption with the audit meta, B never seeing A's adoption, and forget.
+- `apps/web/scripts/e2e-ui.mjs`:
+  - Unassigned lists a pooled computer with its arrival, address and hardware, and not the signed-in user;
+  - Assign asks for confirmation and moves it, audited;
+  - Deploy agents asks for confirmation, shows the key once, stores its hash, and fills the GPO script in the
+    browser;
+  - both pages are swept at both viewports from the menu.
+
+  The full run here gave 1,121 passed and 4 failed. All four are the existing "needs a signed release" check, which
+  needs `RELEASE_BIN`; CI's e2e job builds it.
+- Re-run green on a scratch API and database:
+  - `e2e-enrol-stepup.mjs` (69);
+  - `e2e-device-views.mjs` (142);
+  - `e2e-security-audit.mjs` (57);
+  - `unit-device-views.mjs` (77);
+  - `unit-confirm-policy.mjs` (40);
+  - `gen-integration-contracts --check`;
+  - `gen-api-reference --check`.
+
+#### Not verified
+- **No deployment method has been run on a real fleet.** That includes a real GPO, Intune tenant, RMM and Mac MDM.
+  Each runs the existing installers, unchanged, with the key where a single-use code goes. The claim each installer
+  posts is reproduced in `e2e-adoption.mjs`; the installers themselves were not run.
+
+---
+
 ## [0.56.0] — 2026-11-16 · *Coverage*
 
 **Hardware warranty status and support links.**

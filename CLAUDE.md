@@ -1144,6 +1144,62 @@ with `assertFresh` naming `warranty.settings`.
 Behavioural proof: `e2e-warranty.mjs` (ports 3821–3823, a loopback vendor stub,
 in `run-e2e.sh`). Unit: `unit-warranty.mjs`.
 
+§70 (0.57) is device discovery and adoption. The unassigned pool is
+`common/unassigned.ts`: `tenantId` null OR `customerId` null
+(`UNASSIGNED_WHERE`, `isUnassigned`). `assertAssigned` refuses a pooled
+computer with `403 ENDPOINT_UNASSIGNED`, even for a Platform Admin. It sits at
+every remote and action choke point:
+
+- `sessions.create`, `authorizeConnect` (`endpoint_unassigned`, which also
+  covers Connect, the `.cmd` and the launcher), and `admitWrite` for WRITE
+  (password, rotate, reinstall, agent update and migrate);
+- `createPlan` (actions, scripts, patch rings) and diagnostics;
+- device-control, software (four paths) and patch install;
+- tray pair, self-help and support requests;
+- Quick Connect (`refusePooled`, also on the launcher's ad-hoc path).
+
+RustDesk update staging skips pooled computers. The device edit route refuses to
+move one (`USE_ADOPTION`). An authenticated heartbeat from a pooled computer
+takes the `if (authenticated && pooled)` branch before rotation. It records
+live state, hands out only the automatic inventory commands, and returns every
+flag null with `pending: true`.
+
+The pool, assignment rules and deployment keys are Platform Admin only
+(`assertPlatformAdmin` on every method). Three keys in §62 name their step-up:
+
+- `devices.adopt` (adopt and forget);
+- `adoption.mappings` (create a rule);
+- `deployment.keys` (create a key).
+
+Revoking a key and deleting a rule never ask. Adoption is a conditional
+`updateMany` from `UNASSIGNED_WHERE` with `ENDPOINT_ADOPTED` (approver,
+before/after, key, rule, groups) in the same transaction, and anything else
+is `not_unassigned`. Forget is a conditional `deleteMany` with
+`ENDPOINT_FORGOTTEN`.
+
+Deployment keys are 96 hex characters. Every installer's existing 16–128 hex
+token check accepts them, so no installer changed. The claim looks a token up
+as a claim token first. Only the SHA-256 is stored, and the key is returned
+once. 0078's CHECKs hold the limits: at most 90 days and 10,000 uses, mode
+`review` (default) or `active`. A use is one conditional UPDATE
+(`useCount < maxUses`), so parallel claims never pass the ceiling. A re-run on
+an enrolled computer is a no-op and uses nothing. An existing node must prove
+its device secret. A computer in another business is refused, and nothing
+moves it. A review key pools the computer, tagged with the key. Only an
+`active` key places a computer automatically, and only in its own business.
+
+Assignment rules have four kinds: `deployment_key`, `domain`, `cidr` and
+`hostname_prefix`. `PoolFacts` carries exactly the key, domain, source address
+and hostname, never a signed-in user or an e-mail address, and the adoption
+code names neither. Rules are suggestions only and nothing applies one. 0078
+triggers keep keys and rules inside one business. `arrivedVia` is CHECKed, and
+a NOT VALID CHECK refuses a business without a tenant.
+
+The old `POST /admin/unassigned-devices/:id/assign` is gone. Behavioural proof:
+`e2e-adoption.mjs` (port 3831, in `run-e2e.sh`). Unit: `unit-adoption.mjs`.
+**No deployment method (GPO, Intune, RMM, the macOS MDM script) has been run on
+a real fleet**; they run the existing installers with the key as the token.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

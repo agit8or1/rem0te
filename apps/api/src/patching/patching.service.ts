@@ -1,4 +1,5 @@
 import { AgentMigrationService } from '../update-trust/agent-migration.service';
+import { assertAssigned } from '../common/unassigned';
 import { FULL_AGENT, migrationState } from '../update-trust/agent-migration';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, type ActionJob, type ActionTarget, type PatchDeployment } from '@prisma/client';
@@ -422,6 +423,9 @@ export class PatchingService {
     if (!parsed.success) this.bad('INVALID_REQUEST', parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
     const dto = parsed.data;
     await this.acl.assertEndpointInScope(actor, endpointId);
+    // 0.57 (§70): no patch install on an unassigned computer.
+    const owner = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { customerId: true, tenantId: true } });
+    if (owner) assertAssigned(owner);
     // 0.52: refused before anything is written, like every other check here.
     if (dto.schedule) { if (dto.startsInMinutes) this.bad('INVALID_REQUEST', 'Give a schedule or startsInMinutes, not both.'); scheduledStart(dto.schedule); }
     const st = await this.installState(actor, endpointId);

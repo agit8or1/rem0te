@@ -3,6 +3,7 @@ import {
   OnModuleDestroy, OnModuleInit, UnauthorizedException,
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
+import { assertAssigned } from '../common/unassigned';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
@@ -125,6 +126,8 @@ export class TrayService implements OnModuleInit, OnModuleDestroy {
     const ep = await this.prisma.endpoint.findUnique({ where: { id: dev.endpointId }, select: { id: true, tenantId: true, customerId: true, updateChannel: true, signedSeenAt: true, trayKeyId: true, status: true } });
     if (!ep || ep.status === 'ARCHIVED') throw new NotFoundException('This device is not attached to a computer');
     if (runsSignedAgent(ep)) throw new ConflictException({ code: 'TRAY_SIGNED', message: 'The signed agent\'s tray needs no key: the agent speaks for it.' });
+    // 0.57 (§70): no tray key for a computer in the unassigned pool.
+    assertAssigned(ep);
     const k = newTrayKey();
     await this.prisma.endpoint.update({ where: { id: ep.id }, data: { trayKeyId: k.keyId, trayKeyHash: k.hash, trayPairedAt: new Date() } });
     await this.audit.log({
@@ -259,6 +262,8 @@ export class TrayService implements OnModuleInit, OnModuleDestroy {
    * Rem0te request and says so (502 PSA_SEND_FAILED).
    */
   async supportRequest(dev: TrayDevice, body: { description?: unknown; localUser?: unknown; usage?: unknown; screenshot?: unknown }) {
+    // 0.57 (§70): an unassigned computer has no business to send a ticket for.
+    assertAssigned(dev);
     const eff = await this.psa.trayPrecheck({ id: dev.endpointId, customerId: dev.customerId });
     const localUser = deviceName(body.localUser);
     const r = await this.support.agentSubmit({ id: dev.endpointId, tenantId: dev.tenantId, customerId: dev.customerId }, {
@@ -297,6 +302,8 @@ export class TrayService implements OnModuleInit, OnModuleDestroy {
    * containment is still recorded, so the history says someone tried.
    */
   async selfHelpBegin(dev: TrayDevice, body: { tool?: unknown; localUser?: unknown }) {
+    // 0.57 (§70): nothing runs on an unassigned computer, the tray's tools included.
+    assertAssigned(dev);
     const t = selfHelpTool(body.tool);
     if (!t) throw new BadRequestException({ code: 'SELF_HELP_UNKNOWN', message: 'That is not one of the self-help tools.' });
     if (t.elevated && dev.via !== 'signed') {

@@ -97,6 +97,16 @@ export const CONFIRM_CATALOG = [
   { key: 'credential.reveal', group: 'Devices & enrolment', label: 'Computer passwords', default: 'ask',
     prompt: 'reveal a computer password',
     description: "Revealing a computer's stored RustDesk password, or connecting with it." },
+  // 0.57: discovery and adoption.
+  { key: 'devices.adopt', group: 'Devices & enrolment', label: 'Adopting unassigned computers', default: 'ask',
+    prompt: 'assign or forget unassigned computers',
+    description: 'Assigning computers from the unassigned pool to a business and site, or forgetting them.' },
+  { key: 'deployment.keys', group: 'Devices & enrolment', label: 'Deployment keys', default: 'ask',
+    prompt: 'create a deployment key',
+    description: 'Creating a multi-use deployment key for GPO, Intune, RMM or script rollout. Revoking never asks.' },
+  { key: 'adoption.mappings', group: 'Devices & enrolment', label: 'Assignment rules', default: 'ask',
+    prompt: 'add an assignment rule',
+    description: 'Adding a rule that suggests a business and site for unassigned computers. Removing one never asks.' },
 
   // ── Monitoring & notifications ──────────────────────────────────────────
   { key: 'monitoring.notify', group: 'Monitoring & notifications', label: 'Who is notified', default: 'ask',

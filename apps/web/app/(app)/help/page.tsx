@@ -166,6 +166,18 @@ const SECTIONS: Section[] = [
           RustDesk and only needs listing, without the agent, use{' '}
           <Link href="/endpoints/new" className="underline text-foreground">Register by RustDesk ID</Link>.
         </p>
+        <p className="pt-1 font-medium text-foreground">Many devices at once (Platform Admins)</p>
+        <p>
+          <Link href="/admin/deploy" className="underline text-foreground">Devices → Deploy agents</Link>{' '}
+          makes a deployment key: one key for many computers, for a business, with a use limit and an expiry of at
+          most 90 days, shown once. The page gives ready-to-paste instructions for Group Policy, Intune, an existing
+          RMM, Linux and macOS, with the key filled in by your browser. By default each computer then waits under{' '}
+          <Link href="/admin/unassigned" className="underline text-foreground">Devices → Unassigned</Link>, where you
+          can inspect it and assign it (one or many) to a business, site and groups. Until it is assigned, nobody in a
+          business can see it and nothing can connect to it or act on it. Assignment rules (deployment key, domain,
+          address range, hostname prefix) only suggest a business; they never assign one by themselves, and never use
+          who is signed in.
+        </p>
       </div>
     ),
   },

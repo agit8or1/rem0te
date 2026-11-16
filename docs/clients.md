@@ -128,6 +128,15 @@ client that does more than configure RustDesk:
   0.32, into the site the token names. Business and site are fixed when the
   token is made on Add device, never chosen by the machine
 
+**Many computers at once** (0.57): a Platform Admin makes a multi-use
+*deployment key* on **Devices → Deploy agents** and the same installers take it
+in place of the single-use code — from a Group Policy startup script, Intune,
+another RMM, or a Linux or macOS script. By default a computer that enrols with
+a key waits under **Devices → Unassigned** until a Platform Admin assigns it,
+and nothing can connect to or act on it before then. The business still comes
+only from the code or the key, never from the computer. See
+[deployment.md](deployment.md).
+
 Add device then shows the computer arriving and its first health (online, agent,
 inventory) as the server receives it; see [technician-guide.md](technician-guide.md) §5.
 

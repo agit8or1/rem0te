@@ -1,4 +1,5 @@
 import { AccessPolicyService, type LaunchMode } from '../security-controls/access-policy.service';
+import { assertAssigned, isUnassigned, UNASSIGNED_MESSAGE } from '../common/unassigned';
 import { AbuseGuardService, type AdmitRequest } from '../security-controls/abuse-guard.service';
 import {
   Injectable, NotFoundException, ConflictException,
@@ -355,6 +356,13 @@ export class EndpointsService {
     // Only a Platform Admin may move a computer between businesses.
     if (dto.customerId !== undefined && dto.customerId !== existing.customerId) {
       this.acl.assertPlatformAdmin(actor);
+      // 0.57 (§70): out of the unassigned pool only through adoption — a
+      // fresh sign-in, the tenant set with the business, a site, and an
+      // ENDPOINT_ADOPTED audit row naming who approved it. This route used to
+      // set the business and leave the tenant (and the RustDesk node's) null.
+      if (isUnassigned(existing)) {
+        throw new BadRequestException({ code: 'USE_ADOPTION', message: 'Assign an unassigned computer from Devices → Unassigned.' });
+      }
       if (dto.customerId) {
         const target = await this.prisma.customer.findUnique({
           where: { id: dto.customerId }, select: { id: true, tenantId: true },
@@ -696,6 +704,12 @@ export class EndpointsService {
     });
     if (!endpoint) return { ok: false, reason: 'endpoint_not_found' };
 
+    // 0.57 (§70): nothing connects to a computer in the unassigned pool. Only
+    // a Platform Admin can see one; adopting it is the way out.
+    if (isUnassigned(endpoint)) {
+      return { ok: false, reason: 'endpoint_unassigned', status: 'denied', message: UNASSIGNED_MESSAGE };
+    }
+
     if (!actor.isPlatformAdmin) {
       if (!actor.businessId || endpoint.customerId !== actor.businessId) {
         return { ok: false, reason: 'wrong_business' };
@@ -766,7 +780,11 @@ export class EndpointsService {
    */
   /** The fleet-abuse admission every console write passes (public for the 0.34 agent-upgrade routes). */
   async admitWrite(actor: ActorContext, endpointId: string, kind: 'WRITE' | 'EVIDENCE' = 'WRITE') {
-    const ep = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { customerId: true } });
+    const ep = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { customerId: true, tenantId: true } });
+    // 0.57 (§70): no write reaches an unassigned computer — no password
+    // reveal, set or rotation, reinstall, agent update or migration. Reading
+    // (EVIDENCE: inventory, event logs) is how it is inspected.
+    if (ep && kind === 'WRITE') assertAssigned(ep);
     const customerId = ep?.customerId ?? null;
     const r = await this.abuse.admit({
       identity: `user:${actor.userId}`, tier: this.policy.tierFor(actor, endpointId), kind,

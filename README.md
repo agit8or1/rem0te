@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.56.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.57.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -66,7 +66,7 @@ it, its default and its limits: **Settings → Security → Security Features**,
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
 
-## What's new in 0.40 to 0.56
+## What's new in 0.40 to 0.57
 
 Every change on a computer below (services, processes, installing and removing software) needs the full (signed)
 Windows agent and an approval signer, and none of those changes has yet run on a real Windows computer: they have
@@ -74,6 +74,16 @@ been tested against a simulated one. Ask AI and Create ticket have been tested o
 real provider or PSA. [What each agent can do](docs/capabilities.md)
 says what is proven and what is not.
 
+- **Deploying agents and adopting computers (0.57).** A Platform Admin makes a multi-use *deployment key* for a
+  business (at most 90 days and 10,000 uses, shown once, stored as a hash) on **Devices → Deploy agents**, which
+  also gives copy-paste instructions for a Group Policy startup script, Intune, an existing RMM, Linux and macOS,
+  with the key filled in by the browser. The existing installers take it in place of a single-use code. By default a
+  computer that enrols with a key waits under **Devices → Unassigned**, with its identification, hardware, source
+  address and how it arrived. Nobody in a business can see it, and every remote and action path refuses it
+  (`ENDPOINT_UNASSIGNED`), until a Platform Admin assigns it, one or many at a time, to a business, site and groups,
+  with a fresh sign-in and an audit entry per computer. *Assignment rules* (deployment key, domain, address range,
+  hostname prefix) only suggest a business, never assign one, and never use who is signed in.
+  [deployment.md](docs/deployment.md)
 - **Hardware warranty and support links (0.56).** Each computer's page links to its manufacturer's support, warranty
   and driver pages (Dell, Lenovo, HP, HPE, Surface, Apple, ASUS, Acer; virtual machines say they have no hardware
   warranty). Warranty dates can be entered by hand, or looked up from Dell or Lenovo once a Platform Admin switches

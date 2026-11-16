@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
+import { assertAssigned } from '../common/unassigned';
 import { SessionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -154,6 +155,11 @@ export class SessionsService {
     this.acl.assertCapability(actor, CAP.COMPUTERS_CONNECT);
 
     const endpoint = await this.acl.assertEndpointInScope(actor, dto.endpointId!);
+    // 0.57 (§70): a computer in the unassigned pool has no business and no
+    // tenant to hold a session; nothing connects to it until it is adopted.
+    // Only a Platform Admin can see one, and the insert below used to assume
+    // a tenant (endpoint.tenantId!).
+    assertAssigned(endpoint);
 
     // Owners and admins may reach any computer in scope; technicians their
     // assignment's; everyone else needs an active grant or COMPANY_WIDE.

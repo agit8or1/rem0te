@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { assertAssigned } from '../common/unassigned';
 import { z } from 'zod';
 import { PrismaService } from '../prisma/prisma.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
@@ -92,6 +93,8 @@ export class DeviceControlService {
   private async endpoint(actor: ActorContext, endpointId: string): Promise<Ep> {
     await this.acl.assertEndpointInScope(actor, endpointId);
     const ep = await this.actions.endpointFor(endpointId);
+    // 0.57 (§70): no service or process change on an unassigned computer.
+    if (ep) assertAssigned(ep);
     if (!ep?.customerId) throw new NotFoundException('Computer not found');
     return ep;
   }
