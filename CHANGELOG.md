@@ -183,6 +183,10 @@ These files are touched by both branches, so expect merge work in them:
 
 ---
 
+**CI: the agent's Go tests also run on real Windows and macOS.** A new `agent-real-os` job runs `go test ./...` in `tools/windows-installer` on GitHub's hosted `windows-latest` and `macos-latest` runners (the owner's decision, 2026-11-16), alongside the existing ubuntu run. It builds nothing that is published and touches no key or release script (§56). It is not a required check yet: until the Linux and macOS agent ports land, a red macOS run is a finding, not a merge block.
+
+**Docs: `docs/implementation-status.md`** is the tracker for the owner's expanded-RMM programme — the Phase 0 audit (what exists, what is partial, what is missing, per platform), the phase plan, the owner's decisions, and a separate column for what has run on real hardware. It is for maintainers and is not bundled into `/docs`.
+
 **Test fix: two suites defaulted to production's approval-signer port.** `e2e-add-device.mjs` and `e2e-dashboard.mjs` started their own API on 3201 by default, which on this host is the approval signer's public port. With the signer listening, `e2e-dashboard.mjs` could not bind and sent one login for a `@test.invalid` user to the signer, which answered 404; nothing else reached it. The defaults are now 3861 and 3862, and both suites refuse 3201 and 3202 along with 3000, 3001, 443, 4000 and 4001.
 
 ## [0.55.0] — 2026-11-16 · *Tripwire*

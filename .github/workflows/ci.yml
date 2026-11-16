@@ -499,6 +499,31 @@ jobs:
       - name: Audit
         run: pnpm audit
 
+  # 0.56: the agent's Go tests on real Windows and macOS (owner's decision,
+  # 2026-11-16). The Linux job above runs them on ubuntu; this runs the same
+  # `go test ./...` on GitHub's hosted Windows and macOS runners, so path,
+  # reparse-point, service and launchd code meets a real OS before it meets a
+  # customer's computer. No keys, no signing and no release scripts here (§56):
+  # it builds nothing that is published. Not a required check while the macOS
+  # side has no platform code of its own yet; a red macOS run is a finding,
+  # not a merge block.
+  agent-real-os:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: tools/windows-installer/go.mod
+          cache-dependency-path: tools/windows-installer/go.sum
+      - name: Agent tests on ${{ matrix.os }}
+        working-directory: tools/windows-installer
+        run: go test ./...
+
   # The Windows installer, cross-compiled.
   #
   # This was unverified by anything until now, which is how a
