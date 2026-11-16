@@ -129,7 +129,7 @@ vite 8.3.8, marked 18.2.0.
 
 ---
 
-**Test fix: `e2e-warranty-vendors` assumed it had the hourly lookup budget to itself.** Its sweep run set `WARRANTY_LOOKUPS_PER_HOUR=1`, but the budget counts every computer looked up in the last hour across the database, and under `run-e2e.sh` the preceding `e2e-warranty` suite had already used it, so the sweep asked nothing. It now sets the budget to what is already counted plus one, which still proves the cap.
+**Fix: the warranty sweep never reached a computer behind 500 it could not look up.** Each tick read the 500 oldest never-checked computers and skipped those whose vendor has no lookup (ASUS, Surface, HPE…), is switched off, or has no serial, without marking them. They stayed first in the order, so on a database with 500 or more of them every HP, Dell, Lenovo or Apple computer behind them was never asked about. CI's shared database found it: `e2e-warranty-vendors`' sweep asked nothing. The tick now pages on through the candidates (500 at a time, at most 50,000 per tick) until its budget is spent. Reproduced with 600 ASUS computers ahead of the suite's HP: the old sweep asked nothing (43 passed, 2 failed), the new one asks the HP (45 passed). The suite also sizes its hourly budget to what earlier suites already used, so the cap it proves is its own.
 
 ## [0.60.0] — 2026-11-16 · *Nightshift*
 
