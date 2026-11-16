@@ -166,7 +166,7 @@ async function stepUp(s) {
 }
 const code = (r) => r.body?.code ?? r.body?.message?.code ?? r.body?.error?.code;
 const msg = (r) => `HTTP ${r.status} ${typeof r.body === 'string' ? r.body.slice(0, 300) : JSON.stringify(r.body).slice(0, 500)}`;
-const created = { businesses: [], users: [], pauses: [] };
+const created = { businesses: [], users: [], pauses: [], parked: [] };
 async function waitFor(fn, ms = 20_000) { const end = Date.now() + ms; while (Date.now() < end) { const v = await fn(); if (v) return v; await sleep(500); } return null; }
 
 async function all() {
@@ -310,6 +310,13 @@ async function all() {
   // The hourly budget counts every computer looked up in the last hour, in the
   // whole database. Under run-e2e.sh earlier suites (e2e-warranty) have used
   // some of it, so allow exactly one more lookup than is already counted.
+  // Other suites' computers waiting for a first lookup would sort ahead of
+  // this suite's and take the one lookup the budget allows (CI found an
+  // earlier suite's Mac doing exactly that). Park them two hours back, which
+  // is neither due (30 days) nor counted (1 hour), and put them back after.
+  const foreign = await prisma.endpoint.findMany({ where: { OR: [{ customerId: null }, { customerId: { notIn: created.businesses } }], AND: [{ OR: [{ warrantyLookupAt: null }, { warrantyLookupAt: { lt: new Date(Date.now() - 30 * DAY) } }] }] }, select: { id: true, warrantyLookupAt: true } });
+  await prisma.endpoint.updateMany({ where: { id: { in: foreign.map((e) => e.id) } }, data: { warrantyLookupAt: new Date(Date.now() - 2 * 3_600_000) } });
+  created.parked = foreign;
   const usedBefore = await prisma.endpoint.count({ where: { warrantyLookupAt: { gte: new Date(Date.now() - 3_600_000) } } });
   api = startApi({ WARRANTY_SWEEP: 'on', WARRANTY_SWEEP_SECONDS: '2', WARRANTY_LOOKUPS_PER_HOUR: String(usedBefore + 1) });
   await waitUp();
@@ -348,6 +355,8 @@ async function all() {
 async function cleanup() {
   await stopApi();
   stub.close();
+  // Put other suites' computers back exactly as they were.
+  for (const e of created.parked) await prisma.endpoint.update({ where: { id: e.id }, data: { warrantyLookupAt: e.warrantyLookupAt } }).catch(() => undefined);
   try {
     const ids = created.businesses;
     const eps = (await prisma.endpoint.findMany({ where: { customerId: { in: ids } }, select: { id: true } })).map((e) => e.id);
