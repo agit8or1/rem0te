@@ -40,6 +40,9 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[reports.md](reports.md)** — patch compliance, agent coverage, alert frequency and offline time per
   business and site, what each is computed from and what it cannot tell you, and the audited CSV export (0.32);
   software version compliance per catalog entry (0.34).
+- **[warranty.md](warranty.md)** — hardware warranty and support links (0.56): links to each vendor's support,
+  warranty and driver pages, warranty dates entered by hand or looked up from Dell or Lenovo (off by default; the
+  serial is sent), the device-list filter, the Warranty report, the dashboard tile and the opt-in expiring monitor.
 - **[email.md](email.md)** — outbound email (0.34): the SMTP relay and which hosts it may be, confirmed recipients,
   alert emails, scheduled reports (exactly once per period, evaluated as their owner), and stopping all mail.
 - **[ai-and-tickets.md](ai-and-tickets.md)** — Ask AI and Create ticket on event-log entries and alerts (0.48):

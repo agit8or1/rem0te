@@ -92,6 +92,20 @@ export class ReportsController {
     return { success: true, data: await this.reports.softwareCompliance(actor, parseReportQuery(q)) };
   }
 
+  /** Hardware warranty per computer (0.56): expired, ending within 30/60/90 days, unknown. */
+  @Get('warranty')
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  async warranty(@Actor() actor: ActorContext, @Query() q: Record<string, unknown>) {
+    return { success: true, data: await this.reports.warranty(actor, parseReportQuery(q)) };
+  }
+
+  @Get('warranty/export.csv')
+  @RequireCapability(CAP.COMPUTERS_VIEW)
+  @RateLimit(10)
+  async warrantyCsv(@Actor() actor: ActorContext, @Query() q: Record<string, unknown>, @Res() res: Response) {
+    await this.send(res, actor, 'warranty', q);
+  }
+
   @Get('software-compliance/export.csv')
   @RequireCapability(CAP.COMPUTERS_VIEW)
   @RateLimit(10)

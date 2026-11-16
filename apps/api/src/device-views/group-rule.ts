@@ -21,7 +21,7 @@ import { parseListFilters, storedForm, type ListFilterKey, type ListFilters } fr
 /** What a rule may filter on. */
 export const RULE_KEYS = [
   'siteId', 'online', 'alerts', 'restartPending', 'agent',
-  'platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays',
+  'platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays', 'warranty',
 ] as const satisfies readonly ListFilterKey[];
 export type RuleKey = (typeof RULE_KEYS)[number];
 

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { CardHeading } from './card-heading';
+import { WarrantyCard } from './warranty-card';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { updateSourceLabel, updateSourcePhrase } from '@/lib/platform-wording';
@@ -667,6 +668,8 @@ export function EndpointSpecs({
             </Row>
           )}
         </SectionCard>
+
+        <WarrantyCard endpointId={endpointId} />
 
         <SectionCard
           title="Memory"

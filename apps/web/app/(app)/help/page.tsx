@@ -818,6 +818,37 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'hardware-warranty',
+    title: 'Hardware Warranty and Support Links',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          From 0.56, a computer&apos;s page has a <strong className="text-foreground">Warranty &amp; support</strong> card
+          beside Hardware. It links to the manufacturer&apos;s support, warranty and driver pages for Dell, Lenovo, HP,
+          HPE, Microsoft Surface, Apple, ASUS and Acer. Each link opens in a new tab. Only Dell&apos;s link carries the
+          serial (the service tag); for the others, use <em>Copy serial</em> and paste it on their page. Virtual machines
+          say <em>no hardware warranty</em>.
+        </p>
+        <p>
+          Anyone who may edit the computer can <strong className="text-foreground">enter the warranty dates by hand</strong>.
+          The change is audited, and a vendor lookup never overwrites it. A Platform Admin can switch on an automatic
+          lookup for <strong className="text-foreground">Dell</strong> or <strong className="text-foreground">Lenovo</strong> under{' '}
+          <Link href="/settings/warranty" className="underline text-foreground">Settings → Warranty</Link>. It is off by
+          default, and when it is on, each computer&apos;s serial number is sent to that vendor (nothing else is).
+          The lookup checks each computer at most every 30 days, with an hourly limit, and stops under an
+          <em> integration</em> containment pause.
+        </p>
+        <p>
+          The device list has a Warranty column and filter (expired, ends within 30/60/90 days, unknown).{' '}
+          <Link href="/reports/warranty" className="underline text-foreground">Reports → Warranty</Link> and the dashboard tile count
+          them. To be alerted, add a <em>Warranty expiring</em> monitor in Settings → Monitoring. It is not added for you. The Dell and Lenovo
+          lookups have been tested only against a stand-in, never the real vendor APIs.{' '}
+          <Link href="/docs/warranty" className="underline text-foreground">Hardware warranty</Link>.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'monitoring-and-alerts',
     title: 'Monitoring and Alerts',
     content: (

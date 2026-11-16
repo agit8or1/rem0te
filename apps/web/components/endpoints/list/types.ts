@@ -5,7 +5,7 @@
 
 export type SortKey =
   | 'online' | 'name' | 'business' | 'site' | 'os' | 'lastSeen' | 'agent' | 'user'
-  | 'cpu' | 'memory' | 'disk' | 'patches' | 'alerts' | 'health';
+  | 'cpu' | 'memory' | 'disk' | 'patches' | 'alerts' | 'health' | 'warranty';
 
 export interface DeviceFilters {
   search: string;
@@ -32,17 +32,19 @@ export interface DeviceFilters {
   /** Whole days, as typed. */
   notSeenDays: string;
   seenWithinDays: string;
+  /** 0.56: by hardware warranty end date. d30/d60/d90 = ends within that many days. */
+  warranty: '' | 'expired' | 'd30' | 'd60' | 'd90' | 'active' | 'unknown';
 }
 
 export const EMPTY_FILTERS: DeviceFilters = {
   search: '', businessId: '', siteId: '', online: '', alerts: '', restartPending: false, agent: '', status: 'current', groupId: '',
-  platform: '', os: '', tag: '', patches: '', rustdeskMin: '', rustdeskMax: '', notSeenDays: '', seenWithinDays: '',
+  platform: '', os: '', tag: '', patches: '', rustdeskMin: '', rustdeskMax: '', notSeenDays: '', seenWithinDays: '', warranty: '',
 };
 
 /** The filters a rule group may use (0.34) — the server refuses any other in a rule. */
 export const RULE_KEYS = [
   'siteId', 'online', 'alerts', 'restartPending', 'agent',
-  'platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays',
+  'platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays', 'warranty',
 ] as const satisfies readonly (keyof DeviceFilters)[];
 export type DeviceRule = Partial<Record<(typeof RULE_KEYS)[number], string | boolean>>;
 
@@ -77,6 +79,9 @@ export interface DeviceRow {
   };
   /** null = this viewer may not see alerts for this device (monitoring:alerts). */
   alerts: { open: number; worst: 'CRITICAL' | 'WARNING' | 'INFO' | null } | null;
+  /** 0.56: what the Hardware card shows, for the Warranty column's vendor link. */
+  hardware?: { manufacturer: string | null; model: string | null; serialNumber: string | null };
+  warranty?: { endsAt: string | null; state: 'expired' | 'expiring_30' | 'expiring_60' | 'expiring_90' | 'active' | 'unknown' };
 }
 
 export interface DeviceListResponse {

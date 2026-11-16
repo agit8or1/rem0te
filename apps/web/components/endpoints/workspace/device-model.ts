@@ -222,6 +222,7 @@ export const MONITOR_KIND_LABEL: Record<string, string> = {
   UPTIME_LONG: 'Not restarted',
   UPDATES_MISSING: 'Updates outstanding',
   UPDATE_FAILED: 'Update failed',
+  WARRANTY_EXPIRING: 'Warranty ending',
 };
 
 const EVENT_LEVEL: Record<number, string> = { 0: 'any', 1: 'Critical', 2: 'Error', 3: 'Warning', 4: 'Information', 5: 'Verbose' };
@@ -245,6 +246,7 @@ export function describeMonitor(kind: string, p: Record<string, unknown>): strin
     case 'UPTIME_LONG': return `not restarted for ${n('days') ?? 30} days`;
     case 'UPDATES_MISSING': return `${Array.isArray(p.classes) ? (p.classes as string[]).join(' or ') : 'security or critical'} updates outstanding for ${n('days') ?? 30} days`;
     case 'UPDATE_FAILED': return `an update install failed in the last ${n('days') ?? 7} days`;
+    case 'WARRANTY_EXPIRING': return `hardware warranty ends within ${n('daysBefore') ?? 30} days, or has ended`;
     case 'EVENT_MATCH': {
       const ids = Array.isArray(p.ids) && p.ids.length ? `event ID ${(p.ids as number[]).join(', ')}` : null;
       const levels = Array.isArray(p.levels) && p.levels.length ? (p.levels as number[]).map((l) => EVENT_LEVEL[l] ?? l).join(' / ') : null;

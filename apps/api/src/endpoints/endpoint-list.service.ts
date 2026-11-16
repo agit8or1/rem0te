@@ -40,6 +40,7 @@ import { versionParts, type ListFilters, type ListQuery, type SortKey } from './
 import { likeEscape } from '../common/like';
 import { groupsCell } from '../device-views/rules';
 import { ruleFilters, ruleNeedsAlerts } from '../device-views/group-rule';
+import { warrantyState, WARRANTY_STATE_LABEL } from '../warranty/vendors';
 export { SORT_KEYS, LIST_FILTER_KEYS, parseListQuery } from './list-query';
 export type { SortKey, ListQuery } from './list-query';
 
@@ -65,6 +66,7 @@ interface SqlRow {
   patchSource: 'signed_agent_scan' | 'standard_agent_scan' | null; patchAt: Date | null;
   patchPending: number | null; rebootPending: boolean | null;
   alertCount: number; alertWorst: number | null;
+  warrantyEndsAt: Date | null; manufacturer: string | null; model: string | null; serialNumber: string | null;
   total: bigint | number;
 }
 
@@ -152,6 +154,16 @@ export class EndpointListService {
     if (f.tag) and.push({ tags: { some: { tag: f.tag } } });
     if (f.notSeenDays) and.push({ OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: new Date(Date.now() - f.notSeenDays * 86_400_000) } }] });
     if (f.seenWithinDays) and.push({ lastSeenAt: { gte: new Date(Date.now() - f.seenWithinDays * 86_400_000) } });
+    // Hardware warranty (0.56): d30/d60/d90 are "ends within", not yet ended.
+    if (f.warranty) {
+      const now = Date.now(), at = (d: number) => new Date(now + d * 86_400_000);
+      if (f.warranty === 'expired') and.push({ warrantyEndsAt: { lt: new Date(now) } });
+      if (f.warranty === 'd30') and.push({ warrantyEndsAt: { gte: new Date(now), lt: at(30) } });
+      if (f.warranty === 'd60') and.push({ warrantyEndsAt: { gte: new Date(now), lt: at(60) } });
+      if (f.warranty === 'd90') and.push({ warrantyEndsAt: { gte: new Date(now), lt: at(90) } });
+      if (f.warranty === 'active') and.push({ warrantyEndsAt: { gte: new Date(now) } });
+      if (f.warranty === 'unknown') and.push({ warrantyEndsAt: null });
+    }
     if (f.search) {
       const c = { contains: likeEscape(f.search), mode: 'insensitive' as const };
       and.push({
@@ -231,6 +243,7 @@ export class EndpointListService {
       patches: `patch_pending ${d} NULLS LAST`,
       alerts: `alert_count ${d}, alert_worst ${d} NULLS LAST`,
       health: `alert_worst ${d} NULLS LAST, alert_count ${d}`,
+      warranty: `e."warrantyEndsAt" ${d} NULLS LAST`,
     };
     return Prisma.raw(`${expr[sort]}, e."isOnline" DESC, lower(e.name) ASC, e.id ASC`);
   }
@@ -300,6 +313,7 @@ export class EndpointListService {
              i."systemDiskTotalMb", i."systemDiskFreeMb",
              d.patch_source AS "patchSource", d.patch_at AS "patchAt", d.patch_pending AS "patchPending", d.reboot_pending AS "rebootPending",
              al.alert_count AS "alertCount", al.alert_worst AS "alertWorst",
+             e."warrantyEndsAt", i.manufacturer, i.model, coalesce(i."serialNumber", e."serialNumber") AS "serialNumber",
              COUNT(*) OVER () AS total
         FROM "Endpoint" e
         LEFT JOIN "Customer" c ON c.id = e."customerId"
@@ -484,6 +498,9 @@ export class EndpointListService {
       },
       // null = this caller may not see alerts for this computer.
       alerts: seesAlerts ? { open: r.alertCount ?? 0, worst: SEVERITY[r.alertWorst ?? 0] } : null,
+      // 0.56: what the device page's Hardware card already shows this caller, for the Warranty column's support link.
+      hardware: { manufacturer: r.manufacturer, model: r.model, serialNumber: r.serialNumber },
+      warranty: { endsAt: r.warrantyEndsAt, state: warrantyState(r.warrantyEndsAt, now) },
     };
   }
 
@@ -585,6 +602,7 @@ export class EndpointListService {
       'Agent', 'Agent version', 'Logged-in user',
       'CPU %', 'Memory used %', 'Disk used %', 'Resources sampled (UTC)', 'Resources stale',
       'Pending updates', 'Restart pending', 'Update scan source', 'Update scan (UTC)', 'Update scan stale',
+      'Warranty', 'Warranty ends (UTC)',
       ...(alerts.visible ? ['Open alerts', 'Worst alert'] : []),
     ];
     const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : '');
@@ -594,6 +612,7 @@ export class EndpointListService {
       v.agent.type, v.agent.version ?? '', v.loggedOnUser ?? '',
       v.resources?.cpuPercent ?? '', v.resources?.memoryUsedPercent ?? '', v.resources?.diskUsedPercent ?? '', iso(v.resources?.sampledAt), yn(v.resources?.stale),
       v.patches.pendingCount ?? '', yn(v.patches.rebootPending), v.patches.source, iso(v.patches.checkedAt), yn(v.patches.stale),
+      WARRANTY_STATE_LABEL[v.warranty.state], iso(v.warranty.endsAt),
       ...(alerts.visible ? [v.alerts ? v.alerts.open : '', v.alerts?.worst ?? ''] : []),
     ])].map((cells) => cells.map(csvCell).join(','));
 
@@ -611,6 +630,7 @@ export class EndpointListService {
           platform: q.platform ?? null, os: q.os ?? null, tag: q.tag ?? null, patches: q.patches ?? null,
           rustdeskMin: q.rustdeskMin ?? null, rustdeskMax: q.rustdeskMax ?? null,
           notSeenDays: q.notSeenDays ?? null, seenWithinDays: q.seenWithinDays ?? null,
+          warranty: q.warranty ?? null,
         },
         ...(q.ids ? { selection: { requested: q.ids.length, ids: q.ids } } : {}),
         sort: q.sort, dir: q.dir, viaTechnicianAssignment: !!actor.technician,

@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.55.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.56.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -66,7 +66,7 @@ it, its default and its limits: **Settings → Security → Security Features**,
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
 
-## What's new in 0.40 to 0.55
+## What's new in 0.40 to 0.56
 
 Every change on a computer below (services, processes, installing and removing software) needs the full (signed)
 Windows agent and an approval signer, and none of those changes has yet run on a real Windows computer: they have
@@ -74,6 +74,12 @@ been tested against a simulated one. Ask AI and Create ticket have been tested o
 real provider or PSA. [What each agent can do](docs/capabilities.md)
 says what is proven and what is not.
 
+- **Hardware warranty and support links (0.56).** Each computer's page links to its manufacturer's support, warranty
+  and driver pages (Dell, Lenovo, HP, HPE, Surface, Apple, ASUS, Acer; virtual machines say they have no hardware
+  warranty). Warranty dates can be entered by hand, or looked up from Dell or Lenovo once a Platform Admin switches
+  that on (off by default; it sends the serial number). They feed a device-list column and filter, a Warranty
+  report, a dashboard tile and an opt-in *Warranty expiring* monitor. The lookups have been tested only against a
+  stand-in. [Hardware warranty](docs/warranty.md)
 - **Alerts for drives, uptime and updates, and automatic PSA tickets (0.55).** Four new monitors read what the
   server already stores, with no agent update: every fixed drive (one alert per drive), a computer not restarted for
   N days, security or critical updates outstanding for N days (signed agent's patch scan), and a failed update

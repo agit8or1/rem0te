@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   Activity, AlertOctagon, ArrowRight, Building2, CheckCircle2, Clock, Hourglass, MapPin, Monitor, PlayCircle,
-  RotateCcw, ShieldCheck, Siren, Wrench, XCircle,
+  RotateCcw, ShieldCheck, Siren, Wrench, XCircle, BadgeCheck,
 } from 'lucide-react';
 import { api } from '@/lib/api-client';
 import { usePermissions } from '@/lib/auth';
@@ -39,6 +39,8 @@ interface Overview {
   scope: 'business' | 'platform';
   devices: null | { total: number; online: number; offline: number; agentSilent: number; reachable?: number; agentSilentAfterMinutes: number; offlineList: { id: string; name: string; business: Biz; lastSeenAt: string | null }[] };
   alerts: null | { open: number; acknowledged: number; critical: number; warning: number; info: number; criticalOpen: number; suppressed: number; outages: { id: string; title: string; state: string; suppressed: boolean; site: { id: string; name: string } | null; business: Biz; devices: number; since: string }[] };
+  /** 0.56: hardware warranty, from the stored end dates. */
+  warranty?: null | { expired: number; within30: number; within90: number; unknown: number; total: number };
   restart: null | { devices: number; list: { device: { id: string; name: string }; business: Biz; source: 'scan' | 'alert'; evidenceAt: string | null; stale: boolean }[] };
   patch: null | { definition: string; staleAfterHours: number; total: number; fresh: number; upToDate: number; needsUpdates: number; stale: number; noScan: number; newestScanAt: string | null; oldestFreshScanAt: string | null; compliancePercent: number | null; coveragePercent: number | null };
   actions: null | { awaitingApproval: number; failed: number; uncertain: number; inFlight: { id: string; title: string; status: string; targets: number; createdAt: string; dispatchedAt: string | null; business: Biz; device: Dev; href: string }[] };
@@ -168,7 +170,7 @@ export default function DashboardPage() {
       )}
 
       {/* The figures, each one a way in: devices, alerts, restarts and patches, then what is waiting on people. */}
-      <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7" data-testid="dashboard-tiles">
+      <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8" data-testid="dashboard-tiles">
         {d.devices && (
           <Tile href="/endpoints" icon={Monitor} label="Devices" value={d.devices.total}
             // 0.35: online counts agents checking in; reachable-but-silent is said apart, never folded into it.
@@ -190,6 +192,12 @@ export default function DashboardPage() {
             value={d.patch.compliancePercent === null ? 'No data' : `${d.patch.compliancePercent}%`}
             sub={d.patch.compliancePercent === null ? `no scan under ${d.patch.staleAfterHours} h` : `${d.patch.fresh} of ${d.patch.total} devices scanned`}
             title={d.patch.definition} />
+        )}
+        {d.warranty && (
+          <Tile href="/reports/warranty" icon={BadgeCheck} label="Warranty" value={d.warranty.within30 + d.warranty.expired}
+            sub={`${d.warranty.expired} expired · ${d.warranty.within30} end in 30 days`}
+            tone={d.warranty.expired ? 'bad' : d.warranty.within30 ? 'warn' : undefined}
+            title={`Hardware warranties: ${d.warranty.expired} expired, ${d.warranty.within30} ending within 30 days, ${d.warranty.within90} within 90 days, ${d.warranty.unknown} with no date stored.`} />
         )}
         {d.actions && (
           <Tile href="#work-next" icon={XCircle} label="Failed actions" value={failedActions}
