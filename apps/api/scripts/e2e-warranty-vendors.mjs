@@ -307,14 +307,18 @@ async function all() {
   const pauseB = await prisma.containmentPause.create({ data: { scope: 'BUSINESS', customerId: B.id, kinds: ['integration'], reason: 'e2e warranty vendors stop B', setById: admin.id, setBy: 'msp' } });
   created.pauses.push(pauseB.id);
   hits.length = 0;
-  api = startApi({ WARRANTY_SWEEP: 'on', WARRANTY_SWEEP_SECONDS: '2', WARRANTY_LOOKUPS_PER_HOUR: '1' });
+  // The hourly budget counts every computer looked up in the last hour, in the
+  // whole database. Under run-e2e.sh earlier suites (e2e-warranty) have used
+  // some of it, so allow exactly one more lookup than is already counted.
+  const usedBefore = await prisma.endpoint.count({ where: { warrantyLookupAt: { gte: new Date(Date.now() - 3_600_000) } } });
+  api = startApi({ WARRANTY_SWEEP: 'on', WARRANTY_SWEEP_SECONDS: '2', WARRANTY_LOOKUPS_PER_HOUR: String(usedBefore + 1) });
   await waitUp();
 
   section('The sweep: HP looked up, bounded, a paused business left alone');
   await waitFor(async () => (await prisma.endpoint.findUnique({ where: { id: z840.id } })).warrantySource === 'hp');
   await sleep(5000);
   const asked = hits.filter((h) => h.method === 'POST' && h.url === '/hp/productwarranty/v2/jobs').map((h) => JSON.parse(h.body)[0].sn);
-  check(asked.length === 1 && asked[0] === SN2, 'WARRANTY_LOOKUPS_PER_HOUR=1: only the Z840 (never asked) was asked, once', JSON.stringify(asked));
+  check(asked.length === 1 && asked[0] === SN2, 'the hourly budget allows one more: only the Z840 (never asked) was asked, once', JSON.stringify(asked));
   check(!hits.some((h) => h.body.includes(SNB)), 'the paused business\'s HP was not asked about');
   const z = await prisma.endpoint.findUnique({ where: { id: z840.id } });
   check(z.warrantySource === 'hp' && z.warrantyLookupResult === 'OK', 'the answer was stored', JSON.stringify({ s: z.warrantySource, r: z.warrantyLookupResult }));
