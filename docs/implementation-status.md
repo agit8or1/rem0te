@@ -105,6 +105,7 @@ statement until it has been.
 |---|---|---|---|
 | — Alerts: more conditions, PSA auto-tickets, dashboard recent alerts | 0.55 | shipped with 0.56 (stack PR) | — |
 | — Warranty + hardware support links | 0.56 | shipped (stack PR) | — |
+| — Warranty: HP (HP Inc. Warranty API) and Apple (Business Manager) lookups; "why is there no date" per computer | 0.61 | PR open — HP and Apple tested only against a stand-in | 0.56 |
 | 4 Discovery & adoption (bulk assign w/ site, mappings, multi-use deployment keys, explicit pre-assignment refusals incl. sessions) | next | planned | — (independent of monitoring files) |
 | 1a Health telemetry, Windows (security posture: Defender/AV, firewall, BitLocker, Secure Boot, TPM, activation; battery; SMART/wear via `Get-PhysicalDisk`/`Get-StorageReliabilityCounter`; unexpected shutdown/BSOD), unsupported ≠ healthy | after 0.55/0.56 merge | planned | 0.55 engine |
 | 1b Health telemetry, Linux/macOS (read-only, within §24/§32 or deliberate amendment) | | planned | 1a |

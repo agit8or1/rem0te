@@ -28,6 +28,29 @@
 export const VENDOR_KEYS = ['dell', 'lenovo', 'hp', 'hpe', 'microsoft', 'apple', 'asus', 'acer'] as const;
 export type VendorKey = (typeof VENDOR_KEYS)[number];
 
+/**
+ * The vendors whose warranty API this server can ask (warranty/client.ts),
+ * once a Platform Admin switches one on in Settings → Warranty. 0.56 had Dell
+ * and Lenovo; 0.61 added HP (HP Inc.'s Warranty API, developers.hp.com) and
+ * Apple (the Apple Business Manager API's AppleCare coverage). Migration
+ * 0082's CHECKs name exactly these.
+ */
+export const LOOKUP_VENDORS = ['dell', 'lenovo', 'hp', 'apple'] as const;
+export type LookupVendor = (typeof LOOKUP_VENDORS)[number];
+export const isLookupVendor = (v: unknown): v is LookupVendor => (LOOKUP_VENDORS as readonly string[]).includes(v as string);
+
+/**
+ * The vendors with no lookup, and why — shown on the device page, the report
+ * and Settings → Warranty, so "no date" is never a mystery. Their dates are
+ * entered by hand on the computer's Warranty & support card.
+ */
+export const NO_LOOKUP_REASON: Record<Exclude<VendorKey, LookupVendor>, string> = {
+  hpe: 'HPE publishes no warranty API a customer can sign up for: its Warranty Check API was a closed pilot, and the warranty data in HPE GreenLake covers only servers already onboarded to Compute Ops Management.',
+  microsoft: 'Microsoft publishes no Surface warranty API: coverage is shown only in the Surface Management Portal and on mybusinessservice.surface.com.',
+  asus: 'ASUS publishes no warranty API: its warranty status page takes one serial at a time.',
+  acer: 'Acer publishes no warranty API: its warranty page takes one serial at a time.',
+};
+
 export const VENDOR_LABEL: Record<VendorKey, string> = {
   dell: 'Dell', lenovo: 'Lenovo', hp: 'HP', hpe: 'HPE', microsoft: 'Microsoft Surface', apple: 'Apple', asus: 'ASUS', acer: 'Acer',
 };
@@ -169,7 +192,7 @@ export const WARRANTY_STATE_LABEL: Record<WarrantyState, string> = {
 };
 const DAY_MS = 86_400_000;
 /** Where a computer's stored warranty dates came from. */
-export const WARRANTY_SOURCE_LABEL: Record<string, string> = { manual: 'Entered by hand', dell: 'Dell TechDirect', lenovo: 'Lenovo warranty API' };
+export const WARRANTY_SOURCE_LABEL: Record<string, string> = { manual: 'Entered by hand', dell: 'Dell TechDirect', lenovo: 'Lenovo warranty API', hp: 'HP Warranty API', apple: 'Apple Business Manager' };
 
 /** Whole days from `now` until `endsAt` (negative once it has passed), or null. */
 export function daysLeft(endsAt: Date | string | null | undefined, now: Date | number = Date.now()): number | null {
@@ -201,4 +224,82 @@ export function cleanCoverage(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const s = raw.replace(/[^A-Za-z0-9\u00C0-\u024F .,:;()/&+'#-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, COVERAGE_MAX).trim();
   return s || null;
+}
+
+// \u2500\u2500 Why there is no date (0.61) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+//
+// "Warranty doesn't show anything" was the whole of the 0.56 experience on a
+// fleet of HP workstations: no lookup existed for HP, none was switched on,
+// and nothing said so. Every computer with no date now carries one of these
+// reasons, worked out from what is stored \u2014 never by asking a vendor.
+
+/** What a stored lookup result code means, in words. Unknown codes fall back to the code. */
+export const LOOKUP_RESULT_TEXT: Record<string, string> = {
+  NOT_FOUND: 'the vendor has no warranty record for this serial',
+  VENDOR_AUTH_FAILED: 'the vendor refused the credential saved in Settings \u2192 Warranty',
+  VENDOR_NOT_CONFIGURED: 'the lookup is missing part of its credential',
+  VENDOR_RATE_LIMITED: 'the vendor asked us to slow down; it is asked again within a day',
+  VENDOR_PENDING: 'the vendor had not finished its lookup job; it is asked again within a day',
+  VENDOR_JOB_FAILED: 'the vendor\u2019s lookup job failed; it is asked again within a day',
+  VENDOR_HTTP_5XX: 'the vendor\u2019s service failed; it is asked again within a day',
+  RESPONSE_INVALID: 'the vendor\u2019s answer could not be read; it is asked again within a day',
+  RESPONSE_TOO_LARGE: 'the vendor\u2019s answer was too large to read',
+  TIMEOUT: 'the vendor did not answer in time; it is asked again within a day',
+  NETWORK: 'the vendor could not be reached; it is asked again within a day',
+  UNRESOLVED: 'the vendor\u2019s host did not resolve; it is asked again within a day',
+  TLS_FAILED: 'the vendor\u2019s certificate could not be verified',
+  ADDRESS_REFUSED: 'the vendor\u2019s host resolved to an address this server refuses',
+  URL_REFUSED: 'the vendor address was refused',
+  REDIRECT_REFUSED: 'the vendor answered with a redirect, which is not followed',
+};
+export function lookupResultText(code: string | null | undefined): string {
+  if (!code) return 'unknown';
+  return LOOKUP_RESULT_TEXT[code] ?? (/^VENDOR_HTTP_\d{3}$/.test(code) ? `the vendor refused the request (HTTP ${code.slice(12)})` : code);
+}
+
+export const WARRANTY_GAPS = ['virtual', 'no_inventory', 'unknown_maker', 'no_lookup', 'no_serial', 'not_configured', 'waiting', 'not_found', 'failed'] as const;
+export type WarrantyGapReason = (typeof WARRANTY_GAPS)[number];
+export const WARRANTY_GAP_LABEL: Record<WarrantyGapReason, string> = {
+  virtual: 'Virtual machine',
+  no_inventory: 'No hardware inventory yet',
+  unknown_maker: 'Manufacturer not recognised',
+  no_lookup: 'Vendor has no lookup',
+  no_serial: 'Serial missing',
+  not_configured: 'Lookup not switched on',
+  waiting: 'Waiting for the lookup',
+  not_found: 'Vendor had no record',
+  failed: 'Lookup failed',
+};
+export interface WarrantyGap {
+  reason: WarrantyGapReason;
+  /** One sentence for the console: why there is no date, and what to do. */
+  text: string;
+  /** True when the fix is in Settings \u2192 Warranty (a Platform Admin's). */
+  settings: boolean;
+}
+export interface GapInput {
+  hasInventory: boolean;
+  manufacturer: string | null | undefined;
+  model: string | null | undefined;
+  serial: string | null | undefined;
+  /** The vendors switched on with a credential, from Settings \u2192 Warranty. */
+  enabled: readonly string[];
+  lookupResult: string | null | undefined;
+  lookupAt: Date | string | null | undefined;
+}
+
+/** Why a computer with no stored warranty date has none. Pure: unit-tested. */
+export function warrantyGap(g: GapInput): WarrantyGap {
+  if (!g.hasInventory) return { reason: 'no_inventory', text: 'The agent has not reported this computer\u2019s hardware yet, so its maker and serial are unknown.', settings: false };
+  const maker = identifyMaker(g.manufacturer, g.model);
+  if (maker.kind === 'virtual') return { reason: 'virtual', text: `Virtual machine (${maker.platform}) \u2014 no hardware warranty.`, settings: false };
+  if (maker.kind === 'unknown') return { reason: 'unknown_maker', text: 'The manufacturer is not one with a warranty lookup or support links. Enter the dates by hand.', settings: false };
+  const label = VENDOR_LABEL[maker.vendor];
+  if (!isLookupVendor(maker.vendor)) return { reason: 'no_lookup', text: `${NO_LOOKUP_REASON[maker.vendor]} Enter the dates by hand.`, settings: false };
+  if (!cleanSerial(g.serial)) return { reason: 'no_serial', text: `No usable serial number was reported, so ${label} cannot be asked. Enter the dates by hand.`, settings: false };
+  if (!g.enabled.includes(maker.vendor)) return { reason: 'not_configured', text: `The ${label} warranty lookup is not switched on. A Platform Admin can switch it on in Settings \u2192 Warranty.`, settings: true };
+  // 'OK' with no date: an answer was stored and later cleared by hand; it is asked again after the interval.
+  if (!g.lookupAt || !g.lookupResult || g.lookupResult === 'OK') return { reason: 'waiting', text: `${label} has not been asked yet. The lookup sweep asks a limited number of computers an hour; Check now asks at once.`, settings: false };
+  if (g.lookupResult === 'NOT_FOUND') return { reason: 'not_found', text: `${label} was asked and has no warranty record for this serial. Enter the dates by hand if you have them.`, settings: false };
+  return { reason: 'failed', text: `The last ${label} lookup failed: ${lookupResultText(g.lookupResult)}.`, settings: g.lookupResult === 'VENDOR_AUTH_FAILED' || g.lookupResult === 'VENDOR_NOT_CONFIGURED' };
 }

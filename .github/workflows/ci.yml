@@ -357,6 +357,13 @@ jobs:
       - name: Warranty tests
         run: node apps/api/scripts/unit-warranty.mjs
 
+      # Warranty vendors (0.61): HP's token, one-serial job, bounded polling
+      # and results; Apple's ES256 client assertion, token and AppleCare
+      # coverage; the "why is there no date" reasons — against a loopback
+      # stand-in only, never a real vendor.
+      - name: Warranty vendor tests
+        run: node apps/api/scripts/unit-warranty-vendors.mjs
+
       # Outbound email (0.34): the SMTP host rule (every address class, IPv4-
       # mapped IPv6, what SMTP_ALLOW_LOCAL_RELAY admits, every resolved address
       # checked), the report schedule maths across zones and both DST

@@ -8,8 +8,10 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { CAP } from '../rbac/capabilities';
 import { activePause, pauseMessage } from '../containment/pause';
 import { openSecret, sealSecret } from '../common/secret-box';
-import { LOOKUP_VENDORS, lookup, type LookupResult, type LookupVendor } from './client';
-import { cleanSerial, COVERAGE_RE, daysLeft, identifyMaker, supportInfo, VENDOR_LABEL, WARRANTY_SOURCE_LABEL, warrantyState, type VendorKey } from './vendors';
+import { LOOKUP_VENDORS, lookup, normaliseApplePrivateKey, type Credentials, type LookupResult, type LookupVendor } from './client';
+import {
+  cleanSerial, COVERAGE_RE, daysLeft, identifyMaker, isLookupVendor, NO_LOOKUP_REASON, supportInfo, VENDOR_KEYS, VENDOR_LABEL, WARRANTY_SOURCE_LABEL, warrantyGap, warrantyState, type VendorKey,
+} from './vendors';
 
 /**
  * Hardware warranty (0.56).
@@ -18,7 +20,8 @@ import { cleanSerial, COVERAGE_RE, daysLeft, identifyMaker, supportInfo, VENDOR_
  *             its dates on the device page; audited with before and after.
  *             The sweep never overwrites a manual entry.
  *   vendor    Settings → Warranty: a Platform Admin enables a vendor whose
- *             lookup is implemented (warranty/client.ts: Dell, Lenovo) and
+ *             lookup is implemented (warranty/client.ts: Dell, Lenovo, and
+ *             from 0.61 HP and Apple) and
  *             gives its credential, sealed with its own purpose. Off by
  *             default. Saving needs fresh authentication (catalog key
  *             warranty.settings, §62).
@@ -62,11 +65,31 @@ export const ManualInput = z.object({
 
 export const VendorInput = z.object({
   enabled: z.boolean(),
-  /** Dell only: the TechDirect client id. */
+  /** Dell: the TechDirect client id. HP: the app's API key. Apple: the API account's client id. */
   clientId: z.string().trim().min(4).max(200).regex(/^[\x21-\x7e]+$/, 'printable characters, no spaces').nullable().optional(),
-  /** Absent = keep; null = clear. Dell: the client secret. Lenovo: the ClientID token. */
-  secret: z.string().min(8).max(512).regex(/^[\x21-\x7e]+$/, 'printable characters, no spaces').nullable().optional(),
+  /** Apple only: the API account's key id. */
+  keyId: z.string().trim().min(4).max(100).regex(/^[A-Za-z0-9._-]+$/, 'letters, digits, dot, underscore and hyphen').nullable().optional(),
+  /**
+   * Absent = keep; null = clear. Dell: the client secret. Lenovo: the ClientID
+   * token. HP: the app's API secret. Apple: the private key as PEM (checked to
+   * be an EC P-256 private key, stored as PKCS#8). The shape is checked per
+   * vendor in putVendor.
+   */
+  secret: z.string().min(8).max(4096).nullable().optional(),
 }).strict();
+/** Which vendors take a client id, and which a key id. */
+const TAKES_CLIENT_ID: readonly LookupVendor[] = ['dell', 'hp', 'apple'];
+const TAKES_KEY_ID: readonly LookupVendor[] = ['apple'];
+const PRINTABLE_SECRET = /^[\x21-\x7e]{8,512}$/;
+const KEY_REQUIRED: Record<LookupVendor, string> = {
+  dell: 'Enter the TechDirect client secret to switch the Dell lookup on.',
+  lenovo: 'Enter the Lenovo ClientID to switch the Lenovo lookup on.',
+  hp: 'Enter the HP API secret to switch the HP lookup on.',
+  apple: 'Paste the Apple Business Manager private key to switch the Apple lookup on.',
+};
+const CLIENT_ID_REQUIRED: Record<LookupVendor, string> = {
+  dell: 'Enter the TechDirect client id.', lenovo: '', hp: 'Enter the HP API key.', apple: 'Enter the Apple Business Manager client id.',
+};
 
 const bad = (e: z.ZodError) => new BadRequestException({ code: 'INVALID_REQUEST', message: e.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ') });
 const parseDay = (s: string | null | undefined): Date | null => {
@@ -77,8 +100,8 @@ const parseDay = (s: string | null | undefined): Date | null => {
   if (y < 1990 || y > 2099) throw new BadRequestException({ code: 'INVALID_DATE', message: 'Warranty dates must fall between 1990 and 2099.' });
   return d;
 };
-const last4 = (s: string) => s.slice(-4);
-const isLookupVendor = (v: unknown): v is LookupVendor => (LOOKUP_VENDORS as readonly string[]).includes(v as string);
+/** The last four characters kept in the clear. For a PEM key, of its base64 body: the end of the public key it carries. */
+const last4 = (s: string) => s.replace(/-----[A-Z ]+-----|\s/g, '').slice(-4);
 
 type Ep = {
   id: string; customerId: string | null; serialNumber: string | null;
@@ -129,6 +152,7 @@ export class WarrantyService implements OnModuleInit, OnModuleDestroy {
   private view(e: Ep, vendors: Map<string, WarrantyVendor>, now = new Date()) {
     const vendor = this.vendorOf(e);
     const row = vendor ? vendors.get(vendor) : undefined;
+    const enabled = [...vendors.values()].filter((v) => v.enabled && v.secretEnc).map((v) => v.vendor);
     return {
       warranty: {
         startsAt: e.warrantyStartsAt, endsAt: e.warrantyEndsAt, coverage: e.warrantyCoverage,
@@ -144,6 +168,11 @@ export class WarrantyService implements OnModuleInit, OnModuleDestroy {
         lastAttemptAt: e.warrantyLookupAt, lastResult: e.warrantyLookupResult,
         intervalDays: LOOKUP_INTERVAL_DAYS,
       },
+      // 0.61: why there is no date, in words, and whether the fix is in Settings → Warranty.
+      gap: e.warrantyEndsAt ? null : warrantyGap({
+        hasInventory: !!e.inventory, manufacturer: e.inventory?.manufacturer, model: e.inventory?.model,
+        serial: e.inventory?.serialNumber ?? e.serialNumber, enabled, lookupResult: e.warrantyLookupResult, lookupAt: e.warrantyLookupAt,
+      }),
     };
   }
 
@@ -191,7 +220,7 @@ export class WarrantyService implements OnModuleInit, OnModuleDestroy {
     const e = await this.prisma.endpoint.findUniqueOrThrow({ where: { id: endpointId }, select: EP_SELECT });
     if (e.warrantySource === 'manual') throw new ConflictException({ code: 'WARRANTY_MANUAL', message: 'This warranty was entered by hand. Clear it first to look it up from the vendor.' });
     const vendor = this.vendorOf(e);
-    if (!vendor || !isLookupVendor(vendor)) throw new ConflictException({ code: 'WARRANTY_LOOKUP_UNSUPPORTED', message: vendor ? `There is no warranty lookup for ${VENDOR_LABEL[vendor]}. Enter the dates by hand.` : 'The manufacturer is not one with a warranty lookup. Enter the dates by hand.' });
+    if (!vendor || !isLookupVendor(vendor)) throw new ConflictException({ code: 'WARRANTY_LOOKUP_UNSUPPORTED', message: vendor ? `There is no warranty lookup for ${VENDOR_LABEL[vendor]}. ${NO_LOOKUP_REASON[vendor as Exclude<VendorKey, LookupVendor>]} Enter the dates by hand.` : 'The manufacturer is not one with a warranty lookup. Enter the dates by hand.' });
     const creds = await this.credentials(vendor);
     if (!creds) throw new ConflictException({ code: 'WARRANTY_LOOKUP_OFF', message: `The ${VENDOR_LABEL[vendor]} warranty lookup is not switched on (Settings → Warranty).` });
     const serial = this.serialOf(e);
@@ -206,14 +235,14 @@ export class WarrantyService implements OnModuleInit, OnModuleDestroy {
     return { result: r.ok ? 'OK' : r.code, ...(await this.get(actor, endpointId)) };
   }
 
-  private async credentials(vendor: LookupVendor) {
+  private async credentials(vendor: LookupVendor): Promise<Credentials | null> {
     const v = await this.prisma.warrantyVendor.findUnique({ where: { vendor } });
     if (!v?.enabled || !v.secretEnc) return null;
-    try { return { clientId: v.clientId, secret: openSecret(this.encKey, 'rem0te-warranty-key-v1', v.secretEnc) }; } catch { return null; }
+    try { return { clientId: v.clientId, keyId: v.keyId, secret: openSecret(this.encKey, 'rem0te-warranty-key-v1', v.secretEnc) }; } catch { return null; }
   }
 
   /** Ask the vendor and write what it said. The serial is the only thing about the computer passed on. */
-  private async lookupAndStore(e: Ep, vendor: LookupVendor, creds: { clientId: string | null; secret: string }, serial: string, now: Date): Promise<LookupResult> {
+  private async lookupAndStore(e: Ep, vendor: LookupVendor, creds: Credentials, serial: string, now: Date): Promise<LookupResult> {
     const r = await lookup(vendor, creds, serial);
     const code = r.ok ? 'OK' : r.code;
     if (r.ok) {
@@ -263,7 +292,7 @@ export class WarrantyService implements OnModuleInit, OnModuleDestroy {
       },
       select: EP_SELECT, orderBy: [{ warrantyLookupAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }], take: CANDIDATES_PER_TICK,
     });
-    const creds = new Map<LookupVendor, { clientId: string | null; secret: string }>();
+    const creds = new Map<LookupVendor, Credentials>();
     for (const e of candidates) {
       if (left <= 0) break;
       const vendor = this.vendorOf(e);
@@ -288,7 +317,8 @@ export class WarrantyService implements OnModuleInit, OnModuleDestroy {
   private vendorView(vendor: LookupVendor, v: WarrantyVendor | null) {
     return {
       vendor, label: VENDOR_LABEL[vendor], enabled: !!v?.enabled,
-      clientId: vendor === 'dell' ? v?.clientId ?? null : null,
+      clientId: TAKES_CLIENT_ID.includes(vendor) ? v?.clientId ?? null : null,
+      keyId: TAKES_KEY_ID.includes(vendor) ? v?.keyId ?? null : null,
       secretSet: !!v?.secretEnc, secretLast4: v?.secretEnc ? v.secretLast4 : null,
       updatedAt: v?.updatedAt ?? null, lastResultAt: v?.lastResultAt ?? null, lastResult: v?.lastResult ?? null,
     };
@@ -298,7 +328,7 @@ export class WarrantyService implements OnModuleInit, OnModuleDestroy {
     const rows = new Map((await this.prisma.warrantyVendor.findMany()).map((v) => [v.vendor, v]));
     return {
       vendors: LOOKUP_VENDORS.map((k) => this.vendorView(k, rows.get(k) ?? null)),
-      manualOnly: ['hp', 'hpe', 'microsoft', 'apple', 'asus', 'acer'].map((k) => ({ vendor: k, label: VENDOR_LABEL[k as VendorKey] })),
+      manualOnly: VENDOR_KEYS.filter((k): k is Exclude<VendorKey, LookupVendor> => !isLookupVendor(k)).map((k) => ({ vendor: k, label: VENDOR_LABEL[k], reason: NO_LOOKUP_REASON[k] })),
       sweep: { enabled: process.env.WARRANTY_SWEEP !== 'off', perHour: perHour(), intervalDays: LOOKUP_INTERVAL_DAYS },
     };
   }
@@ -307,22 +337,31 @@ export class WarrantyService implements OnModuleInit, OnModuleDestroy {
     if (!isLookupVendor(vendor)) throw new BadRequestException({ code: 'UNKNOWN_VENDOR', message: `There is no warranty lookup for "${String(vendor).slice(0, 20)}".` });
     const d = VendorInput.safeParse(raw ?? {});
     if (!d.success) throw bad(d.error);
-    if (vendor !== 'dell' && d.data.clientId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Only Dell takes a client id.' });
+    if (!TAKES_CLIENT_ID.includes(vendor) && d.data.clientId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Only Dell, HP and Apple take a client id.' });
+    if (!TAKES_KEY_ID.includes(vendor) && d.data.keyId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Only Apple takes a key id.' });
+    // The secret's own shape: a PEM private key for Apple, printable characters with no spaces for the rest.
+    let given: string | null | undefined = d.data.secret;
+    if (typeof given === 'string') {
+      given = vendor === 'apple' ? normaliseApplePrivateKey(given) : PRINTABLE_SECRET.test(given) ? given : null;
+      if (!given) throw new BadRequestException({ code: 'INVALID_KEY', message: vendor === 'apple' ? 'Paste the private key Apple Business Manager gave you: a PEM EC P-256 private key.' : 'The secret is 8 to 512 printable characters with no spaces.' });
+    }
     const cur = await this.prisma.warrantyVendor.findUnique({ where: { vendor } });
-    const clientId = vendor === 'dell' ? (d.data.clientId === undefined ? cur?.clientId ?? null : d.data.clientId) : null;
-    // A different Dell client id is a different credential: the old secret is not kept for it.
-    const moved = vendor === 'dell' && !!cur && (cur.clientId ?? null) !== clientId;
+    const clientId = TAKES_CLIENT_ID.includes(vendor) ? (d.data.clientId === undefined ? cur?.clientId ?? null : d.data.clientId) : null;
+    const keyId = TAKES_KEY_ID.includes(vendor) ? (d.data.keyId === undefined ? cur?.keyId ?? null : d.data.keyId) : null;
+    // A different client id (or Apple key id) is a different credential: the old secret is not kept for it.
+    const moved = !!cur && ((cur.clientId ?? null) !== clientId || (cur.keyId ?? null) !== keyId);
     let secretEnc: string | null; let secretLast4: string | null;
     let keyChange: 'set' | 'kept' | 'cleared' | 'cleared_client_changed' | 'none';
-    if (typeof d.data.secret === 'string') { secretEnc = sealSecret(this.encKey, 'rem0te-warranty-key-v1', d.data.secret); secretLast4 = last4(d.data.secret); keyChange = 'set'; }
-    else if (d.data.secret === null) { secretEnc = null; secretLast4 = null; keyChange = cur?.secretEnc ? 'cleared' : 'none'; }
+    if (typeof given === 'string') { secretEnc = sealSecret(this.encKey, 'rem0te-warranty-key-v1', given); secretLast4 = last4(given); keyChange = 'set'; }
+    else if (given === null) { secretEnc = null; secretLast4 = null; keyChange = cur?.secretEnc ? 'cleared' : 'none'; }
     else if (cur?.secretEnc && moved) { secretEnc = null; secretLast4 = null; keyChange = 'cleared_client_changed'; }
     else { secretEnc = cur?.secretEnc ?? null; secretLast4 = cur?.secretLast4 ?? null; keyChange = secretEnc ? 'kept' : 'none'; }
-    if (d.data.enabled && !secretEnc) throw new BadRequestException({ code: 'KEY_REQUIRED', message: vendor === 'dell' ? 'Enter the TechDirect client secret to switch the Dell lookup on.' : 'Enter the Lenovo ClientID to switch the Lenovo lookup on.' });
-    if (d.data.enabled && vendor === 'dell' && !clientId) throw new BadRequestException({ code: 'CLIENT_ID_REQUIRED', message: 'Enter the TechDirect client id.' });
-    const data = { enabled: d.data.enabled, clientId, secretEnc, secretLast4, updatedById: a.userId };
+    if (d.data.enabled && !secretEnc) throw new BadRequestException({ code: 'KEY_REQUIRED', message: KEY_REQUIRED[vendor] });
+    if (d.data.enabled && TAKES_CLIENT_ID.includes(vendor) && !clientId) throw new BadRequestException({ code: 'CLIENT_ID_REQUIRED', message: CLIENT_ID_REQUIRED[vendor] });
+    if (d.data.enabled && TAKES_KEY_ID.includes(vendor) && !keyId) throw new BadRequestException({ code: 'KEY_ID_REQUIRED', message: 'Enter the Apple Business Manager key id.' });
+    const data = { enabled: d.data.enabled, clientId, keyId, secretEnc, secretLast4, updatedById: a.userId };
     const row = await this.prisma.warrantyVendor.upsert({ where: { vendor }, create: { vendor, ...data }, update: data });
-    const pub = (s: WarrantyVendor | null) => s && { enabled: s.enabled, clientIdSet: !!s.clientId };
+    const pub = (s: WarrantyVendor | null) => s && { enabled: s.enabled, clientIdSet: !!s.clientId, keyIdSet: !!s.keyId };
     // The secret is never in the audit row: only whether it changed.
     await this.audit.logOrFail({
       action: 'WARRANTY_SETTINGS_CHANGED', actorId: a.userId, actorIp: a.ip, tenantId: a.tenantId ?? undefined, resource: 'warranty_vendor', resourceId: vendor,

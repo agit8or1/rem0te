@@ -1144,6 +1144,37 @@ with `assertFresh` naming `warranty.settings`.
 Behavioural proof: `e2e-warranty.mjs` (ports 3821–3823, a loopback vendor stub,
 in `run-e2e.sh`). Unit: `unit-warranty.mjs`.
 
+§74 (0.61) is the HP and Apple warranty lookups and "why is there no date".
+§69 holds for every vendor; the lookup list is one constant,
+`LOOKUP_VENDORS` in `vendors.ts` (`dell`, `lenovo`, `hp`, `apple`), which
+the client re-exports and migration 0082's two CHECKs name exactly. HPE,
+Microsoft, ASUS and Acer have no lookup, each with its reason in
+`NO_LOOKUP_REASON`.
+
+- **Hosts.** Every vendor URL in `client.ts` is https to one of its five
+  `LOOKUP_HOSTS`. `warranty.api.hp.com`, `account.apple.com` and
+  `api-business.apple.com` appear nowhere else in the API.
+- **HP** is sent `[{ sn: serial }]` and nothing else: no product number
+  (the inventory does not collect one) and no country. Its job id passes
+  `JOB_ID_RE` before it is put in a URL. Polling is bounded by
+  `HP_MAX_POLLS` (6), and an unfinished job is `VENDOR_PENDING`, transient.
+- **Apple's** pasted key must be EC P-256 (`normaliseApplePrivateKey`) before
+  it is sealed. Its client assertion is ES256 and lives five minutes. `keyId`
+  is Apple's alone (0082 CHECK). A changed client id or key id drops the
+  saved secret.
+- **Tokens** live only in an unexported in-memory map, keyed by a SHA-256 of
+  the credential.
+- **Why no date.** One pure function, `warrantyGap`, gives the reason. The
+  device card, the report (and its CSV) and the dashboard use it. The report
+  and the dashboard read only enabled vendors' names, never a credential.
+- **The console and `docs/warranty.md`** say HP and Apple were tested only
+  against a stand-in.
+
+**No real HP or Apple API has been called from this server.** Behavioural
+proof: `e2e-warranty-vendors.mjs` (ports 3881–3883, a loopback stand-in for
+HP's token, job, status and results and Apple's assertion token and
+coverage, in `run-e2e.sh`). Unit: `unit-warranty-vendors.mjs`.
+
 §70 (0.57) is device discovery and adoption. The unassigned pool is
 `common/unassigned.ts`: `tenantId` null OR `customerId` null
 (`UNASSIGNED_WHERE`, `isUnassigned`). `assertAssigned` refuses a pooled

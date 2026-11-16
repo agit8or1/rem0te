@@ -1056,16 +1056,18 @@ export interface WarrantyView {
   };
   support: import('./hardware-support').SupportInfo;
   lookup: {
-    vendor: 'dell' | 'lenovo' | null; vendorLabel: string | null; implemented: boolean; enabled: boolean;
+    vendor: import('./hardware-support').LookupVendor | null; vendorLabel: string | null; implemented: boolean; enabled: boolean;
     lastAttemptAt: string | null; lastResult: string | null; intervalDays: number;
   };
+  /** 0.61: why there is no date (null when there is one). */
+  gap: import('./hardware-support').WarrantyGap | null;
 }
 export interface WarrantyVendorView {
-  vendor: 'dell' | 'lenovo'; label: string; enabled: boolean; clientId: string | null; secretSet: boolean; secretLast4: string | null;
+  vendor: import('./hardware-support').LookupVendor; label: string; enabled: boolean; clientId: string | null; keyId: string | null; secretSet: boolean; secretLast4: string | null;
   updatedAt: string | null; lastResultAt: string | null; lastResult: string | null; keyChange?: string;
 }
 export interface WarrantySettingsView {
-  vendors: WarrantyVendorView[]; manualOnly: { vendor: string; label: string }[];
+  vendors: WarrantyVendorView[]; manualOnly: { vendor: string; label: string; reason: string }[];
   sweep: { enabled: boolean; perHour: number; intervalDays: number };
 }
 export const warrantyApi = {
@@ -1073,7 +1075,7 @@ export const warrantyApi = {
   set: (endpointId: string, body: { startsAt?: string | null; endsAt: string | null; coverage?: string | null }) => api.put(`/endpoints/${endpointId}/warranty`, body),
   lookup: (endpointId: string) => api.post(`/endpoints/${endpointId}/warranty/lookup`, {}),
   settings: () => api.get('/warranty/settings'),
-  saveVendor: (vendor: 'dell' | 'lenovo', body: { enabled: boolean; clientId?: string | null; secret?: string | null }) => api.put(`/warranty/settings/${vendor}`, body),
+  saveVendor: (vendor: import('./hardware-support').LookupVendor, body: { enabled: boolean; clientId?: string | null; keyId?: string | null; secret?: string | null }) => api.put(`/warranty/settings/${vendor}`, body),
   report: (params: Record<string, string>) => api.get('/reports/warranty', { params }),
 };
 

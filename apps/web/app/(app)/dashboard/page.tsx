@@ -40,7 +40,7 @@ interface Overview {
   devices: null | { total: number; online: number; offline: number; agentSilent: number; reachable?: number; agentSilentAfterMinutes: number; offlineList: { id: string; name: string; business: Biz; lastSeenAt: string | null }[] };
   alerts: null | { open: number; acknowledged: number; critical: number; warning: number; info: number; criticalOpen: number; suppressed: number; outages: { id: string; title: string; state: string; suppressed: boolean; site: { id: string; name: string } | null; business: Biz; devices: number; since: string }[] };
   /** 0.56: hardware warranty, from the stored end dates. */
-  warranty?: null | { expired: number; within30: number; within90: number; unknown: number; total: number };
+  warranty?: null | { expired: number; within30: number; within90: number; unknown: number; total: number; /** 0.61: unknown, but a lookup not switched on (or refused its credential) could answer. */ unknownFixable?: number };
   restart: null | { devices: number; list: { device: { id: string; name: string }; business: Biz; source: 'scan' | 'alert'; evidenceAt: string | null; stale: boolean }[] };
   patch: null | { definition: string; staleAfterHours: number; total: number; fresh: number; upToDate: number; needsUpdates: number; stale: number; noScan: number; newestScanAt: string | null; oldestFreshScanAt: string | null; compliancePercent: number | null; coveragePercent: number | null };
   actions: null | { awaitingApproval: number; failed: number; uncertain: number; inFlight: { id: string; title: string; status: string; targets: number; createdAt: string; dispatchedAt: string | null; business: Biz; device: Dev; href: string }[] };
@@ -195,9 +195,9 @@ export default function DashboardPage() {
         )}
         {d.warranty && (
           <Tile href="/reports/warranty" icon={BadgeCheck} label="Warranty" value={d.warranty.within30 + d.warranty.expired}
-            sub={`${d.warranty.expired} expired · ${d.warranty.within30} end in 30 days`}
+            sub={`${d.warranty.expired} expired · ${d.warranty.within30} end in 30 days${d.warranty.unknown ? ` · ${d.warranty.unknown} no date${d.warranty.unknownFixable ? ` (${d.warranty.unknownFixable} lookup not on)` : ''}` : ''}`}
             tone={d.warranty.expired ? 'bad' : d.warranty.within30 ? 'warn' : undefined}
-            title={`Hardware warranties: ${d.warranty.expired} expired, ${d.warranty.within30} ending within 30 days, ${d.warranty.within90} within 90 days, ${d.warranty.unknown} with no date stored.`} />
+            title={`Hardware warranties: ${d.warranty.expired} expired, ${d.warranty.within30} ending within 30 days, ${d.warranty.within90} within 90 days, ${d.warranty.unknown} with no date stored${d.warranty.unknownFixable ? ` — ${d.warranty.unknownFixable} of them could be looked up if the vendor lookup were switched on in Settings → Warranty` : ''}. The report says why each one has no date.`} />
         )}
         {d.actions && (
           <Tile href="#work-next" icon={XCircle} label="Failed actions" value={failedActions}

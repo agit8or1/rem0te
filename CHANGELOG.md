@@ -5,6 +5,130 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.61.0] — 2026-11-16 · *Guarantee*
+
+**HP and Apple warranty lookups, and every empty warranty now says why.**
+
+The owner's report was *"warranty doesn't show anything. Is it picking up asset tags/serials and checking them?"*
+It was picking up serials — `EndpointInventory.serialNumber` is collected — and checking none of them. Every
+production computer is an HP Z440 or Z840 workstation (firmware manufacturer `Hewlett-Packard`). 0.56 could look
+up only Dell and Lenovo, no lookup was switched on, and the card said only *No warranty date stored. Enter it by
+hand.* Nothing on the dashboard tile or the report told anyone that HP had no lookup at all, or that switching one
+on was the fix.
+
+Numbered 0.61: 0.60 (restart windows) is being built in parallel and touches none of these files.
+
+### HP Inc. lookup
+
+- **Settings → Warranty → HP** takes an HP Developer Portal app's **API key** and **API secret**. Getting them: an
+  account at developers.hp.com, the CSS API enrolment form (developers.hp.com/css-enroll), HP's approval, then an
+  app with the Warranty API. `docs/warranty.md` has the steps.
+- The client (`warranty/client.ts`) asks for an OAuth client-credentials token at
+  `warranty.api.hp.com/oauth/v1/token` (key and secret as HTTP Basic), then uses HP's **batch-job** API with one
+  serial per job: `POST /productwarranty/v2/jobs` with `[{"sn":"<serial>"}]`, polls `GET …/jobs/<id>` at most
+  six times (about 30 s, `HP_MAX_POLLS`), then `GET …/jobs/<id>/results`. The latest-ending `offers[]` entry gives
+  the end date and coverage. HP's synchronous `/queries` endpoint is reported deprecated in favour of jobs, so it is
+  not used.
+- A job that has not finished is `VENDOR_PENDING`, and a failed job `VENDOR_JOB_FAILED`; both are asked again within
+  a day, like a timeout. A job id outside `[A-Za-z0-9-]{8,64}` is never put in a URL (`RESPONSE_INVALID`).
+- The token is kept in memory for its lifetime less five minutes, keyed by a SHA-256 of the credential, so a sweep
+  does not fetch one per computer and a changed credential never reuses an old token. A remembered token the vendor
+  refuses is dropped and replaced once.
+- **Only the serial is sent.** HP's API also takes an optional product number (SKU) to tell recycled serials apart.
+  The agent's inventory does not collect one (`MS_SystemInformation.SystemSKU` / `Win32_ComputerSystem.SystemSKUNumber`
+  have no slot in `EndpointInventory`), so none is sent, and **the agent and inventory are unchanged**. Collecting
+  it would be an agent, heartbeat-script and schema change; it is noted, not done.
+- **HP is not HPE.** `identifyMaker` already sends ProLiant, Synergy, Apollo, Superdome and Moonshot — even those
+  whose firmware says *Hewlett-Packard* — to HPE. The Z440 and Z840 stay HP.
+
+### Apple lookup
+
+HP was asked for; Apple was the one other vendor in `VENDOR_KEYS` with an official, documented API. The **Apple
+Business Manager API** (*Get AppleCare coverage for a device*) takes an API account's client id, key id and EC
+P-256 private key. Each token request carries a client assertion signed here (ES256, five minutes, the key id in the
+header) for a `business.api` token from `account.apple.com/auth/oauth2/token`, then
+`GET api-business.apple.com/v1/orgDevices/<serial>/appleCareCoverage`. Cancelled plans are ignored. Only devices in
+the organisation's Apple Business Manager are known; anything else is *no record*. The pasted key must be an EC
+P-256 private key (PKCS#8 or SEC1 PEM), and is stored sealed as PKCS#8; its last four characters are the end of the
+public key it carries.
+
+### No lookup, said plainly
+
+- **HPE**: its Support Center *Warranty Check API* (`api-gw.support.hpe.com/…/warrantyCheck`) was a pilot that closed
+  to applicants, with no published request or response format. GreenLake Compute Ops Management's documented
+  `server-warranty` API covers only servers onboarded to that subscription, by GreenLake device id, through regional
+  hosts and a workspace credential — not a serial lookup.
+- **Microsoft Surface**, **ASUS**, **Acer**: no public warranty API.
+
+Each has its reason in `vendors.ts` `NO_LOOKUP_REASON`, shown on the computer's card, in the report and in Settings →
+Warranty; Check now's refusal (`WARRANTY_LOOKUP_UNSUPPORTED`) says it too.
+
+### Why is there no date?
+
+`warrantyGap()` (pure, in `vendors.ts` and its web copy) gives every computer with no date one reason, from what is
+stored and never by asking a vendor: *no hardware inventory yet*, *virtual machine*, *manufacturer not recognised*,
+*vendor has no lookup*, *serial missing*, *lookup not switched on*, *waiting for the lookup*, *vendor had no record*,
+or *lookup failed* (with the stored result in words: credential refused, rate limited, timed out…).
+
+- The device page's **Warranty & support** card shows it, with a link to Settings → Warranty for a Platform Admin
+  when that is where the fix is.
+- **Reports → Warranty** has a new section, *No warranty date: why*, with counts by reason and the fixable ones
+  first; the CSV has a *Why no date* column.
+- The dashboard tile adds *N no date (M lookup not on)*.
+- The report and the dashboard read only the enabled vendors' names (`select: { vendor: true }`), never a credential.
+
+On production today this would say, for each of the three workstations: *Lookup not switched on — the HP warranty
+lookup is not switched on. A Platform Admin can switch it on in Settings → Warranty.*
+
+### Migration 0082
+
+0077's two vendor-list CHECKs (`Endpoint.warrantySource`, `WarrantyVendor.vendor`) named exactly Dell and Lenovo; a
+stored `hp` or `apple` would have been refused. Both are rebuilt naming exactly `LOOKUP_VENDORS`. `WarrantyVendor`
+gains `keyId` (Apple only, CHECKed), and a new CHECK allows a client id only for Dell, HP and Apple. Every change
+widens, so no existing row can fail. A changed client id or key id drops the saved secret, as Dell's client id did.
+
+### Invariants (§74)
+
+`scripts/check-security-invariants.mjs` §74: one lookup list, re-exported by the client and named exactly by 0082;
+the four no-lookup vendors each with a reason; every vendor URL in `client.ts` on its five `LOOKUP_HOSTS`, and the
+HP and Apple hosts nowhere else; HP sent `[{ sn: serial }]` alone, its job id checked before use, its polling
+bounded; Apple's key checked before it is sealed and its assertion five minutes; a changed client or key id drops the
+secret; tokens only in an unexported map keyed by a hash; the report and dashboard reading vendor names only; the gap
+from one function; the console and docs saying *tested only against a stand-in*; the suites in CI and
+`run-e2e.sh`. §69's checks were updated for nine vendor requests (all with the 20 s bound and 256 KB cap), the
+per-vendor secret shape, and `keyIdSet` in the audit.
+
+### Tests
+
+- `apps/api/scripts/unit-warranty-vendors.mjs` (61 checks, in CI): the gap reasons; HP's token, job body, polling,
+  results, token reuse and replacement, no record, never-finishing and failed jobs, 429 on the token and the job, 5xx,
+  unreadable results, a hostile job id; Apple's key checks (PKCS#8 and SEC1 accepted, RSA, P-384, public keys and
+  garbage refused), the assertion verified against the public key, coverage, not in the organisation, 429, a key
+  Apple cannot verify.
+- `apps/api/scripts/e2e-warranty-vendors.mjs` (45 checks, ports 3881–3883, in `run-e2e.sh`): the reasons on the
+  card, report, CSV and dashboard; HP and Apple settings (fresh sign-in, the key shape, write-only credentials, a
+  changed key id); Check now through the stand-in with only the serial leaving; an integration pause; the sweep
+  bounded per hour and skipping a paused business and a manual entry; no credential or token in an audit row or the
+  API's output.
+- `e2e-warranty.mjs` (0.56, Dell and Lenovo) still passes, 64 checks, with three assertions updated: HP now has a
+  lookup (off), four vendors can be switched on, and HPE is the one refused as unknown.
+
+### Not verified
+
+- **No real HP or Apple API has been called** — nor, still, Dell or Lenovo. HP's reference pages are behind a
+  sign-in, so its shapes come from HP's published sample scripts and from open-source integrations, including a
+  captured response; Apple's from its developer documentation. Use *Check now* on one computer first.
+- HP's rate limits are not published; each HP lookup is several requests. Lower `WARRANTY_LOOKUPS_PER_HOUR` if HP
+  answers 429.
+- HP approves enrolments case by case, and third-party reports say it has refused some IT-service companies.
+
+### Development dependencies
+
+Folded in from `main` (#160, no release of its own): typescript-eslint 8.72.2, @vitejs/plugin-react 6.3.0,
+vite 8.3.8, marked 18.2.0.
+
+---
+
 ## [0.59.0] — 2026-11-16 · *Passport*
 
 **Agit8or Identity P0: the groundwork for trusting a self-hosted Keycloak.**
