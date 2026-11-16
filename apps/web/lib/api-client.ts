@@ -830,7 +830,8 @@ export const securityControlsApi = {
 // Monitoring and alerts (0.29).
 export type MonitorScope = 'global' | 'business' | 'site' | 'group' | 'endpoint';
 export type Severity = 'INFO' | 'WARNING' | 'CRITICAL';
-export type MonitorKindId = 'OFFLINE' | 'DISK_FREE' | 'CPU_HIGH' | 'MEMORY_HIGH' | 'SERVICE_STOPPED' | 'EVENT_MATCH' | 'REBOOT_PENDING' | 'AGENT_SILENT';
+export type MonitorKindId = 'OFFLINE' | 'DISK_FREE' | 'CPU_HIGH' | 'MEMORY_HIGH' | 'SERVICE_STOPPED' | 'EVENT_MATCH' | 'REBOOT_PENDING' | 'AGENT_SILENT'
+  | 'DRIVE_FREE' | 'UPTIME_LONG' | 'UPDATES_MISSING' | 'UPDATE_FAILED'; // 0.55
 /** A notification destination: a webhook, or (0.34) a confirmed email recipient of the policy's own scope. */
 export type NotifyDestination = { label: string; url: string } | { label: string; recipientId: string };
 const bq = (businessId?: string | null) => ({ params: businessId ? { businessId } : {} });
@@ -859,6 +860,10 @@ export const monitoringApi = {
   setPolicy: (data: { scope: 'global' | 'business'; businessId?: string; levels: { afterMinutes: number; minSeverity: Severity; destinations: NotifyDestination[] }[]; ticketing: { enabled: boolean; minSeverity: Severity } }) =>
     api.put('/monitoring/notify-policy', data),
   endpoint: (id: string) => api.get(`/monitoring/endpoints/${id}`),
+  /** 0.55: automatic PSA tickets from alerts. Saving and removing ask for fresh authentication (monitoring.autoticket). */
+  ticketPolicy: (businessId?: string | null) => api.get('/monitoring/ticket-policy', bq(businessId)),
+  setTicketPolicy: (data: { scope: 'global' | 'business'; businessId?: string; enabled: boolean; minSeverity: Severity; kinds: MonitorKindId[] }) => api.put('/monitoring/ticket-policy', data),
+  removeTicketPolicy: (scope: 'global' | 'business', businessId?: string | null) => api.delete('/monitoring/ticket-policy', { params: { scope, ...(businessId ? { businessId } : {}) } }),
 };
 
 // Global search (0.33): one route, grouped results. A group the caller may

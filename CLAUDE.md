@@ -1075,6 +1075,39 @@ function. Older documents keep their bytes. Behavioural proof:
 `PRE054_ACTION_SIM`); unit: `unit-restart-windows.mjs` and the Go
 `restart054_test.go`.
 
+§68 (0.55) is alert conditions and automatic PSA tickets. Four monitor kinds,
+`DRIVE_FREE`, `UPTIME_LONG`, `UPDATES_MISSING` and `UPDATE_FAILED`, read only
+what the server stores. They are `INVENTORY_KINDS`, evaluated by the sweep, and
+`AGENT_KINDS` is unchanged, so there is no agent change.
+
+- **Drive alerts** are one per drive, keyed `<rule>:<computer>:<letter>`. The
+  letter must pass `DRIVE_LETTER` (`^[A-Z]:$`) first.
+- **One ticket per alert.** `MonitorAlertTicket.alertId` is unique, with
+  attempts `CHECK 1..4`, a closed status, and a retry time only on `failed`
+  (0076).
+- **Where it runs.** `AlertTicketsService.pass` is called once, from the
+  monitoring sweep after `notifyPass`, and has no timer, so `MONITOR_SWEEP=off`
+  stops it.
+- **The order:**
+  1. `autoTicketDecision`: the rule, the backlog (`enabledAt`), severity, kinds,
+     `notifyFrom`, an open site outage, a maintenance window;
+  2. the `notifications` pause;
+  3. the per-business hourly budget (`PSA_AUTO_TICKETS_PER_HOUR`);
+  4. `PsaService.alertTicket`: the claim (a unique insert, or a conditional
+     update from `failed`), `PSA_AUTO_TICKET_REQUESTED` with `logOrFail`, then
+     its one `drv.send`.
+- **What is sent.** The draft is a manual alert ticket's, with detail null, no
+  note and AI null. The audit meta carries ids only.
+- **Changing the rule.** PUT and DELETE `ticket-policy` need `assertFresh`
+  naming `monitoring.autoticket`, and are audited.
+- **Recent alerts** on the dashboard is the alerts list's `active` where AND
+  `endpointVisibilityWhere`.
+
+Behavioural proof: `e2e-alert-tickets.mjs` (ports 3811–3812, a loopback
+webhook stub, in `run-e2e.sh`). Unit: `unit-alert-conditions.mjs`. **No real
+PSA has been called, and none of it has run against a real Windows
+inventory.**
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

@@ -196,6 +196,21 @@ export class DashboardOverviewService {
           this.prisma.monitorAlert.findMany({ where: { AND: [active, { kind: 'REBOOT_PENDING' }] }, select: { endpointId: true, firstSeenAt: true } }),
         ])
       : [[], [], [], [], [], [], []];
+    // 0.55: Recent alerts — open and acknowledged, newest first. Inside the
+    // alerts list's own rule (monitoring:alerts) AND, for a computer's alert,
+    // the device list's visibility rule: a row never names a computer this
+    // person cannot open. A site outage (no computer) needs only the first.
+    // With nothing to show, the panel says whether any monitor applies here.
+    const [recentAlerts, monitorsConfigured] = active
+      ? await Promise.all([
+          this.prisma.monitorAlert.findMany({
+            where: { AND: [active, { OR: [{ endpointId: null }, { endpoint: this.acl.endpointVisibilityWhere(actor, scope) }] }] },
+            select: { ...alertSelect, autoTicket: { select: { status: true, ref: true, url: true } } },
+            orderBy: { firstSeenAt: 'desc' }, take: 12,
+          }),
+          this.prisma.monitorRule.count({ where: { enabled: true, ...(scope ? { OR: [{ scopeKey: 'global' }, { customerId: scope }] } : {}) } }),
+        ])
+      : [[], 0];
     const sum = (f: (r: (typeof alertGroups)[number]) => boolean) => alertGroups.filter(f).reduce((n, r) => n + r._count, 0);
     const live = (r: (typeof alertGroups)[number]) => !r.suppressed;
 
@@ -424,6 +439,18 @@ export class DashboardOverviewService {
             criticalOpen: sum((r) => live(r) && r.severity === 'CRITICAL' && r.state === 'OPEN'),
             suppressed: sum((r) => r.suppressed),
             outages: outages.map((o) => ({ id: o.id, title: o.title, state: o.state, suppressed: o.suppressed, site: o.site, business: o.customer, devices: o._count.children, since: o.firstSeenAt.toISOString() })),
+          }
+        : null,
+      // 0.55: null without monitoring:alerts, as `alerts` is.
+      recentAlerts: active
+        ? {
+            monitorsConfigured,
+            list: recentAlerts.map((a) => ({
+              id: a.id, title: a.title, severity: a.severity, state: a.state, kind: a.kind, suppressed: a.suppressed,
+              since: a.firstSeenAt.toISOString(), business: a.customer, device: dev(a.endpoint),
+              ticket: a.autoTicket?.status === 'sent' ? { ref: a.autoTicket.ref, url: a.autoTicket.url } : null,
+              href: `/alerts?alert=${encodeURIComponent(a.id)}`,
+            })),
           }
         : null,
       restart: visible ? { devices: restart.length, list: restart.slice(0, 10) } : null,

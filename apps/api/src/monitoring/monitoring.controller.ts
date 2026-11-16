@@ -75,6 +75,29 @@ export class MonitoringController {
     return { success: true, data: await this.svc.putPolicy(a, body) };
   }
 
+  // 0.55: automatic PSA tickets from alerts. Changing the rule (or removing
+  // one, which can hand a business back to the platform rule) needs fresh
+  // authentication under its own catalog key.
+  private freshTicket(req: Request) {
+    const u = req.user as { sub?: string; iat?: number } | undefined;
+    assertFresh(u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null, { action: 'monitoring.autoticket' });
+  }
+
+  @Get('ticket-policy')
+  async ticketPolicy(@Actor() a: ActorContext, @Query() q: Record<string, unknown>) { return { success: true, data: await this.svc.getTicketPolicy(a, biz(q)) }; }
+
+  @Put('ticket-policy')
+  async putTicketPolicy(@Actor() a: ActorContext, @Body() body: unknown, @Req() req: Request) {
+    this.freshTicket(req);
+    return { success: true, data: await this.svc.putTicketPolicy(a, body) };
+  }
+
+  @Delete('ticket-policy')
+  async removeTicketPolicy(@Actor() a: ActorContext, @Query() q: Record<string, unknown>, @Req() req: Request) {
+    this.freshTicket(req);
+    return { success: true, data: await this.svc.removeTicketPolicy(a, q.scope === 'global' ? 'global' : 'business', biz(q)) };
+  }
+
   @Get('endpoints/:id')
   async endpoint(@Actor() a: ActorContext, @Param('id') id: string) { return { success: true, data: await this.svc.endpointView(a, id) }; }
 }

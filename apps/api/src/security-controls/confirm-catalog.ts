@@ -102,6 +102,9 @@ export const CONFIRM_CATALOG = [
   { key: 'monitoring.notify', group: 'Monitoring & notifications', label: 'Who is notified', default: 'ask',
     prompt: 'change who is notified',
     description: 'Changing a notification policy: where alert text, including computer names, is sent.' },
+  { key: 'monitoring.autoticket', group: 'Monitoring & notifications', label: 'Automatic tickets from alerts', default: 'ask',
+    prompt: 'change which alerts open tickets',
+    description: 'Changing or removing the rule that opens a PSA ticket when an alert opens: tickets carry the alert and the computer name.' },
 
   // ── Reports & email ─────────────────────────────────────────────────────
   { key: 'email.relay', group: 'Reports & email', label: 'Email relay', default: 'ask',

@@ -51,14 +51,20 @@ critical) and parameters.
 | Event log match | at least *threshold* events since the last report match *ids*, *levels* or *provider* in one of System, Application, Security, Setup | no match for *clearAfterMinutes* |
 | Restart pending | Windows has wanted a restart for *hours* | the restart happens |
 | Agent silent (0.36; recommended from 0.36.1) | RustDesk still reaches the computer but its agent has not checked in for *minutes* (default 60, 30 – 10,080) | the agent checks in again |
+| Drive space, every fixed drive (0.55; recommended) | any fixed drive (C:, D:, …) the inventory reports is below *minFreePercent* (default 10) or *minFreeMb* — **one alert per drive** | that drive is 2 points above the line, or is no longer reported |
+| Not restarted (0.55) | the computer has been up for *days* (default 30, 1 – 365) | it restarts |
+| Security updates outstanding (0.55; recommended) | a security or critical update has been offered for *days* (default 30, 1 – 180) | it is installed, or no longer offered |
+| Update install failed (0.55; recommended) | an update failed to install in the last *days* (default 7, 1 – 90) | it installs, or the failure is older than the window |
 
 An event-log monitor must name at least one of IDs, levels or provider — a
 monitor on every event in a log is a flood, not a monitor. The agent asks
 for at most 100 events per query and sends one sample, truncated.
 
 **Add recommended** creates a starter set — offline, disk, CPU, memory,
-restart pending, disk errors (System log IDs 7, 11, 51, 153) and, from 0.36.1,
-agent silent (60 minutes, *warning*) — as ordinary monitors you then adjust.
+restart pending, disk errors (System log IDs 7, 11, 51, 153), from 0.36.1
+agent silent (60 minutes, *warning*), and from 0.55 other fixed drives
+(10 %, C: excepted), security updates outstanding (30 days) and failed update
+installs (7 days), all *warning* — as ordinary monitors you then adjust.
 Nothing is created without that click: no monitor is installed at startup, by
 an upgrade or by the seed, and the click adds only the starters missing at that
 scope. A scope where someone pressed *Add recommended* before 0.36.1 has no
@@ -106,6 +112,110 @@ for a site.
   carries and this is not one; with ticketing on, an agent-silent alert is
   notified as usual but not offered for a ticket. Carrying it needs a contract
   revision agreed with ClientSt0r.
+
+### Drives, uptime and updates (0.55)
+
+These four read only what the server already stores, so they need no agent
+update. The sweep looks at them at most every five minutes
+(`MONITOR_INVENTORY_SECONDS`, default 300).
+
+- **Drive space (every fixed drive).** This reads the drive list from the
+  inventory pass. On Windows that is every `Win32_LogicalDisk` of type 3 (a
+  fixed drive), and the pass runs about every six hours. A pass older than 48
+  hours is not used. **Each drive gets its own alert**, keyed
+  `<monitor>:<computer>:<letter>`, so D: and E: filling up are two problems.
+  Only a single letter and a colon counts as a drive. A Linux or macOS mount
+  point is ignored, and so is a malformed entry.
+  - *Only these drives* narrows the monitor to the drives you name.
+  - *Except these drives* leaves drives out.
+  - **How it relates to Disk space.** The older *Disk space* monitor reads the
+    system disk from every heartbeat, so it is quicker. The recommended
+    drive-space monitor therefore leaves C: out, so a full C: is not alerted
+    twice.
+  - It clears only at the line plus 2 points, so a drive hovering on the line
+    does not flap.
+  - A drive that disappears from the inventory, such as a removed disk,
+    resolves its alert.
+- **Not restarted.** This uses the boot time from the computer's heartbeat.
+  An offline computer is not judged, because it may have restarted since.
+  This monitor is *not* in the recommended set.
+- **Security updates outstanding.** This needs the **signed agent's patch
+  scan**. On a standard agent, or with a scan more than 36 hours old, the
+  monitor does nothing.
+  - An update's age counts from **when Rem0te first saw it offered**. Windows
+    does not say when an update was released. On a computer that is new to
+    Rem0te, the clock starts at its first scan.
+  - Only the Security and Critical classifications count. A browse-only
+    (optional) update never does.
+- **Update install failed.** This reads Windows Update's own install history
+  from the patch scan, and the results of Rem0te patch deployments to that
+  computer.
+  - A failure followed by a later successful install of the same update is
+    forgotten.
+  - The alert lists up to ten failures with their KB and error code.
+
+### Automatic tickets (0.55)
+
+**Settings → Monitoring → Automatic tickets** opens a ticket in the PSA when
+an alert opens. You set this at the platform level, and a business can have
+its own rule. A business's rule *replaces* the platform rule there, even when
+it is switched off. The rule says:
+
+- the lowest severity that opens a ticket (default *critical*);
+- optionally, which kinds open one (none ticked means every kind).
+
+The ticket goes through the PSA connector under **Settings → PSA /
+ticketing**: the business's own, or else the platform default. It is the
+ticket **Create ticket** on that alert would make: the alert's title, kind and
+severity, the computer, the business and a link back to the alert. It carries
+no alert detail, no note and no AI text (see
+[ai-and-tickets.md](ai-and-tickets.md#create-ticket)). It is marked as
+requested by *Rem0te monitoring (automatic)*.
+
+**When an alert is ticketed:**
+
+- **Once.** There is never more than one automatic ticket per alert; the
+  database holds one row per alert.
+- **Only alerts that open after the rule is switched on.** Switching it on
+  does not ticket the backlog.
+- **After the alert's notification hold.** An *Offline* alert waits for the
+  site-outage correlation hold, as its notification does.
+- **Never** for an alert in a maintenance window, for a site outage itself,
+  or for a computer gathered under an open site outage.
+- **Never under a `notifications` containment pause.** An alert held by a
+  pause is ticketed when the pause is lifted, if it is still open.
+- **At most 10 sends per business an hour** (`PSA_AUTO_TICKETS_PER_HOUR`).
+  An alert over the budget waits for a later sweep.
+
+**When a send fails:**
+
+- The failure is recorded on the alert's history and in the audit log.
+- It is tried again after 5, 30 and then 120 minutes, four sends in all.
+  After that it is *not sent*.
+- A send interrupted by an API restart is given up rather than repeated,
+  because the PSA may already have made the ticket.
+- It stops being retried once the alert resolves or the rule no longer asks
+  for it.
+
+**Where the ticket shows:** the reference, with the PSA's link when the PSA
+returned one, appears on the alert in **Alerts**, on the computer's
+**Monitoring** tab and in the dashboard's **Recent alerts**. Resolving the
+alert does not close the ticket, because no connector supports that yet.
+
+**Who may change the rule, and what is recorded:**
+
+- The rule follows *who is notified* (below). The platform rule belongs to
+  the MSP. A business rule belongs to the MSP, that Business Owner, or
+  someone with `monitoring:configure` for the whole business.
+- Saving or removing it asks you to confirm it is you
+  (`monitoring.autoticket` under *Settings → Confirm it is you*).
+- Each change is audited (`MONITOR_TICKET_POLICY_CHANGED`, before and after).
+- Each send is audited **before** it leaves (`PSA_AUTO_TICKET_REQUESTED`),
+  then as `PSA_TICKET_CREATED` or `PSA_TICKET_FAILED`. These entries carry
+  ids, the kind, the severity and the reference, never the subject or the
+  body.
+
+The pass runs inside the monitoring sweep, so `MONITOR_SWEEP=off` stops it.
 
 ![Monitoring settings for one business: its own monitors above the inherited global ones](screenshots/guide/monitoring-settings.png)
 

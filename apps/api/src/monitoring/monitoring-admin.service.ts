@@ -8,7 +8,8 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { CAP } from '../rbac/capabilities';
 import { validatePeerUrl } from '../integration/peers';
 import {
-  type Destination, isEmailDestination, LIMITS, NotifyPolicyInput, parseParams, RECOMMENDED, RULE_KEY, RuleInput, RulePatch, scopeKeyOf, scopeOfKey, SEVERITIES,
+  type Destination, isEmailDestination, LIMITS, MONITOR_KINDS, NotifyPolicyInput, parseParams, RECOMMENDED, RULE_KEY, RuleInput, RulePatch, scopeKeyOf, scopeOfKey, SEVERITIES,
+  AUTO_TICKET, TicketPolicyInput,
 } from './engine';
 import { MonitoringService, VIEW_INCLUDE } from './monitoring.service';
 import { EmailService } from '../email/email.service';
@@ -117,6 +118,11 @@ export class MonitoringAdminService {
       acknowledgedAt: r.acknowledgedAt, acknowledgedById: r.acknowledgedById,
       resolvedAt: r.resolvedAt, resolvedById: r.resolvedById, resolvedBy: r.resolvedAt ? (r.resolvedById ? 'person' : 'monitor') : null, resolveNote: r.resolveNote,
       ticket: r.ticketId ? { id: r.ticketId, url: r.ticketUrl, peer: r.ticketPeerId, linkedAt: r.ticketLinkedAt } : null,
+      // 0.55: the automatic PSA ticket. The URL is the connector's own answer (https only, cleanUrl).
+      autoTicket: r.autoTicket ? {
+        status: r.autoTicket.status, attempts: r.autoTicket.attempts, lastStatus: r.autoTicket.lastStatus, connectorKind: r.autoTicket.connectorKind,
+        ref: r.autoTicket.ref, url: r.autoTicket.url, lastAttemptAt: r.autoTicket.lastAttemptAt, nextAttemptAt: r.autoTicket.nextAttemptAt,
+      } : null,
     };
   }
 
@@ -460,6 +466,71 @@ export class MonitoringAdminService {
       meta: { scope: scopeKey, levels: d.data.levels.map((l) => ({ afterMinutes: l.afterMinutes, minSeverity: l.minSeverity, destinations: l.destinations.map((x) => (isEmailDestination(x) ? `${x.label} → email ${book.get(x.recipientId)?.address ?? x.recipientId}` : `${x.label} → ${this.maskUrl(x.url)}`)) })), ticketing: d.data.ticketing },
     });
     return this.getPolicy(a, customerId);
+  }
+
+  // ── Automatic PSA tickets (0.55) ──────────────────────────────────────────
+
+  /**
+   * The rule at the platform layer and at one business. Who may change it is
+   * who may change who is notified (mayManageNotifications): a ticket carries
+   * the alert and the computer's name to the PSA, as a notification does.
+   */
+  async getTicketPolicy(a: ActorContext, businessId?: string | null) {
+    const scope = this.configScope(a, businessId);
+    const [g, b] = await Promise.all([
+      this.prisma.monitorTicketPolicy.findUnique({ where: { scopeKey: 'global' } }),
+      scope ? this.prisma.monitorTicketPolicy.findUnique({ where: { scopeKey: `b:${scope}` } }) : null,
+    ]);
+    const mayBusiness = !!scope && (() => { try { this.assertPolicy(a, scope); return true; } catch { return false; } })();
+    const show = (p: typeof g) => p && { scopeKey: p.scopeKey, enabled: p.enabled, minSeverity: p.minSeverity, kinds: p.kinds, enabledAt: p.enabledAt, updatedAt: p.updatedAt };
+    return {
+      global: show(g), business: show(b), effective: b ? 'business' : g ? 'global' : 'none',
+      may: { global: this.isMsp(a), business: mayBusiness },
+      kinds: MONITOR_KINDS, severities: SEVERITIES,
+      limits: { perBusinessPerHour: AUTO_TICKET.perBusinessPerHour, maxAttempts: AUTO_TICKET.maxAttempts, backoffMinutes: AUTO_TICKET.backoffMinutes },
+    };
+  }
+
+  /** The controller has already asked for fresh authentication (monitoring.autoticket). */
+  async putTicketPolicy(a: ActorContext, raw: unknown) {
+    const d = TicketPolicyInput.safeParse(raw ?? {});
+    if (!d.success) throw bad(d.error);
+    if (d.data.scope === 'global' && d.data.businessId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'The platform rule names no business.' });
+    const customerId = d.data.scope === 'business' ? (d.data.businessId ?? a.businessId) : null;
+    if (d.data.scope === 'business' && !customerId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'businessId is required.' });
+    if (customerId) {
+      const c = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { id: true } });
+      if (!c) throw new NotFoundException('Business not found');
+    }
+    this.assertPolicy(a, customerId);
+    const scopeKey = customerId ? `b:${customerId}` : 'global';
+    const cur = await this.prisma.monitorTicketPolicy.findUnique({ where: { scopeKey } });
+    const kinds = [...new Set(d.data.kinds)].sort();
+    // Switching on starts the clock: alerts first seen before it are never ticketed.
+    const enabledAt = d.data.enabled ? (cur?.enabled && cur.enabledAt ? cur.enabledAt : new Date()) : null;
+    const data = { enabled: d.data.enabled, minSeverity: d.data.minSeverity, kinds, enabledAt, updatedById: a.userId };
+    const row = await this.prisma.monitorTicketPolicy.upsert({ where: { scopeKey }, create: { scopeKey, customerId, ...data }, update: data });
+    const pub = (p: { enabled: boolean; minSeverity: string; kinds: string[] } | null) => p && { enabled: p.enabled, minSeverity: p.minSeverity, kinds: p.kinds };
+    await this.audit.logOrFail({
+      action: 'MONITOR_TICKET_POLICY_CHANGED', customerId: customerId ?? undefined, actorId: a.userId, actorIp: a.ip, resource: 'monitor_ticket_policy', resourceId: row.id,
+      meta: { scope: scopeKey, before: pub(cur), after: pub(row) },
+    });
+    return this.getTicketPolicy(a, customerId);
+  }
+
+  /** Remove a business's own rule (the platform rule applies to it again), or the platform rule. Fresh authentication, as putTicketPolicy. */
+  async removeTicketPolicy(a: ActorContext, scope: 'global' | 'business', businessId?: string | null) {
+    const customerId = scope === 'business' ? (businessId ?? a.businessId ?? null) : null;
+    if (scope === 'business' && !customerId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'businessId is required.' });
+    this.assertPolicy(a, customerId);
+    const cur = await this.prisma.monitorTicketPolicy.findUnique({ where: { scopeKey: customerId ? `b:${customerId}` : 'global' } });
+    if (!cur) throw new NotFoundException('No rule is set here');
+    await this.prisma.monitorTicketPolicy.delete({ where: { id: cur.id } });
+    await this.audit.logOrFail({
+      action: 'MONITOR_TICKET_POLICY_CHANGED', customerId: customerId ?? undefined, actorId: a.userId, actorIp: a.ip, resource: 'monitor_ticket_policy', resourceId: cur.id,
+      meta: { scope: cur.scopeKey, before: { enabled: cur.enabled, minSeverity: cur.minSeverity, kinds: cur.kinds }, after: null },
+    });
+    return { removed: true };
   }
 
   /**

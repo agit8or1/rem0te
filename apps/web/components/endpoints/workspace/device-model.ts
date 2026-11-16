@@ -218,6 +218,10 @@ export const MONITOR_KIND_LABEL: Record<string, string> = {
   EVENT_MATCH: 'Event log',
   REBOOT_PENDING: 'Restart pending',
   AGENT_SILENT: 'Agent silent',
+  DRIVE_FREE: 'Drive space',
+  UPTIME_LONG: 'Not restarted',
+  UPDATES_MISSING: 'Updates outstanding',
+  UPDATE_FAILED: 'Update failed',
 };
 
 const EVENT_LEVEL: Record<number, string> = { 0: 'any', 1: 'Critical', 2: 'Error', 3: 'Warning', 4: 'Information', 5: 'Verbose' };
@@ -233,6 +237,14 @@ export function describeMonitor(kind: string, p: Record<string, unknown>): strin
     case 'SERVICE_STOPPED': return `${String(p.service ?? '?')} not running${p.alertIfMissing ? ' or missing' : ''}`;
     case 'REBOOT_PENDING': return `a restart pending for over ${n('hours') ?? 72} hours`;
     case 'AGENT_SILENT': return `RustDesk reachable but no agent check-in for ${n('minutes') ?? 60} minutes`;
+    case 'DRIVE_FREE': {
+      const only = Array.isArray(p.drives) && p.drives.length ? ` (${(p.drives as string[]).join(', ')})` : '';
+      const except = Array.isArray(p.exceptDrives) && p.exceptDrives.length ? `, except ${(p.exceptDrives as string[]).join(', ')}` : '';
+      return `any fixed drive${only} under ${n('minFreePercent') ?? 10}% free${n('minFreeMb') ? ` or under ${Math.round((n('minFreeMb') as number) / 1024)} GB` : ''}${except}`;
+    }
+    case 'UPTIME_LONG': return `not restarted for ${n('days') ?? 30} days`;
+    case 'UPDATES_MISSING': return `${Array.isArray(p.classes) ? (p.classes as string[]).join(' or ') : 'security or critical'} updates outstanding for ${n('days') ?? 30} days`;
+    case 'UPDATE_FAILED': return `an update install failed in the last ${n('days') ?? 7} days`;
     case 'EVENT_MATCH': {
       const ids = Array.isArray(p.ids) && p.ids.length ? `event ID ${(p.ids as number[]).join(', ')}` : null;
       const levels = Array.isArray(p.levels) && p.levels.length ? (p.levels as number[]).map((l) => EVENT_LEVEL[l] ?? l).join(' / ') : null;

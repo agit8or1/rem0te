@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.54.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.55.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -66,7 +66,7 @@ it, its default and its limits: **Settings → Security → Security Features**,
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
 
-## What's new in 0.40 to 0.54
+## What's new in 0.40 to 0.55
 
 Every change on a computer below (services, processes, installing and removing software) needs the full (signed)
 Windows agent and an approval signer, and none of those changes has yet run on a real Windows computer: they have
@@ -74,6 +74,13 @@ been tested against a simulated one. Ask AI and Create ticket have been tested o
 real provider or PSA. [What each agent can do](docs/capabilities.md)
 says what is proven and what is not.
 
+- **Alerts for drives, uptime and updates, and automatic PSA tickets (0.55).** Four new monitors read what the
+  server already stores, with no agent update: every fixed drive (one alert per drive), a computer not restarted for
+  N days, security or critical updates outstanding for N days (signed agent's patch scan), and a failed update
+  install. Three of them join *Add recommended*. A rule under Settings → Monitoring opens a PSA ticket when an alert
+  of at least a chosen severity opens. It sends once per alert, after the alert's hold, never in a maintenance window
+  or under a notifications pause, inside a per-business hourly budget, and retries a failed send three times. The
+  dashboard has a **Recent alerts** card with each alert's ticket reference.
 - **Restart scheduling and restart windows (0.54).** A restart can be asked for now or at a date and time up to
   14 days ahead, in a named zone, from a computer's Actions tab, the Patches tab's restart banner, or the device
   list for a selection or a device group (at most 200, one approved plan each). *Only if a restart is required*

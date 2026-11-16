@@ -13,12 +13,23 @@ import { UserBudget } from '../common/user-budget';
 import { AiService } from '../ai/ai.service';
 import { KINDS, type DriverDeps, type Kind, type PsaDriver, type Scope } from './connector';
 import { DRIVERS } from './connectors';
-import { buildDraft, buildTrayDraft, defaultSubject, NOTE_MAX, SUBJECT_MAX } from './ticket';
+import { AUTO_REQUESTER, buildDraft, buildTrayDraft, defaultSubject, NOTE_MAX, SUBJECT_MAX } from './ticket';
+import { autoTicketRetryAt } from '../monitoring/engine';
+import { createHash } from 'crypto';
 import { CONTROLS_ALL } from '../common/text';
 
 const ID = /^[A-Za-z0-9_-]{8,64}$/;
 /** PsaTicket.createdById for a ticket the tray asked for: there is no signed-in person. */
 export const TRAY_CREATOR = 'tray';
+/** 0.55: PsaTicket.createdById for an automatic alert ticket. */
+export const AUTO_CREATOR = 'monitoring';
+
+/** What an automatic alert ticket is built from: the server's own alert row. */
+export interface AutoTicketAlert {
+  id: string; kind: string; ruleKey: string; severity: string; title: string; firstSeenAt: Date;
+  tenantId: string | null; customerId: string | null;
+  endpoint: { id: string; name: string }; customer: { name: string } | null;
+}
 
 const ConnectorInput = z.object({
   scope: z.enum(['global', 'business']),
@@ -228,6 +239,85 @@ export class PsaService {
     });
     await this.audit.log({ ...base, action: 'PSA_TICKET_CREATED', meta: { ...ids, ticketId: ticket.id, ref: ticket.ref, status: r.status } });
     return { ok: true as const, ticketId: ticket.id, ref: ticket.ref, kindLabel: drv.label };
+  }
+
+  // ── Automatic alert tickets (0.55) ─────────────────────────────────────────
+  //
+  // Called only by AlertTicketsService.pass, inside the monitoring sweep,
+  // after its rule, notify-hold, maintenance-window, `notifications` pause
+  // and per-business budget checks. Here: the connector (the business's
+  // enabled one, else the platform default) and its readiness, then the
+  // claim — the MonitorAlertTicket row, unique per alert, created (or a
+  // failed row moved on) before anything is sent — then PSA_AUTO_TICKET_REQUESTED
+  // with logOrFail, then the one send. The draft is buildDraft's for the
+  // alert with no note and no AI text: the same as "Create ticket" sends.
+  // Audit meta carries ids, the kind, the attempt and the reference only.
+
+  /** Whether an automatic ticket for a computer of this business could be sent now (connector and readiness). */
+  async autoReady(customerId: string | null) {
+    const eff = await this.effective(customerId);
+    if (!eff) return null;
+    const ready = await this.driver(eff.row.kind).ready(eff.row, this.deps, customerId);
+    return ready.ok ? eff : null;
+  }
+
+  async alertTicket(a: AutoTicketAlert, prior: { id: string; attempts: number } | null, now = new Date()): Promise<{ attempted: boolean; status: string }> {
+    const eff = await this.autoReady(a.customerId);
+    if (!eff) return { attempted: false, status: 'not_configured' };
+    const drv = this.driver(eff.row.kind);
+    const attempt = prior ? prior.attempts + 1 : 1;
+    const claim = { status: 'sending', attempts: attempt, lastAttemptAt: now, nextAttemptAt: null, connectorKind: eff.row.kind, connectorScope: eff.scope };
+    let rowId: string;
+    if (!prior) {
+      try {
+        rowId = (await this.prisma.monitorAlertTicket.create({ data: { alertId: a.id, customerId: a.customerId, ...claim } })).id;
+      } catch (e) {
+        if ((e as { code?: string }).code === 'P2002') return { attempted: false, status: 'claimed' };
+        throw e;
+      }
+    } else {
+      const u = await this.prisma.monitorAlertTicket.updateMany({ where: { id: prior.id, status: 'failed', attempts: prior.attempts }, data: claim });
+      if (!u.count) return { attempted: false, status: 'claimed' };
+      rowId = prior.id;
+    }
+    const draft = buildDraft({
+      endpoint: { id: a.endpoint.id, name: a.endpoint.name, tenantId: a.tenantId, customerId: a.customerId, osVersion: null },
+      businessName: a.customer?.name ?? null, sourceRef: `alert:${a.id}`,
+      alert: { id: a.id, kind: a.kind, ruleKey: a.ruleKey, severity: a.severity, title: a.title, detail: null, firstSeenAt: a.firstSeenAt.toISOString() },
+    }, { link: `${this.urls.web()}/alerts?alert=${encodeURIComponent(a.id)}`, requestedBy: AUTO_REQUESTER, ai: null });
+    const base = { tenantId: a.tenantId ?? undefined, customerId: a.customerId ?? undefined, resource: 'monitor_alert', resourceId: a.id };
+    const ids = { connectorKind: eff.row.kind, connectorScope: eff.scope, connectorId: eff.row.id, source: 'monitoring', sourceRef: draft.sourceRef, alertId: a.id, endpointId: a.endpoint.id, kind: a.kind, severity: a.severity, attempt };
+    const failed = async (status: string) => {
+      const retryAt = autoTicketRetryAt(attempt, now);
+      await this.prisma.monitorAlertTicket.update({ where: { id: rowId }, data: { status: retryAt ? 'failed' : 'gave_up', nextAttemptAt: retryAt, lastStatus: status.slice(0, 64) } });
+      await this.prisma.monitorAlertEvent.create({ data: { alertId: a.id, type: 'ticket_failed', detail: { attempt, status: status.slice(0, 64), retryAt: retryAt?.toISOString() ?? null, connectorKind: eff.row.kind } } });
+      return retryAt;
+    };
+    // No record, no request.
+    try {
+      await this.audit.logOrFail({ ...base, action: 'PSA_AUTO_TICKET_REQUESTED', meta: ids });
+    } catch {
+      await failed('audit_unavailable');
+      return { attempted: true, status: 'audit_unavailable' };
+    }
+    const r = await drv.send(eff.row, draft, this.deps);
+    if (!r.ok) {
+      const retryAt = await failed(r.status);
+      await this.audit.log({ ...base, action: 'PSA_TICKET_FAILED', meta: { ...ids, status: r.status, retryAt: retryAt?.toISOString() ?? null } });
+      return { attempted: true, status: r.status };
+    }
+    const ticket = await this.prisma.psaTicket.create({
+      data: {
+        tenantId: a.tenantId, customerId: a.customerId, endpointId: a.endpoint.id, sourceRef: draft.sourceRef,
+        // The same identity "Create ticket" records for this alert, so the button sees it.
+        fingerprint: createHash('sha256').update(`alert:${a.id}`).digest('hex'),
+        connectorKind: eff.row.kind, connectorScope: eff.scope, ref: r.ref ?? null, url: r.url ?? null, createdById: AUTO_CREATOR,
+      },
+    });
+    await this.prisma.monitorAlertTicket.update({ where: { id: rowId }, data: { status: 'sent', psaTicketId: ticket.id, ref: ticket.ref, url: ticket.url, lastStatus: r.status.slice(0, 64) } });
+    await this.prisma.monitorAlertEvent.create({ data: { alertId: a.id, type: 'ticketed', detail: { attempt, ref: ticket.ref, connectorKind: eff.row.kind } } });
+    await this.audit.log({ ...base, action: 'PSA_TICKET_CREATED', meta: { ...ids, ticketId: ticket.id, ref: ticket.ref, status: r.status } });
+    return { attempted: true, status: 'sent' };
   }
 
   /** For the buttons: is a ticket possible from this computer, and the tickets already made. */

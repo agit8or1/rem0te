@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { apiError } from '@/components/security-controls/shared';
-import { AlertDetail, type AlertRow, SeverityBadge, StateBadge, type Summary } from '@/components/monitoring/alerts';
+import { AlertDetail, type AlertRow, AutoTicketBadge, SeverityBadge, StateBadge, type Summary } from '@/components/monitoring/alerts';
 
 /**
  * Alerts (0.29).
@@ -137,6 +137,7 @@ export default function AlertsPage() {
                 {a.occurrences > 1 && <Badge variant="outline">×{a.occurrences}</Badge>}
                 {a.parentId && <Badge variant="outline">in site outage</Badge>}
                 {a.ticket && <Badge variant="outline">ticket {a.ticket.id}</Badge>}
+                <AutoTicketBadge t={a.autoTicket} />
                 <span className="ml-auto text-xs text-muted-foreground">
                   {a.business?.name}{a.computer ? ` · ${a.computer.name ?? a.computer.hostname ?? ''}` : a.site ? ` · ${a.site.name}` : ''} · {fmt(a.lastSeenAt)}
                 </span>

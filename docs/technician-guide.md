@@ -71,6 +71,7 @@ zero.
 | **Customers affected** | Businesses with an outage, an open alert, an offline device or a failed action |
 | **Devices needing attention** | Devices with critical or warning alerts, failed actions, offline, agent silent or restart pending, most serious first |
 | **Being worked on** | Live sessions, acknowledged alerts (and who acknowledged them), actions in flight, patch deployments in progress |
+| **Recent alerts** (0.55) | The newest open and acknowledged alerts: severity, computer, business, how long, and the automatic PSA ticket's reference. Each links to the alert. Needs *View alerts*, and lists only computers you can see. With no monitor configured it says so and links to **Settings → Monitoring** (*Add recommended*) |
 | **Your recent devices** | The devices of your own most recent sessions |
 | **Recent activity** | Alert, action, patch, session, device and support-request events from the audit log, last 7 days. Needs *View business audit log* |
 
@@ -90,7 +91,7 @@ System status** (*Server health* at the top right). From 0.35 the dashboard
 fits the window on a desktop screen (1366 × 768 and up): the figures across
 the top, then *Work on next*, *Devices needing attention* and *Customers
 affected*, then the map with *Being worked on*, *Patch status*, *Recent
-activity* and *Your recent devices* beside it. A long list scrolls inside its
+alerts*, *Recent activity* and *Your recent devices* beside it. A long list scrolls inside its
 own card instead of lengthening the page — also while a red containment strip
 is showing at the top (0.36: the dashboard takes the strip's height off its
 own). On a phone the cards stack in that order. *Hide device locations* (top

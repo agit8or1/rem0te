@@ -44,7 +44,14 @@ export function defaultSubject(src: Pick<ResolvedSource, 'endpoint' | 'event' | 
   return oneLine(`[Rem0te] ${src.endpoint.name} — alert: ${src.alert?.title ?? ''} (${(src.alert?.severity ?? '').toLowerCase()})`, SUBJECT_MAX);
 }
 
-export function buildDraft(src: ResolvedSource, opts: { subject?: string | null; note?: string | null; link: string; requestedBy: string; ai: TicketDraft['ai'] }): TicketDraft {
+/**
+ * 0.55: what an automatic alert ticket says it was requested by. There is no
+ * person; the body otherwise carries exactly what "Create ticket" on the same
+ * alert carries with no note and no AI text.
+ */
+export const AUTO_REQUESTER = 'Rem0te monitoring (automatic)';
+
+export function buildDraft(src: Pick<ResolvedSource, 'endpoint' | 'businessName' | 'sourceRef' | 'event' | 'alert'>, opts: { subject?: string | null; note?: string | null; link: string; requestedBy: string; ai: TicketDraft['ai'] }): TicketDraft {
   const subject = oneLine(opts.subject && opts.subject.trim() ? opts.subject : defaultSubject(src), SUBJECT_MAX);
   const note = opts.note ? cleanNote(opts.note) || null : null;
   const event = src.event ? {

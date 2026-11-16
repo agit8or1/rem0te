@@ -217,6 +217,8 @@ enum ActivityAction {
   PSA_CONNECTOR_CHANGED
   PSA_TICKET_CREATED
   PSA_TICKET_FAILED
+  PSA_AUTO_TICKET_REQUESTED // 0.55: written before an automatic alert ticket is sent
+  MONITOR_TICKET_POLICY_CHANGED // 0.55
   // 0.33 device groups, shared device views and bulk actions
   DEVICE_GROUP_CREATED
   DEVICE_GROUP_UPDATED
@@ -648,6 +650,7 @@ model Customer {
   monitorRules         MonitorRule[]
   monitorAlerts        MonitorAlert[]
   monitorSuppressions  MonitorSuppression[]
+  monitorTicketPolicies MonitorTicketPolicy[]
   clientUpdatePolicies ClientUpdatePolicy[]
   scripts              Script[]
   softwareEntries      SoftwareCatalogEntry[]
@@ -2957,6 +2960,10 @@ enum MonitorKind {
   EVENT_MATCH
   REBOOT_PENDING
   AGENT_SILENT // 0.36: reachable through RustDesk, agent not checking in (opt-in)
+  DRIVE_FREE // 0.55: any fixed drive (inventory), one alert per drive
+  UPTIME_LONG // 0.55: not restarted in N days
+  UPDATES_MISSING // 0.55: security/critical updates offered for N days (signed patch scan)
+  UPDATE_FAILED // 0.55: an update install failed (Windows Update history, deployment results)
 }
 
 enum AlertSeverity {
@@ -3052,6 +3059,8 @@ model MonitorAlert {
   ticketUrl        String?
   ticketLinkedAt   DateTime?
   events           MonitorAlertEvent[]
+  /// 0.55: the automatic PSA ticket, at most one per alert (alertId is unique).
+  autoTicket       MonitorAlertTicket?
 
   @@index([customerId, state])
   @@index([endpointId, state])
@@ -4059,6 +4068,7 @@ model PsaTicket {
   url            String?
   createdById    String
   createdAt      DateTime @default(now())
+  alertTickets   MonitorAlertTicket[]
 
   @@index([endpointId, createdAt])
   @@index([endpointId, fingerprint])
@@ -4073,4 +4083,51 @@ model ConfirmPolicy {
   value       String
   updatedById String?
   updatedAt   DateTime @updatedAt
+}
+
+/// 0.55: "create a ticket in the PSA when an alert of at least this severity
+/// (optionally only these kinds) opens". One row per scope, 'global' or
+/// 'b:<businessId>'; a business's row, when present, replaces the global one
+/// for that business (as MonitorNotifyPolicy does). Only alerts first seen
+/// after `enabledAt` are ticketed: switching it on does not ticket the backlog.
+model MonitorTicketPolicy {
+  id          String        @id @default(cuid())
+  scopeKey    String        @unique
+  customerId  String?
+  customer    Customer?     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  enabled     Boolean       @default(false)
+  minSeverity AlertSeverity @default(CRITICAL)
+  /// Empty = every kind.
+  kinds       String[]
+  enabledAt   DateTime?
+  updatedById String
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+/// 0.55: one automatic PSA ticket attempt record per alert (alertId unique,
+/// so an alert is ticketed at most once). The row is the claim: created
+/// 'sending' before the send, then 'sent', or 'failed' with a backoff and a
+/// bounded number of attempts, then 'gave_up'.
+model MonitorAlertTicket {
+  id             String        @id @default(cuid())
+  alertId        String        @unique
+  alert          MonitorAlert  @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  customerId     String?
+  status         String
+  attempts       Int
+  lastAttemptAt  DateTime
+  nextAttemptAt  DateTime?
+  lastStatus     String?
+  connectorKind  String?
+  connectorScope String?
+  psaTicketId    String?
+  psaTicket      PsaTicket?    @relation(fields: [psaTicketId], references: [id], onDelete: SetNull)
+  ref            String?
+  url            String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([customerId, lastAttemptAt])
 }
