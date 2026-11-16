@@ -373,15 +373,15 @@ check(
 {
   const signerDir = 'apps/api/src/approval-signer';
   const signerFiles = readdirSync(join(ROOT, signerDir)).filter((f) => f.endsWith('.ts')).map((f) => `${signerDir}/${f}`);
-  const ALLOWED_IMPORT = /^(node:|crypto$|\.\/|@simplewebauthn\/server$|zod$|\.\.\/actions\/catalog$|\.\.\/actions\/patch-policy$|\.\.\/actions\/device-result$|\.\.\/actions\/script-run$|\.\.\/integration\/crypto$)/;
+  const ALLOWED_IMPORT = /^(node:|crypto$|\.\/|@simplewebauthn\/server$|zod$|\.\.\/actions\/catalog$|\.\.\/actions\/patch-policy$|\.\.\/actions\/automation-policy$|\.\.\/actions\/device-result$|\.\.\/actions\/script-run$|\.\.\/integration\/crypto$)/;
   const importsOf = (src) => [...src.matchAll(/(?:from|require\()\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
   const bad = [];
   // 0.32: the patch-policy evaluator (and the posture module it judges with)
   // run inside the signer, so they are held to the same rule; so (0.34) is
   // the device-result verifier, and the script-run rules (argument schema,
-  // plan block, allowlist proposal).
-  for (const f of [...signerFiles, 'apps/api/src/actions/catalog.ts', 'apps/api/src/integration/crypto.ts', 'apps/api/src/actions/patch-policy.ts', 'apps/api/src/patching/posture.ts', 'apps/api/src/actions/device-result.ts', 'apps/api/src/actions/script-run.ts']) {
-    const own = f.startsWith(signerDir) ? ALLOWED_IMPORT : /^(node:|crypto$|zod$|\.\/crypto$|\.\/catalog$|\.\/device-result$|\.\/script-run$|\.\.\/actions\/catalog$|\.\.\/actions\/device-result$|\.\.\/patching\/posture$|\.\.\/integration\/crypto$)/;
+  // plan block, allowlist proposal), and (0.58) the automation-policy evaluator.
+  for (const f of [...signerFiles, 'apps/api/src/actions/catalog.ts', 'apps/api/src/integration/crypto.ts', 'apps/api/src/actions/patch-policy.ts', 'apps/api/src/patching/posture.ts', 'apps/api/src/actions/device-result.ts', 'apps/api/src/actions/script-run.ts', 'apps/api/src/actions/automation-policy.ts']) {
+    const own = f.startsWith(signerDir) ? ALLOWED_IMPORT : /^(node:|crypto$|zod$|\.\/crypto$|\.\/catalog$|\.\/device-result$|\.\/script-run$|\.\/patch-policy$|\.\.\/actions\/catalog$|\.\.\/actions\/device-result$|\.\.\/patching\/posture$|\.\.\/integration\/crypto$)/;
     for (const i of importsOf(read(f))) if (!own.test(i)) bad.push(`${f} imports ${i}`);
   }
   check('approval signer loads no Nest, Prisma or portal module', signerFiles.length >= 4 && bad.length === 0,
@@ -4482,6 +4482,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'agent-upgrade/agent-upgrade.service.ts': ['agent.migrate'],
     'ai/ai.controller.ts': ['ai.settings'],
     'apikeys/apikeys.service.ts': ['apikey.create'],
+    'automation/automation.controller.ts': ['automation.policy'],
+    'automation/automation.service.ts': ['actions.direct'],
     'client-updates/client-updates.service.ts': ['agent.autoupdate.business', 'updates.schedule'],
     'containment/containment.controller.ts': ['containment.lift'],
     'email/email.controller.ts': ['email.recipients', 'email.relay'],
@@ -4995,6 +4997,115 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /unit-restart-windows\.mjs/.test(read('.github/workflows/ci.yml')) && / service-process task-progress restart-windows; do/.test(read('scripts/run-e2e.sh'))
       && /P\.policyDigest\(parsed\) === '466423a5bb889e289b536d62ac25ddf66450179770f1161c576003fc3644f99b'/.test(unitR),
     'unit-restart-windows.mjs in CI (pinning the 0.52 digest), e2e-restart-windows.mjs in run-e2e.sh');
+}
+
+// ── §71 (0.58): automation schedules ─────────────────────────────────────────
+// A recurring script run or software install is an automation policy: one
+// document two passkey approvers approve on the approval signer (or that the
+// signer activates in direct mode), under which the signer signs each
+// occurrence's plan with its own checks. The portal's sweep only asks, through
+// ActionsService.createPlan, after the containment and task checks. Disabled by
+// default: nothing creates a policy but a person, and AUTOMATION_SWEEP=off stops it.
+{
+  console.log('\n§71 automation schedules');
+  const ap = read('apps/api/src/actions/automation-policy.ts');
+  const core = read('apps/api/src/approval-signer/core.ts');
+  const srv = read('apps/api/src/approval-signer/server.ts');
+  const store = read('apps/api/src/approval-signer/store.ts');
+  const svc = read('apps/api/src/automation/automation.service.ts');
+  const ctl = read('apps/api/src/automation/automation.controller.ts');
+  const asvc = read('apps/api/src/actions/actions.service.ts');
+  const pp = read('apps/api/src/actions/patch-policy.ts');
+  const mig = read('apps/api/prisma/migrations/0079_automation_policies/migration.sql');
+  const strip71 = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const imports = [...ap.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1]);
+  check('automation document: pure, loaded by the signer, importing only zod, crypto and the shared action modules',
+    imports.every((i) => ['node:crypto', 'zod', '../integration/crypto', './catalog', './script-run', './patch-policy'].includes(i))
+      && read('apps/api/scripts/build-approval-signer.mjs').includes('/^actions\\/automation-policy\\.js$/'),
+    `imports: ${imports.join(', ')}; build-approval-signer.mjs must ALLOW actions/automation-policy.js`);
+  check('automation document: its own digest and signing prefixes, not a patch policy\'s',
+    ap.includes("export const AUTOMATION_DIGEST_PREFIX = 'rem0te-automation-policy-v1\\n';") && ap.includes("export const AUTOMATION_SIGNING_PREFIX = 'rem0te-automation-policy-approved-v1\\n';"),
+    'AUTOMATION_DIGEST_PREFIX / AUTOMATION_SIGNING_PREFIX');
+  check('recurrence: hourly is automation\'s own closed shape; the patch window union is not widened (§66 unchanged)',
+    !/hourly/.test(strip71(pp)) && ap.includes('export const HOURLY_EVERY = [1, 2, 3, 4, 6, 8, 12] as const;')
+      && ap.includes('export const AutomationRecurrence = z.union([HourlyRecurrence, PolicyWindow]);')
+      && ap.includes("export function recurrenceKind(r: unknown): 'hourly' | 'weekly' | 'monthly' | null {") && ap.includes('return windowKind(r);'),
+    'patch-policy.ts must not name hourly; recurrenceKind falls back to windowKind and fails closed');
+  check('limits: at most 25 computers, 3 plans an occurrence, 24 hours of validity, 90 days',
+    ap.includes('export const MAX_AUTOMATION_TARGETS = MAX_RING_TARGETS;') && ap.includes('export const MAX_RUNS_PER_OCCURRENCE = 3;')
+      && ap.includes('export const MAX_EXPIRE_HOURS = 24;') && ap.includes('export const MAX_AUTOMATION_DAYS = MAX_POLICY_DAYS;')
+      && mig.includes('CHECK ("attempt" BETWEEN 0 AND 3)') && mig.includes('CHECK ("targets" BETWEEN 0 AND 25)'),
+    'the constants, and 0079\'s CHECKs');
+  const evS = ap.indexOf('export function evaluateAutomationPlan(');
+  const ev = evS < 0 ? '' : ap.slice(evS, ap.indexOf('\n}\n', evS));
+  const at = (c) => ev.indexOf(`no('${c}'`);
+  check('the signer\'s plan check: revoked first, then approval, then the exact task, the computers, the window, the offline rule, no overlap, the per-occurrence limit',
+    ev.length > 0 && at('policy_revoked') > 0 && at('policy_revoked') < at('policy_not_active') && at('policy_not_active') < at('policy_not_approved')
+      && at('policy_not_approved') < at('action_not_in_policy') && at('params_not_in_policy') > 0 && at('script_not_in_policy') > 0 && at('software_not_in_policy') > 0
+      && at('requester_mismatch') > 0 && at('computer_not_in_policy') > 0 && at('too_many_targets') > 0 && at('outside_schedule') > at('computer_not_in_policy')
+      && at('offline_rule_unknown') > 0 && at('offline_rule_mismatch') > at('offline_rule_unknown') && at('previous_run_open') > 0
+      && at('occurrence_run_limit') > 0 && at('already_ran_this_occurrence') > 0,
+    'evaluateAutomationPlan must refuse every code, revocation before anything else');
+  const suS = core.indexOf('export function signUnderAutomation(');
+  const sua = suS < 0 ? '' : core.slice(suS, core.indexOf('\n}\n', suS));
+  check('the signer signs an occurrence only after the ordinary admission (allowlist, software revocation) and the policy check',
+    sua.length > 0 && sua.indexOf('admitPlan(raw.plan, business, now, scripts, softwareRevoked)') > 0
+      && sua.indexOf('admitPlan(') < sua.indexOf('evaluateAutomationPlan(') && sua.indexOf('if (!decision.ok) throw') < sua.indexOf('signJob(job, k, now)')
+      && sua.includes('signatureValid: verifyAutomation(r, createPublicKey(k.key))'),
+    'signUnderAutomation: admitPlan, then evaluateAutomationPlan on a verified record, then signJob');
+  check('approving a schedule: passkeys on the signer\'s origin; never its author, never a script\'s contributor',
+    core.includes("if (m.userId === r.doc.createdBy.userId) throw new Refused('requester_cannot_approve'")
+      && core.includes("if (r.doc.task.kind === 'script' && r.doc.task.script.contributors.includes(m.userId)) throw new Refused('contributor_cannot_approve'"),
+    'recordAutomationDecision refuses requester_cannot_approve and contributor_cannot_approve');
+  const arS = srv.indexOf('function automationRoute(');
+  const ar = arS < 0 ? '' : srv.slice(arS, srv.indexOf('\n}\n', arS));
+  check('the signer\'s internal automation routes: propose, read, revoke, plans — nothing approves, activates or un-revokes',
+    ar.includes("if (rest.length === 2 && (rest[1] === 'revoke' || rest[1] === 'plans')) return [rest[0], rest[1]];")
+      && srv.includes("if (sub !== 'plans') return send(res, 404, { error: 'not_found' });")
+      && store.includes("writeFileSync(path.join(this.dir, 'automation-revocations', `${id}.json`), JSON.stringify(rev, null, 2), { mode: 0o600, flag: 'wx' })"),
+    'automationRoute names revoke and plans only; revocations are write-once (wx)');
+  check('direct mode: only the signer\'s own policy activates a schedule at admission',
+    srv.includes("if (policyFor(store.policy(), doc.businessId).approval === 'direct') {") && sua.includes('direct: biz.approval === DIRECT')
+      && svc.includes("if (direct) assertFresh(freshMethod, { action: 'actions.direct',"),
+    'internalAutomation reads policyFor; the portal asks actions.direct before proposing in direct mode');
+  const routes = [...ctl.matchAll(/@(Get|Post|Put|Patch|Delete)\('([^']+)'\)/g)].map((m) => `${m[1]} ${m[2]}`);
+  const freshIn = (name) => { const i = ctl.indexOf(`async ${name}(`) >= 0 ? ctl.indexOf(`async ${name}(`) : ctl.indexOf(`  ${name}(`); const j = ctl.indexOf('\n  }\n', i); return i >= 0 && ctl.slice(i, j).includes('this.fresh(req);'); };
+  check('portal routes: list, create, preview, read, pause, resume, revoke — no approve route; create, resume and revoke ask, pause never does',
+    routes.join('|') === 'Get automation/schedules|Post automation/schedules|Post automation/schedules/preview|Get automation/schedules/:id|Post automation/schedules/:id/pause|Post automation/schedules/:id/resume|Post automation/schedules/:id/revoke'
+      && freshIn('create') && freshIn('resume') && freshIn('revoke') && !freshIn('pause') && ctl.includes("assertFresh(this.freshMethod(req), { action: 'automation.policy' });"),
+    `routes: ${routes.join(', ')}`);
+  const prop = svc.slice(svc.indexOf('  async propose('), svc.indexOf('  private actionOf('));
+  check('the sweep only asks: one createPlan under the automation policy, after the overlap, containment, author and task checks',
+    prop.length > 0 && (prop.match(/this\.actions\.createPlan\(/g) ?? []).length === 1
+      && !/this\.signer\./.test(strip71(prop))
+      && prop.indexOf("this.containment.blocking('actions', r.customerId)") > prop.indexOf("rec(false, 'previous_run_open'")
+      && prop.indexOf('this.actors.contextFor(') > prop.indexOf("this.containment.blocking('actions'")
+      && prop.indexOf('automationScriptProblem(') > prop.indexOf('this.actors.contextFor(') && prop.indexOf('automationEntryProblem(') > 0
+      && prop.indexOf('this.actions.createPlan(') > prop.indexOf('automationEntryProblem(')
+      && prop.includes("underPolicy: { policyId: r.id, digest: r.digest, evidence: null, kind: 'automation' },"),
+    'AutomationService.propose');
+  check('ActionsService sends an automation plan to the signer\'s automation route, and audits that it came from one',
+    /\? r\.underPolicy\.kind === 'automation'\s*\? await this\.signer\.submitUnderAutomation\(r\.underPolicy\.policyId, \{ plan, policyDigest: r\.underPolicy\.digest \}\)/.test(asvc)
+      && asvc.includes("...(r.underPolicy?.kind === 'automation' ? { automation: true } : {})"),
+    'actions.service.ts submit and ACTION_REQUESTED meta');
+  const creators = walk('apps/api/src').filter((f) => /automationPolicy\.create\(/.test(read(f)));
+  check('disabled by default: nothing creates a schedule but the create route; AUTOMATION_SWEEP=off stops the sweep',
+    creators.join(',') === 'apps/api/src/automation/automation.service.ts' && (svc.match(/automationPolicy\.create\(/g) ?? []).length === 1
+      && svc.includes("static sweepEnabled() { return process.env.AUTOMATION_SWEEP !== 'off'; }")
+      && /^export AUTOMATION_SWEEP=off$/m.test(read('scripts/run-e2e.sh')) && !mig.includes('INSERT INTO "AutomationPolicy"'),
+    `creators: ${creators.join(', ')}`);
+  check('pause is immediate and audited, and cancels undelivered plans; resume and revoke are audited; REVOKED is final in the database',
+    svc.includes('const stopped = await this.stopPlans(r, `schedule paused by') && svc.includes("action: 'AUTOMATION_POLICY_PAUSED'")
+      && svc.includes("action: 'AUTOMATION_POLICY_RESUMED'") && svc.includes("action: 'AUTOMATION_POLICY_REVOKED'") && svc.includes("action: 'AUTOMATION_POLICY_CREATED'")
+      && mig.includes('CREATE TRIGGER "AutomationPolicy_revoked_final"'),
+    'pause/resume/revoke/create audit rows; 0079 trigger');
+  const goAction = readdirSync(join(ROOT, 'tools/windows-installer/internal/action')).join(' ');
+  check('the agent is unchanged: an occurrence plan is an ordinary script or software plan',
+    !/automation/i.test(goAction),
+    'no automation code in the agent');
+  check('automation schedules: the suites run',
+    read('.github/workflows/ci.yml').includes('unit-automation-schedule.mjs') && read('scripts/run-e2e.sh').includes('scripts/e2e-automation-schedule.mjs'),
+    'unit-automation-schedule.mjs in CI, e2e-automation-schedule.mjs in run-e2e.sh');
 }
 
 if (failures.length > 0) {

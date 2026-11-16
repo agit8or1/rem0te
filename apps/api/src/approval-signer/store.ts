@@ -27,6 +27,9 @@
  *                               write-once, never removed; nothing from them is installed again
  *   <dir>/revocations.json      every revocation ever published in a statement (v0.36), so
  *                               the signed statement never shrinks, whatever is on disk
+ *   <dir>/automations/<id>.json automation policies (0.58): the document, its decisions,
+ *                               the signer's signature and the ledger of occurrence plans
+ *   <dir>/automation-revocations/<id>.json  their revocations: write-once, never removed
  *
  * The serving process never writes roster.json or policy.json: those belong
  * to the operator CLI. Counters live apart so that saving one can never
@@ -39,14 +42,14 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
-import type { Challenge, DevicePin, JobRecord, Policy, PolicyRecord, RevocationSet, Roster, ScriptAllowRecord } from './core';
+import type { AutomationRecord, Challenge, DevicePin, JobRecord, Policy, PolicyRecord, RevocationSet, Roster, ScriptAllowRecord } from './core';
 
 const ID = /^[a-f0-9]{32}$/;
 
 export class SignerStore {
   private chain: Promise<unknown> = Promise.resolve();
   constructor(readonly dir: string) {
-    for (const d of ['jobs', 'challenges', 'counters', 'pauses', 'policies', 'revocations', 'device-keys', 'scripts', 'script-revocations', 'software-revocations']) mkdirSync(path.join(dir, d), { recursive: true, mode: 0o700 });
+    for (const d of ['jobs', 'challenges', 'counters', 'pauses', 'policies', 'revocations', 'device-keys', 'scripts', 'script-revocations', 'software-revocations', 'automations', 'automation-revocations']) mkdirSync(path.join(dir, d), { recursive: true, mode: 0o700 });
   }
 
   /** Run fn with every other mutation waiting. */
@@ -118,6 +121,28 @@ export class SignerStore {
   }
   savePatchPolicy(r: PolicyRecord) { if (!ID.test(r.policyId)) throw new Error('bad policy id'); this.write(path.join(this.dir, 'policies', `${r.policyId}.json`), r); }
   patchPolicies(): string[] { return readdirSync(path.join(this.dir, 'policies')).filter((f) => /^[a-f0-9]{32}\.json$/.test(f)).map((f) => f.slice(0, -5)); }
+
+  // ── Automation policies (0.58) ────────────────────────────────────────────
+  // As patch policies: one file each, revocation its own write-once file, so
+  // nothing that rewrites a policy can lose one, and nothing removes it.
+  automation(id: string): AutomationRecord | null {
+    if (!ID.test(id)) return null;
+    const r = this.read<AutomationRecord>(path.join(this.dir, 'automations', `${id}.json`));
+    if (!r) return null;
+    const rev = this.read<Revocation>(path.join(this.dir, 'automation-revocations', `${id}.json`));
+    if (rev) Object.assign(r, { status: 'REVOKED', revokedAt: rev.at, revokedBy: rev.by, revokeReason: rev.reason });
+    return r;
+  }
+  /** Revoke an automation policy. Returns false if it already was; the first revocation stands. */
+  revokeAutomation(id: string, rev: Revocation): boolean {
+    if (!ID.test(id)) throw new Error('bad automation id');
+    try { writeFileSync(path.join(this.dir, 'automation-revocations', `${id}.json`), JSON.stringify(rev, null, 2), { mode: 0o600, flag: 'wx' }); return true; } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
+      throw e;
+    }
+  }
+  saveAutomation(r: AutomationRecord) { if (!ID.test(r.policyId)) throw new Error('bad automation id'); this.write(path.join(this.dir, 'automations', `${r.policyId}.json`), r); }
+  automations(): string[] { return readdirSync(path.join(this.dir, 'automations')).filter((f) => /^[a-f0-9]{32}\.json$/.test(f)).map((f) => f.slice(0, -5)); }
 
   // ── Device result keys (v0.34) ────────────────────────────────────────────
   // One file per enrolled identity, created with 'wx': the serving process

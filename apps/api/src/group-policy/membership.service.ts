@@ -43,6 +43,12 @@ export class Membership {
     for (const s of this.byEndpoint.values()) if (s.has(groupId)) n++;
     return n;
   }
+  /** 0.58: the computers in a group, sorted by id — what an automation policy's group target resolves to at one occurrence. */
+  members(groupId: string): string[] {
+    const out: string[] = [];
+    for (const [ep, s] of this.byEndpoint) if (s.has(groupId)) out.push(ep);
+    return out.sort();
+  }
 }
 
 /**

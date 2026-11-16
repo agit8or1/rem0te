@@ -238,7 +238,7 @@ function startApi() {
     HBBS_PRESENCE_HOST: '127.0.0.2', I_KNOW_THIS_IS_NOT_PRODUCTION: '1',
     // Nothing in the background acts on this database while the browser looks at it.
     MONITOR_SWEEP: 'off', CLIENT_UPDATE_SWEEP: 'off', PATCH_POLICY_SWEEP: 'off', METRIC_SWEEP: 'off', AUDIT_SEALER: 'off',
-    RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off', TRAY_SWEEP: 'off', AUTO_MIGRATION_SWEEP: 'off', WINGET_INDEX_SWEEP: 'off',
+    RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off', TRAY_SWEEP: 'off', AUTO_MIGRATION_SWEEP: 'off', WINGET_INDEX_SWEEP: 'off', AUTOMATION_SWEEP: 'off',
     // 0.35: the agent-silent fixture is reachable (isOnline) with an old heartbeat; with no hbbs here the stale sweep would take it offline within a minute.
     STALE_SWEEP: 'off',
     // 0.35 automatic snapshots: the fixtures' snapshots are the only ones, and
@@ -1979,8 +1979,38 @@ async function patchWindowEditor(page, f, vp, label) {
   await cleanCheck(page, `${label} patch policy editor`);
 }
 
+/**
+ * 0.58: Automation → Schedules. This stack has no approval signer, so the
+ * list must say so (with the reason), show its empty state and offer no
+ * "New schedule". The editor still works out an hourly schedule's next runs
+ * through the preview route — the signer's own functions — and refuses
+ * nothing silently. Nothing is proposed.
+ */
+async function automationSchedules(page, f, vp, label) {
+  await go(page, '/automation/schedules');
+  const text = await page.locator('main').innerText();
+  check(/Automation schedules need the approval signer/.test(await page.locator('[data-testid="schedule-not-ready"]').innerText().catch(() => ''))
+      && await page.locator('[data-testid="schedules-empty"]').isVisible().catch(() => false)
+      && !(await page.locator('[data-testid="schedule-new"]').isVisible().catch(() => false)),
+    `${label}: Schedules without a signer: says why, shows the empty state, offers no New schedule`, text.slice(0, 400));
+  if (vp === 'phone') await noSideScroll(page, `${label} schedules`);
+  await cleanCheck(page, `${label} schedules list`);
+  await go(page, '/automation/schedules/new');
+  await page.locator('[data-testid="rec-hourly"]').check();
+  await page.locator('[data-testid="hourly-every"]').selectOption('6');
+  await page.waitForFunction(() => /Every 6 hours at :00/.test(document.querySelector('[data-testid="schedule-preview"]')?.textContent ?? ''), null, { timeout: 15_000 }).catch(() => {});
+  const prev = await page.locator('[data-testid="schedule-preview"]').innerText().catch(() => '');
+  check(/Every 6 hours at :00/.test(prev) && (prev.match(/–/g) ?? []).length >= 3, `${label}: the editor previews an hourly schedule's next runs from the server`, prev.slice(0, 300));
+  check(await page.locator('[data-testid="schedule-create"]').isDisabled() && /Give it a name|Choose/.test(await page.locator('[data-testid="schedule-problem"]').innerText().catch(() => '')),
+    `${label}: Propose stays disabled, and says what is missing`);
+  if (vp === 'phone') await noSideScroll(page, `${label} schedule editor`);
+  await shot(page, `${label}-automation-schedule-new`);
+  await cleanCheck(page, `${label} schedule editor`);
+}
+
 async function coverage035(page, f, vp, label) {
   await patchWindowEditor(page, f, vp, label);
+  await automationSchedules(page, f, vp, label);
   await chatTab(page, f, vp, label);
   await scriptRunPanel(page, f, vp, label);
   await softwareCatalog(page, f, vp, label);

@@ -72,6 +72,9 @@ export const CONFIRM_CATALOG = [
   { key: 'scripts.direct', group: 'Approved actions & scripts', label: 'Direct-mode script proposals', default: 'ask',
     prompt: "add a script to the approval signer's allowlist",
     description: "In direct mode, proposing a script adds it to the approval signer's allowlist at once." },
+  { key: 'automation.policy', group: 'Approved actions & scripts', label: 'Automation schedules', default: 'ask',
+    prompt: 'create, resume or revoke an automation schedule',
+    description: 'Proposing a recurring script run or software install (0.58), resuming a paused one, or revoking one. Pausing never asks.' },
 
   // ── Agents ──────────────────────────────────────────────────────────────
   { key: 'agent.migrate', group: 'Agents', label: 'Upgrade to the full agent', default: 'ask',

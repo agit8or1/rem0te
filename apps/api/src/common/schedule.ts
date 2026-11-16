@@ -17,7 +17,7 @@ export const Schedule = z.object({
 export type Schedule = z.infer<typeof Schedule>;
 
 /** The instant a schedule names, checked: a known zone, not in the past (5 minutes' grace), at most MAX_SCHEDULE_DAYS ahead. */
-export function scheduledStart(s: Schedule, now = new Date(), what = 'An install'): Date {
+export function scheduledStart(s: Schedule, now = new Date(), what = 'An install', regular?: string): Date {
   if (!validTimezone(s.timeZone)) throw new BadRequestException({ code: 'INVALID_TIMEZONE', message: `${s.timeZone} is not a time zone this server knows (an IANA name, e.g. Europe/London).` });
   const [d, t] = s.local.split('T');
   const [y, m, day] = d.split('-').map(Number), [hh, mm] = t.split(':').map(Number);
@@ -25,7 +25,17 @@ export function scheduledStart(s: Schedule, now = new Date(), what = 'An install
   const at = zonedToUtc(y, m, day, hh, mm, s.timeZone);
   if (Number.isNaN(at.getTime())) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'That date or time does not exist.' });
   if (at.getTime() < now.getTime() - 5 * 60_000) throw new BadRequestException({ code: 'SCHEDULE_IN_PAST', message: `${s.local} in ${s.timeZone} has already passed.` });
-  if (at.getTime() > now.getTime() + MAX_SCHEDULE_DAYS * 86_400_000) throw new BadRequestException({ code: 'SCHEDULE_TOO_FAR', message: `${what} can be scheduled at most ${MAX_SCHEDULE_DAYS} days ahead. For a regular schedule, use a patch policy's ${what === 'An install' ? 'maintenance' : 'restart'} window.` });
+  if (at.getTime() > now.getTime() + MAX_SCHEDULE_DAYS * 86_400_000) throw new BadRequestException({ code: 'SCHEDULE_TOO_FAR', message: `${what} can be scheduled at most ${MAX_SCHEDULE_DAYS} days ahead. For a regular schedule, use ${regular ?? `a patch policy's ${what === 'An install' ? 'maintenance' : 'restart'} window`}.` });
   return new Date(Math.max(at.getTime(), now.getTime()));
 }
 
+
+/**
+ * 0.58: the signed window of a one-time scheduled script run or software
+ * install: it opens at the scheduled time and lasts `windowHours`, exactly as
+ * a scheduled ring does (§65). A recurring schedule is an automation policy.
+ */
+export function scheduledPlanWindow(s: Schedule, windowHours: number, now = new Date(), what = 'A run'): { notBefore: Date; notAfter: Date } {
+  const notBefore = scheduledStart(s, now, what, 'an automation schedule (Automation → Schedules)');
+  return { notBefore, notAfter: new Date(notBefore.getTime() + windowHours * 3600_000) };
+}

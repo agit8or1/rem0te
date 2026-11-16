@@ -151,14 +151,14 @@ export const softwareApi = {
   deployment: (id: string) => api.get(`/software/deployments/${id}`),
   createDeployment: (body: { entryId: string; operation: 'install' | 'uninstall'; name?: string; rings: string[][]; soakHours: number; failureThreshold: number; windowHours: number }) =>
     api.post('/software/deployments', body),
-  requestRing: (id: string, ring: number, body: { reason: string; startsInMinutes?: number; exclude?: { endpointId: string; why: string }[] }) =>
+  requestRing: (id: string, ring: number, body: { reason: string; startsInMinutes?: number; schedule?: { local: string; timeZone: string }; exclude?: { endpointId: string; why: string }[] }) =>
     api.post(`/software/deployments/${id}/rings/${ring}/request`, body),
   pause: (id: string, reason: string) => api.post(`/software/deployments/${id}/pause`, { reason }),
   resume: (id: string, reason: string) => api.post(`/software/deployments/${id}/resume`, { reason }),
   cancel: (id: string, reason: string) => api.post(`/software/deployments/${id}/cancel`, { reason }),
   endpoint: (endpointId: string) => api.get(`/endpoints/${endpointId}/software/catalog`),
   // One computer: a one-ring deployment; the returned job carries the approval link.
-  single: (endpointId: string, entryId: string, operation: 'install' | 'uninstall', body: { reason: string; windowHours: number; startsInMinutes?: number }) =>
+  single: (endpointId: string, entryId: string, operation: 'install' | 'uninstall', body: { reason: string; windowHours: number; startsInMinutes?: number; schedule?: { local: string; timeZone: string } }) =>
     api.post(`/endpoints/${endpointId}/software/${entryId}/${operation}`, body),
   // 0.41: the searchable winget catalog, one-click install, removing an installed program.
   wingetSearch: (q: string) => api.get('/software/winget/packages', { params: { q } }),
@@ -1063,6 +1063,36 @@ export const scriptRunsApi = {
   readiness: (versionId: string) => api.get(`/script-runs/versions/${versionId}`),
   propose: (versionId: string) => api.post(`/script-runs/versions/${versionId}/allowlist`),
   revoke: (versionId: string, reason: string) => api.post(`/script-runs/versions/${versionId}/allowlist/revoke`, { reason }),
-  run: (data: { scriptVersionId: string; endpointIds: string[]; parameters: Record<string, ScriptArgument>; timeoutMinutes: number; reason: string; windowHours?: number }) =>
+  run: (data: { scriptVersionId: string; endpointIds: string[]; parameters: Record<string, ScriptArgument>; timeoutMinutes: number; reason: string; windowHours?: number; schedule?: { local: string; timeZone: string } }) =>
     api.post('/script-runs', data),
+};
+
+// ─── v0.58: automation schedules (docs/automation.md) ───────────────────────
+// Proposed here, approved on the approval signer with passkeys (or, in direct
+// mode, active at once), and every run signed there under the policy. There
+// is no approve route. Create, resume and revoke ask for a fresh sign-in
+// (automation.policy); pause never does.
+export type AutomationRecurrenceInput =
+  | { kind: 'hourly'; everyHours: number; minute: number; windowMinutes: number; timezone: string }
+  | PolicyWindowInputLite;
+type PolicyWindowInputLite =
+  | { days: string[]; start: string; end: string; timezone: string }
+  | { kind: 'monthly'; week: string; weekday: string; offsetDays: number; start: string; end: string; timezone: string }
+  | { kind: 'monthly'; day: number; start: string; end: string; timezone: string };
+export type AutomationOfflineInput = { mode: 'run_when_online' } | { mode: 'skip_if_offline' } | { mode: 'expire_after'; hours: number };
+export interface AutomationCreateInput {
+  businessId: string; name: string; reason: string;
+  task: { kind: 'script'; scriptVersionId: string; parameters: Record<string, ScriptArgument>; timeoutMinutes: number } | { kind: 'software'; entryId: string; operation: 'install' | 'uninstall' };
+  targets: { kind: 'computers'; endpointIds: string[] } | { kind: 'group'; groupId: string; maxTargets: number };
+  recurrence: AutomationRecurrenceInput; offline: AutomationOfflineInput; maxRunsPerOccurrence: number; expiresInDays: number; supersedes?: string;
+}
+export const automationApi = {
+  list: (businessId?: string | null) => api.get('/automation/schedules', bq(businessId)),
+  get: (id: string) => api.get(`/automation/schedules/${id}`),
+  create: (body: AutomationCreateInput) => api.post('/automation/schedules', body),
+  preview: (body: { recurrence: AutomationRecurrenceInput; expiresInDays?: number }) => api.post('/automation/schedules/preview', body),
+  pause: (id: string, reason: string) => api.post(`/automation/schedules/${id}/pause`, { reason }),
+  resume: (id: string) => api.post(`/automation/schedules/${id}/resume`),
+  revoke: (id: string, reason: string) => api.post(`/automation/schedules/${id}/revoke`, { reason }),
+  groups: (businessId: string) => api.get('/device-groups', { params: { businessId } }),
 };

@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.54.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.58.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -66,7 +66,7 @@ it, its default and its limits: **Settings → Security → Security Features**,
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
 
-## What's new in 0.40 to 0.54
+## What's new in 0.40 to 0.58
 
 Every change on a computer below (services, processes, installing and removing software) needs the full (signed)
 Windows agent and an approval signer, and none of those changes has yet run on a real Windows computer: they have
@@ -74,6 +74,14 @@ been tested against a simulated one. Ask AI and Create ticket have been tested o
 real provider or PSA. [What each agent can do](docs/capabilities.md)
 says what is proven and what is not.
 
+- **Automation schedules (0.58).** An approved library script or a software catalog package can run every few
+  hours, daily, weekly or monthly, on up to 25 named computers or on a device group with a cap
+  (*Automation → Schedules*). Two passkey approvers approve the schedule once on the approval signer, never its
+  author or the script's writers. The signer then signs each run and holds it to the same task, computers, window and
+  offline rule (run when online, skip, or expire after N hours, signed into each plan). Runs never overlap. Pause is
+  immediate; revoking the script, archiving the package, a containment pause or revoking the schedule stops every
+  later run; a change is a revision approved again. A single script run or install can also be scheduled once.
+  The signer must be reinstalled from 0.58; the agent is unchanged. [Automation schedules](docs/automation.md)
 - **Restart scheduling and restart windows (0.54).** A restart can be asked for now or at a date and time up to
   14 days ahead, in a named zone, from a computer's Actions tab, the Patches tab's restart banner, or the device
   list for a selection or a device group (at most 200, one approved plan each). *Only if a restart is required*

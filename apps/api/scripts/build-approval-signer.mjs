@@ -17,7 +17,7 @@
  *
  * It copies exactly the files the signer loads, found by loading it (not by a
  * list someone has to keep in step), and refuses if that set ever reaches
- * outside approval-signer/, actions/catalog, actions/script-run (0.34), actions/patch-policy, actions/device-result,
+ * outside approval-signer/, actions/catalog, actions/script-run (0.34), actions/patch-policy, actions/automation-policy (0.58), actions/device-result,
  * patching/posture and integration/crypto — which is
  * how a Nest or Prisma import would announce itself. The manifest pins the
  * exact versions the API was built and tested against.
@@ -37,7 +37,8 @@ if (!out && !listOnly) { console.error('usage: build-approval-signer.mjs --out D
 
 // 0.32: the patch-policy evaluator and the posture rule it shares with the portal (both pure: zod and node: only).
 // 0.34: the device-result verifier it checks each computer's signed result with (zod and node:crypto only).
-const ALLOWED = [/^approval-signer\//, /^actions\/catalog\.js$/, /^actions\/script-run\.js$/, /^actions\/patch-policy\.js$/, /^actions\/device-result\.js$/, /^patching\/posture\.js$/, /^integration\/crypto\.js$/];
+// 0.58: the automation-policy evaluator (pure, as patch-policy).
+const ALLOWED = [/^approval-signer\//, /^actions\/catalog\.js$/, /^actions\/automation-policy\.js$/, /^actions\/script-run\.js$/, /^actions\/patch-policy\.js$/, /^actions\/device-result\.js$/, /^patching\/posture\.js$/, /^integration\/crypto\.js$/];
 const DIRECT_DEPS = ['@simplewebauthn/server', 'zod'];
 
 const require = createRequire(import.meta.url);

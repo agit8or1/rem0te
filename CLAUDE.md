@@ -1075,6 +1075,43 @@ function. Older documents keep their bytes. Behavioural proof:
 `PRE054_ACTION_SIM`); unit: `unit-restart-windows.mjs` and the Go
 `restart054_test.go`.
 
+§71 (0.58) is automation schedules. A recurring script run or software install is an automation policy:
+
+- **The document** is one signer document (`actions/automation-policy.ts`, pure, on the signer's ALLOWED list), with
+  its own digest and signing prefixes.
+- **Its recurrence** is hourly (automation's own closed shape) or the patch policy's weekly or monthly window.
+  `PolicyWindow` is not widened, so §66 and every patch document's bytes are unchanged, and `recurrenceKind` fails
+  closed.
+- **Approval.** Two passkey approvers on the signer's origin approve it, never its author
+  (`requester_cannot_approve`) and never a script's contributor (`contributor_cannot_approve`). In direct mode it is
+  active at admission, decided only by the signer's `policyFor`, and the portal asks `actions.direct` first.
+- **Each run.** The signer signs a run only after the ordinary `admitPlan` (allowlist, software revocation, pauses)
+  and `evaluateAutomationPlan`. Revocation is checked first, then:
+  - the exact task;
+  - the named computers bound to their identity, or the group's business and cap;
+  - the window;
+  - the offline rule as `notAfter`;
+  - no overlap;
+  - at most three plans per window.
+- **Signer routes.** The internal routes are propose, read, revoke and plans only, and revocations are write-once.
+- **Portal routes** are list, create, preview, read, pause, resume and revoke. There is no approve route. Create,
+  resume and revoke need `assertFresh` naming `automation.policy`; pause never does, and cancels undelivered plans.
+- **The sweep** (`AUTOMATION_SWEEP`; `=off` is exact, exported by `run-e2e.sh` and set by `e2e-ui.mjs`) makes one
+  `ActionsService.createPlan` as the author with `underPolicy.kind: 'automation'`. It does so only after checking:
+  1. no open plan;
+  2. the `actions` containment pause;
+  3. the author;
+  4. the task still allowlisted or unarchived.
+- **Disabled by default.** Only `AutomationService.create` writes an `AutomationPolicy` row, and 0079 keeps REVOKED
+  final.
+- **The agent is unchanged**: a run is an ordinary script or software plan.
+- **This amends 0.34's wording, not §39.** A scheduled run is approved once per schedule, not per run, by two people
+  who are still not the script's writers. §39's allowlist and constant-command-line checks hold as before. §65 and
+  §66 are unchanged; one-time script and software schedules reuse `common/schedule.ts` as the signed `notBefore`.
+
+Behavioural proof: `e2e-automation-schedule.mjs` (ports 3841–3843, `RELEASE_BIN` / `ACTION_SIM` / pwsh). Unit:
+`unit-automation-schedule.mjs`.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

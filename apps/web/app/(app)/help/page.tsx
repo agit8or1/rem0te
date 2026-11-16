@@ -1244,6 +1244,20 @@ const SECTIONS: Section[] = [
           <Link href="/docs/staged-patching#scheduled-installs" className="underline text-foreground">Staged patching</Link>.
         </p>
         <p>
+          From 0.58, an approved library script or a software catalog package can run{' '}
+          <strong className="text-foreground">on a schedule</strong>:{' '}
+          <Link href="/automation/schedules" className="underline text-foreground">Automation → Schedules</Link>. A
+          schedule names the task (the script&apos;s exact hash and arguments, or the package version), named computers
+          or a device group with a cap of 25, every few hours or a daily, weekly or monthly window, and what happens to a
+          computer that is offline. Two approvers who are not its author (and did not write the script) approve it once
+          on the approval signer; the signer then signs each run and holds it to the schedule. Runs never overlap.
+          Pausing stops it at once; resuming and revoking ask you to confirm it is you. Revoking the script, archiving
+          the package or a containment pause on actions stops every later run, and changing a schedule is a revision,
+          approved again. A single script run or software install can also be scheduled once, up to 14 days ahead.
+          Tested against a simulated agent only. More in{' '}
+          <Link href="/docs/automation" className="underline text-foreground">Automation schedules</Link>.
+        </p>
+        <p>
           From 0.53, a patch policy&apos;s maintenance window can be{' '}
           <strong className="text-foreground">monthly</strong> as well as weekly: the first, second, third, fourth or
           last weekday of each month plus 0–14 days (Patch Tuesday is the second Tuesday, so &ldquo;second Tuesday + 2&rdquo;

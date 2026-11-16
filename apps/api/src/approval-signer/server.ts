@@ -14,13 +14,17 @@
  *             approve or edit one),
  *             GET /internal/v1/revocations, POST /internal/v1/software/:entryId/revoke
  *             (v0.36: the signed revocation statement the portal relays to
- *             agents, and the one-way revocation of an archived catalog entry)
+ *             agents, and the one-way revocation of an archived catalog entry),
+ *             POST /internal/v1/automations, GET /internal/v1/automations/:id,
+ *             POST /internal/v1/automations/:id/revoke and /plans (0.58:
+ *             automation policies — propose, mirror, revoke one-way, and ask
+ *             for an occurrence's plan, which this process decides)
  *   public    (behind the reverse proxy, on its OWN origin — not the
  *             portal's, so no script the portal serves can reach into it):
  *             GET /approve/:id, GET /approve/:id/state,
  *             POST /approve/:id/challenge, POST /approve/:id/decide,
- *             and the same four under /approve/policy/:id (0.32) and
- *             /approve/script/:id (0.34)
+ *             and the same four under /approve/policy/:id (0.32),
+ *             /approve/script/:id (0.34) and /approve/automation/:id (0.58)
  *
  * The portal can propose and poll. It cannot decide: a decision is a passkey
  * assertion that this process verifies against its own roster.
@@ -35,11 +39,12 @@ import {
   deviceIdentity, deviceKeyChangedMessage, newPins, pinConflicts,
   allowlistDirect, admitScriptProposal, assertScriptAllowed, effectiveScriptStatus, recordScriptDecision, scriptRolesFor,
   assertSoftwareAllowed, mergeRevocations, revocationStatement, signRevocations, SOFTWARE_ENTRY_ID,
-  type Challenge, type JobRecord, type PolicyRecord, type Role, type ScriptAllowRecord,
+  admitAutomation, automationApprovalsOf, automationRolesFor, effectiveAutomationStatus, recordAutomationDecision, signAutomation, signUnderAutomation,
+  type AutomationRecord, type Challenge, type JobRecord, type PolicyRecord, type Role, type ScriptAllowRecord,
 } from './core';
 import { SCRIPT_RUN_ACTION, canonical } from '../actions/script-run';
 import { SignerStore } from './store';
-import { renderApprovalPage, renderPolicyApprovalPage, renderScriptApprovalPage } from './page';
+import { renderApprovalPage, renderAutomationApprovalPage, renderPolicyApprovalPage, renderScriptApprovalPage } from './page';
 
 export interface SignerConfig {
   dir: string;
@@ -84,6 +89,15 @@ const fail = (res: ServerResponse, e: unknown) => {
 function policyView(r: PolicyRecord, now: Date) {
   return {
     policyId: r.policyId, status: effectivePolicyStatus(r, now), digest: r.digest, doc: r.doc,
+    decisions: r.decisions.map((d) => ({ name: d.name, role: d.role, decision: d.decision, at: d.at })),
+    revokedAt: r.revokedAt, revokeReason: r.revokeReason, signedPlans: r.ledger.length,
+  };
+}
+
+/** Public view of an automation policy (0.58): what an approver needs, nothing about the roster. */
+function automationView(r: AutomationRecord, now: Date) {
+  return {
+    policyId: r.policyId, status: effectiveAutomationStatus(r, now), digest: r.digest, doc: r.doc,
     decisions: r.decisions.map((d) => ({ name: d.name, role: d.role, decision: d.decision, at: d.at })),
     revokedAt: r.revokedAt, revokeReason: r.revokeReason, signedPlans: r.ledger.length,
   };
@@ -300,6 +314,134 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
     return send(res, 200, { id: out.id, status: effectiveScriptStatus(out), revokedAt: out.revokedAt });
   }
 
+  /** The public approval pages for an automation policy (0.58): the same passkeys, roster and origin rules as a patch policy's. */
+  async function publicAutomation(req: IncomingMessage, res: ServerResponse, id: string, sub: string | undefined) {
+    const r = store.automation(id);
+    if (!r) return send(res, 404, { error: 'not_found' });
+    if (req.method === 'GET' && !sub) {
+      const nonce = randomBytes(16).toString('base64');
+      // A script task shows the script as this process holds it, from its own allowlist.
+      const scriptContent = r.doc.task.kind === 'script' ? store.scriptEntry(r.doc.task.script.allowlistId)?.proposal.content ?? null : null;
+      return send(res, 200, renderAutomationApprovalPage({ ...automationView(r, now()), scriptContent }, nonce), pageHeaders(nonce));
+    }
+    if (req.method === 'GET' && sub === '/state') return send(res, 200, automationView(r, now()));
+    if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
+    if (req.headers.origin !== cfg.origin) throw new Refused('not_authorized', 'cross-origin request refused');
+    const b = await body(req) as { decision?: string; role?: string; challengeId?: string; assertion?: AuthenticationResponseJSON };
+    const p = store.activePause(r.doc.businessId);
+    if (p) throw new Refused('paused', `approvals are paused${p.scope === 'business' ? ' for this business' : ''}: ${p.reason}`);
+    if (sub === '/challenge') {
+      const decision = b.decision === 'reject' ? 'reject' : b.decision === 'approve' ? 'approve' : null;
+      const role = b.role === 'customer' ? 'customer' : b.role === 'approver' ? 'approver' : null;
+      if (!decision || !role) throw new Refused('bad_request', 'decision and role are required');
+      const st = effectiveAutomationStatus(r, now());
+      if (st !== 'AWAITING_APPROVAL') throw new Refused('not_awaiting', `this automation policy is ${st.toLowerCase().replace(/_/g, ' ')}`);
+      const c: Challenge = { id: randomBytes(32).toString('base64url'), kind: 'automation', jobId: r.policyId, digest: r.digest, decision, role, expiresAt: new Date(now().getTime() + CHALLENGE_TTL_MS).toISOString(), used: false };
+      store.saveChallenge(c);
+      return send(res, 200, { challengeId: c.id, options: { challenge: webauthnChallenge(c), rpId: cfg.rpId, timeout: CHALLENGE_TTL_MS, userVerification: 'required', allowCredentials: [] } });
+    }
+    // /decide
+    const out = await store.exclusive(async () => {
+      const c = b.challengeId ? store.challenge(b.challengeId) : null;
+      if (!c || c.kind !== 'automation' || c.jobId !== r.policyId) throw new Refused('bad_challenge');
+      if (c.used) throw new Refused('challenge_used', 'this approval prompt was already used');
+      if (Date.parse(c.expiresAt) <= now().getTime()) throw new Refused('challenge_expired');
+      c.used = true; store.saveChallenge(c);
+      const cur = store.automation(r.policyId)!;
+      if (cur.digest !== c.digest) throw new Refused('plan_changed');
+      const member = await verifiedMember(c, b.assertion);
+      if (store.activePause(cur.doc.businessId)) throw new Refused('paused', 'approvals were paused while you decided');
+      // A script revoked, or a package archived, while the policy waited is never approved into running.
+      if (c.decision === 'approve') admitAutomation(cur.doc, now(), (sid) => store.scriptEntry(sid), softwareRevoked);
+      const status = recordAutomationDecision(cur, member, c.role as Role, c.decision, now(), policyFor(store.policy(), cur.doc.businessId).customerSignoff);
+      if (status === 'ACTIVE') signAutomation(cur, k, now());
+      store.saveAutomation(cur);
+      if (status === 'ACTIVE') console.log(`[approval-signer] automation policy ${cur.policyId} approved; its occurrences are now signed without further approval until ${cur.doc.expiresAt}`);
+      return { cur, member };
+    });
+    return send(res, 200, { ...automationView(out.cur, now()), you: { name: out.member.name, credential: credentialSha256(out.member).slice(0, 16), roles: automationRolesFor(out.member, out.cur.doc) } });
+  }
+
+  // ── internal: automation policies (0.58) ──────────────────────────────────
+  //   POST /internal/v1/automations               propose (awaits two approvals here, or active in direct mode)
+  //   GET  /internal/v1/automations/:id           status, for the portal to mirror
+  //   POST /internal/v1/automations/:id/revoke    one-way: nothing un-revokes
+  //   POST /internal/v1/automations/:id/plans     sign an occurrence's plan, if it is inside the policy
+  // There is no route that approves, edits or un-revokes one.
+  async function internalAutomation(req: IncomingMessage, res: ServerResponse, [id, sub]: [string | undefined, string | undefined]) {
+    if (!id) {
+      if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
+      const b = await body(req, MAX_POLICY_PLAN_BODY) as { policy?: unknown };
+      const out = await store.exclusive(() => {
+        const { doc, digest } = admitAutomation(b.policy, now(), (sid) => store.scriptEntry(sid), softwareRevoked);
+        assertNotPaused(doc.businessId);
+        const existing = store.automation(doc.policyId);
+        if (existing) {
+          if (existing.digest !== digest) throw new Refused('policy_id_reused', 'a different automation policy already has this id');
+          return existing;
+        }
+        const r: AutomationRecord = {
+          policyId: doc.policyId, status: 'AWAITING_APPROVAL', doc, digest, decisions: [], signature: null, kid: null,
+          revokedAt: null, revokedBy: null, revokeReason: null, ledger: [], refusals: [], createdAt: now().toISOString(), updatedAt: now().toISOString(),
+        };
+        // Direct mode (§58): active at admission, with no approvals; it stops counting if the business leaves direct mode.
+        if (policyFor(store.policy(), doc.businessId).approval === 'direct') {
+          r.direct = true;
+          signAutomation(r, k, now());
+          console.log(`[approval-signer] automation policy ${r.policyId} active in direct mode (proposed by ${doc.createdBy.userId})`);
+        }
+        store.saveAutomation(r);
+        return r;
+      });
+      return send(res, 201, { policyId: out.policyId, digest: out.digest, status: effectiveAutomationStatus(out, now()), direct: out.direct === true, approvalUrl: `${cfg.origin}/approve/automation/${out.policyId}` });
+    }
+    const r0 = store.automation(id);
+    if (!r0) return send(res, 404, { error: 'not_found' });
+    if (req.method === 'GET' && !sub) {
+      return send(res, 200, { ...automationView(r0, now()), direct: r0.direct === true, approvals: automationApprovalsOf(r0).map((a) => ({ name: a.name, role: a.role, at: a.at })), refusals: r0.refusals.slice(-10), approvalUrl: `${cfg.origin}/approve/automation/${r0.policyId}` });
+    }
+    if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
+    if (sub === 'revoke') {
+      const b = await body(req) as { reason?: unknown };
+      if (typeof b.reason !== 'string' || b.reason.trim().length < 3) throw new Refused('bad_request', 'a reason is required');
+      const out = await store.exclusive(() => {
+        const reason = [...b.reason as string].slice(0, 300).map((c) => (c < ' ' ? ' ' : c)).join('');
+        if (store.revokeAutomation(id, { at: now().toISOString(), by: 'portal', reason })) console.log(`[approval-signer] automation policy ${id} revoked at the portal's request: ${reason}`);
+        return store.automation(id)!;
+      });
+      return send(res, 200, { policyId: out.policyId, status: 'REVOKED', revokedAt: out.revokedAt });
+    }
+    if (sub !== 'plans') return send(res, 404, { error: 'not_found' });
+    const b = await body(req, MAX_POLICY_PLAN_BODY) as { plan?: { jobId?: unknown }; policyDigest?: unknown };
+    const out = await store.exclusive(() => {
+      const r = store.automation(id)!;
+      const jobId = typeof b.plan?.jobId === 'string' && /^[a-f0-9]{32}$/.test(b.plan.jobId) ? b.plan.jobId : '-';
+      try {
+        assertNotPaused(r.doc.businessId);
+        const existing = jobId !== '-' ? store.job(jobId) : null;
+        if (existing) {
+          // The same plan again (a retried request): the same answer. Anything else under this id is refused.
+          const again = admitPlan(b.plan, store.policy(), now(), (sid) => store.scriptEntry(sid), softwareRevoked);
+          if (existing.digest !== again.digest || !r.ledger.some((e) => e.jobId === jobId)) throw new Refused('job_id_reused', 'a different plan already has this job id');
+          return existing;
+        }
+        const { job, entry } = signUnderAutomation(r, b, k, store.policy(), now(), (sid) => store.scriptEntry(sid), softwareRevoked);
+        store.saveJob(job);
+        store.saveAutomation(r);
+        console.log(`[approval-signer] signed ${job.jobId} under automation policy ${r.policyId} (occurrence ${entry.occurrence}, ${job.plan.targets.length} computer(s))`);
+        return job;
+      } catch (e) {
+        if (e instanceof Refused) {
+          r.refusals = [...r.refusals, { at: now().toISOString(), jobId, code: e.code, message: e.message.slice(0, 300) }].slice(-50);
+          store.saveAutomation(r);
+          console.log(`[approval-signer] refused a plan under automation policy ${r.policyId}: ${e.code} — ${e.message}`);
+        }
+        throw e;
+      }
+    });
+    return send(res, 201, { jobId: out.jobId, digest: out.digest, status: out.status, approvalUrl: `${cfg.origin}/approve/${out.jobId}` });
+  }
+
   // ── internal: patch policies (v0.32) ──────────────────────────────────────
   //   POST /internal/v1/policies               propose (awaits two approvals here)
   //   GET  /internal/v1/policies/:id           status, for the portal to mirror
@@ -425,12 +567,14 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
         const people = new Set(store.roster().members.filter((x) => !x.disabled && x.approve.length).map((x) => x.userId));
         const pol = store.policy();
         const directBusinesses = Object.keys(pol.businesses).filter((b) => policyFor(pol, b).approval === 'direct').length;
-        return send(res, 200, { patchPolicies: 1, scripts: 1, revocations: 1, direct: 1, kid: k.kid, roster: { approvers: people.size }, approval: { default: policyFor({ default: pol.default, businesses: {} }, '-').approval, directBusinesses } });
+        return send(res, 200, { patchPolicies: 1, scripts: 1, revocations: 1, direct: 1, automations: 1, kid: k.kid, roster: { approvers: people.size }, approval: { default: policyFor({ default: pol.default, businesses: {} }, '-').approval, directBusinesses } });
       }
       const pol = policyRoute(url.pathname);
       if (pol) return await internalPolicy(req, res, pol);
       const scr = scriptRoute(url.pathname);
       if (scr) return await internalScript(req, res, scr);
+      const aut = automationRoute(url.pathname);
+      if (aut) return await internalAutomation(req, res, aut);
       if (!m) return send(res, 404, { error: 'not_found' });
       if (req.method === 'POST' && !m[1]) {
         const b = await body(req) as { plan?: unknown };
@@ -483,6 +627,8 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       if (pm) return await publicPolicy(req, res, pm[1], pm[2]);
       const sm = url.pathname.match(/^\/approve\/script\/([a-f0-9]{32})(\/state|\/challenge|\/decide)?$/);
       if (sm) return await publicScript(req, res, sm[1], sm[2]);
+      const am = url.pathname.match(/^\/approve\/automation\/([a-f0-9]{32})(\/state|\/challenge|\/decide)?$/);
+      if (am) return await publicAutomation(req, res, am[1], am[2]);
       const m = url.pathname.match(/^\/approve\/([a-f0-9]{32})(\/state|\/challenge|\/decide)?$/);
       if (!m) return send(res, 404, { error: 'not_found' });
       const j = store.job(m[1]);
@@ -571,6 +717,18 @@ function scriptRoute(p: string): [string | undefined, string | undefined] | null
   if (!/^[a-f0-9]{32}$/.test(rest[0])) return null;
   if (rest.length === 1) return [rest[0], undefined];
   if (rest.length === 2 && rest[1] === 'revoke') return [rest[0], rest[1]];
+  return null;
+}
+
+/** /internal/v1/automations, /automations/<id>, /automations/<id>/(revoke|plans) → [id?, sub?]; else null. */
+function automationRoute(p: string): [string | undefined, string | undefined] | null {
+  const base = '/internal/v1/automations';
+  if (p === base) return [undefined, undefined];
+  if (!p.startsWith(`${base}/`)) return null;
+  const rest = p.slice(base.length + 1).split('/');
+  if (!/^[a-f0-9]{32}$/.test(rest[0])) return null;
+  if (rest.length === 1) return [rest[0], undefined];
+  if (rest.length === 2 && (rest[1] === 'revoke' || rest[1] === 'plans')) return [rest[0], rest[1]];
   return null;
 }
 

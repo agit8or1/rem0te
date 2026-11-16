@@ -124,6 +124,13 @@ jobs:
       # it, one open plan and three per window), and the 0.52 digest pinned.
       - name: Restart window tests
         run: node apps/api/scripts/unit-restart-windows.mjs
+      # 0.58: automation schedules — hourly recurrence (beside, never inside,
+      # the patch window union), the offline rule as the signed notAfter, the
+      # document and its quorum, every evaluateAutomationPlan refusal, and the
+      # signer in-process: approval, occurrence plans, no overlap, revocation,
+      # pause, direct mode and the CLI.
+      - name: Automation schedule tests
+        run: node apps/api/scripts/unit-automation-schedule.mjs
       # 0.50: company-wide and assignable patch policies — the rings the
       # portal builds (checked with the signer's own validatePolicyDoc), the
       # membership fingerprint and the bounded revision decision.

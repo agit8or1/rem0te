@@ -12,6 +12,7 @@ import { SignerClient } from '../actions/signer.client';
 import { RevocationRelay } from '../actions/revocations.controller';
 import { MAX_RING_TARGETS, MAX_WINDOW_HOURS, SCRIPT_RUN } from '../actions/catalog';
 import { assertFresh } from '../security-controls/review';
+import { Schedule, scheduledPlanWindow } from '../common/schedule';
 import {
   MAX_SCRIPT_OUTPUT_BYTES, SCRIPT_OUTPUT_RETENTION_DAYS, TIMEOUT_MINUTES, ScriptRunParams, argumentsProblem, type ParameterDecl, type ScriptBlock, type ScriptProposal,
 } from '../actions/script-run';
@@ -52,6 +53,8 @@ export const RunDto = z.object({
   reason: z.string().trim().min(3).max(500),
   startsInMinutes: z.number().int().min(0).max(24 * 60).default(0),
   windowHours: z.number().int().min(1).max(MAX_WINDOW_HOURS).default(4),
+  /** 0.58: a one-time run at a date and time in a named zone, at most 14 days ahead: the plan's signed notBefore (§65). */
+  schedule: Schedule.optional(),
 }).strict();
 export const RevokeDto = z.object({ reason: z.string().trim().min(3).max(300) }).strict();
 
@@ -278,9 +281,51 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
       language: 'powershell', targetOs: 'windows', risk: v.risk as ScriptBlock['risk'], parameters: decls,
       contentSha256: v.contentSha256, contentBytes: v.contentBytes, definitionSha256: v.definitionSha256, contributors: v.contributorIds, reviewedBy: v.decidedById,
     };
+    if (d.schedule && d.startsInMinutes) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Give a schedule or startsInMinutes, not both.' });
     const job = await this.actions.createPlan(actor, {
-      action: SCRIPT_RUN, endpointIds: d.endpointIds, params, reason: d.reason, startsInMinutes: d.startsInMinutes, windowHours: d.windowHours, script: block, freshMethod,
+      action: SCRIPT_RUN, endpointIds: d.endpointIds, params, reason: d.reason, startsInMinutes: d.startsInMinutes, windowHours: d.windowHours, script: block,
+      // 0.58: a scheduled run. The plan's signed window opens at the scheduled time.
+      ...(d.schedule ? { window: scheduledPlanWindow(d.schedule, d.windowHours, new Date(), 'A run') } : {}),
+      freshMethod,
     });
     return this.actions.view(job, actor);
+  }
+
+  /**
+   * 0.58: what an automation policy runs, as the author sees it — the same
+   * checks a one-off run makes (an APPROVED version, an ACTIVE entry on the
+   * signer's allowlist, arguments the declarations accept, the script's own
+   * business) — returned as the params and allowlist block its plans carry.
+   * Requests nothing: the automation service puts these into a document the
+   * signer admits only if its own allowlist agrees.
+   */
+  async automationTask(actor: ActorContext, versionId: string, parameters: Record<string, unknown>, timeoutMinutes: number, businessId: string): Promise<{ params: ScriptRunParams; block: ScriptBlock }> {
+    const v = await this.load(actor, versionId);
+    const s = v.script;
+    if (v.status !== 'APPROVED' || !v.decidedById) throw new ConflictException({ code: 'NOT_APPROVED', message: 'Only a version approved in the library can be scheduled.' });
+    const entry = (await this.entries(v.id)).find((e) => e.status === 'ACTIVE');
+    if (!entry) throw new ConflictException({ code: 'SCRIPT_NOT_ALLOWLISTED', message: 'This version is not on the approval signer\'s allowlist yet. Propose it from the library first.' });
+    if (s.customerId && s.customerId !== businessId) throw new BadRequestException({ code: 'SCRIPT_WRONG_BUSINESS', message: 'This script belongs to another business; it runs on that business\'s computers only.' });
+    const params = { scriptVersionId: v.id, sha256: v.contentSha256, parameters, timeoutMinutes };
+    const decls = v.parameters as unknown as ParameterDecl[];
+    const why = argumentsProblem(decls, parameters);
+    const ok = ScriptRunParams.safeParse(params);
+    if (why || !ok.success) throw new BadRequestException({ code: 'PARAMS_NOT_ALLOWED', message: why ? `Those arguments do not match the script's declared parameters: ${why}.` : `The timeout is one of ${TIMEOUT_MINUTES.join(', ')} minutes.` });
+    const block: ScriptBlock = {
+      allowlistId: entry.id, scriptId: s.id, versionId: v.id, name: s.name.slice(0, 120), version: v.version, businessId: s.customerId,
+      language: 'powershell', targetOs: 'windows', risk: v.risk as ScriptBlock['risk'], parameters: decls,
+      contentSha256: v.contentSha256, contentBytes: v.contentBytes, definitionSha256: v.definitionSha256, contributors: v.contributorIds, reviewedBy: v.decidedById,
+    };
+    return { params: ok.data, block };
+  }
+
+  /** 0.58: is this allowlist entry still ACTIVE (mirrored from the signer)? Null if so, else why not. The signer decides regardless. */
+  async automationScriptProblem(allowlistId: string): Promise<string | null> {
+    const e0 = /^[a-f0-9]{32}$/.test(allowlistId) ? await this.prisma.scriptAllowlistEntry.findUnique({ where: { id: allowlistId } }) : null;
+    if (!e0) return 'its script is no longer on the approval signer\'s allowlist';
+    const e = await this.refresh(e0);
+    if (e.status === 'REVOKED') return `its script was removed from the allowlist${e.revokeReason ? `: ${e.revokeReason}` : ''}`;
+    if (e.status !== 'ACTIVE') return `its script's allowlist entry is ${e.status.toLowerCase().replace(/_/g, ' ')}`;
+    return null;
   }
 }

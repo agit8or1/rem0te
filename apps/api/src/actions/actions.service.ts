@@ -155,8 +155,10 @@ export interface PlanRequest {
   /**
    * 0.32: submit under a patch policy. The signer signs it at once if it is
    * inside that policy, and refuses it otherwise; nobody is asked to approve.
+   * 0.58: `kind: 'automation'` names an automation policy instead
+   * (actions/automation-policy.ts), decided by the signer the same way.
    */
-  underPolicy?: { policyId: string; digest: string; evidence: unknown };
+  underPolicy?: { policyId: string; digest: string; evidence: unknown; kind?: 'automation' };
   /** 0.34, windows.script.run: the signer's allowlist entry for the version (script-run.ts ScriptBlock). */
   script?: ScriptBlock;
   /**
@@ -414,7 +416,9 @@ export class ActionsService {
     const scriptProblem = scriptPlanProblem(check.data);
     if (scriptProblem) throw new BadRequestException({ code: 'PARAMS_NOT_ALLOWED', message: `This plan does not describe its script consistently (${scriptProblem}).` });
     const submitted = r.underPolicy
-      ? await this.signer.submitUnderPolicy(r.underPolicy.policyId, { plan, policyDigest: r.underPolicy.digest, evidence: r.underPolicy.evidence })
+      ? r.underPolicy.kind === 'automation'
+        ? await this.signer.submitUnderAutomation(r.underPolicy.policyId, { plan, policyDigest: r.underPolicy.digest })
+        : await this.signer.submitUnderPolicy(r.underPolicy.policyId, { plan, policyDigest: r.underPolicy.digest, evidence: r.underPolicy.evidence })
       : await this.signer.submit(plan);
     if (submitted.status !== 201 || !submitted.body.approvalUrl || submitted.body.digest !== planDigest(plan)) {
       // Under a policy, the signer's own code says which bound the plan crossed.
@@ -439,7 +443,7 @@ export class ActionsService {
       meta: { endpointIds: eps.map((e) => e.id), action: `${action.id}@${action.version}`, params: r.params, risk,
         // 0.54: the RustDesk-session exception and a restart's chosen time, said plainly.
         ...((r.params as { ignoreRemoteSession?: unknown }).ignoreRemoteSession === true ? { ignoreRemoteSession: true } : {}),
-        ...(action.id === REBOOT_SCHEDULE.id && r.window ? { notBefore: notBefore.toISOString() } : {}), approvalsRequired: plan.policy.approvalsRequired, customerSignoff: plan.policy.customerSignoff, approval: direct ? DIRECT : 'signed', origin: origin.kind, via: origin.via, ticketRef: origin.ticketRef, digest: job.digest, deployment: r.deployment ?? null, softwareDeployment: r.softwareDeployment ?? null, underPolicy: r.underPolicy?.policyId ?? null },
+        ...(action.id === REBOOT_SCHEDULE.id && r.window ? { notBefore: notBefore.toISOString() } : {}), approvalsRequired: plan.policy.approvalsRequired, customerSignoff: plan.policy.customerSignoff, approval: direct ? DIRECT : 'signed', origin: origin.kind, via: origin.via, ticketRef: origin.ticketRef, digest: job.digest, deployment: r.deployment ?? null, softwareDeployment: r.softwareDeployment ?? null, underPolicy: r.underPolicy?.policyId ?? null, ...(r.underPolicy?.kind === 'automation' ? { automation: true } : {}) },
     });
     // Signed already, by the signer's own decision (under a policy, or in
     // direct mode at admission): pull the envelope now.

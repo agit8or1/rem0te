@@ -36,6 +36,10 @@ import {
 } from '../actions/patch-policy';
 import { resultKeyFingerprint } from '../actions/device-result';
 import {
+  AUTOMATION_PROPOSAL_DAYS, AutomationDoc, automationDigest, automationLedgerEntry, automationQuorum, automationSigningBytes, evaluateAutomationPlan, validateAutomationDoc,
+  type AutomationApproval, type AutomationLedgerEntry, type AutomationStatus,
+} from '../actions/automation-policy';
+import {
   SCRIPT_ALLOWLIST_APPROVALS, SCRIPT_RUN_ACTION, ScriptProposal, argumentsProblem, canonical, contentProblem, scriptBlockOf, sha256Hex,
 } from '../actions/script-run';
 
@@ -76,9 +80,10 @@ export interface JobRecord {
 /**
  * One single-use WebAuthn challenge. `kind: 'policy'` (0.32) is a policy
  * decision and `kind: 'script'` (0.34) an allowlist decision; `jobId` is then
- * the policy's or the entry's id.
+ * the policy's or the entry's id; `kind: 'automation'` (0.58) an automation
+ * policy decision, `jobId` its id.
  */
-export interface Challenge { id: string; kind?: 'policy' | 'script'; jobId: string; digest: string; decision: 'approve' | 'reject'; role: Role; expiresAt: string; used: boolean }
+export interface Challenge { id: string; kind?: 'policy' | 'script' | 'automation'; jobId: string; digest: string; decision: 'approve' | 'reject'; role: Role; expiresAt: string; used: boolean }
 
 export class Refused extends Error { constructor(public code: string, msg?: string) { super(msg ?? code); } }
 
@@ -365,6 +370,142 @@ export function signUnderPolicy(
     // Each computer's signed result must name exactly these bytes (v0.34).
     planSha256,
   };
+  r.ledger.push(entry); r.updatedAt = now.toISOString();
+  return { job, entry };
+}
+
+// ── Automation policies (0.58) ──────────────────────────────────────────────
+// A recurring script run or software install, approved here once by the
+// same roster and passkeys as a plan (or activated at admission in direct
+// mode), after which this process signs each occurrence's plan on its own —
+// only plans actions/automation-policy.ts finds inside the document, and only
+// after the ordinary admission (admitPlan) with this process's own script
+// allowlist and software revocations. Revocation is an act on this process.
+
+export interface AutomationRecord {
+  policyId: string;
+  status: AutomationStatus;
+  doc: AutomationDoc;
+  digest: string;
+  decisions: Decision[];
+  /** base64 Ed25519 over automationSigningBytes(doc, approvals), set when the quorum is met. */
+  signature: string | null;
+  kid: string | null;
+  revokedAt: string | null;
+  revokedBy: 'portal' | 'operator' | null;
+  revokeReason: string | null;
+  /** Activated at admission because the business was in direct mode; it carries no approvals. */
+  direct?: true;
+  /** Every plan signed under it: overlap and the per-occurrence limit are decided from this, not from the portal. */
+  ledger: AutomationLedgerEntry[];
+  refusals: { at: string; jobId: string; code: string; message: string }[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Accept a proposed automation policy. Beyond the document's own rules, the
+ * task must be runnable here now: a script version ACTIVE on this signer's
+ * allowlist with exactly that block and arguments its declarations accept,
+ * or a software catalog entry this signer has not revoked (an install).
+ */
+export function admitAutomation(
+  raw: unknown, now: Date, scripts: (id: string) => ScriptAllowRecord | null, softwareRevoked: (entryId: string) => boolean,
+): { doc: AutomationDoc; digest: string } {
+  const parsed = AutomationDoc.safeParse(raw);
+  if (!parsed.success) throw new Refused('invalid_automation', parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
+  const doc = parsed.data;
+  const v = validateAutomationDoc(doc, now);
+  if (!v.ok) throw new Refused(v.reason, v.message);
+  const t = doc.task;
+  if (t.kind === 'script') {
+    const entry = scripts(t.script.allowlistId);
+    if (!entry) throw new Refused('script_not_allowlisted', 'this script version is not on the approval signer\'s allowlist');
+    const st = effectiveScriptStatus(entry);
+    if (st === 'REVOKED') throw new Refused('script_revoked', `this script was removed from the allowlist${entry.revokeReason ? `: ${entry.revokeReason}` : ''}`);
+    if (st !== 'ACTIVE') throw new Refused('script_not_allowlisted', `this script's allowlist entry is ${st.toLowerCase().replace(/_/g, ' ')}`);
+    if (canonical(t.script) !== canonical(scriptBlockOf(entry.proposal))) throw new Refused('script_mismatch', 'the policy does not describe the allowlisted script exactly');
+    const why = argumentsProblem(entry.proposal.parameters, t.params.parameters);
+    if (why) throw new Refused('arguments_not_allowed', why);
+  } else if (t.operation === 'install' && softwareRevoked(t.display.entryId)) {
+    throw new Refused('software_revoked', 'this software catalog entry was archived; nothing from it is installed any more');
+  }
+  return { doc, digest: automationDigest(doc) };
+}
+
+export function automationRolesFor(m: RosterMember, doc: AutomationDoc): Role[] {
+  if (m.disabled) return [];
+  const out: Role[] = [];
+  if (m.approve.includes('*') || m.approve.includes(doc.businessId)) out.push('approver');
+  if (m.customer.includes(doc.businessId)) out.push('customer');
+  return out;
+}
+
+export const automationApprovalsOf = (r: Pick<AutomationRecord, 'decisions'>): AutomationApproval[] =>
+  r.decisions.filter((d) => d.decision === 'approve').map((d) => ({ userId: d.userId, name: d.name, role: d.role, credentialSha256: d.credentialSha256, at: d.at }));
+
+export function effectiveAutomationStatus(r: AutomationRecord, now: Date): AutomationStatus {
+  if (r.revokedAt) return 'REVOKED';
+  if (r.status === 'REJECTED') return 'REJECTED';
+  if (now.getTime() >= Date.parse(r.doc.expiresAt)) return 'EXPIRED';
+  if (r.status === 'AWAITING_APPROVAL' && now.getTime() >= Date.parse(r.createdAt) + AUTOMATION_PROPOSAL_DAYS * 86_400_000) return 'EXPIRED';
+  return r.status;
+}
+
+/**
+ * Record one verified decision. Its author cannot approve it, nor (SAME_PERSON,
+ * as for a one-off run) anyone who wrote the script it runs: the agent would
+ * refuse every plan carrying such an approver.
+ */
+export function recordAutomationDecision(r: AutomationRecord, m: RosterMember, role: Role, decision: 'approve' | 'reject', now: Date, customerSignoff: boolean): AutomationStatus {
+  const st = effectiveAutomationStatus(r, now);
+  if (st !== 'AWAITING_APPROVAL') throw new Refused('not_awaiting', `this automation policy is ${st.toLowerCase().replace(/_/g, ' ')}`);
+  if (!automationRolesFor(m, r.doc).includes(role)) throw new Refused('not_authorized', `this passkey is not on the roster as ${role} for this business`);
+  if (m.userId === r.doc.createdBy.userId) throw new Refused('requester_cannot_approve', 'the person who proposed the policy cannot approve it');
+  if (r.doc.task.kind === 'script' && r.doc.task.script.contributors.includes(m.userId)) throw new Refused('contributor_cannot_approve', 'you wrote or edited this script, so someone else must approve running it');
+  if (r.decisions.some((d) => d.userId === m.userId)) throw new Refused('already_decided', 'each person decides once; a second approval must come from someone else');
+  r.decisions.push({ userId: m.userId, name: m.name, role, decision, credentialSha256: credentialSha256(m), at: now.toISOString() });
+  r.updatedAt = now.toISOString();
+  if (decision === 'reject') { r.status = 'REJECTED'; return r.status; }
+  return automationQuorum(r.doc, automationApprovalsOf(r), customerSignoff) ? 'ACTIVE' : 'AWAITING_APPROVAL';
+}
+
+export function signAutomation(r: AutomationRecord, k: { key: KeyObject; kid: string }, now: Date) {
+  r.signature = edSign(null, automationSigningBytes(r.doc, automationApprovalsOf(r)), k.key).toString('base64');
+  r.kid = k.kid; r.status = 'ACTIVE'; r.updatedAt = now.toISOString();
+}
+
+export function verifyAutomation(r: AutomationRecord, publicKey: KeyObject): boolean {
+  if (!r.signature) return false;
+  try { return edVerify(null, automationSigningBytes(r.doc, automationApprovalsOf(r)), publicKey, Buffer.from(r.signature, 'base64')); } catch { return false; }
+}
+
+/**
+ * Decide a plan the portal proposes under an automation policy. First the
+ * ordinary admission — the catalog, the business's mode and sign-off, the
+ * script allowlist (ACTIVE, unrevoked, exact block, arguments) and software
+ * revocations, all from this process's own state — then the document. On
+ * success the plan is signed with the policy's approvers as its approvers
+ * (none in direct mode), and the ledger records it.
+ */
+export function signUnderAutomation(
+  r: AutomationRecord, raw: { plan?: unknown; policyDigest?: unknown }, k: { key: KeyObject; kid: string },
+  business: Policy, now: Date, scripts: (id: string) => ScriptAllowRecord | null, softwareRevoked: (entryId: string) => boolean,
+): { job: JobRecord; entry: AutomationLedgerEntry } {
+  const { plan, digest } = admitPlan(raw.plan, business, now, scripts, softwareRevoked);
+  const biz = policyFor(business, r.doc.businessId);
+  const decision = evaluateAutomationPlan({
+    doc: r.doc, digest: r.digest, status: effectiveAutomationStatus(r, now), approvals: automationApprovalsOf(r),
+    signatureValid: verifyAutomation(r, createPublicKey(k.key)), revokedAt: r.revokedAt, ledger: r.ledger,
+  }, { plan, policyDigest: typeof raw.policyDigest === 'string' ? raw.policyDigest : '' }, { now, customerSignoff: biz.customerSignoff, direct: biz.approval === DIRECT });
+  if (!decision.ok) throw new Refused(decision.code, decision.message);
+  const job: JobRecord = {
+    jobId: plan.jobId, status: 'AWAITING_APPROVAL', plan, digest,
+    decisions: r.decisions.filter((d) => d.decision === 'approve'), envelope: null, createdAt: now.toISOString(), updatedAt: now.toISOString(),
+  };
+  signJob(job, k, now);
+  const planSha256 = createHash('sha256').update(Buffer.from(job.envelope!.plan, 'base64')).digest('hex');
+  const entry = automationLedgerEntry(plan, decision.occurrence, now, planSha256);
   r.ledger.push(entry); r.updatedAt = now.toISOString();
   return { job, entry };
 }

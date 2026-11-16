@@ -49,8 +49,9 @@ export default function SoftwareEntryPage() {
     <div className="space-y-4 p-4 md:p-6">
       <Link href="/automation/software" className="text-xs text-muted-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3 w-3" />Software catalog</Link>
       <PageHeader title={`${e.name} ${e.version}`} description={`${e.packageId} · ${e.scope === 'global' ? 'global catalog' : e.businessName ?? 'business catalog'} · revision ${e.revision}`}>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {!e.archivedAt && !deploying && <Button size="sm" onClick={() => { setDeploying(true); setEditing(false); }}><Rocket className="h-4 w-4 mr-1" />Deploy to computers</Button>}
+          {!e.archivedAt && <Button size="sm" variant="outline" asChild><Link href={`/automation/schedules/new?entry=${e.id}${e.businessId ? `&business=${e.businessId}` : ''}`} data-testid="software-schedule-link">On a schedule…</Link></Button>}
           {e.canEdit && !e.archivedAt && !editing && <Button size="sm" variant="outline" onClick={() => { setEditing(true); setDeploying(false); }}>Edit</Button>}
         </div>
       </PageHeader>
