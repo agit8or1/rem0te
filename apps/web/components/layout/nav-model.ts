@@ -115,6 +115,8 @@ export const NAV: NavSection[] = [
       { href: '/automation/software', label: 'Software catalog', icon: Package, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
       // 0.52: every task sent or queued to the computers you can see, and where it is.
       { href: '/automation/tasks', label: 'Tasks', icon: ListChecks, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
+      // 0.58: recurring script runs and software installs, approved once on the approval signer.
+      { href: '/automation/schedules', label: 'Schedules', icon: CalendarClock, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
     ],
   },
   {

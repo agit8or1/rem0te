@@ -54,6 +54,20 @@ export class SignerClient {
     return this.call<{ jobId?: string; digest?: string; status?: string; approvalUrl?: string; error?: string; message?: string }>('POST', `/internal/v1/policies/${id}/plans`, body);
   }
 
+  // ── Automation policies (0.58) ────────────────────────────────────────────
+  // The same shape as patch policies: propose, mirror, revoke one-way, and ask
+  // for an occurrence's plan, which the signer decides. No approve, edit or
+  // un-revoke.
+  submitAutomation(policy: unknown) { return this.call<{ policyId?: string; digest?: string; status?: string; direct?: boolean; approvalUrl?: string; error?: string; message?: string }>('POST', '/internal/v1/automations', { policy }); }
+  automationStatus(id: string) {
+    return this.call<{ status?: string; digest?: string; direct?: boolean; approvals?: { name: string; role: string; at: string }[]; revokedAt?: string | null; signedPlans?: number; refusals?: { at: string; jobId: string; code: string; message: string }[]; error?: string }>('GET', `/internal/v1/automations/${id}`);
+  }
+  revokeAutomation(id: string, reason: string) { return this.call<{ status?: string; revokedAt?: string; error?: string }>('POST', `/internal/v1/automations/${id}/revoke`, { reason }); }
+  /** Ask the signer to sign an occurrence's plan under an automation policy. It decides; a refusal is 409 with the code. */
+  submitUnderAutomation(id: string, body: { plan: unknown; policyDigest: string }) {
+    return this.call<{ jobId?: string; digest?: string; status?: string; approvalUrl?: string; error?: string; message?: string }>('POST', `/internal/v1/automations/${id}/plans`, body);
+  }
+
   // ── The script allowlist (v0.34) ──────────────────────────────────────────
   // The portal proposes an entry (the content and what the library says about
   // it) and may revoke one. It cannot approve or edit one: approvers add it

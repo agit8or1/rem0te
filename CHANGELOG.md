@@ -5,6 +5,172 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.58.0] — 2026-11-16 · *Metronome*
+
+**Scripts and software can run on a schedule, approved once on the signer and signed run by run.**
+
+Phase 2a of automation. Until now an approved script or a catalog package ran only when a person requested it, and
+each run needed two approvals on the signer. A recurring job (clear the print queue every night, keep 7-Zip
+installed on the tills) meant a person and two approvers every time. That was an approval nobody reads by the
+tenth night.
+
+0.58 adds the **automation policy**: one signer document naming the task, the computers, the schedule and the offline
+rule. Two people approve it once with passkeys. The signer then signs each run under it, and checks every run
+against it with its own rules. The owner's constraints hold:
+
+- there is no path around the signer;
+- high risk still needs two passkey approvals, or direct mode with a fresh sign-in;
+- revocation and containment stop it;
+- nothing AI touches authorises or runs it;
+- everything is audited;
+- nothing is on until a person creates a schedule.
+
+#### Added
+- **One-time scheduling of a script run or a software install or uninstall.**
+  - The script Run panel, a computer's Software tab (catalog install and uninstall) and a deployment's ring now take
+    a date and time in a named zone, up to 14 days ahead.
+  - That time becomes the signed plan's `notBefore`, through `common/schedule.ts`'s new `scheduledPlanWindow`. It
+    uses the same picker (`components/patching/schedule-choice.tsx`) as an update install or a restart.
+  - `schedule` with `startsInMinutes` is refused. Beyond 14 days, `SCHEDULE_TOO_FAR` points at automation schedules.
+- **Automation → Schedules** (`/automation/schedules`, `/new`, `/[id]`). The pages have empty, loading and error
+  states.
+  - **The list** shows status, the task, next and last run, and success and failure counts.
+  - **The editor** takes the task (an approved script with typed arguments and a timeout, or a catalog entry to
+    install or uninstall), up to 25 named computers or a device group with a cap, and the schedule. The offline rule,
+    plans per window and expiry are below it. Its preview comes from the server, from the signer's own occurrence
+    functions.
+  - **The detail page** shows the approval link, approvals, the next five windows, and each window's plans with every
+    computer's outcome and anything left out. It also has the signer's refusals, pause, resume, revoke and *Revise…*.
+  - *Run it on a schedule* links from the script Run panel, and *On a schedule…* from a catalog entry.
+- **The schedule** is one of two shapes:
+  - **every N hours** (1, 2, 3, 4, 6, 8, 12) at a minute, open 15 minutes up to the gap between runs, from local
+    midnight in a zone;
+  - **a daily, weekly or monthly window**, the patch policy's shapes unchanged. Daily is a weekly window on every
+    day.
+- **Hourly is automation's own shape** in `actions/automation-policy.ts` (`AutomationRecurrence = HourlyRecurrence |
+  PolicyWindow`). The patch `PolicyWindow` union is not widened, so §66 and every patch document's bytes are
+  untouched. `recurrenceKind` fails closed, and an unknown shape never opens.
+- **The offline rule is the signed `notAfter`.** There are three modes:
+  - *run when online*: until the window closes;
+  - *skip if offline*: only online computers are named, valid 15 minutes;
+  - *expire after N hours* (1–24): from the window's start.
+
+  `latestNotAfter` caps every mode at 24 hours and at the expiry, and an unknown mode signs nothing. The signer
+  refuses a plan that outlasts the rule (`offline_rule_mismatch`).
+- **Limits.** 25 computers, 1–3 plans per window, 90 days.
+  - Runs never overlap (`previous_run_open`, checked by the portal and the signer).
+  - A later plan in a window names only computers not yet named (`already_ran_this_occurrence`).
+  - `occurrence_run_limit` caps the plans per window.
+- **The approval signer's new document type**, in `core.ts`, `server.ts`, `store.ts`, `page.ts` and `main.ts`. It has
+  its own digest and signing prefixes (`rem0te-automation-policy-v1\n`, `rem0te-automation-policy-approved-v1\n`).
+  - **Admission:**
+    - a script's allowlist entry must be ACTIVE with exactly the block named, and the arguments valid;
+    - a package must not be revoked;
+    - the document passes `validateAutomationDoc`;
+    - a pause blocks it;
+    - direct mode is read from the signer's own `policyFor`, nowhere else.
+  - **The approval page** (`/approve/automation/<id>`) shows the script and its hash, or the package, version and
+    installer hash. It also shows the computers, the schedule in words, the offline rule, and that the approvers are
+    not asked again for each run. For a group it says: "This signer cannot see the group."
+  - **Approval** refuses the author (`requester_cannot_approve`) and anyone who wrote or edited the script
+    (`contributor_cannot_approve`). So every scheduled run still meets the agent's own contributor rule.
+  - **Each run** passes the ordinary `admitPlan` (allowlist, software revocation) and then `evaluateAutomationPlan`,
+    which refuses 21 codes, revocation first. Only then is it signed with the policy's approvers and recorded in the
+    policy's ledger.
+  - **Internal routes:** propose, read, revoke and plans only. A POST with no sub-path is a 404. Revocations are a
+    write-once file (`automation-revocations/`, `wx`).
+  - **CLI:** `automation list` and `automation revoke`.
+  - **Capabilities:** the signer reports `automations: 1`. The portal refuses to make a schedule against an older
+    signer (`SIGNER_TOO_OLD`).
+- **The sweep, `AUTOMATION_SWEEP`** (every 60 s; `=off` stops it, `AUTOMATION_SWEEP_SECONDS` floor 2). For each
+  ACTIVE, unpaused policy and its open window, in order:
+  1. no open earlier plan;
+  2. no `actions` containment pause;
+  3. the author still active and reaching the business;
+  4. the script still allowlisted, or the entry unarchived and at its revision;
+  5. which computers are ready (one that cannot run is left out, with the reason);
+  6. one `ActionsService.createPlan` as the author, under `underPolicy.kind: 'automation'`, which goes to the
+     signer's automation route.
+
+  A refusal is recorded, and the sweep asks again in that window only after ten minutes. A group is resolved at
+  every run through `Membership.members`.
+- **Pause** stops the schedule at once and cancels undelivered plans, with no fresh sign-in. **Resume** and
+  **revoke** need one (`automation.policy`, a new confirm-catalog key). Creating needs it too, and also
+  `actions.direct` in direct mode. Revoke is one-way, and is repeated to the signer until it confirms.
+- **A revision** (`supersedes`) replaces its predecessor only once it is ACTIVE. Widening anything is a revision,
+  approved again.
+- **Audit:** `AUTOMATION_POLICY_CREATED`, `_UPDATED`, `_PAUSED`, `_RESUMED`, `_REVOKED`, `_SUPERSEDED`, and
+  `AUTOMATION_RUN_PROPOSED` / `_REFUSED`. A run's `ACTION_REQUESTED` carries `automation: true`.
+- **Migration 0079:**
+  - `AutomationPolicy` has an id CHECK, a task-kind CHECK, REVOKED ⇒ `revokedAt`, and a trigger keeping REVOKED
+    final.
+  - `AutomationOccurrence` has unique (policy, window, attempt), attempt 0–3, attempt 0 exactly when there is no job,
+    and 0–25 targets.
+  - Eight `ActivityAction` values.
+- **Invariant §71**, sixteen checks:
+  - the document is pure and on the signer's ALLOWED list;
+  - its prefixes, and hourly kept out of the patch union;
+  - the limits and 0079's CHECKs;
+  - the order of the signer's refusals, and admission before evaluation;
+  - the approver rules, and the closed internal routes with write-once revocation;
+  - direct mode only from the signer's policy;
+  - the seven portal routes with no approve route: create, resume and revoke ask, pause never does;
+  - the sweep's one `createPlan` after its checks, and the automation route in `ActionsService`;
+  - nothing creating a schedule but the create route, plus `AUTOMATION_SWEEP=off`;
+  - the audit and the trigger;
+  - no agent change;
+  - the suites run.
+
+  §62's `SITE_KEYS` gains the two automation files. `AUTOMATION_SWEEP=off` is exported by `run-e2e.sh`, set in
+  `e2e-ui.mjs` (§44) and added to the docs stack's switches.
+- **Docs:** a new `docs/automation.md` (in the bundle's `ORDER`), `docs/script-library.md`,
+  `docs/software-deployment.md`, `docs/README.md`, `/help` and the README.
+
+#### Changed
+- **Script library (amends 0.34's wording, not §39's checks).** A run under an automation policy is approved by the
+  two people who approved the schedule, once, for that version, those arguments, those computers and that schedule,
+  not by two people per run. The signer and the agent check each run as before. §39 is unchanged: no run without an
+  APPROVED version and an ACTIVE entry on the signer's own allowlist, and the agent runs one constant command line.
+- `GET /automation/schedules` takes an optional `businessId`. A Platform Admin who names none sees every business.
+- `ScriptRunModule` exports `ScriptRunService`, so the automation module can ask it for a task.
+
+#### For whoever deploys this
+- **Reinstall the approval signer from 0.58** (`apps/api/scripts/build-approval-signer.mjs`, which now ships
+  `actions/automation-policy.js`). Until then the Schedules page says the signer is too old, and no schedule can be
+  made.
+- **The Windows agent needs no change.** A run is an ordinary `windows.script.run@1` or
+  `windows.software.install@1` / `uninstall@1` plan.
+- **Migration 0079** needs `prisma migrate deploy` and the target's `prisma generate` (see *Deploying*).
+- No production dependency changed. No devDependency bumps landed on `main` since 0.54.0.
+
+#### Tests
+- `apps/api/scripts/unit-automation-schedule.mjs` (105 checks, in CI) covers:
+  - hourly recurrence, including a skipped DST hour, and fail-closed shapes;
+  - every offline mode's `notAfter`;
+  - the document and its quorum, and every `evaluateAutomationPlan` refusal;
+  - the signer in-process: approval with synthetic passkeys, author and contributor refused, plans signed and
+    verified, overlap, a revoked script or package, a pause, revocation, direct mode, the CLI and the approval page.
+- `apps/api/scripts/e2e-automation-schedule.mjs` (70 checks; ports 3841–3843; `RELEASE_BIN`, `ACTION_SIM`, pwsh) runs
+  the real portal, signer and agent verifier and executor. It covers:
+  - a script schedule on two computers: approved, signed, run and reported, with the history and counts;
+  - pause (immediate, audited), and resume needing a fresh sign-in;
+  - a revoked script stopping the next window;
+  - a software schedule held by a containment pause, then run, then stopped by archiving its entry;
+  - revoke (signer-confirmed; REVOKED final in the database);
+  - a direct-mode schedule on a device group;
+  - the signer CLI;
+  - isolation between businesses.
+
+  It is in `run-e2e.sh`.
+- `e2e-ui.mjs` covers the Schedules page without a signer (it says why, shows the empty state, offers no *New
+  schedule*) and the editor's hourly preview, at both viewports.
+
+#### Not proven
+Nothing here has run on real Windows, or over days of real time: the e2e stands in "the next window" by moving
+a window's portal records back an hour.
+
+---
+
 ## [0.57.0] — 2026-11-16 · *Muster*
 
 **Deploying agents to a fleet, and adopting the computers that arrive.**

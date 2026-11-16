@@ -177,6 +177,15 @@ $S software revoke --entry <entry id> --reason "why"  # one-way
 
 (`$S` as in [Script library → Revocation](script-library.md#revocation).)
 
+### At a time, or on a schedule (0.58)
+
+Installing or uninstalling an entry on one computer, and requesting a deployment's ring, take **Schedule**: a date
+and time in a named zone, up to 14 days ahead, as the signed plan's `notBefore`. To keep a package installed on a
+schedule (every few hours, daily, weekly or monthly), choose **On a schedule…** on the entry and make an
+[automation schedule](automation.md). It is approved once on the signer for that entry's revision. Archiving the
+entry, which revokes it on the signer, stops every later run, and changing the entry needs a new revision of the
+schedule.
+
 ## Searching the winget catalog (0.41)
 
 The server keeps a read-only copy of the winget community source's own package index, the file winget itself
@@ -506,7 +515,8 @@ Observed fields (strings): `wingetVersion`, `detectedBefore`, `versionBefore`, `
 - **The winget `msstore` source**, per-user installs, install switches or locations: not offered.
 - **Dependencies.** See above.
 - **Automatic remediation** (installing on whatever the compliance report shows missing): every install is a person's
-  request through rings and approvals.
+  request through rings and approvals, or an [automation schedule](automation.md) two people approved for named
+  computers or a capped device group.
 - **Updating an entry in place on the computers.** A new version is a changed entry and a new deployment.
 - **ClientSt0r** is not offered the software actions. Offering them is a change to the ticket-rmm contract.
 - **Other sources** (Chocolatey, the `msstore` source, a private winget source): the search is the community source only.

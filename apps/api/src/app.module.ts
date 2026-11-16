@@ -57,6 +57,7 @@ import { DiagnosticsCatalogModule } from './diagnostics-catalog/diagnostics-cata
 import { ScriptLibraryModule } from './script-library/script-library.module';
 import { ScriptRunModule } from './script-run/script-run.module';
 import { SoftwareModule } from './software/software.module';
+import { AutomationModule } from './automation/automation.module';
 import { DeviceControlModule } from './device-control/device-control.module';
 import { DeviceViewsModule } from './device-views/device-views.module';
 import { AdoptionModule } from './adoption/adoption.module';
@@ -149,6 +150,7 @@ import { TrayModule } from './tray/tray.module';
     ScriptLibraryModule,
     ScriptRunModule,
     SoftwareModule,
+    AutomationModule,
     DeviceControlModule,
     AgentUpgradeModule,
     AgentAutoUpdateModule,

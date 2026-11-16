@@ -20,10 +20,11 @@ exact hash to the approval signer's own allowlist, and two approvers approving e
 | **Static checks** | Shown to the reviewer as warnings: `Invoke-Expression`, download-and-run, `-EncodedCommand`, credential material, disabling Defender, `Set-ExecutionPolicy`, restarts, hidden Unicode and more. They **flag**; they never block and never mean a script is safe |
 | **Diff** | Any two versions of a script, line by line |
 | **Running (0.34)** | An approved version's page has a **Run this version** panel: propose it to the approval signer's allowlist, then request runs on up to 25 Windows computers with typed arguments and a timeout. Results, with the exit code and redacted output, appear on each computer's **Actions** tab |
+| **Scheduling (0.58)** | **Once:** the Run panel takes a date and time in a named zone, up to 14 days ahead, as the signed plan's `notBefore`. **Recurring:** *Run it on a schedule* makes an [automation schedule](automation.md) — every few hours, daily, weekly or monthly — that two signer approvers (not the author, not anyone who wrote the script) approve once, and under which the signer signs each run |
 | **Audit** | Every create, submit, withdraw, approval, rejection and refused review attempt, every allowlist proposal and revocation, and every run (requested, approved, dispatched, result), with the hashes |
 
-It doesn't schedule a script, run one on Linux or macOS, run one outside a plan, or collect more than 64 KB of output
-per stream.
+It doesn't run a script on Linux or macOS, run one outside a signed plan, or collect more than 64 KB of output per
+stream.
 
 ![The script library: how a script runs, the scope filter, a script and New script](screenshots/guide/script-library.png)
 
@@ -120,6 +121,20 @@ both failed when used.
 the full language, as SYSTEM. The timeout, the output caps, the temporary folder and the job object limit
 accidents. They don't stop a script that means harm. The real control is the people who read the exact bytes before
 anything is signed: one library reviewer, two allowlist approvers, two run approvers, none of them the author.
+
+## On a schedule (0.58)
+
+An [automation schedule](automation.md) names one approved version by its hash, its arguments and its timeout. The
+signer admits the schedule only if that version is ACTIVE on its allowlist with exactly those bytes and the
+arguments pass the declarations, and it checks the same again for every run it signs under the schedule. Nobody who
+wrote or edited the script can approve the schedule, as for a single run, so every scheduled run still satisfies
+the agent's own contributor rule. Revoking the version from the allowlist stops every later run of every schedule
+that names it: the portal stops asking (*task revoked* in the schedule's history), and the signer would refuse
+(`script_revoked`).
+
+This amends what this page said up to 0.57, that each run is approved by two people. A scheduled run is approved by
+the two people who approved the schedule, once, for that version, those arguments, those computers and that
+schedule. The signer and the agent check each run against it.
 
 ## Revocation
 

@@ -1,3 +1,4 @@
+import { Schedule } from '../common/schedule';
 import { z } from 'zod';
 import {
   DISPLAY_NAME_RE, Detection, MAX_RING_TARGETS, PACKAGE_ID_MAX, PACKAGE_ID_RE, PROGRAM_KEY_RE, SHA256_RE, SOFTWARE_VERSION_RE, SoftwareParams, UNINSTALL_KEY_RE, programNameOk,
@@ -527,11 +528,14 @@ export const RequestRingDto = z.object({
   reason: z.string().trim().min(3).max(400),
   startsInMinutes: z.number().int().min(0).max(24 * 60).default(0),
   exclude: z.array(z.object({ endpointId: Id, why: z.string().trim().min(3).max(200) }).strict()).max(MAX_RING_TARGETS).default([]),
+  /** 0.58: a one-time install at a date and time in a named zone (common/schedule.ts): the plan's signed notBefore. */
+  schedule: Schedule.optional(),
 }).strict();
 export const SingleDto = z.object({
   reason: z.string().trim().min(3).max(400),
   windowHours: z.number().int().min(1).max(24).default(8),
   startsInMinutes: z.number().int().min(0).max(24 * 60).default(0),
+  schedule: Schedule.optional(),
 }).strict();
 export const ReasonDto = z.object({ reason: z.string().trim().min(3).max(300) }).strict();
 
