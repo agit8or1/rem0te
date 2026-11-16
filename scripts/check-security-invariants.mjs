@@ -1679,7 +1679,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'migration 0049 must create both triggers, the insert check before the copy of 0.33 memberships');
   const memberWriters = walk('apps/api/src').filter((f) => !f.endsWith('.spec.ts') && /endpointGroupMember\.(create|createMany|upsert|update|updateMany)\(|groupMemberships: \{ create:/.test(read(f))).sort();
   check('only the known paths add a computer to a group',
-    JSON.stringify(memberWriters) === JSON.stringify(['apps/api/src/device-views/device-bulk.service.ts', 'apps/api/src/endpoints/endpoints.service.ts', 'apps/api/src/enrollment/enrollment.service.ts'])
+    JSON.stringify(memberWriters) === JSON.stringify(['apps/api/src/adoption/adoption.service.ts', 'apps/api/src/device-views/device-bulk.service.ts', 'apps/api/src/endpoints/endpoints.service.ts', 'apps/api/src/enrollment/enrollment.service.ts'])
       && !/endpointGroupMember\.(update|updateMany|upsert)\(/.test(memberWriters.map(read).join('\n')),
     `writers: ${memberWriters.join(', ')} — a new path must check the business (and rely on the trigger)`);
   const listSvc = read('apps/api/src/endpoints/endpoint-list.service.ts');
@@ -4478,6 +4478,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   // step-up, or moving one to another key, changes this list in the same commit.
   const SITE_KEYS = {
     'actions/actions.service.ts': ['actions.direct'],
+    'adoption/adoption.service.ts': ['adoption.mappings', 'devices.adopt'],
+    'adoption/deployment-keys.service.ts': ['deployment.keys'],
     'agent-auto-migration/agent-auto-migration.service.ts': ['agent.automigrate'],
     'agent-auto-update/agent-auto-update.service.ts': ['agent.autoupdate', 'agent.autoupdate.computer'],
     'agent-upgrade/agent-upgrade.service.ts': ['agent.migrate'],
@@ -4718,7 +4720,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /if \(dto\.updateChannel === 'signed'\) return 'signed';\s*\n\s*if \(!runsSignedAgent\(ep, now\)\) return 'standard';/.test(idn),
     'common/agent-identity.ts runsSignedAgent / heartbeatKind / heartbeatMayAct');
 
-  const iRead = hb.indexOf("select: { updateChannel: true, signedSeenAt: true, legacySeenAt: true }"), iNode = hb.indexOf('await this.prisma.rustdeskNode.update({', iRead),
+  // 0.57: the same read also takes customerId and tenantId (the unassigned pool, §70).
+  const iRead = hb.indexOf("select: { updateChannel: true, signedSeenAt: true, legacySeenAt: true"), iNode = hb.indexOf('await this.prisma.rustdeskNode.update({', iRead),
     iEp = hb.indexOf('await this.prisma.endpoint.update({'), iRet = hb.indexOf('if (authenticated && !mayAct) {'), iFlags = hb.indexOf('let updateRustdesk:');
   const early = hb.slice(iRet, hb.indexOf('\n    }\n', iRet));
   check('sticky: the heartbeat reads the computer first, and a legacy report on a signed computer returns before any update step with every flag null',
@@ -5255,9 +5258,124 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /ALTER TYPE "MonitorKind" ADD VALUE 'WARRANTY_EXPIRING';/.test(mig),
     'engine.ts PARAMS / RECOMMENDED; monitoring.service SWEEP_KINDS');
   check('warranty: the suites run — unit in CI, e2e in run-e2e.sh with the sweep off for everything else',
-    /unit-warranty\.mjs/.test(read('.github/workflows/ci.yml')) && / warranty; do/.test(read('scripts/run-e2e.sh'))
+    /unit-warranty\.mjs/.test(read('.github/workflows/ci.yml')) && / warranty[ ;]/.test(read('scripts/run-e2e.sh'))
       && /^export WARRANTY_SWEEP=off$/m.test(read('scripts/run-e2e.sh')),
     'ci.yml / run-e2e.sh');
+}
+
+// 70. Device discovery and adoption (0.57). A computer in the unassigned pool
+//     (tenant null OR business null) is seen only by a Platform Admin, is
+//     handed nothing to do by its heartbeat but the automatic inventory, and
+//     is refused by every remote and action path (ENDPOINT_UNASSIGNED) until
+//     a Platform Admin adopts it — with a fresh sign-in, conditionally (only
+//     from the pool), audited per computer. Deployment keys are stored as a
+//     hash, at most 90 days and 10,000 uses, review by default, and a use is
+//     one conditional UPDATE. Assignment rules read only four explicit facts
+//     — never who is signed in or an e-mail address — and are suggestions;
+//     nothing applies one by itself.
+{
+  const SRC = 'apps/api/src';
+  const strip = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const una = read(`${SRC}/common/unassigned.ts`);
+  const mig = read('apps/api/prisma/migrations/0078_device_adoption/migration.sql');
+  const enr = read(`${SRC}/enrollment/enrollment.service.ts`);
+  const hb = enr.slice(enr.indexOf('  async heartbeat('), enr.indexOf('  async authenticateDevice('));
+  const ad = read(`${SRC}/adoption/adoption.service.ts`);
+  const dk = read(`${SRC}/adoption/deployment-keys.service.ts`);
+  const key = read(`${SRC}/adoption/deployment-key.ts`);
+  const map = read(`${SRC}/adoption/mapping.ts`);
+  const ctl = read(`${SRC}/adoption/adoption.controller.ts`);
+
+  check('adoption: the pool is tenant null OR business null, refused as ENDPOINT_UNASSIGNED',
+    /export const UNASSIGNED_WHERE: Prisma\.EndpointWhereInput = \{ OR: \[\{ tenantId: null \}, \{ customerId: null \}\] \};/.test(una)
+      && /return !ep\.customerId \|\| !ep\.tenantId;/.test(una)
+      && /throw new ForbiddenException\(\{ code: ENDPOINT_UNASSIGNED, message: UNASSIGNED_MESSAGE \}\)/.test(una),
+    'common/unassigned.ts UNASSIGNED_WHERE / isUnassigned / assertAssigned');
+
+  const chokes = {
+    'sessions/sessions.service.ts': /assertAssigned\(endpoint\)/,
+    'actions/actions.service.ts': /if \(ep\) assertAssigned\(ep\);/,
+    'diagnostics-catalog/diagnostics-catalog.service.ts': /assertAssigned\(/,
+    'device-control/device-control.service.ts': /if \(ep\) assertAssigned\(ep\)/,
+    'software/software.service.ts': /if \(ep\) assertAssigned\(ep\)/,
+    'patching/patching.service.ts': /if \(owner\) assertAssigned\(owner\);/,
+    'tray/tray.service.ts': /assertAssigned\(dev\);[\s\S]*assertAssigned\(dev\);[\s\S]*assertAssigned\(ep\);|assertAssigned\(ep\);[\s\S]*assertAssigned\(dev\);[\s\S]*assertAssigned\(dev\);/,
+    'endpoints/endpoints.service.ts': /reason: 'endpoint_unassigned'/,
+    'quick-connect/quick-connect.service.ts': /async refusePooled\(/,
+    'launcher/launcher.service.ts': /this\.quickConnect\.refusePooled\(/,
+  };
+  const missing = Object.entries(chokes).filter(([f, re]) => !re.test(strip(read(`${SRC}/${f}`)))).map(([f]) => f);
+  const sw = strip(read(`${SRC}/software/software.service.ts`));
+  check('adoption: every remote and action path refuses a pooled computer',
+    !missing.length && (sw.match(/if \(ep\) assertAssigned\(ep\)/g) ?? []).length >= 4
+      && /if \(ep && kind === 'WRITE'\) assertAssigned\(ep\);/.test(strip(read(`${SRC}/endpoints/endpoints.service.ts`)))
+      && /code: 'USE_ADOPTION'/.test(read(`${SRC}/endpoints/endpoints.service.ts`))
+      && /^\s+await this\.refusePooled\(rustdeskId\);/m.test(read(`${SRC}/quick-connect/quick-connect.service.ts`)),
+    `missing the refusal: ${missing.join(', ') || '(software ×4, admitWrite WRITE, USE_ADOPTION, Quick Connect connect)'}`);
+
+  const iPooled = hb.indexOf('if (authenticated && pooled) {'), iRotate = hb.indexOf('let rotate:');
+  const branch = hb.slice(iPooled, hb.indexOf('\n    }\n', iPooled));
+  check('adoption: a pooled heartbeat is handed only the automatic inventory and returns before any other step',
+    iPooled > 0 && iPooled < iRotate
+      && /const pooled = !!identity && isUnassigned\(identity\);/.test(hb)
+      && /rotate: null, updateRustdesk: null, reinstallAgent: null,/.test(branch)
+      && /actions: \[\], actionAcks: \[\], patchPostureAck: null, patchScan: false,/.test(branch)
+      && /monitor: null, diagnostics: \[\], chat: null, tray: null,/.test(branch)
+      && /pending: true/.test(branch)
+      && !/prisma\.|assignTray|trayKey|migration|agentUpgrade|monitor\.|actions\./.test(strip(branch).replace(/this\.inventory\.(recordLiveState|collectForHeartbeat)/g, '')),
+    'enrollment.service heartbeat: `if (authenticated && pooled)` before rotation, every flag null');
+
+  check('adoption: the pool, the rules and the keys are a Platform Admin\'s, and the three writes need a fresh sign-in',
+    (ad.match(/this\.acl\.assertPlatformAdmin\(actor\);/g) ?? []).length >= 6 && (dk.match(/this\.acl\.assertPlatformAdmin\(actor\);/g) ?? []).length >= 3
+      && /assertFresh\(freshMethod, \{[^;]*?action: 'devices\.adopt'/.test(ad) && /assertFresh\(freshMethod, \{[^;]*?action: 'adoption\.mappings'/.test(ad)
+      && /assertFresh\(freshMethod, \{[^;]*?action: 'deployment\.keys'/.test(dk)
+      && /@UseGuards\(JwtAuthGuard\)/.test(ctl),
+    'AdoptionService and DeploymentKeysService: assertPlatformAdmin on every method, assertFresh on adopt/forget, rule create, key create');
+
+  const adopt = ad.slice(ad.indexOf('  async adopt('), ad.indexOf('  async forget('));
+  check('adoption: adopting and forgetting move a computer only from the pool, and each is audited',
+    /tx\.endpoint\.updateMany\(\{\s*where: \{ AND: \[\{ id: endpointId \}, UNASSIGNED_WHERE, \{ status: \{ not: 'ARCHIVED' \} \}\] \},/.test(adopt)
+      && /action: 'ENDPOINT_ADOPTED'/.test(adopt) && /approvedBy: actor\.userId/.test(adopt) && /deploymentKeyId/.test(adopt) && /mappingId/.test(adopt) && /before/.test(adopt) && /after/.test(adopt)
+      && !/tx\.endpoint\.update\(/.test(adopt)
+      && /tx\.endpoint\.deleteMany\(\{ where: \{ AND: \[\{ id: endpointId \}, UNASSIGNED_WHERE\] \} \}\)/.test(ad) && /action: 'ENDPOINT_FORGOTTEN'/.test(ad),
+    'adopt: conditional updateMany from UNASSIGNED_WHERE + ENDPOINT_ADOPTED in the same transaction; forget: conditional deleteMany + ENDPOINT_FORGOTTEN');
+
+  const enrolKey = enr.slice(enr.indexOf('  private async enrolWithDeploymentKey('), enr.indexOf('\n  }\n', enr.indexOf('  private async enrolWithDeploymentKey(')));
+  check('adoption: a deployment key is a hash, at most 90 days and 10,000 uses, review by default, and a use is one conditional UPDATE',
+    /export const KEY_BYTES = 48;/.test(key) && /export const MAX_KEY_DAYS = 90;/.test(key) && /export const MAX_KEY_USES = 10_000;/.test(key)
+      && /mode: z\.enum\(KEY_MODES\)\.default\('review'\)/.test(key)
+      && /CHECK \("keyHash" ~ '\^\[0-9a-f\]\{64\}\$'\)/.test(mig) && /"expiresAt" <= "createdAt" \+ INTERVAL '90 days'/.test(mig)
+      && /CHECK \("maxUses" BETWEEN 1 AND 10000 AND "useCount" >= 0 AND "useCount" <= "maxUses"\)/.test(mig)
+      && /CHECK \("mode" IN \('review', 'active'\)\)/.test(mig)
+      && /WHERE "id" = \$\{key\.id\} AND "revokedAt" IS NULL AND "expiresAt" > now\(\) AND "useCount" < "maxUses"`/.test(enrolKey)
+      && /keyHash: hash, keyHint: hint,/.test(dk) && !/keyHash: true/.test(strip(dk)) && !/\bkey\b/.test(dk.slice(dk.indexOf('const KEY_VIEW = {'), dk.indexOf('} as const;')))
+      && /return \{ \.\.\.row, state: keyState\(row, now\), businessName: business\.name, key \};/.test(dk),
+    'deployment-key.ts limits, 0078 CHECKs, the conditional use in enrolWithDeploymentKey, only the hash stored and never selected');
+
+  check('adoption: a deployment key never moves an assigned computer to another business, and a node proves its secret',
+    /if \(!existing\.agentSecretHash \|\| !this\.secretMatches\(existing\.agentSecretHash, dto\.agentSecret\)\) throw refused\(\);/.test(enrolKey) && /unchanged: true/.test(enrolKey) && /if \(!isUnassigned\(ep\)\) \{\s*if \(ep\.customerId === key\.customerId\) return \{ enrolled: true, unchanged: true \};\s*throw refused\(\);/.test(enrolKey),
+    'enrolWithDeploymentKey: an existing node proves its device secret; another business is refused; the same one is a no-op');
+
+  const factsIface = map.slice(map.indexOf('export interface PoolFacts {'), map.indexOf('}', map.indexOf('export interface PoolFacts {')));
+  check('adoption: rules read four explicit facts — never who is signed in or an e-mail address — and nothing applies one',
+    /export const MAPPING_KINDS = \['deployment_key', 'domain', 'cidr', 'hostname_prefix'\] as const;/.test(map)
+      && /CHECK \("kind" IN \('deployment_key', 'domain', 'cidr', 'hostname_prefix'\)\)/.test(mig)
+      && JSON.stringify([...factsIface.matchAll(/^\s+(\w+):/gm)].map((m) => m[1])) === '["deploymentKeyId","domain","sourceIp","hostname"]'
+      && !/loggedOnUser|lastUser|e-?mail|\bupn\b/i.test(strip(map) + strip(ad) + strip(dk))
+      && !/\.(update|updateMany|create)\(/.test(strip(map)),
+    'mapping.ts PoolFacts is exactly the four facts; no user or e-mail in the adoption code; mapping.ts writes nothing');
+
+  check('adoption: the database keeps keys and rules inside one business and records how a computer arrived',
+    /CREATE TRIGGER deployment_key_same_business/.test(mig) && /CREATE TRIGGER adoption_mapping_same_business/.test(mig)
+      && /CHECK \("arrivedVia" IS NULL OR "arrivedVia" IN \('heartbeat', 'install_script', 'deployment_key'\)\)/.test(mig)
+      && /CHECK \("customerId" IS NULL OR "tenantId" IS NOT NULL\) NOT VALID/.test(mig)
+      && /ADD VALUE 'ENDPOINT_ADOPTED'/.test(mig) && /ADD VALUE 'DEPLOYMENT_KEY_USED'/.test(mig),
+    'migration 0078');
+
+  check('adoption: the old one-step assign route is gone, and the suites run',
+    !/unassigned-devices\/:id\/assign/.test(strip(read(`${SRC}/admin/admin.controller.ts`))) && !/async assignDevice\(/.test(read(`${SRC}/admin/admin.service.ts`))
+      && /unit-adoption\.mjs/.test(read('.github/workflows/ci.yml')) && / adoption[ ;]/.test(read('scripts/run-e2e.sh')),
+    'no POST /admin/unassigned-devices/:id/assign; unit-adoption.mjs in CI; e2e-adoption.mjs in run-e2e.sh');
 }
 
 if (failures.length > 0) {

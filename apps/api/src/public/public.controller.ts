@@ -35,6 +35,7 @@ import {
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { AgentMigrationService } from '../update-trust/agent-migration.service';
 import { buildMigrationScript, buildSignedInstallScript, validPortalHost } from '../update-trust/agent-migration';
+import { keyState } from '../adoption/deployment-key';
 
 const INSTALLER_MAGIC = Buffer.from('REM0TE_INST_URL:');
 const INSTALLER_SLOT_SIZE = 256;
@@ -296,6 +297,13 @@ export class PublicController {
       const tokenRecord = await this.prisma.deviceClaimToken.findUnique({ where: { token: tokenHash } });
       if (tokenRecord && !tokenRecord.claimedAt && tokenRecord.expiresAt >= new Date()) {
         validatedToken = enrollToken;
+      } else if (!tokenRecord) {
+        // 0.57: a usable deployment key installs exactly as a claim token
+        // does; the claim decides where the computer lands.
+        const key = await this.prisma.deploymentKey.findUnique({
+          where: { keyHash: tokenHash }, select: { revokedAt: true, expiresAt: true, useCount: true, maxUses: true },
+        });
+        if (key && keyState(key) === 'usable') validatedToken = enrollToken;
       }
     }
 

@@ -91,6 +91,8 @@ export const NAV: NavSection[] = [
       { href: '/technician', label: 'All assigned', icon: LayoutGrid, show: (c) => c.hasAssignments },
       { href: '/endpoints/enroll', label: 'Add device', icon: Download, show: (c) => c.can(CAP.COMPUTERS_ADD) },
       { href: '/admin/unassigned', label: 'Unassigned', icon: MonitorX, show: (c) => c.isPlatformAdmin },
+      // 0.57: deployment keys and fleet rollout instructions (GPO, Intune, RMM, Linux, macOS).
+      { href: '/admin/deploy', label: 'Deploy agents', icon: HardDriveDownload, show: (c) => c.isPlatformAdmin },
       // 0.35: the fleet view of moves to the signed agent, which until now was
       // reachable only from an Agent card's link. Shown to whoever may request
       // one (computers:edit); the page and its API need only computers:view.

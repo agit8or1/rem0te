@@ -95,6 +95,7 @@ export class LauncherService {
       // platform switch, business switch, and the capability. Checking only
       // the capability here let a launcher token bypass both switches.
       await this.quickConnect.assertUsable(actor);
+      await this.quickConnect.refusePooled(dto.adHocRustdeskId.replace(/[\s-]/g, ''));
       await this.quickConnect.admitLaunch(actor, 'launcher');
     }
 

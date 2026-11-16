@@ -59,6 +59,7 @@ import { ScriptRunModule } from './script-run/script-run.module';
 import { SoftwareModule } from './software/software.module';
 import { DeviceControlModule } from './device-control/device-control.module';
 import { DeviceViewsModule } from './device-views/device-views.module';
+import { AdoptionModule } from './adoption/adoption.module';
 import { AgentUpgradeModule } from './agent-upgrade/agent-upgrade.module';
 import { AgentAutoUpdateModule } from './agent-auto-update/agent-auto-update.module';
 import { AgentAutoMigrationModule } from './agent-auto-migration/agent-auto-migration.module';
@@ -153,6 +154,7 @@ import { TrayModule } from './tray/tray.module';
     AgentAutoUpdateModule,
     AgentAutoMigrationModule,
     DeviceViewsModule,
+    AdoptionModule,
     SupportRequestsModule,
     OffboardingModule,
     SsoModule,

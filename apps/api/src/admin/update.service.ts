@@ -792,7 +792,8 @@ export class UpdateService {
       // re-ran the installer on one anyway.
       where: {
         ...(endpointIds?.length ? { endpointId: { in: endpointIds } } : {}),
-        endpoint: { status: { not: 'ARCHIVED' } },
+        // 0.57 (§70): nor a computer in the unassigned pool, which is handed no work.
+        endpoint: { status: { not: 'ARCHIVED' }, customerId: { not: null }, tenantId: { not: null } },
       },
       select: { id: true, endpointId: true, version: true, tenantId: true, endpoint: { select: { platform: true } } },
     });

@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **556** of them across
-**85** controllers.
+integration, under `/api/integration/v1`). There are **554** of them across
+**84** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -47,7 +47,22 @@ Admins and Business Owners are not confined by it; see
 | `PATCH` | `/api/v1/admin/platform-settings` | signed in | — |
 | `GET` | `/api/v1/admin/status` | signed in | — |
 | `GET` | `/api/v1/admin/unassigned-devices` | signed in | — |
-| `POST` | `/api/v1/admin/unassigned-devices/:id/assign` | signed in | — |
+
+## Adoption
+
+`apps/api/src/adoption/adoption.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/adoption/deployment-keys` | signed in | — |
+| `POST` | `/api/v1/adoption/deployment-keys` | signed in, throttled | — |
+| `POST` | `/api/v1/adoption/deployment-keys/:id/revoke` | signed in | — |
+| `GET` | `/api/v1/adoption/devices` | signed in | — |
+| `POST` | `/api/v1/adoption/devices/assign` | signed in, throttled | — |
+| `POST` | `/api/v1/adoption/devices/forget` | signed in, throttled | — |
+| `GET` | `/api/v1/adoption/mappings` | signed in | — |
+| `POST` | `/api/v1/adoption/mappings` | signed in, throttled | — |
+| `DELETE` | `/api/v1/adoption/mappings/:id` | signed in | — |
 
 ## Agent auto migration adminagentautomigration
 
@@ -533,9 +548,6 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/monitoring/suppressions` | signed in | — |
 | `POST` | `/api/v1/monitoring/suppressions` | signed in | — |
 | `POST` | `/api/v1/monitoring/suppressions/:id/revoke` | signed in | — |
-| `GET` | `/api/v1/monitoring/ticket-policy` | signed in | — |
-| `PUT` | `/api/v1/monitoring/ticket-policy` | signed in | — |
-| `DELETE` | `/api/v1/monitoring/ticket-policy` | signed in | — |
 
 ## Notes
 
@@ -724,8 +736,6 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/reports/patch-compliance/export.csv` | signed in, throttled | `COMPUTERS_VIEW` |
 | `GET` | `/api/v1/reports/software-compliance` | signed in | `COMPUTERS_VIEW` |
 | `GET` | `/api/v1/reports/software-compliance/export.csv` | signed in, throttled | `COMPUTERS_VIEW` |
-| `GET` | `/api/v1/reports/warranty` | signed in | `COMPUTERS_VIEW` |
-| `GET` | `/api/v1/reports/warranty/export.csv` | signed in, throttled | `COMPUTERS_VIEW` |
 
 ## Retention
 
@@ -1155,23 +1165,4 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/users/find` | signed in | — |
 | `GET` | `/api/v1/users/me/mfa-status` | signed in | — |
 | `GET` | `/api/v1/users/platform-admins` | signed in | — |
-
-## Warranty endpointsidwarranty
-
-`apps/api/src/warranty/warranty.controller.ts`
-
-| Method | Path | Access | Capability |
-|---|---|---|---|
-| `GET` | `/api/v1/endpoints/:id/warranty` | signed in | `COMPUTERS_VIEW` |
-| `PUT` | `/api/v1/endpoints/:id/warranty` | signed in, throttled | `COMPUTERS_EDIT` |
-| `POST` | `/api/v1/endpoints/:id/warranty/lookup` | signed in, throttled | `COMPUTERS_EDIT` |
-
-## Warranty warrantysettings
-
-`apps/api/src/warranty/warranty.controller.ts`
-
-| Method | Path | Access | Capability |
-|---|---|---|---|
-| `GET` | `/api/v1/warranty/settings` | Platform Admin | — |
-| `PUT` | `/api/v1/warranty/settings/:vendor` | Platform Admin, throttled | — |
 

@@ -447,8 +447,56 @@ export const enrollmentApi = {
 export const adminApi = {
   status: () => api.get('/admin/status'),
   listUnassigned: () => api.get('/admin/unassigned-devices'),
-  assignDevice: (id: string, businessId: string) =>
-    api.post(`/admin/unassigned-devices/${id}/assign`, { businessId }),
+};
+
+// ─── Device discovery and adoption (0.57) ────────────────────────────────────
+// Platform Admin only. Adopting, forgetting, a new rule and a new deployment
+// key ask for a fresh sign-in (the interceptor shows the dialog and retries).
+export type AdoptionSource = 'deployment_key' | 'key_binding' | 'domain' | 'cidr' | 'hostname_prefix';
+export interface AdoptionMatch { source: AdoptionSource; mappingId: string | null; customerId: string; siteId: string | null; value: string }
+export interface PooledComputer {
+  id: string; name: string; hostname: string | null; platform: string | null; osVersion: string | null;
+  ipAddress: string | null; sourceIp: string | null; arrivedVia: 'heartbeat' | 'install_script' | 'deployment_key' | null;
+  deploymentKeyId: string | null; createdAt: string; lastSeenAt: string | null; isOnline: boolean; status: string;
+  agentVersion: string | null; updateChannel: string | null; macAddress: string | null; serialNumber: string | null;
+  rustdeskId: string | null; rustdeskVersion: string | null; nodeLastSeenAt: string | null; agentBound: boolean;
+  inventory: {
+    manufacturer: string | null; model: string | null; serialNumber: string | null; chassisType: string | null; osCaption: string | null;
+    osBuild: string | null; osArch: string | null; domain: string | null; cpuModel: string | null; cpuCores: number | null;
+    cpuThreads: number | null; memoryTotalMb: number | null; systemDiskTotalMb: number | null; collectedAt: string | null;
+  } | null;
+  deploymentKey: { id: string; name: string; customerId: string; siteId: string | null; mode: 'review' | 'active'; keyHint: string } | null;
+  suggestion: AdoptionMatch | null; matches: AdoptionMatch[]; conflict: boolean;
+}
+export interface AdoptionMapping {
+  id: string; customerId: string; siteId: string | null; kind: 'deployment_key' | 'domain' | 'cidr' | 'hostname_prefix';
+  value: string; deploymentKeyId: string | null; priority: number; note: string | null; createdAt: string;
+  businessName: string | null; siteName: string | null; keyName: string | null; keyState: DeploymentKeyState | null;
+}
+export type DeploymentKeyState = 'usable' | 'revoked' | 'expired' | 'exhausted';
+export interface DeploymentKey {
+  id: string; customerId: string; siteId: string | null; endpointGroupId: string | null; name: string; keyHint: string;
+  mode: 'review' | 'active'; accessMode: 'ASSIGNED_USERS' | 'COMPANY_WIDE'; maxUses: number; useCount: number;
+  expiresAt: string; revokedAt: string | null; lastUsedAt: string | null; createdAt: string; state: DeploymentKeyState;
+  businessName: string | null; siteName?: string | null; groupName?: string | null;
+  /** Only in the answer to create, once. */
+  key?: string;
+}
+export type AdoptResult = { endpointId: string; result: 'adopted' | 'not_unassigned' };
+export const adoptionApi = {
+  devices: () => api.get('/adoption/devices').then((r) => r.data?.data as { computers: PooledComputer[]; businesses: Record<string, string>; sites: Record<string, string> }),
+  assign: (body: { endpointIds: string[]; businessId: string; siteId?: string | null; groupIds?: string[]; mappingId?: string | null }) =>
+    api.post('/adoption/devices/assign', body).then((r) => r.data?.data as { results: AdoptResult[] }),
+  forget: (endpointIds: string[]) =>
+    api.post('/adoption/devices/forget', { endpointIds }).then((r) => r.data?.data as { results: { endpointId: string; result: 'forgotten' | 'not_unassigned' | 'in_use' }[] }),
+  mappings: () => api.get('/adoption/mappings').then((r) => r.data?.data as AdoptionMapping[]),
+  createMapping: (body: { businessId: string; siteId?: string | null; kind: AdoptionMapping['kind']; value: string; priority?: number; note?: string | null }) =>
+    api.post('/adoption/mappings', body).then((r) => r.data?.data as AdoptionMapping),
+  deleteMapping: (id: string) => api.delete(`/adoption/mappings/${id}`).then((r) => r.data?.data),
+  keys: () => api.get('/adoption/deployment-keys').then((r) => r.data?.data as DeploymentKey[]),
+  createKey: (body: { businessId: string; siteId?: string | null; endpointGroupId?: string | null; name: string; mode: 'review' | 'active'; accessMode?: DeploymentKey['accessMode']; maxUses: number; expiresInDays: number }) =>
+    api.post('/adoption/deployment-keys', body).then((r) => r.data?.data as DeploymentKey),
+  revokeKey: (id: string) => api.post(`/adoption/deployment-keys/${id}/revoke`).then((r) => r.data?.data),
 };
 
 // ─── Public address (Settings → General) ─────────────────────────────────────

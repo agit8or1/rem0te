@@ -36,6 +36,8 @@ import { assertFresh } from '../security-controls/review';
 import { MetricsService } from '../metrics/metrics.service';
 import { ChatService } from '../chat/chat.service';
 import { AgentAutoUpdateService } from '../agent-auto-update/agent-auto-update.service';
+import { keyState } from '../adoption/deployment-key';
+import { isUnassigned } from '../common/unassigned';
 
 const execFileAsync = promisify(execFile);
 
@@ -325,7 +327,14 @@ export class EnrollmentService {
       where: { token: tokenHash },
     });
 
-    if (!record) throw new NotFoundException('Claim token not found');
+    if (!record) {
+      // 0.57: a multi-use deployment key rides the same field (every
+      // installer already sends `token`). Looked up only when the value is
+      // not a claim token, so single-use claims are unchanged.
+      const key = await this.prisma.deploymentKey.findUnique({ where: { keyHash: tokenHash } });
+      if (key) return this.enrolWithDeploymentKey(withDeviceText(dto), key, claimedByIp);
+      throw new NotFoundException('Claim token not found');
+    }
     if (record.claimedAt) throw new BadRequestException('Token has already been used');
     if (record.expiresAt < new Date()) throw new BadRequestException('Token has expired');
 
@@ -586,6 +595,125 @@ export class EnrollmentService {
     return { endpoint, tenantId: record.tenantId };
   }
 
+  /**
+   * Enrol with a multi-use deployment key (0.57, check-security-invariants
+   * §70). The business, site, group and access mode come from the key, never
+   * from the computer — exactly as with a claim token.
+   *
+   *   review (the default): the computer lands in the unassigned pool, tagged
+   *     with the key, for a Platform Admin to adopt. It is handed no work.
+   *   active: it lands ACTIVE in the key's business.
+   *
+   * A use is consumed by one conditional UPDATE (not revoked, not expired,
+   * uses left) before anything is written, and handed back if the rest fails.
+   * Anything that already exists must prove its device secret. A computer
+   * already in the key's business, or already pooled under this key, is a
+   * no-op that consumes nothing: a GPO startup script re-runs on every boot.
+   * A computer in any other business is refused with one message.
+   */
+  private async enrolWithDeploymentKey(
+    dto: ClaimEndpointDto,
+    key: NonNullable<Awaited<ReturnType<PrismaService['deploymentKey']['findUnique']>>>,
+    ip: string | undefined,
+  ) {
+    const refused = () => new BadRequestException(`RustDesk ID ${dto.rustdeskId} cannot be enrolled with this key`);
+    const state = keyState(key);
+    if (state === 'revoked') throw new BadRequestException('Deployment key has been revoked');
+    if (state === 'expired') throw new BadRequestException('Deployment key has expired');
+    if (state === 'exhausted') throw new BadRequestException('Deployment key has no uses left');
+    // Every installer this server hands out sends one; without it the
+    // computer could never authenticate a heartbeat afterwards.
+    if (!dto.agentSecret) throw new BadRequestException('A deployment key enrolment needs the device secret');
+    const business = await this.prisma.customer.findFirst({ where: { id: key.customerId, isArchived: false }, select: { id: true, tenantId: true } });
+    if (!business || business.tenantId !== key.tenantId) throw new BadRequestException('Deployment key cannot be used');
+    const active = key.mode === 'active';
+
+    const existing = await this.prisma.rustdeskNode.findUnique({
+      where: { rustdeskId: dto.rustdeskId },
+      select: { id: true, tenantId: true, agentSecretHash: true, endpointId: true, endpoint: { select: { id: true, tenantId: true, customerId: true, deploymentKeyId: true, status: true } } },
+    });
+    if (existing) {
+      if (!existing.agentSecretHash || !this.secretMatches(existing.agentSecretHash, dto.agentSecret)) throw refused();
+      const ep = existing.endpoint;
+      if (ep.status === 'ARCHIVED') throw refused();
+      if (!isUnassigned(ep)) {
+        if (ep.customerId === key.customerId) return { enrolled: true, unchanged: true };
+        throw refused();
+      }
+      if (!active && ep.deploymentKeyId === key.id) return { pending: true, unchanged: true };
+    }
+
+    const used = await this.prisma.$executeRaw`
+      UPDATE "DeploymentKey" SET "useCount" = "useCount" + 1, "lastUsedAt" = now()
+       WHERE "id" = ${key.id} AND "revokedAt" IS NULL AND "expiresAt" > now() AND "useCount" < "maxUses"`;
+    if (used !== 1) throw new BadRequestException('Deployment key has no uses left');
+
+    try {
+      const siteId = active && key.siteId
+        ? (await this.prisma.site.findFirst({ where: { id: key.siteId, customerId: key.customerId, isActive: true }, select: { id: true } }))?.id ?? null
+        : null;
+      const groupId = active && key.endpointGroupId
+        ? (await this.prisma.endpointGroup.findFirst({
+            where: { id: key.endpointGroupId, kind: 'STATIC', OR: [{ customerId: key.customerId }, { customerId: null, tenantId: key.tenantId }] },
+            select: { id: true },
+          }))?.id ?? null
+        : null;
+      const encryptedPassword = dto.password ? this.encryptPassword(dto.password) : undefined;
+      const placement = active
+        ? { tenantId: key.tenantId, customerId: key.customerId, siteId, status: 'ACTIVE' as const, accessMode: key.accessMode }
+        : { tenantId: null, customerId: null, siteId: null, status: 'PENDING_ENROLLMENT' as const };
+      const common = {
+        hostname: dto.hostname ?? null, platform: dto.platform ?? null, osVersion: dto.osVersion ?? null,
+        lastSeenAt: new Date(), isOnline: true, deploymentKeyId: key.id, arrivedVia: 'deployment_key', sourceIp: ip ?? null,
+      };
+
+      let endpointId: string;
+      if (existing) {
+        endpointId = existing.endpointId;
+        await this.prisma.endpoint.update({
+          where: { id: endpointId },
+          data: { ...common, ...placement, ...(dto.hostname ? { name: dto.hostname } : {}), ...(active ? { isManaged: true } : {}) },
+        });
+        await this.prisma.rustdeskNode.update({
+          where: { id: existing.id },
+          data: {
+            tenantId: placement.tenantId, hostname: dto.hostname ?? undefined, platform: dto.platform ?? undefined, lastSeenAt: new Date(),
+            ...(encryptedPassword ? { permanentPassword: encryptedPassword } : {}),
+          },
+        });
+      } else {
+        const created = await this.prisma.endpoint.create({
+          data: { ...common, ...placement, name: dto.hostname ?? dto.rustdeskId, isManaged: active },
+        });
+        endpointId = created.id;
+        await this.prisma.rustdeskNode.create({
+          data: {
+            tenantId: placement.tenantId, endpointId, rustdeskId: dto.rustdeskId, hostname: dto.hostname ?? null, platform: dto.platform ?? null,
+            lastSeenAt: new Date(), agentSecretHash: this.hashSecret(dto.agentSecret), agentSecretSetAt: new Date(),
+            ...(encryptedPassword ? { permanentPassword: encryptedPassword } : {}),
+          },
+        });
+      }
+      if (groupId) await this.prisma.endpointGroupMember.createMany({ data: [{ endpointGroupId: groupId, endpointId }], skipDuplicates: true });
+
+      await this.audit.log({
+        // A pending computer is not the business's yet: the row is platform-level.
+        ...(active ? { tenantId: key.tenantId, customerId: key.customerId } : {}),
+        actorIp: ip, action: 'DEPLOYMENT_KEY_USED', resource: 'endpoint', resourceId: endpointId,
+        meta: {
+          deploymentKeyId: key.id, keyName: key.name, mode: key.mode, outcome: active ? 'enrolled' : 'pending',
+          rustdeskId: dto.rustdeskId, hostname: dto.hostname ?? null, fromPool: !!existing,
+          ...(siteId ? { siteId } : {}), ...(groupId ? { groupId } : {}),
+        },
+      });
+      // Nothing about the business goes back to the installer.
+      return active ? { enrolled: true } : { pending: true };
+    } catch (e) {
+      await this.prisma.$executeRaw`UPDATE "DeploymentKey" SET "useCount" = "useCount" - 1 WHERE "id" = ${key.id} AND "useCount" > 0`.catch(() => undefined);
+      throw e;
+    }
+  }
+
   async heartbeat(dto: {
     rustdeskId: string; hostname?: string; platform?: string; osVersion?: string;
     agentVersion?: string; rustdeskVersion?: string; ipAddress?: string;
@@ -664,6 +792,9 @@ export class EnrollmentService {
           lastSeenAt: new Date(),
           isOnline: true,
           status: 'PENDING_ENROLLMENT',
+          // 0.57: how it arrived, and from where, for the Unassigned page.
+          arrivedVia: isInstallerCheckIn(dto) ? 'install_script' : 'heartbeat',
+          sourceIp: remoteIp ?? null,
         },
       });
       await this.prisma.rustdeskNode.create({
@@ -693,8 +824,11 @@ export class EnrollmentService {
     // heartbeat — keeps liveness and nothing else.
     const now = new Date();
     const identity = authenticated && node.endpointId
-      ? await this.prisma.endpoint.findUnique({ where: { id: node.endpointId }, select: { updateChannel: true, signedSeenAt: true, legacySeenAt: true } })
+      ? await this.prisma.endpoint.findUnique({ where: { id: node.endpointId }, select: { updateChannel: true, signedSeenAt: true, legacySeenAt: true, customerId: true, tenantId: true } })
       : null;
+    // 0.57 (§70): a computer in the unassigned pool reports and is inspected,
+    // and is handed nothing to do until it is adopted.
+    const pooled = !!identity && isUnassigned(identity);
     const kind: HeartbeatKind = identity ? heartbeatKind(dto, identity, now) : dto.updateChannel === 'signed' ? 'signed' : 'standard';
     const mayAct = heartbeatMayAct(kind);
 
@@ -774,6 +908,8 @@ export class EnrollmentService {
       // The address decides where the machine appears on the dashboard map and
       // what the audit trail records, so it is the device's to report or nobody's.
       ...(authenticated && dto.ipAddress !== undefined && { ipAddress: dto.ipAddress }),
+      // Where a pooled computer connects from: what an address-range rule matches.
+      ...(pooled && remoteIp ? { sourceIp: remoteIp } : {}),
       // Update channel (0.24). Self-reported, and only ever used to decide what
       // the portal withholds from a legacy agent — claiming "signed" gets an
       // agent less from the portal, never more.
@@ -836,6 +972,34 @@ export class EnrollmentService {
         commands: [], actions: [], actionAcks: [], patchPostureAck: null, patchScan: false,
         monitor: null, diagnostics: [], chat: null, tray: null,
         ...(kind === 'legacy_on_signed' ? { retireStandard: true } : {}),
+        rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
+      };
+    }
+
+    // 0.57 (§70): the unassigned pool. Liveness, the live sample and the
+    // automatic inventory (what the Unassigned page shows: identification and
+    // hardware) — and nothing else: no rotation, no update or reinstall, no
+    // migration, monitoring, diagnostic, action, patch scan, chat or tray.
+    // The heartbeat changes nothing else here until a Platform Admin adopts
+    // the computer (AdoptionService.adopt).
+    if (authenticated && pooled) {
+      let commands: { id: string; type: string; params: unknown }[] = [];
+      try {
+        await this.inventory.recordLiveState(node.endpointId, {
+          loggedOnUser: dto.loggedOnUser, uptimeSeconds: dto.uptimeSeconds, lastBootAt: dto.lastBootAt, cpuLoadPercent: dto.cpuLoadPercent,
+          memoryTotalMb: dto.memoryTotalMb, memoryFreeMb: dto.memoryFreeMb, systemDiskTotalMb: dto.systemDiskTotalMb, systemDiskFreeMb: dto.systemDiskFreeMb,
+        });
+        // Only the automatic collections: a person's request needs a tenant
+        // (requesterStillAllowed) and fails before it is handed out.
+        commands = await this.inventory.collectForHeartbeat(node.endpointId);
+      } catch (e) {
+        this.logger.warn(`Inventory step failed for pooled endpoint ${node.endpointId}: ${String(e)}`);
+      }
+      return {
+        found: true, endpointId: node.endpointId, authenticated, pending: true,
+        rotate: null, updateRustdesk: null, reinstallAgent: null,
+        commands, actions: [], actionAcks: [], patchPostureAck: null, patchScan: false,
+        monitor: null, diagnostics: [], chat: null, tray: null,
         rustdeskRegistered: await this.peerRegisteredWithHbbs(dto.rustdeskId),
       };
     }

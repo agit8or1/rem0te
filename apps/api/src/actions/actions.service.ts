@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { assertAssigned } from '../common/unassigned';
 import { Prisma, type ActionJob, type ActionJobStatus, type ActionTarget, type ActionTargetStatus } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
@@ -331,6 +332,9 @@ export class ActionsService {
     for (const id of r.endpointIds) {
       await this.acl.assertEndpointInScope(actor, id);
       const ep = await this.endpointFor(id);
+      // 0.57 (§70): no plan — action, software, script, service, process or
+      // patch ring — names a computer in the unassigned pool.
+      if (ep) assertAssigned(ep);
       if (!ep || !ep.customerId || !ep.customer || ep.status === 'ARCHIVED' || !ep.customer.isActive || ep.customer.isArchived) throw new NotFoundException('Computer not found');
       if (!(await this.acl.canReachEndpoint(actor, ep))) throw new NotFoundException('Computer not found');
       eps.push(ep);

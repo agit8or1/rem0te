@@ -130,6 +130,11 @@ jobs:
       # reason it does not ticket), its retry schedule and the draft it sends.
       - name: Alert condition tests
         run: node apps/api/scripts/unit-alert-conditions.mjs
+      # 0.57: device adoption — the unassigned rule, deployment keys (96 hex,
+      # hash only, 90 days / 10,000 uses, review by default) and assignment
+      # rules (four kinds, none about users; ranking and conflicts).
+      - name: Device adoption tests
+        run: node apps/api/scripts/unit-adoption.mjs
       # 0.50: company-wide and assignable patch policies — the rings the
       # portal builds (checked with the signer's own validatePolicyDoc), the
       # membership fingerprint and the bounded revision decision.

@@ -2,11 +2,7 @@ import {
   Body,
   Controller,
   Get,
-  HttpCode,
-  HttpStatus,
-  Param,
   Patch,
-  Post,
   UseGuards,
 } from '@nestjs/common';
 import { IsBoolean, IsOptional } from 'class-validator';
@@ -65,17 +61,9 @@ export class AdminController {
     return { success: true, data: await this.adminService.getUnassignedDevices() };
   }
 
-  /** Move an unassigned device into a business. */
-  @Post('unassigned-devices/:id/assign')
-  @HttpCode(HttpStatus.OK)
-  async assignDevice(
-    @Actor() actor: ActorContext,
-    @Param('id') id: string,
-    @Body('businessId') businessId: string,
-  ) {
-    this.acl.assertPlatformAdmin(actor);
-    return { success: true, data: await this.adminService.assignDevice(actor, id, businessId) };
-  }
+  // POST unassigned-devices/:id/assign was removed in 0.57: it set the
+  // business with no fresh sign-in, no site and an ENDPOINT_UPDATED audit row.
+  // Adoption (POST /adoption/devices/assign, AdoptionService) replaces it.
 
   // GET /admin/search was removed in 0.31.2. It scoped computers by business
   // alone, so a Business User found computers granted only to others (name,

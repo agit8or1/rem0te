@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
-  businessesApi, endpointsApi, sitesApi,
+  adoptionApi, businessesApi, endpointsApi, sitesApi,
 } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -45,9 +45,11 @@ export default function BusinessDetailPage() {
   });
 
   // Unassigned computers are a platform-level view — a business never owns one.
+  // 0.57: the adoption pool, assigned through the adoption route (fresh
+  // sign-in, audited per computer); the device edit route no longer moves one.
   const { data: unassignedData } = useQuery({
-    queryKey: ['endpoints', 'unassigned'],
-    queryFn: () => endpointsApi.list({ businessId: 'null' }).then((r) => r.data?.data),
+    queryKey: ['adoption', 'devices'],
+    queryFn: adoptionApi.devices,
     enabled: isPlatformAdmin,
   });
 
@@ -60,8 +62,9 @@ export default function BusinessDetailPage() {
   const [selectedUnassigned, setSelectedUnassigned] = useState('');
 
   const assignMutation = useMutation({
-    mutationFn: (epId: string) => endpointsApi.update(epId, { customerId: id }),
+    mutationFn: (epId: string) => adoptionApi.assign({ endpointIds: [epId], businessId: id }),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['adoption'] });
       toast({ title: 'Computer moved into this business' });
       setSelectedUnassigned('');
       qc.invalidateQueries({ queryKey: ['endpoints'] });
@@ -96,7 +99,7 @@ export default function BusinessDetailPage() {
   const b = business as Record<string, unknown>;
   const siteList: Record<string, unknown>[] = Array.isArray(sites) ? sites : [];
   const endpointList: Record<string, unknown>[] = Array.isArray(endpointsData?.endpoints) ? endpointsData.endpoints : [];
-  const unassignedList: Record<string, unknown>[] = Array.isArray(unassignedData?.endpoints) ? unassignedData.endpoints : [];
+  const unassignedList: Record<string, unknown>[] = (unassignedData?.computers ?? []) as unknown as Record<string, unknown>[];
   const peopleList: Record<string, unknown>[] = Array.isArray(people) ? people : [];
   const quickConnectEnabled = (b.quickConnectEnabled as boolean) ?? false;
 

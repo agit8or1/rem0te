@@ -26,7 +26,8 @@ The Rem0te operator. Identified by `User.isPlatformAdmin`, not by a role row —
 "Platform Admin" membership to forge.
 
 Can create, edit, disable and delete businesses; view every business, user and computer;
-move an unassigned computer into a business; manage Business Owners and Business Users; manage
+adopt an unassigned computer into a business and make deployment keys and assignment rules
+(0.57, [deployment.md](deployment.md)); manage Business Owners and Business Users; manage
 platform settings, RustDesk infrastructure, installers and updates; view global audit logs and
 active sessions; and use Quick Connect whenever the master switch is on.
 

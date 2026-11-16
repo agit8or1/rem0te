@@ -43,6 +43,7 @@ const ORDER = [
   ['troubleshooting.md', 'Troubleshooting', 'Start here', 'Start here when something is broken — especially "the target device is offline".'],
   ['connecting.md', 'Connecting', 'Connecting and clients', 'What happens when you click Connect, and why the three connect paths differ.'],
   ['clients.md', 'Clients', 'Connecting and clients', 'Every RustDesk client Rem0te hands out, who it is for, and how it finds this server.'],
+  ['deployment.md', 'Deploying agents', 'Connecting and clients', 'Deployment keys for GPO, Intune, an RMM, Linux and macOS; unassigned computers, assignment rules and adoption.'],
   ['chat.md', 'Chat', 'Connecting and clients', 'Chatting with the person at a Windows computer: the tray\'s chat window, receipts, recording, limits and retention.'],
   ['tray.md', 'The tray icon', 'Connecting and clients', 'The tray icon on Windows computers: chat, support requests with usage and a screenshot, and self-help tools.'],
   ['support-requests.md', 'Support requests', 'Connecting and clients', 'The customer support link, the status page and the technician queue.'],
