@@ -661,6 +661,10 @@ The **Windows Update script still never restarts** (`wua.ps1`, §15); the only r
 
 ## Restart windows (0.54)
 
+> From 0.60 a restart window can also be set without a patch policy — on a business, a device group or one
+> computer — for computers whose updates are installed some other way. See [Restart windows](/docs/restart-windows).
+> A computer in a patch policy with its own restart window is restarted by that policy only.
+
 **Who stops a restart.** Only a technician connected through RustDesk (`rustdesk.exe --cm` running), or the agent
 not being able to tell. **A signed-in user does not stop the restart. They see the 15-minute warning, and unsaved
 work is lost.** People leave themselves signed in, so "someone is signed in" would mean "never restarts".

@@ -64,6 +64,7 @@ const ORDER = [
   ['software-deployment.md', 'Software deployment', 'Computers and monitoring', 'Allowlisted winget packages pinned by version and hash, installed through rings and two approvals; version compliance.'],
   ['script-library.md', 'Script library', 'Computers and monitoring', 'Write, version and review PowerShell scripts, and run approved ones through the signed approval chain.'],
   ['automation.md', 'Automation schedules', 'Computers and monitoring', 'Recurring script runs and software installs, approved once on the signer and signed run by run.'],
+  ['restart-windows.md', 'Restart windows', 'Computers and monitoring', 'When a computer may be restarted automatically: a business, group or computer window, approved once, each restart signed.'],
   ['technicians.md', 'MSP technicians', 'People and access', 'Per-business, time-limited and scheduled technician access.'],
   ['technician-access.md', 'Technician access and abuse prevention', 'People and access', 'L1/L2/L3 presets, policy, independent review and temporary access.'],
   ['access-control.md', 'Access control', 'People and access', 'Roles, capabilities and what each permission allows.'],

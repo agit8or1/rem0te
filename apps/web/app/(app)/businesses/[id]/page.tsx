@@ -22,6 +22,7 @@ import { useToast } from '@/hooks/use-toast';
 import { usePermissions, CAP } from '@/lib/auth';
 import { Download, Plus, X, Zap } from 'lucide-react';
 import { AgentAutoUpdateCard } from '@/components/businesses/agent-auto-update-card';
+import { BusinessRestartWindowCard } from '@/components/restart-windows/restart-window-card';
 
 export default function BusinessDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -169,6 +170,9 @@ export default function BusinessDetailPage() {
 
           {/* 0.46: this business's automatic agent updates (the business policy's agent mode). */}
           <AgentAutoUpdateCard businessId={id} />
+
+          {/* 0.60: when its computers may be restarted automatically (business, device groups, computer overrides). */}
+          <BusinessRestartWindowCard businessId={id} />
         </TabsContent>
 
         <TabsContent value="computers" className="mt-4 space-y-4">

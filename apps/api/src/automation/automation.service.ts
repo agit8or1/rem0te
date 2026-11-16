@@ -19,8 +19,10 @@ import { connectivityOf } from '../common/connectivity';
 import {
   AUTOMATION_SCHEMA, AutomationDoc, AutomationOffline, AutomationRecurrence, HOURLY_EVERY, MAX_AUTOMATION_DAYS, MAX_AUTOMATION_TARGETS, MAX_RUNS_PER_OCCURRENCE,
   automationDigest, automationNextOccurrence, automationNextOccurrences, automationOccurrenceAt, latestNotAfter, offlineInWords, recurrenceInWords, recurrenceKind,
-  taskAction, taskInWords, validateAutomationDoc, type AutomationTask,
+  taskAction, taskInWords, targetsInWords, validateAutomationDoc, type AutomationTask, type RestartTask,
 } from '../actions/automation-policy';
+import { REBOOT_SCHEDULE } from '../actions/catalog';
+import type { PolicyWindow } from '../actions/patch-policy';
 
 /**
  * Automation schedules (0.58, docs/automation.md).
@@ -124,8 +126,9 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     if (this.busy) return;
     this.busy = true;
     try {
+      // 0.60: restart windows are mirrored and run by RESTART_WINDOW_SWEEP (restart-windows/), not here.
       const rows = await this.prisma.automationPolicy.findMany({
-        where: { OR: [{ status: { in: ['AWAITING_APPROVAL', 'ACTIVE'] } }, { status: 'REVOKED', signerRevokedAt: null }] },
+        where: { taskKind: { not: 'restart' }, OR: [{ status: { in: ['AWAITING_APPROVAL', 'ACTIVE'] } }, { status: 'REVOKED', signerRevokedAt: null }] },
         orderBy: { createdAt: 'asc' }, take: 200,
       });
       for (const r0 of rows) {
@@ -137,6 +140,9 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       }
     } finally { this.busy = false; }
   }
+
+  /** 0.60: the same mirror, for RestartWindowsService's own sweep and pages. */
+  mirror(r: AutomationPolicy, now = new Date()): Promise<AutomationPolicy> { return this.refresh(r, now); }
 
   /** Mirror the signer's view of a policy; keep asking it to revoke until it confirms. */
   private async refresh(r: AutomationPolicy, now = new Date()): Promise<AutomationPolicy> {
@@ -220,6 +226,8 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
   /** Inside an open occurrence: ask for its plan, unless one is still open or the occurrence has had its plans. */
   async propose(r: AutomationPolicy, now: Date) {
     const doc = AutomationDoc.parse(r.document);
+    // 0.60: a restart window is proposed one computer at a time by RestartWindowsService, never here.
+    if (doc.task.kind === 'restart' || doc.targets.kind === 'business' || doc.targets.kind === 'group_members') return;
     const occ = automationOccurrenceAt(now, doc.recurrence);
     if (!occ || now >= new Date(doc.expiresAt)) return;
     const key = occ.start.toISOString();
@@ -319,6 +327,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
   }
 
   private actionOf(t: AutomationTask): CatalogAction {
+    if (t.kind === 'restart') return REBOOT_SCHEDULE;
     if (t.kind === 'script') return SCRIPT_RUN;
     return taskAction(t).id === SOFTWARE_UNINSTALL.id ? SOFTWARE_UNINSTALL : SOFTWARE_INSTALL;
   }
@@ -370,8 +379,9 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     const configured = this.signer.configured();
     const caps = configured ? await this.signer.capabilities().catch(() => null) : null;
     const supports = caps?.status === 200 && (caps.body as { automations?: number }).automations === 1;
+    const restarts = caps?.status === 200 && (caps.body as { restartWindows?: number }).restartWindows === 1;
     return {
-      signerConfigured: configured, signerSupportsAutomation: supports,
+      signerConfigured: configured, signerSupportsAutomation: supports, signerSupportsRestartWindows: restarts,
       sweep: { enabled: AutomationService.sweepEnabled(), everySeconds: AutomationService.sweepSeconds() },
       why: !configured ? 'Automation schedules need the approval signer (APPROVAL_SIGNER_INTERNAL_URL).' : !supports ? 'The approval signer answering is older than 0.58 and does not support automation policies. Install the 0.58 signer.' : null,
     };
@@ -411,7 +421,6 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       const t = await this.software.automationTask(actor, dto.task.entryId, dto.task.operation, dto.businessId);
       task = { kind: 'software', operation: dto.task.operation, params: t.params, display: t.display };
     }
-    const action = this.actionOf(task);
 
     // The computers: named ones bound to their enrolled identity; a group checked now as the author would be at each run.
     let targets: AutomationDoc['targets'];
@@ -449,6 +458,50 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     // §58: in direct mode the signer activates it at admission, with no approvers; the request is the decision.
     if (direct) assertFresh(freshMethod, { action: 'actions.direct', message: 'Direct mode: this schedule starts running as soon as you create it, with no approval step. Confirm it is you.' });
 
+    const row = await this.submit(actor, { ...dto, businessName: biz.name, tenantId: biz.tenantId }, task, targets, supersedes, now);
+    return this.detail(actor, row.id, now);
+  }
+
+  /**
+   * 0.60: propose a restart window's policy (task `restart`). Called only by
+   * RestartWindowsService, which has already checked who may set the window
+   * and asked for a fresh sign-in (restart.window). The document goes to the
+   * signer through the same submit() as any schedule; in direct mode it is
+   * active at once, so it needs actions.direct as well.
+   */
+  async createRestart(actor: ActorContext, input: {
+    businessId: string; name: string; task: RestartTask; targets: AutomationDoc['targets']; recurrence: PolicyWindow;
+    maxRunsPerOccurrence: number; expiresInDays: number; reason: string; supersedes?: string | null;
+  }, freshMethod: string | null, now = new Date()): Promise<AutomationPolicy> {
+    const ready = await this.readiness();
+    if (!ready.signerConfigured) throw new ServiceUnavailableException({ code: 'APPROVAL_SIGNER_NOT_CONFIGURED', message: 'Restart windows need the approval signer (APPROVAL_SIGNER_INTERNAL_URL): every restart is a signed plan.' });
+    if (!ready.signerSupportsRestartWindows) throw new ConflictException({ code: 'SIGNER_TOO_OLD', message: 'The approval signer answering is older than 0.60 and does not support restart windows. Install the 0.60 signer.' });
+    await this.acl.assertBusinessInScope(actor, input.businessId);
+    const biz = await this.prisma.customer.findUnique({ where: { id: input.businessId }, select: { name: true, tenantId: true, isActive: true, isArchived: true } });
+    if (!biz || !biz.isActive || biz.isArchived) throw new NotFoundException('Business not found');
+    let supersedes: AutomationPolicy | null = null;
+    if (input.supersedes) {
+      supersedes = await this.prisma.automationPolicy.findUnique({ where: { id: input.supersedes } });
+      if (!supersedes || supersedes.customerId !== input.businessId || supersedes.taskKind !== 'restart' || ['REVOKED', 'REJECTED', 'EXPIRED'].includes(supersedes.status)) supersedes = null;
+    }
+    const signerPolicy = await this.signer.policy(input.businessId);
+    if (signerPolicy.status !== 200) throw new ConflictException({ code: 'APPROVAL_SIGNER_ERROR', message: 'The approval signer did not return this business\'s policy.' });
+    const direct = signerPolicy.body.approval === DIRECT;
+    // §58: in direct mode the signer activates it at admission, with no approvers; the request is the decision.
+    if (direct) assertFresh(freshMethod, { action: 'actions.direct', message: 'Direct mode: this restart window starts working as soon as you save it, with no approval step. Confirm it is you.' });
+    return this.submit(actor, {
+      businessId: input.businessId, businessName: biz.name, tenantId: biz.tenantId, name: input.name, recurrence: input.recurrence,
+      offline: { mode: 'run_when_online' }, maxRunsPerOccurrence: input.maxRunsPerOccurrence, expiresInDays: input.expiresInDays, reason: input.reason,
+    }, input.task, input.targets, supersedes, now);
+  }
+
+  /** The document, its checks, the signer, and the one row: shared by create() and createRestart(). */
+  private async submit(actor: ActorContext, dto: {
+    businessId: string; businessName: string; tenantId: string | null; name: string; recurrence: AutomationDoc['recurrence']; offline: AutomationDoc['offline'];
+    maxRunsPerOccurrence: number; expiresInDays: number; reason: string;
+  }, task: AutomationDoc['task'], targets: AutomationDoc['targets'], supersedes: AutomationPolicy | null, now: Date): Promise<AutomationPolicy> {
+    const biz = { name: dto.businessName, tenantId: dto.tenantId };
+    const action = this.actionOf(task);
     const user = await this.prisma.user.findUnique({ where: { id: actor.userId }, select: { firstName: true, lastName: true, email: true } });
     const expiresAt = new Date(now.getTime() + dto.expiresInDays * 86_400_000);
     const doc: AutomationDoc = {
@@ -480,13 +533,17 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       tenantId: biz.tenantId ?? undefined, customerId: dto.businessId, actorId: actor.userId, actorIp: actor.ip, action: 'AUTOMATION_POLICY_CREATED', resource: 'automation_policy', resourceId: row.id,
       meta: {
         name: dto.name, digest, approval: activeNow ? 'direct' : 'signed', action: `${action.id}@${action.version}`, task: taskInWords(task),
-        ...(task.kind === 'script' ? { scriptVersionId: task.params.scriptVersionId, sha256: task.params.sha256, parameters: task.params.parameters } : { entryId: task.display.entryId, packageId: task.params.packageId, version: task.params.version }),
-        targets: targets.kind === 'computers' ? { kind: 'computers', endpointIds: targets.computers.map((c) => c.endpointId) } : { kind: 'group', groupId: targets.groupId, maxTargets: targets.maxTargets },
+        ...(task.kind === 'script' ? { scriptVersionId: task.params.scriptVersionId, sha256: task.params.sha256, parameters: task.params.parameters }
+          : task.kind === 'software' ? { entryId: task.display.entryId, packageId: task.params.packageId, version: task.params.version }
+            : { restartRule: task.rule, ...(task.ignoreRemoteSession ? { ignoreRemoteSession: true } : {}) }),
+        targets: targets.kind === 'computers' ? { kind: 'computers', endpointIds: targets.computers.map((c) => c.endpointId) }
+          : targets.kind === 'group' ? { kind: 'group', groupId: targets.groupId, maxTargets: targets.maxTargets }
+            : targets.kind === 'group_members' ? { kind: 'group_members', groupId: targets.groupId } : { kind: targets.kind },
         recurrence: dto.recurrence, offline: dto.offline, maxRunsPerOccurrence: dto.maxRunsPerOccurrence, expiresAt: doc.expiresAt, supersedes: supersedes?.id ?? null, reason: dto.reason,
       },
     });
     if (activeNow && row.supersedesId) await this.supersede(row, now);
-    return this.detail(actor, row.id, now);
+    return row;
   }
 
   /**
@@ -523,7 +580,8 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     if (businessId !== undefined && businessId !== '' && !Id.safeParse(businessId).success) this.bad('INVALID_REQUEST', 'businessId is not an id');
     const scope = this.acl.resolveScope(actor, businessId || null);
     if (scope) await this.acl.assertBusinessInScope(actor, scope);
-    const rows = await this.prisma.automationPolicy.findMany({ where: scope ? { customerId: scope } : {}, orderBy: { createdAt: 'desc' }, take: 50 });
+    // 0.60: restart windows are shown where they are set (business, group and computer pages), not in this list.
+    const rows = await this.prisma.automationPolicy.findMany({ where: { taskKind: { not: 'restart' }, ...(scope ? { customerId: scope } : {}) }, orderBy: { createdAt: 'desc' }, take: 50 });
     const out = [];
     for (const r0 of rows) {
       try { await this.scoped(actor, r0.id); } catch { continue; }
@@ -532,7 +590,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       const counts = await this.counts(r.id);
       out.push({
         id: r.id, name: r.name, businessId: r.customerId, businessName: doc.businessName, status: r.status, paused: !!r.pausedAt, taskKind: r.taskKind, task: taskInWords(doc.task),
-        targets: doc.targets.kind === 'computers' ? `${doc.targets.computers.length} computer(s)` : `group "${doc.targets.groupName}" (at most ${doc.targets.maxTargets})`,
+        targets: doc.targets.kind === 'computers' ? `${doc.targets.computers.length} computer(s)` : targetsInWords(doc.targets, doc.businessName),
         schedule: recurrenceInWords(doc.recurrence), offline: offlineInWords(doc.offline),
         nextRun: r.status === 'ACTIVE' && !r.pausedAt ? automationNextOccurrence(now, doc.recurrence, r.expiresAt) : null,
         lastRun: counts.lastRun, succeeded: counts.succeeded, failed: counts.failed,
@@ -622,6 +680,21 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     if (!c.count) throw new ConflictException({ code: 'NOT_ALLOWED_NOW', message: 'The schedule is not paused.' });
     await this.audit.log({ tenantId: r.tenantId ?? undefined, customerId: r.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'AUTOMATION_POLICY_RESUMED', resource: 'automation_policy', resourceId: id, meta: { pausedAt: r.pausedAt, pauseReason: r.pauseReason } });
     return this.detail(actor, id, now);
+  }
+
+  /**
+   * 0.60: withdraw a restart window's policy (it was changed, removed, or set
+   * to no automatic restarts). Called only by RestartWindowsService, after its
+   * own permission checks; withdrawing only narrows, so it asks no fresh
+   * sign-in. Revoked here at once and on the signer now or on a later sweep.
+   */
+  async withdrawRestart(r: AutomationPolicy, reason: string, now = new Date()) {
+    if (r.taskKind !== 'restart' || r.status === 'REVOKED') return;
+    const why = reason.slice(0, 300);
+    await this.prisma.automationPolicy.update({ where: { id: r.id }, data: { status: 'REVOKED', revokedAt: now, revokeReason: why } });
+    const out = this.signer.configured() ? await this.signer.revokeAutomation(r.id, why).catch(() => null) : null;
+    if (out?.status === 200) await this.prisma.automationPolicy.update({ where: { id: r.id }, data: { signerRevokedAt: new Date(out.body.revokedAt ?? now) } });
+    await this.audit.log({ tenantId: r.tenantId ?? undefined, customerId: r.customerId, action: 'AUTOMATION_POLICY_REVOKED', resource: 'automation_policy', resourceId: r.id, meta: { reason: why, from: r.status, restartWindow: true, signerConfirmed: out?.status === 200 } });
   }
 
   /** Revoke: the portal stops at once; the signer is told now and on every sweep until it confirms. One-way. */

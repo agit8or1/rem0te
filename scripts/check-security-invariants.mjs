@@ -1896,7 +1896,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const doc = read('docs/staged-patching.md').replace(/\n>\s*/g, ' ').replace(/\s+/g, ' ');
   check('the UI, the approval page and the docs say the restart has not run on real Windows',
     tsCat.includes(`REBOOT_UNPROVEN = '${UNPROVEN}'`) && comp.includes(`REBOOT_UNPROVEN = '${UNPROVEN}'`) && /<strong>\{REBOOT_UNPROVEN\}<\/strong>/.test(comp)
-      && (read('apps/api/src/approval-signer/page.ts').match(/esc\(REBOOT_UNPROVEN\)/g) ?? []).length === 3 && doc.includes(`**Not proven on Windows.** ${UNPROVEN}`),
+      && (read('apps/api/src/approval-signer/page.ts').match(/esc\(REBOOT_UNPROVEN\)/g) ?? []).length === 4 && doc.includes(`**Not proven on Windows.** ${UNPROVEN}`),
     'catalog.ts and patch-reboot-choice.tsx define it, the reboot choice shows it, the signer page and docs/staged-patching.md say it');
 }
 
@@ -4487,6 +4487,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'apikeys/apikeys.service.ts': ['apikey.create'],
     'automation/automation.controller.ts': ['automation.policy'],
     'automation/automation.service.ts': ['actions.direct'],
+    'restart-windows/restart-windows.service.ts': ['restart.window'],
     'client-updates/client-updates.service.ts': ['agent.autoupdate.business', 'updates.schedule'],
     'containment/containment.controller.ts': ['containment.lift'],
     'email/email.controller.ts': ['email.recipients', 'email.relay'],
@@ -5592,6 +5593,113 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /unit-sso-identity\.mjs/.test(read('.github/workflows/ci.yml')) && /^for t in credentials [^\n]* sso-identity[ ;][^\n]*do run/m.test(read('scripts/run-e2e.sh'))
       && /section\('G-R1: a Platform Admin through SSO'\)/.test(read('apps/api/scripts/e2e-sso-identity.mjs')),
     'unit-sso-identity.mjs in CI; e2e-sso-identity.mjs in run-e2e.sh');
+}
+
+// ── §73 (0.60): the simple restart window ────────────────────────────────────
+// "Restart if Windows needs it, nightly 02:00–04:00" on a business, a device
+// group or one computer (which may say "no automatic restarts"), computer >
+// group > business. A window is an automation policy whose task is `restart`:
+// approved on the approval signer with two passkeys, or active at creation in
+// direct mode. Each restart is one signed windows.reboot.schedule plan the
+// signer checks against the approved window (evaluateAutomationRestart): the
+// business, the window by the shared occurrence function, the fixed 15-minute
+// warning, onlyIfRequired under "if required", the RustDesk exception only if
+// the window has it, one open plan and at most three per computer per window.
+// The portal's sweep only asks, through ActionsService.createPlan, after the
+// containment check. The agent is unchanged (0.54 agents honour both flags).
+{
+  console.log('\n§73 restart windows');
+  const ap = read('apps/api/src/actions/automation-policy.ts');
+  const svc = read('apps/api/src/restart-windows/restart-windows.service.ts');
+  const ctl = read('apps/api/src/restart-windows/restart-windows.controller.ts');
+  const res = read('apps/api/src/restart-windows/resolve.ts');
+  const auto = read('apps/api/src/automation/automation.service.ts');
+  const page = read('apps/api/src/approval-signer/page.ts');
+  const srv = read('apps/api/src/approval-signer/server.ts');
+  const mig = read('apps/api/prisma/migrations/0081_restart_windows/migration.sql');
+  const dgs = read('apps/api/src/device-views/device-groups.service.ts');
+  const card = read('apps/web/components/restart-windows/restart-window-card.tsx');
+  const strip73 = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const fn73 = (src, sig) => { const i = src.indexOf(sig); const j = src.indexOf('\n}\n', i); return i < 0 ? '' : src.slice(i, j); };
+  const m73 = (src, sig) => { const i = src.indexOf(sig); const j = src.indexOf('\n  }\n', i); return i < 0 ? '' : src.slice(i, j); };
+
+  check('restart task: closed — a rule of two, the exception only as true, nothing else',
+    /export const RestartTask = z\.object\(\{\n  kind: z\.literal\('restart'\),\n  rule: z\.enum\(RESTART_RULES\),\n  ignoreRemoteSession: z\.literal\(true\)\.optional\(\),\n\}\)\.strict\(\);/.test(ap)
+      && ap.includes('export const RESTART_WINDOW_DELAY_MINUTES = POLICY_RESTART_DELAY_MINUTES;')
+      && /delayMinutes: RESTART_WINDOW_DELAY_MINUTES,\n    \.\.\.\(t\.rule === 'if_required' \? \{ onlyIfRequired: true as const \} : \{\}\),\n    \.\.\.\(t\.ignoreRemoteSession === true \? \{ ignoreRemoteSession: true as const \} : \{\}\),/.test(ap)
+      && /if \(t\.kind === 'restart'\) return \{ id: REBOOT_SCHEDULE\.id, version: 1 \};/.test(ap),
+    'RestartTask strict; restartParamsFor: the fixed warning, onlyIfRequired for if_required, the exception only when true; taskAction → windows.reboot.schedule');
+  check('restart document: whole business or a group\'s members only for a restart; never hourly; run_when_online; at least 30 minutes',
+    ['target_restart_only', 'restart_target_kind', 'restart_schedule_kind', 'restart_offline_rule', 'restart_window_too_short'].every((c) => ap.includes(`bad('${c}'`))
+      && ap.includes('export const MIN_RESTART_WINDOW_MINUTES = 30;'),
+    'validateAutomationDoc must refuse each');
+  const ev = fn73(ap, 'export function evaluateAutomationRestart(');
+  const order = ['restart_rule_unknown', 'action_not_in_policy', 'override_not_allowed', 'restart_params_not_allowed', 'script_not_in_policy', 'bad_display', 'requester_mismatch', 'computer_not_in_policy', 'outside_restart_window', 'restart_already_signed', 'restart_retry_limit'];
+  const idx = order.map((c) => ev.indexOf(`no('${c}'`));
+  check('signer: every restart plan is decided by evaluateAutomationRestart, refusals in order',
+    /if \(doc\.task\.kind === 'restart'\) return evaluateAutomationRestart\(s, r, now\);/.test(ap)
+      && idx.every((x, i) => x > 0 && (i === 0 || x > idx[i - 1]))
+      && /const want = restartParamsFor\(/.test(ev) && /if \(canonical\(got\) !== canonical\(want\)\) return no\('restart_params_not_allowed'/.test(ev)
+      && /automationOccurrenceAt\(nb, doc\.recurrence\)/.test(ev) && /e\.endpointIds\.includes\(tg\.endpointId\)/.test(ev),
+    `order ${order.join(' → ')}; params compared canonically; the shared occurrence function; the ledger per computer`);
+  check('signer: says it supports restart windows, and its page says what a window does',
+    srv.includes('restartWindows: 1') && /function renderRestartWindowPage\(/.test(page)
+      && /esc\(SIGNED_IN_USER_NOTE\)/.test(fn73(page, 'function renderRestartWindowPage(')) && /esc\(REBOOT_UNPROVEN\)/.test(fn73(page, 'function renderRestartWindowPage(')),
+    'capabilities restartWindows: 1; renderRestartWindowPage shows the signed-in user note and REBOOT_UNPROVEN');
+  const plans = (strip73(svc).match(/this\.actions\.createPlan\(/g) ?? []).length;
+  check('portal: one way to ask for a restart — one createPlan, under the window, with restartParamsFor',
+    plans === 1 && /action: REBOOT_SCHEDULE, endpointIds: \[ep\.id\], params: restartParamsFor\(task\)/.test(svc)
+      && /underPolicy: \{ policyId: p\.id, digest: p\.digest, evidence: null, kind: 'automation' \}/.test(svc)
+      && !/automationPolicy\.create\(|actionJob\.create\(|actionTarget\.create\(/.test(strip73(svc))
+      && /this\.automation\.createRestart\(/.test(svc) && (auto.match(/this\.prisma\.automationPolicy\.create\(/g) ?? []).length === 1,
+    'restart-windows.service.ts: createPlan once; no policy, job or target written directly; createRestart → the one automationPolicy.create');
+  const write = m73(svc, '  private async write(');
+  const offAt = write.indexOf("if (dto.mode === 'off') {"), freshAt = write.indexOf("assertFresh(freshMethod, { action: 'restart.window'");
+  check('portal: anything that can widen asks for a fresh sign-in (restart.window); "no automatic restarts" never does',
+    offAt > 0 && freshAt > offAt && !/assertFresh/.test(write.slice(offAt, write.indexOf('return row;', offAt)))
+      && /if \(scope !== 'business'\) assertFresh\(freshMethod, \{ action: 'restart\.window'/.test(svc)
+      && /if \(dto\.mode === 'inherit'\) assertFresh\(freshMethod, \{ action: 'restart\.window'/.test(svc)
+      && (svc.match(/assertFresh\(/g) ?? []).length === 3,
+    'write: off returns before the one assertFresh; clear asks except for the business; bulk inherit asks');
+  const pf = m73(svc, '  private async proposeFor(');
+  check('portal: containment first, then precedence, patch-policy computers left to their policy',
+    pf.indexOf("this.containment.blocking('actions', customerId)") > 0 && pf.indexOf("this.containment.blocking('actions', customerId)") < pf.indexOf('this.prisma.endpoint.findMany(')
+      && /effectiveSetting\(\{ id: ep\.id, customerId, groupIds: members\.groupsOf\(ep\.id\) \}, settings\)/.test(pf) && /patchGoverned\.has\(ep\.id\)/.test(pf)
+      && /if \(task\.rule === 'if_required' && \(await this\.restartRequired\(ep\.id\)\) !== true\) return 'not_required';/.test(svc),
+    'proposeFor: containment.blocking before reading computers; effectiveSetting; skip a patch policy\'s computers; if_required only when Windows says so');
+  check('precedence: computer > group > business through the 0.35 rule; a window not approved governs nothing',
+    /import \{ applies, resolve[^}]*\} from '\.\.\/group-policy\/precedence';/.test(res) && /export function inForce\(s: Pick<SettingLike, 'mode' \| 'policyLive'>\): boolean \{\n  return s\.mode === 'off' \|\| \(s\.mode === 'window' && s\.policyLive\);\n\}/.test(res)
+      && !/new Map|this\./.test(strip73(res)) && /policyLive: !!s\.policy && s\.policy\.status === 'ACTIVE' && !s\.policy\.pausedAt && s\.policy\.expiresAt > new Date\(\)/.test(svc),
+    'resolve.ts pure; inForce: off, or an ACTIVE unpaused unexpired policy');
+  check('retry: only after a RustDesk session or "cannot tell", or a plan that never arrived — 0.54\'s rule',
+    res.includes("export const RESTART_RETRY_REASONS: readonly string[] = ['remote_session_open', 'session_state_unknown'];")
+      && res.includes("export const RESTART_RETRY_JOB_STATES: readonly string[] = ['REJECTED', 'CANCELED', 'EXPIRED'];")
+      && /const RESTART_RETRY_MS = 15 \* 60_000;/.test(svc) && /export const RESTART_ATTEMPTS = MAX_RUNS_PER_OCCURRENCE;/.test(svc),
+    'resolve.ts retry lists; 15 minutes apart; at most three a window');
+  check('routes: read, set and remove per scope, and a bulk off/inherit — no approve, activate or sign route',
+    JSON.stringify([...ctl.matchAll(/@(Get|Put|Delete|Post)\('([^']*)'\)/g)].map((m) => `${m[1]} ${m[2]}`)) === JSON.stringify([
+      'Get businesses/:businessId', 'Put businesses/:businessId', 'Delete businesses/:businessId',
+      'Put businesses/:businessId/groups/:groupId', 'Delete businesses/:businessId/groups/:groupId',
+      'Get computers/:endpointId', 'Put computers/:endpointId', 'Delete computers/:endpointId', 'Post computers/bulk']),
+    'restart-windows.controller.ts route list');
+  check('sweep: RESTART_WINDOW_SWEEP=off stops it, and every test stack sets it',
+    /return process\.env\.RESTART_WINDOW_SWEEP !== 'off';/.test(svc) && /^export RESTART_WINDOW_SWEEP=off$/m.test(read('scripts/run-e2e.sh'))
+      && /RESTART_WINDOW_SWEEP: 'off'/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    'restart-windows.service.ts; run-e2e.sh; e2e-ui.mjs');
+  check('0081: restart task kind, the setting\'s CHECKs, three tries, one business per setting',
+    mig.includes(`CHECK ("taskKind" IN ('script', 'software', 'restart'))`) && /"RestartWindowSetting_mode_check" CHECK \(/.test(mig)
+      && mig.includes('CHECK ("attempt" BETWEEN 1 AND 3)') && /CREATE TRIGGER restart_window_setting_same_business/.test(mig) && /CREATE TRIGGER endpoint_restart_window_leaves/.test(mig)
+      && /WHERE "scope" = 'business'/.test(mig),
+    'migration 0081');
+  check('a device group carrying a restart window cannot be deleted',
+    /this\.prisma\.restartWindowSetting\.count\(\{ where: \{ groupId \} \}\)/.test(dgs),
+    'device-groups.service.ts policiesOn counts restart window settings');
+  check('UI: says "Waiting for approval", and never ticks the RustDesk exception by default',
+    card.includes('Waiting for approval') && /const \[ignore, setIgnore\] = useState\(initial\?\.ignoreRemoteSession \?\? false\);/.test(card) && card.includes('IGNORE_REMOTE_SESSION_LABEL') && card.includes('SIGNED_IN_USER_NOTE'),
+    'restart-window-card.tsx');
+  check('restart windows: the suites run',
+    /unit-restart-window-settings\.mjs/.test(read('.github/workflows/ci.yml')) && /run restart-window-settings node scripts\/e2e-restart-window-settings\.mjs/.test(read('scripts/run-e2e.sh')),
+    'unit-restart-window-settings.mjs in CI; e2e-restart-window-settings.mjs in run-e2e.sh');
 }
 
 // ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──

@@ -95,6 +95,10 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   every few hours, daily, weekly or monthly on named computers or a device group. Two passkey approvers approve the
   schedule once on the approval signer, which signs each run under it and holds it to the same task, computers,
   window and offline rule, one run at a time. Pause, revoke, revisions, history, and one-time scheduling of a run.
+- **[restart-windows.md](restart-windows.md)** — restart windows (0.60): "restart if Windows needs it, nightly
+  02:00–04:00" on a business, a device group or one computer (or *No automatic restarts*), computer > group >
+  business. Approved once on the approval signer; each restart a signed plan with the 15-minute warning, deferred
+  for a RustDesk session and tried again. With nothing set, nothing restarts a computer automatically.
 - **[patching-setup.md](patching-setup.md)** — turning on signed patching in production, in order (0.32): signed
   release, signed channel, signer, approvers, the first policy; where each key lives; the live pre-flight.
 - **[containment.md](containment.md)** — stopping writes during an incident (0.28): a global write pause and

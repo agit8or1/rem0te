@@ -1319,6 +1319,19 @@ const SECTIONS: Section[] = [
           <Link href="/docs/automation" className="underline text-foreground">Automation schedules</Link>.
         </p>
         <p>
+          From 0.60, a <strong className="text-foreground">restart window</strong> says when a computer may be restarted
+          automatically: &ldquo;restart if Windows needs it (or every time), nightly 02:00&ndash;04:00&rdquo; in one time
+          zone. Set it on a business (its overview), on a device group, or on one computer (its Patches tab), which can
+          instead say <em>No automatic restarts</em>; the computer&apos;s own setting wins, then a group&apos;s, then the
+          business&apos;s. With nothing set, nothing restarts a computer automatically. A window is approved once on the
+          approval signer by two people with passkeys (or is in force at once in direct mode) and says{' '}
+          <em>Waiting for approval</em> until then. Each restart is its own signed plan with the 15-minute warning; a
+          signed-in user does not stop it, a technician connected through RustDesk does (unless the window says otherwise),
+          and a deferred restart is tried again 15 minutes later and in the next window. Tested against a simulated agent
+          only. More in{' '}
+          <Link href="/docs/restart-windows" className="underline text-foreground">Restart windows</Link>.
+        </p>
+        <p>
           From 0.53, a patch policy&apos;s maintenance window can be{' '}
           <strong className="text-foreground">monthly</strong> as well as weekly: the first, second, third, fourth or
           last weekday of each month plus 0–14 days (Patch Tuesday is the second Tuesday, so &ldquo;second Tuesday + 2&rdquo;

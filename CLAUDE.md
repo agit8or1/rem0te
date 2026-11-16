@@ -1289,6 +1289,47 @@ provider has been called**; `docs/sso-keycloak.md` is untried.
 Behavioural proof: `e2e-sso-identity.mjs` (ports 3851–3853, a loopback mock
 provider, `SSO_SESSION_SWEEP` on and fast); unit: `unit-sso-identity.mjs`.
 
+§73 (0.60) is the simple restart window: "restart if Windows needs it (or
+always), nightly 02:00–04:00" on a business, a device group or one computer,
+which may instead say "no automatic restarts". Precedence is computer > group
+(priority) > business through `restart-windows/resolve.ts` (pure, the 0.35
+rule). A window not in force (awaiting approval, rejected, revoked, paused,
+expired) governs nothing and the next one down applies. With nothing set,
+nothing restarts a computer automatically.
+
+A window is an automation policy (§71) whose task is `restart`. `RestartTask`
+is strict: a rule of two and `ignoreRemoteSession` only as `true`, never by
+default. Its targets are `business`, `group_members` or one named computer;
+those two kinds are refused for a script or software task. It is never
+hourly, always `run_when_online`, and at least 30 minutes long.
+
+Each restart is one `windows.reboot.schedule@1` plan for one computer with
+exactly `restartParamsFor(task)`. The signer decides it in
+`evaluateAutomationRestart`, in order: `restart_rule_unknown`,
+`action_not_in_policy`, `override_not_allowed`, `restart_params_not_allowed`,
+`script_not_in_policy`, `bad_display`, `requester_mismatch`,
+`computer_not_in_policy`, `outside_restart_window` (the shared occurrence
+function), `restart_already_signed` and `restart_retry_limit`. The last two
+are per computer, from its own ledger, three a window.
+
+The portal asks only in `RestartWindowsService.proposeFor`, through one
+`ActionsService.createPlan`. Containment (`actions`) comes before it reads a
+computer. It skips a computer that a patch policy's own restart window
+governs. Under "if required" it asks only when the last scan says a restart
+is pending. A retry is 0.54's rule: 15 minutes apart, after a RustDesk session
+or "cannot tell", or a plan that never arrived.
+
+A window, and removing a group's or computer's own setting, need
+`assertFresh` naming `restart.window`. "No automatic restarts" and removing a
+business's window never do. 0081 holds the setting's CHECKs, the
+same-business trigger and `attempt BETWEEN 1 AND 3`. A group carrying a window
+cannot be deleted. `RESTART_WINDOW_SWEEP=off` is exact and set by `run-e2e.sh`
+and `e2e-ui.mjs`. The signer must be 0.60 (`restartWindows: 1`); the agent is
+unchanged. **No restart window has restarted a real Windows computer.**
+
+Behavioural proof: `e2e-restart-window-settings.mjs` (ports 3871–3873,
+`RELEASE_BIN` / `ACTION_SIM`); unit: `unit-restart-window-settings.mjs`.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs
