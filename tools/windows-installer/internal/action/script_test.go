@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -318,6 +319,11 @@ func TestPwshWrapperNeverEvaluatesArguments(t *testing.T) {
 }
 
 func TestPwshTimeoutKillsTheTree(t *testing.T) {
+	// The child is /bin/sh; the Windows tree kill (a job object) is
+	// action_windows.go's and is not what this fake host exercises.
+	if runtime.GOOS == "windows" {
+		t.Skip("needs /bin/sh; Windows kills the tree with a job object")
+	}
 	ps := pwshPath(t)
 	f := newFixture(t)
 	marker := filepath.Join(t.TempDir(), "child-survived")
