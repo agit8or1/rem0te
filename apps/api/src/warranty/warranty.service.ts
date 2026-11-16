@@ -45,6 +45,8 @@ const DAY_MS = 86_400_000;
 const RETRY_AFTER_MS = DAY_MS;
 const PER_TICK_MAX = 25;
 const CANDIDATES_PER_TICK = 500;
+/** How far one tick reads past computers it cannot look up (0.61). */
+const CANDIDATES_SCAN_MAX = 50_000;
 
 export function perHour(env: NodeJS.ProcessEnv = process.env): number {
   const n = Number(env.WARRANTY_LOOKUPS_PER_HOUR);
@@ -283,32 +285,40 @@ export class WarrantyService implements OnModuleInit, OnModuleDestroy {
     let left = budget(perHour(), used);
     if (!left) return;
     const cutoff = new Date(now.getTime() - LOOKUP_INTERVAL_DAYS * DAY_MS);
-    const candidates = await this.prisma.endpoint.findMany({
+    const page = (skip: number) => this.prisma.endpoint.findMany({
       where: {
         status: 'ACTIVE',
         OR: [{ warrantySource: null }, { warrantySource: { not: 'manual' } }],
         AND: [{ OR: [{ warrantyLookupAt: null }, { warrantyLookupAt: { lt: cutoff } }] }],
         inventory: { isNot: null },
       },
-      select: EP_SELECT, orderBy: [{ warrantyLookupAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }], take: CANDIDATES_PER_TICK,
+      select: EP_SELECT, orderBy: [{ warrantyLookupAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }], take: CANDIDATES_PER_TICK, skip,
     });
     const creds = new Map<LookupVendor, Credentials>();
-    for (const e of candidates) {
-      if (left <= 0) break;
-      const vendor = this.vendorOf(e);
-      if (!vendor || !isLookupVendor(vendor) || !enabled.has(vendor)) continue;
-      const serial = this.serialOf(e);
-      if (!serial) continue;
-      if (await activePause(this.prisma, 'integration', e.customerId)) continue;
-      if (!creds.has(vendor)) { const c = await this.credentials(vendor); if (!c) { enabled.delete(vendor); continue; } creds.set(vendor, c); }
-      // Claim it: one instance, one ask.
-      const claim = await this.prisma.endpoint.updateMany({
-        where: { id: e.id, OR: [{ warrantyLookupAt: null }, { warrantyLookupAt: { lt: cutoff } }] },
-        data: { warrantyLookupAt: now },
-      });
-      if (!claim.count) continue;
-      left--;
-      await this.lookupAndStore(e, vendor, creds.get(vendor)!, serial, now);
+    // Page through candidates until the budget is spent. A computer whose
+    // vendor has no lookup (or is switched off) is skipped without being
+    // marked, so it stays first in the order; reading only the first page
+    // let 500 of them hide every HP or Dell behind them for ever.
+    for (let skip = 0; left > 0 && skip < CANDIDATES_SCAN_MAX; skip += CANDIDATES_PER_TICK) {
+      const candidates = await page(skip);
+      if (!candidates.length) break;
+      for (const e of candidates) {
+        if (left <= 0) break;
+        const vendor = this.vendorOf(e);
+        if (!vendor || !isLookupVendor(vendor) || !enabled.has(vendor)) continue;
+        const serial = this.serialOf(e);
+        if (!serial) continue;
+        if (await activePause(this.prisma, 'integration', e.customerId)) continue;
+        if (!creds.has(vendor)) { const c = await this.credentials(vendor); if (!c) { enabled.delete(vendor); continue; } creds.set(vendor, c); }
+        // Claim it: one instance, one ask.
+        const claim = await this.prisma.endpoint.updateMany({
+          where: { id: e.id, OR: [{ warrantyLookupAt: null }, { warrantyLookupAt: { lt: cutoff } }] },
+          data: { warrantyLookupAt: now },
+        });
+        if (!claim.count) continue;
+        left--;
+        await this.lookupAndStore(e, vendor, creds.get(vendor)!, serial, now);
+      }
     }
   }
 
