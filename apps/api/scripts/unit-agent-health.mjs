@@ -49,7 +49,7 @@ section('Recommended, but off until someone adds it (0.36.1)');
 const rec = m.RECOMMENDED.filter((r) => r.kind === 'AGENT_SILENT');
 check(rec.length === 1 && rec[0].key === 'agent-silent' && rec[0].severity === 'WARNING' && rec[0].params.minutes === m.AGENT_SILENT_BOUNDS.def && m.parseParams('AGENT_SILENT', rec[0].params).ok,
   'one RECOMMENDED starter: key agent-silent, WARNING, AGENT_SILENT_BOUNDS.def (60) minutes', JSON.stringify(rec));
-check(m.RECOMMENDED.length === 7 && new Set(m.RECOMMENDED.map((r) => r.key)).size === 7, 'the recommended set is seven monitors with distinct keys', m.RECOMMENDED.map((r) => r.key).join(','));
+check(m.RECOMMENDED.length === 10 && new Set(m.RECOMMENDED.map((r) => r.key)).size === 10, 'the recommended set is ten monitors (0.55 added drive-free, updates-missing, update-failed) with distinct keys', m.RECOMMENDED.map((r) => r.key).join(','));
 check(!('OPTIONAL' in m), 'the separate OPTIONAL list is gone');
 check(m.effectiveRules([], m.scopesFor({ id: 'e1', customerId: 'b1', siteId: null })).length === 0, 'no rule anywhere: nothing applies (off unless enabled)');
 const g = rule({ minutes: 60 });

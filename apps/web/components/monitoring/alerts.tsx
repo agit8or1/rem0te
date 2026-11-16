@@ -20,6 +20,8 @@ export type AlertRow = {
   firstSeenAt: string; lastSeenAt: string; occurrences: number; notifyFrom: string; escalationLevel: number; lastNotifiedAt: string | null;
   suppressed: boolean; parentId: string | null; acknowledgedAt: string | null; resolvedAt: string | null; resolvedBy: 'person' | 'monitor' | null; resolveNote: string | null;
   ticket: { id: string; url: string | null; peer: string | null; linkedAt: string } | null;
+  /** 0.55: the automatic PSA ticket (Settings → Monitoring → Automatic tickets). */
+  autoTicket?: { status: 'sending' | 'sent' | 'failed' | 'gave_up'; attempts: number; lastStatus: string | null; connectorKind: string | null; ref: string | null; url: string | null; lastAttemptAt: string; nextAttemptAt: string | null } | null;
 };
 type Detail = AlertRow & { events: { type: string; actorId: string | null; detail: Record<string, unknown> | null; at: string }[]; children: AlertRow[] };
 export type Summary = { visible: boolean; open: number; acknowledged: number; critical: number; warning: number; info: number; suppressed: number };
@@ -42,7 +44,21 @@ const EVENT_LABEL: Record<string, string> = {
   raised: 'Raised', acknowledged: 'Acknowledged', resolved: 'Resolved', notified: 'Notified', escalated: 'Escalated',
   suppressed: 'Held by a maintenance window', unsuppressed: 'Maintenance window over', grouped: 'Grouped into a site outage',
   ticket_linked: 'Ticket linked', ticket_event: 'Sent to ClientSt0r',
+  ticketed: 'Ticket opened in the PSA', ticket_failed: 'PSA ticket not sent',
 };
+
+/** 0.55: the automatic PSA ticket as a short badge — its reference (a link when the PSA gave one), or what went wrong. */
+export function AutoTicketBadge({ t }: { t: AlertRow['autoTicket'] }) {
+  if (!t) return null;
+  if (t.status === 'sent') {
+    const label = `ticket ${t.ref ?? '(no reference)'}`;
+    return t.url
+      ? <a href={t.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} data-testid="auto-ticket"><Badge variant="outline">{label}<ExternalLink className="ml-1 h-3 w-3" /></Badge></a>
+      : <Badge variant="outline" data-testid="auto-ticket">{label}</Badge>;
+  }
+  if (t.status === 'sending') return <Badge variant="outline" data-testid="auto-ticket">ticket sending…</Badge>;
+  return <Badge variant="outline" className="border-destructive/50 text-destructive" data-testid="auto-ticket" title={t.lastStatus ?? undefined}>{t.status === 'failed' ? 'ticket failed, will retry' : 'ticket not sent'}</Badge>;
+}
 
 /** What the monitor recorded, as label/value pairs. A nested sample (an event) shows its fields inline. */
 function DetailList({ detail }: { detail: Record<string, unknown> }) {
@@ -80,6 +96,17 @@ export function AlertDetail({ id, onChanged }: { id: string; onChanged: () => vo
             {data.ticket.url ? <a className="inline-flex items-center text-primary hover:underline" href={data.ticket.url} target="_blank" rel="noopener noreferrer">{data.ticket.id}<ExternalLink className="ml-1 h-3 w-3" /></a> : data.ticket.id}
           </div>
         )}
+        {data.autoTicket && (
+          <div><div className="text-xs text-muted-foreground">PSA ticket (automatic)</div>
+            {data.autoTicket.status === 'sent'
+              ? (data.autoTicket.url
+                ? <a className="inline-flex items-center text-primary hover:underline" href={data.autoTicket.url} target="_blank" rel="noopener noreferrer">{data.autoTicket.ref ?? 'open'}<ExternalLink className="ml-1 h-3 w-3" /></a>
+                : (data.autoTicket.ref ?? 'sent (the PSA gave no reference)'))
+              : data.autoTicket.status === 'failed'
+                ? `not sent yet (${data.autoTicket.lastStatus ?? 'error'}); try ${data.autoTicket.attempts + 1} at ${fmt(data.autoTicket.nextAttemptAt)}`
+                : data.autoTicket.status === 'sending' ? 'sending…' : `not sent (${data.autoTicket.lastStatus ?? 'gave up'}) after ${data.autoTicket.attempts} tr${data.autoTicket.attempts === 1 ? 'y' : 'ies'}`}
+          </div>
+        )}
         {data.resolveNote && <div className="md:col-span-3"><div className="text-xs text-muted-foreground">Resolution</div>{data.resolveNote}</div>}
       </div>
       {data.detail && Object.keys(data.detail).length > 0 && <DetailList detail={data.detail} />}
@@ -97,6 +124,8 @@ export function AlertDetail({ id, onChanged }: { id: string; onChanged: () => vo
           {data.events.map((e, i) => (
             <li key={i}><span className="text-muted-foreground">{fmt(e.at)}</span> — {EVENT_LABEL[e.type] ?? e.type}
               {typeof e.detail?.note === 'string' && <>: “{e.detail.note}”</>}
+              {e.type === 'ticketed' && typeof e.detail?.ref === 'string' && <>: {e.detail.ref}</>}
+              {e.type === 'ticket_failed' && typeof e.detail?.status === 'string' && <>: {e.detail.status}{typeof e.detail?.retryAt === 'string' ? `, retry at ${fmt(e.detail.retryAt)}` : ', not retried'}</>}
               {Array.isArray(e.detail?.results) && <> → {(e.detail.results as { label: string; ok: boolean; status: string }[]).map((r) => `${r.label} ${r.ok ? '✓' : `✗ ${r.status}`}`).join(', ') || 'no destination for this severity'}</>}
             </li>
           ))}

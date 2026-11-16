@@ -852,6 +852,24 @@ const SECTIONS: Section[] = [
           or re-running the installer, it clears when the agent checks in again, and the computer&apos;s page
           and Agent card link to it. It is not offered to ClientSt0r for a ticket.
         </p>
+        <p className="font-medium text-foreground">Drives, uptime and updates (0.55)</p>
+        <p>
+          Four monitors read what Rem0te already stores, with no agent update. <em>Drive space (every fixed drive)</em>
+          raises one alert per drive from the inventory, which is about six-hourly. The recommended one leaves C: out,
+          because <em>Disk space</em> already watches it on every heartbeat. <em>Not restarted</em> uses the heartbeat&apos;s
+          boot time. <em>Security updates outstanding</em> counts from when Rem0te first saw each update offered, and
+          needs the signed agent&apos;s patch scan. <em>Update install failed</em> reads Windows Update&apos;s history and
+          Rem0te&apos;s own patch deployments. Add recommended includes all but <em>Not restarted</em>.
+        </p>
+        <p className="font-medium text-foreground">Automatic tickets (0.55)</p>
+        <p>
+          Settings → Monitoring → <em>Automatic tickets</em> opens a ticket in your PSA (Settings → PSA / ticketing)
+          when an alert of at least the chosen severity opens. It sends the same ticket <em>Create ticket</em> would,
+          once per alert, and only alerts that open after you switch it on. It waits for the alert&apos;s hold. It never
+          sends in a maintenance window or while notifications are paused, and sends at most 10 per business an hour.
+          A failed send is tried three more times. The reference shows on the alert, the computer&apos;s Monitoring tab
+          and the dashboard&apos;s <em>Recent alerts</em>. Changing the rule asks you to confirm it is you.
+        </p>
         <p className="font-medium text-foreground">Monitors for a device group</p>
         <p>
           Under <em>New monitor</em>, pick a group and give it a priority. It applies to the computers in the

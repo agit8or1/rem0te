@@ -3595,7 +3595,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     pre.indexOf('this.effective(ep.customerId)') > 0 && pre.indexOf("code: 'SUPPORT_REQUEST_NOT_CONFIGURED'") > pre.indexOf('this.effective(')
       && pre.indexOf("activePause(this.prisma, 'notifications', ep.customerId)") > pre.indexOf("'SUPPORT_REQUEST_NOT_CONFIGURED'")
       && pre.indexOf('.ready(eff.row') > pre.indexOf("'notifications'")
-      && /this\.trayBudget\.take\(ep\.id\) \? await drv\.send\(eff\.row, draft, this\.deps\)/.test(tt) && (psvc.match(/drv\.send\(/g) ?? []).length === 2
+      && /this\.trayBudget\.take\(ep\.id\) \? await drv\.send\(eff\.row, draft, this\.deps\)/.test(tt) && (psvc.match(/drv\.send\(/g) ?? []).length === 3 /* 0.55: alertTicket's, §68 */
       && sr.indexOf('this.psa.trayPrecheck(') > 0 && sr.indexOf('this.support.agentSubmit(') > sr.indexOf('this.psa.trayPrecheck(')
       && sr.indexOf('this.psa.trayTicket(') > sr.indexOf('this.support.agentSubmit(') && (tsv.match(/this\.support\.agentSubmit\(/g) ?? []).length === 1,
     'trayPrecheck: effective → NOT_CONFIGURED → notifications pause → ready; supportRequest: precheck → agentSubmit → trayTicket (budget → send)');
@@ -4488,7 +4488,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'endpoints/endpoints.controller.ts': ['credential.reveal'],
     'enrollment/enrollment.service.ts': ['enrollment.create'],
     'integration/integration-admin.controller.ts': ['technicians.manage'],
-    'monitoring/monitoring.controller.ts': ['monitoring.notify'],
+    'monitoring/monitoring.controller.ts': ['monitoring.autoticket', 'monitoring.notify'],
     'offboarding/offboarding.controller.ts': ['permissions.change'],
     'passkeys/passkeys.controller.ts': ['passkey.manage'],
     'patching/patching.controller.ts': ['patching.policy'],
@@ -4995,6 +4995,103 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /unit-restart-windows\.mjs/.test(read('.github/workflows/ci.yml')) && / service-process task-progress restart-windows; do/.test(read('scripts/run-e2e.sh'))
       && /P\.policyDigest\(parsed\) === '466423a5bb889e289b536d62ac25ddf66450179770f1161c576003fc3644f99b'/.test(unitR),
     'unit-restart-windows.mjs in CI (pinning the 0.52 digest), e2e-restart-windows.mjs in run-e2e.sh');
+}
+
+// ─── §68 (0.55): alert conditions and automatic PSA tickets ──────────────────
+//     Four monitor kinds read only what the server already stores (inventory
+//     drives, the live sample's boot time, the signed patch scan, deployment
+//     results) — no agent change. A drive monitor's alerts are one per drive,
+//     the drive letter charset-checked before it reaches a dedup key. An
+//     automatic ticket is at most one per alert (a unique index), only for an
+//     open alert first seen after its rule was switched on, after the notify
+//     hold, outside every maintenance window and site outage, never under a
+//     notifications pause, inside a per-business hourly budget, audited before
+//     the send with ids only, through the same driver and draft as "Create
+//     ticket", and retried a bounded number of times. It runs only inside the
+//     monitoring sweep. Changing the rule needs fresh authentication.
+{
+  const eng = read('apps/api/src/monitoring/engine.ts');
+  const msvc = read('apps/api/src/monitoring/monitoring.service.ts');
+  const at = read('apps/api/src/monitoring/alert-tickets.service.ts');
+  const psvc = read('apps/api/src/psa/psa.service.ts');
+  const madm = read('apps/api/src/monitoring/monitoring-admin.service.ts');
+  const mctl = read('apps/api/src/monitoring/monitoring.controller.ts');
+  const sql = read('apps/api/prisma/migrations/0076_alert_conditions/migration.sql');
+  const cat = read('apps/api/src/security-controls/confirm-catalog.ts');
+  const ovw = read('apps/api/src/dashboard/overview.service.ts');
+  const sliceFrom = (src, sig) => { const i = src.indexOf(sig); const j = src.indexOf('\n  }\n', i); return i < 0 ? '' : src.slice(i, j); };
+  const tk = sliceFrom(psvc, '  async alertTicket(');
+  const pass = sliceFrom(at, '  async pass(');
+
+  check('alert conditions: a drive letter reaches a dedup key only through the charset (one letter and a colon)',
+    /const DRIVE_LETTER = \/\^\[A-Z\]:\$\/;/.test(eng) && /const DRIVE_INPUT = \/\^\[A-Za-z\]:\?\$\/;/.test(eng)
+      && /export const driveKeyOf = \(ruleKey: string, endpointId: string, drive: string\) => `\$\{drivePrefixOf\(ruleKey, endpointId\)\}\$\{drive\.slice\(0, 1\)\}`;/.test(eng)
+      && /if \(!DRIVE_LETTER\.test\(drive\) \|\| seen\.has\(drive\)\) continue;/.test(eng),
+    'engine.ts DRIVE_LETTER / DRIVE_INPUT, driveKeyOf, and evaluateDrives skipping anything else');
+  check('alert conditions: the new kinds read stored data only — nothing new is asked of the agent',
+    /const AGENT_KINDS: ReadonlySet<string> = new Set\(\['SERVICE_STOPPED', 'EVENT_MATCH'\]\);/.test(msvc)
+      && /const INVENTORY_KINDS: ReadonlySet<string> = new Set\(\['DRIVE_FREE', 'UPTIME_LONG', 'UPDATES_MISSING', 'UPDATE_FAILED'\]\);/.test(msvc),
+    'AGENT_KINDS is unchanged; the four 0.55 kinds are INVENTORY_KINDS, evaluated by the sweep');
+  check('alert conditions: the recommended set is still created only on a click, and uptime is not in it',
+    !/UPTIME_LONG/.test((eng.match(/export const RECOMMENDED[\s\S]*?\n\];/) ?? [''])[0])
+      && /\{ key: 'drive-free', kind: 'DRIVE_FREE'/.test(eng),
+    'RECOMMENDED adds drive-free, updates-missing, update-failed; addRecommended is still the only creator (§17)');
+
+  check('auto tickets: one per alert, in the database',
+    /CREATE UNIQUE INDEX "MonitorAlertTicket_alertId_key" ON "MonitorAlertTicket"\("alertId"\);/.test(sql)
+      && /CHECK \("attempts" BETWEEN 1 AND 4\)/.test(sql) && /\n  maxAttempts: 4,\n/.test(eng)
+      && /CHECK \("status" IN \('sending', 'sent', 'failed', 'gave_up'\)\)/.test(sql)
+      && /CHECK \("nextAttemptAt" IS NULL OR "status" = 'failed'\)/.test(sql),
+    '0076: unique alertId, attempts 1–4 (AUTO_TICKET.maxAttempts), closed status, a retry time only on failed');
+  check('auto tickets: run only inside the monitoring sweep (MONITOR_SWEEP=off stops them)',
+    /await this\.notifyPass\(now\);\s*\n(\s*\/\/[^\n]*\n)*\s*await this\.tickets\.pass\(now\);/.test(msvc)
+      && (read('apps/api/src/monitoring/monitoring.service.ts').match(/this\.tickets\.pass\(/g) ?? []).length === 1
+      && !/setInterval|setTimeout|@Cron|@Interval/.test(at),
+    'MonitoringService.sweep calls AlertTicketsService.pass once, after notifyPass; the service has no timer');
+  check('auto tickets: rule → notifications pause → budget → alertTicket, in that order',
+    pass.indexOf('autoTicketDecision(') > 0
+      && pass.indexOf("activePause(this.prisma, 'notifications', a.customerId)") > pass.indexOf('autoTicketDecision(')
+      && pass.indexOf('if (n >= this.perHour()) continue;') > pass.indexOf("activePause(")
+      && pass.indexOf('this.psa.alertTicket(') > pass.indexOf('this.perHour()')
+      && /firstSeenAt: \{ gte: earliest \}/.test(pass) && /kind: \{ not: 'SITE_OUTAGE' \}/.test(pass) && /notifyFrom: \{ lte: now \}/.test(pass),
+    'AlertTicketsService.pass: decision, pause, per-business budget, then the PSA');
+  check('auto tickets: the decision holds the rule, the backlog, the notify hold, outages and maintenance windows',
+    ['no_rule', 'off', 'resolved', 'no_computer', 'before_rule', 'severity', 'kind', 'held', 'in_outage', 'maintenance'].every((r) => eng.includes(`reason: '${r}'`))
+      && /if \(a\.notifyFrom > now\) return \{ ok: false, reason: 'held' \};/.test(eng),
+    'autoTicketDecision names every reason; notifyFrom in the future is held');
+  check('auto tickets: claim → logOrFail → the one send; a failure is recorded and retried with backoff',
+    tk.indexOf('this.monitorAlertTicket.create(') < 0 && tk.indexOf('this.prisma.monitorAlertTicket.create(') > 0
+      && /if \(\(e as \{ code\?: string \}\)\.code === 'P2002'\) return \{ attempted: false, status: 'claimed' \};/.test(tk)
+      && /where: \{ id: prior\.id, status: 'failed', attempts: prior\.attempts \}/.test(tk)
+      && tk.indexOf("action: 'PSA_AUTO_TICKET_REQUESTED'") > tk.indexOf('monitorAlertTicket.create(')
+      && tk.indexOf('this.audit.logOrFail(') > 0 && tk.indexOf('drv.send(') > tk.indexOf("action: 'PSA_AUTO_TICKET_REQUESTED'")
+      && (tk.match(/drv\.send\(/g) ?? []).length === 1 && /const retryAt = autoTicketRetryAt\(attempt, now\);/.test(tk),
+    'PsaService.alertTicket: unique claim (or a conditional update from failed), PSA_AUTO_TICKET_REQUESTED with logOrFail, then drv.send');
+  check('auto tickets: the draft is a manual alert ticket\'s — no detail, no note, no AI — and audit meta carries ids only',
+    /detail: null, firstSeenAt: a\.firstSeenAt\.toISOString\(\) \}/.test(tk) && /requestedBy: AUTO_REQUESTER, ai: null \}/.test(tk)
+      && !/note:/.test(tk.slice(tk.indexOf('buildDraft('), tk.indexOf('const base')))
+      && !/subject|body|title|draft\.(subject|body)|note|text/.test((tk.match(/const ids = \{[^\n]*\};/) ?? ['x'])[0].replace(/sourceRef: draft\.sourceRef/, ''))
+      && /meta: \{ \.\.\.ids, status: r\.status, retryAt:/.test(tk) && /meta: \{ \.\.\.ids, ticketId: ticket\.id, ref: ticket\.ref, status: r\.status \}/.test(tk),
+    'buildDraft with detail null, ai null, no note; ids = connector, source, sourceRef, alertId, endpointId, kind, severity, attempt');
+  check('auto tickets: changing or removing the rule needs fresh authentication under its own catalog key, and is audited',
+    (mctl.match(/assertFresh\([^;]*?action: 'monitoring\.autoticket'/g) ?? []).length === 1
+      && /@Put\('ticket-policy'\)\s*\n\s*async putTicketPolicy\([^\n]*\) \{\s*\n\s*this\.freshTicket\(req\);/.test(mctl)
+      && /@Delete\('ticket-policy'\)\s*\n\s*async removeTicketPolicy\([^\n]*\) \{\s*\n\s*this\.freshTicket\(req\);/.test(mctl)
+      && /key: 'monitoring\.autoticket', group: 'Monitoring & notifications', label: '[^']+', default: 'ask'/.test(cat)
+      && (madm.match(/action: 'MONITOR_TICKET_POLICY_CHANGED'/g) ?? []).length === 2
+      && /this\.assertPolicy\(a, customerId\);/.test(sliceFrom(madm, '  async putTicketPolicy(')),
+    'monitoring.controller freshTicket (monitoring.autoticket); putTicketPolicy/removeTicketPolicy: assertPolicy, logOrFail');
+  check('auto tickets: switching on starts the clock (no backlog), and 0076 holds it',
+    /const enabledAt = d\.data\.enabled \? \(cur\?\.enabled && cur\.enabledAt \? cur\.enabledAt : new Date\(\)\) : null;/.test(madm)
+      && /CHECK \(NOT "enabled" OR "enabledAt" IS NOT NULL\)/.test(sql),
+    'putTicketPolicy sets enabledAt when turning on; MonitorTicketPolicy_enabledAt CHECK');
+  check('dashboard recent alerts: monitoring:alerts AND the device visibility rule',
+    /where: \{ AND: \[active, \{ OR: \[\{ endpointId: null \}, \{ endpoint: this\.acl\.endpointVisibilityWhere\(actor, scope\) \}\] \}\] \}/.test(ovw)
+      && /recentAlerts: active\s*\n?\s*\?/.test(ovw),
+    'overview.service.ts recentAlerts inside `active` (the alerts list where) and endpointVisibilityWhere');
+  check('alert conditions: the suites run',
+    /unit-alert-conditions\.mjs/.test(read('.github/workflows/ci.yml')) && / confirm-policy alert-tickets; do run/.test(read('scripts/run-e2e.sh')),
+    'unit-alert-conditions.mjs in CI, e2e-alert-tickets.mjs in run-e2e.sh');
 }
 
 if (failures.length > 0) {

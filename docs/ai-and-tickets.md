@@ -182,6 +182,24 @@ reference, whether the AI answer and a note were included, and the PSA's referen
 subject, note or body. `PSA_CONNECTOR_CHANGED` records the kind, an email connector's masked address
 or a webhook's host, and whether a signing secret was set — never the secret or the full URL.
 
+### Automatically, from alerts (0.55)
+
+A rule under **Settings → Monitoring → Automatic tickets** can open this same
+ticket when an alert opens. You choose a minimum severity and, optionally,
+which kinds. It is sent through the same connector with the same draft:
+
+- no alert detail, no note and no AI text;
+- requested by *Rem0te monitoring (automatic)*;
+- recorded as a `PsaTicket` with this alert's identity, so **Create ticket**
+  on that alert shows it was already sent.
+
+It is sent only after the alert's notification hold, never in a maintenance
+window or under a `notifications` pause, and at most once per alert. A
+failed send is retried a bounded number of times. The audit row
+`PSA_AUTO_TICKET_REQUESTED` is written before the send. It names the
+connector, the alert, the computer, the kind, the severity and the attempt,
+never text. See [monitoring.md](monitoring.md#automatic-tickets-055).
+
 ### From the tray (0.51)
 
 **Open a support request…** in the [tray](tray.md) appears only when the computer's business has an

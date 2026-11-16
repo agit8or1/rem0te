@@ -231,9 +231,9 @@ async function all() {
   // The click itself, on Cedar, which has no computers: nothing it adds can raise mid-run.
   r = await req('POST', '/monitoring/rules/recommended', { s: S.admin, body: { scope: 'business', businessId: C.id } });
   const addedSilent = r.data?.added?.filter((x) => x.kind === 'AGENT_SILENT') ?? [];
-  check(r.status === 201 && r.data.added.length === 7 && addedSilent.length === 1 && addedSilent[0].key === 'agent-silent' && addedSilent[0].params.minutes === 60 && addedSilent[0].severity === 'WARNING',
-    '“Add recommended” adds the seven starters, the agent-silent monitor among them (60 minutes, WARNING)', msg(r));
-  check((await prisma.activityLog.count({ where: { customerId: C.id, action: 'MONITOR_RULE_CHANGED' } })) === 7, 'each one is an ordinary audited rule (seven MONITOR_RULE_CHANGED rows)');
+  check(r.status === 201 && r.data.added.length === 10 && addedSilent.length === 1 && addedSilent[0].key === 'agent-silent' && addedSilent[0].params.minutes === 60 && addedSilent[0].severity === 'WARNING',
+    '“Add recommended” adds the ten starters, the agent-silent monitor among them (60 minutes, WARNING)', msg(r));
+  check((await prisma.activityLog.count({ where: { customerId: C.id, action: 'MONITOR_RULE_CHANGED' } })) === 10, 'each one is an ordinary audited rule (ten MONITOR_RULE_CHANGED rows)');
   r = await req('POST', '/monitoring/rules/recommended', { s: S.admin, body: { scope: 'business', businessId: C.id } });
   check(r.status === 201 && r.data.added.length === 0, 'a second click adds nothing: the set is all there', msg(r));
   await prisma.monitorRule.deleteMany({ where: { customerId: C.id } });

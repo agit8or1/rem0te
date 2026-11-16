@@ -124,6 +124,12 @@ jobs:
       # it, one open plan and three per window), and the 0.52 digest pinned.
       - name: Restart window tests
         run: node apps/api/scripts/unit-restart-windows.mjs
+      # 0.55: alert conditions and automatic PSA tickets — every fixed drive
+      # (charset-checked letters, one alert each), uptime, outstanding and
+      # failed updates, the recommended set, the auto-ticket rule (every
+      # reason it does not ticket), its retry schedule and the draft it sends.
+      - name: Alert condition tests
+        run: node apps/api/scripts/unit-alert-conditions.mjs
       # 0.50: company-wide and assignable patch policies — the rings the
       # portal builds (checked with the signer's own validatePolicyDoc), the
       # membership fingerprint and the bounded revision decision.

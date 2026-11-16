@@ -5,8 +5,10 @@ import { validatePeerUrl } from '../integration/peers';
 import {
   agentMonitorConfig, dedupKeyOf, type Destination, isEmailDestination, dueLevels, effectiveRules, EMPTY_STATE, evaluateEvents, evaluateLive, evaluateService,
   NotifyLevel, OUTAGE, outageDecision, outageKeyOf, sanitizeReport, scopesFor, SEVERITY_RANK, suppressionFor,
+  drivePrefixOf, evaluateDrives, evaluateFailedUpdates, evaluateMissingUpdates, evaluateUptime, type SeenUpdates,
   type Live, type MonitorStateLike, type RuleLike, type Severity, type Verdict,
 } from './engine';
+import { AlertTicketsService } from './alert-tickets.service';
 import { AlertEventsService } from './alert-events.service';
 import { EmailService } from '../email/email.service';
 import { alertMail } from '../email/mail-content';
@@ -42,6 +44,16 @@ const LIVE_KINDS = new Set(['DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH']);
 const SWEEP_KINDS = new Set(['OFFLINE', 'REBOOT_PENDING', 'AGENT_SILENT']);
 /** What the agent is asked about and reports on: the heartbeat's monitor block and the monitor report. */
 const AGENT_KINDS: ReadonlySet<string> = new Set(['SERVICE_STOPPED', 'EVENT_MATCH']);
+/**
+ * 0.55: read from what the server already stores — the inventory pass's
+ * drives, the live sample's boot time, the patch scan and update-install
+ * results — by the sweep, at most every MONITOR_INVENTORY_SECONDS (default
+ * five minutes: the evidence moves on a six-hourly or daily cadence).
+ */
+const INVENTORY_KINDS: ReadonlySet<string> = new Set(['DRIVE_FREE', 'UPTIME_LONG', 'UPDATES_MISSING', 'UPDATE_FAILED']);
+const inventoryEveryMs = () => { const s = Number(process.env.MONITOR_INVENTORY_SECONDS); return Number.isFinite(s) && s >= 1 ? s * 1000 : 5 * 60_000; };
+/** How far back update-install results are read for UPDATE_FAILED (its longest window). */
+const DEPLOYMENT_LOOKBACK_MS = 90 * 86_400_000;
 const RECHECK_MS = 60 * 60_000;
 /** The offline correlation hold. MONITOR_OFFLINE_HOLD_SECONDS overrides it, for tests. */
 const offlineHoldMs = () => { const s = Number(process.env.MONITOR_OFFLINE_HOLD_SECONDS); return Number.isFinite(s) && s >= 1 ? s * 1000 : OUTAGE.holdMs; };
@@ -52,6 +64,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   private timer: ReturnType<typeof setInterval> | null = null;
   private first: ReturnType<typeof setTimeout> | null = null;
   private busy = false;
+  private inventoryAt = 0;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -59,6 +72,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
     private readonly email: EmailService,
     private readonly urls: PublicUrlService,
     private readonly groups: GroupMembershipService,
+    private readonly tickets: AlertTicketsService,
   ) {}
 
   onModuleInit() {
@@ -193,8 +207,8 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
 
   // ── Alert lifecycle ───────────────────────────────────────────────────────
 
-  async raise(ep: Ep, rule: RuleLike & { id: string }, title: string, detail: Record<string, unknown>, now: Date, repeat: boolean) {
-    const dedupKey = dedupKeyOf(rule.key, ep.id);
+  /** `dedupKey` is the rule and computer, or (0.55, DRIVE_FREE) the rule, computer and drive. */
+  async raise(ep: Ep, rule: RuleLike & { id: string }, title: string, detail: Record<string, unknown>, now: Date, repeat: boolean, dedupKey = dedupKeyOf(rule.key, ep.id)) {
     const bump = async (a: MonitorAlert) => {
       await this.prisma.monitorAlert.update({
         where: { id: a.id },
@@ -259,6 +273,10 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
       await this.evaluateSweepRules(now);
       await this.correlateOutages(now);
       await this.notifyPass(now);
+      // 0.55: automatic PSA tickets, after notification so an alert's hold
+      // and maintenance window have been looked at this tick. Only here:
+      // MONITOR_SWEEP=off stops it with the rest of the sweep.
+      await this.tickets.pass(now);
     } catch (e) {
       this.logger.error(`monitoring sweep: ${(e as Error).stack ?? e}`);
     } finally { this.busy = false; }
@@ -276,14 +294,20 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
     const sweepKeys = [...new Set(rules.filter((r) => SWEEP_KINDS.has(r.kind) || r.kind === 'EVENT_MATCH').map((r) => r.key))];
     const stateRows = sweepKeys.length ? await this.prisma.endpointMonitorState.findMany({ where: { ruleKey: { in: sweepKeys } } }) : [];
     const states = new Map(stateRows.map((s) => [`${s.endpointId}|${s.ruleKey}`, s as MonitorStateLike]));
+    // 0.55: a drive monitor's alerts are one per drive; while the rule applies, any of them is valid.
+    const validPrefixes = new Set<string>();
+    const inventoryWork: { ep: Ep; rules: (RuleLike & MonitorRule)[] }[] = [];
     // Group membership, once for this tick and never kept past it: the
     // groups that carry a monitor, each evaluated over its whole business.
     const membership = await this.groups.snapshot(rules.filter((r) => r.groupId).map((r) => r.groupId!));
     for (const ep of eps) {
       const eff = effectiveRules(rules, scopesFor(ep, membership.groupsOf(ep.id)));
+      const inv = eff.filter((r) => INVENTORY_KINDS.has(r.kind));
+      if (inv.length) inventoryWork.push({ ep, rules: inv });
       for (const r of eff) {
         const dk = dedupKeyOf(r.key, ep.id);
         valid.add(dk);
+        if (r.kind === 'DRIVE_FREE') validPrefixes.add(drivePrefixOf(r.key, ep.id));
         const st = states.get(`${ep.id}|${r.key}`) ?? EMPTY_STATE;
         if (SWEEP_KINDS.has(r.kind)) {
           const live: Live = {
@@ -308,10 +332,106 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
         }
       }
     }
+    if (inventoryWork.length && now.getTime() - this.inventoryAt >= inventoryEveryMs()) {
+      this.inventoryAt = now.getTime();
+      await this.evaluateInventoryRules(inventoryWork, open, now);
+    }
     // An open alert whose monitor no longer applies (removed, disabled, moved scope) or whose computer was retired.
     for (const [dk, a] of open) {
-      if (!valid.has(dk)) await this.resolveOpen(dk, null, 'Closed: the monitor no longer applies to this computer, or the computer was retired.', now);
+      if (!valid.has(dk) && !validPrefixes.has(dk.slice(0, dk.lastIndexOf(':') + 1))) await this.resolveOpen(dk, null, 'Closed: the monitor no longer applies to this computer, or the computer was retired.', now);
       void a;
+    }
+  }
+
+  /**
+   * 0.55: drive space, uptime, outstanding and failed updates, from stored
+   * evidence. Stateless but for UPDATES_MISSING's first-seen dates: a verdict
+   * raises (or rewrites an open alert's title when it changed, without
+   * counting a repeat — the same evidence is read again every pass), clears,
+   * or — `skip`, `hold` — leaves things as they are.
+   */
+  private async evaluateInventoryRules(work: { ep: Ep; rules: (RuleLike & MonitorRule)[] }[], open: Map<string, { id: string; dedupKey: string; title: string }>, now: Date) {
+    const ids = work.map((w) => w.ep.id);
+    const needs = (k: string) => work.filter((w) => w.rules.some((r) => r.kind === k)).map((w) => w.ep.id);
+    const patchIds = new Set([...needs('UPDATES_MISSING'), ...needs('UPDATE_FAILED')]);
+    const inv = new Map<string, { disks: Prisma.JsonValue; collectedAt: Date | null; lastBootAt: Date | null; uptimeSeconds: number | null; liveSampledAt: Date | null; patchPosture?: Prisma.JsonValue }>();
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      const rows = await this.prisma.endpointInventory.findMany({
+        where: { endpointId: { in: chunk } },
+        select: { endpointId: true, disks: true, collectedAt: true, lastBootAt: true, uptimeSeconds: true, liveSampledAt: true },
+      });
+      for (const r of rows) inv.set(r.endpointId, r);
+      const withPatch = chunk.filter((id) => patchIds.has(id));
+      if (withPatch.length) {
+        for (const r of await this.prisma.endpointInventory.findMany({ where: { endpointId: { in: withPatch } }, select: { endpointId: true, patchPosture: true } })) {
+          const cur = inv.get(r.endpointId);
+          if (cur) cur.patchPosture = r.patchPosture;
+        }
+      }
+    }
+    const failIds = needs('UPDATE_FAILED');
+    const deployments = new Map<string, { resultAt: Date | null; result: unknown }[]>();
+    if (failIds.length) {
+      const rows = await this.prisma.actionTarget.findMany({
+        where: { endpointId: { in: failIds }, resultAt: { gte: new Date(now.getTime() - DEPLOYMENT_LOOKBACK_MS) }, job: { actionId: 'windows.update.install' } },
+        select: { endpointId: true, resultAt: true, result: true }, orderBy: { resultAt: 'desc' }, take: 5000,
+      });
+      for (const r of rows) { const l = deployments.get(r.endpointId) ?? []; l.push(r); deployments.set(r.endpointId, l); }
+    }
+    const missKeys = [...new Set(work.flatMap((w) => w.rules.filter((r) => r.kind === 'UPDATES_MISSING').map((r) => r.key)))];
+    const seenRows = missKeys.length ? await this.prisma.endpointMonitorState.findMany({ where: { endpointId: { in: needs('UPDATES_MISSING') }, ruleKey: { in: missKeys } }, select: { endpointId: true, ruleKey: true, lastValue: true } }) : [];
+    const seen = new Map(seenRows.map((s) => [`${s.endpointId}|${s.ruleKey}`, s.lastValue]));
+
+    const verdict = async (ep: Ep, r: RuleLike & MonitorRule, dk: string, v: { verdict: string; title?: string; detail?: Record<string, unknown> }, note: string) => {
+      const cur = open.get(dk);
+      if (v.verdict === 'breach') {
+        // Raise, or rewrite a title that changed ("… 31 days"); the same reading again is not a repeat.
+        if (!cur || cur.title !== v.title!.slice(0, 300)) await this.raise(ep, r, v.title!, v.detail ?? {}, now, false, dk);
+      } else if (v.verdict === 'ok' && cur) {
+        await this.resolveOpen(dk, null, note, now);
+      }
+    };
+    for (const { ep, rules } of work) {
+      const i = inv.get(ep.id) ?? null;
+      for (const r of rules) {
+        try {
+          if (r.kind === 'DRIVE_FREE') {
+            const v = evaluateDrives(r, ep, i ? { disks: i.disks, collectedAt: i.collectedAt } : null, now);
+            if (v.verdict === 'skip') continue;
+            const reported = new Set<string>();
+            for (const d of v.drives) {
+              reported.add(d.dedupKey);
+              await verdict(ep, r, d.dedupKey, d, `Cleared: drive ${d.drive} has room again.`);
+            }
+            // A drive no longer reported (removed, or excluded since) closes its alert.
+            const prefix = drivePrefixOf(r.key, ep.id);
+            for (const dk of open.keys()) if (dk.startsWith(prefix) && !reported.has(dk)) await this.resolveOpen(dk, null, 'Closed: that drive is no longer reported, or the monitor no longer covers it.', now);
+          } else if (r.kind === 'UPTIME_LONG') {
+            if (!i) continue;
+            await verdict(ep, r, dedupKeyOf(r.key, ep.id), evaluateUptime(r, { name: ep.name, lastBootAt: i.lastBootAt, uptimeSeconds: i.uptimeSeconds, liveSampledAt: i.liveSampledAt }, now), 'Cleared: the computer has restarted.');
+          } else if (r.kind === 'UPDATES_MISSING') {
+            if (!i) continue;
+            const prev = seen.get(`${ep.id}|${r.key}`);
+            const prevSeen = (prev && typeof prev === 'object' && !Array.isArray(prev) ? (prev as { seen?: SeenUpdates }).seen : undefined) ?? {};
+            const v = evaluateMissingUpdates(r, ep.name, i.patchPosture ?? null, prevSeen, now);
+            if (v.verdict === 'skip') continue;
+            if (JSON.stringify(v.seen) !== JSON.stringify(prevSeen)) {
+              const lastValue = { seen: v.seen } as Prisma.InputJsonValue;
+              await this.prisma.endpointMonitorState.upsert({
+                where: { endpointId_ruleKey: { endpointId: ep.id, ruleKey: r.key } },
+                create: { endpointId: ep.id, ruleKey: r.key, lastValue }, update: { lastValue },
+              });
+            }
+            await verdict(ep, r, dedupKeyOf(r.key, ep.id), v, 'Cleared: no security or critical update has been outstanding that long.');
+          } else if (r.kind === 'UPDATE_FAILED') {
+            if (!i && !deployments.has(ep.id)) continue;
+            await verdict(ep, r, dedupKeyOf(r.key, ep.id), evaluateFailedUpdates(r, ep.name, i?.patchPosture ?? null, deployments.get(ep.id) ?? [], now), 'Cleared: no failed update install in the window, or it has since installed.');
+          }
+        } catch (e) {
+          this.logger.warn(`inventory monitor ${r.key} on ${ep.id}: ${(e as Error).message}`);
+        }
+      }
     }
   }
 
@@ -465,6 +585,8 @@ export const VIEW_INCLUDE = {
   endpoint: { select: { id: true, name: true, hostname: true } },
   site: { select: { id: true, name: true } },
   customer: { select: { id: true, name: true } },
+  // 0.55: the automatic PSA ticket, if one was made or tried.
+  autoTicket: { select: { status: true, attempts: true, lastStatus: true, connectorKind: true, ref: true, url: true, lastAttemptAt: true, nextAttemptAt: true } },
 } as const;
 export type AlertView = Prisma.MonitorAlertGetPayload<{ include: typeof VIEW_INCLUDE }>;
 

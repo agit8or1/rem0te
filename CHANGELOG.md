@@ -5,6 +5,114 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.55.0] — 2026-11-16 · *Tripwire*
+
+**Alerts for drives, uptime and updates; automatic PSA tickets from alerts; Recent alerts on the dashboard.**
+
+The owner asked to "add alerts for certain conditions like low disk space, etc. it should also be able to feed into psa
+to create tickets, show alerts on dashboard, etc". Before this, the *Disk space* monitor saw only the system disk
+(the heartbeat's live sample is C:), so a data drive could fill unnoticed. Nothing watched uptime or Windows Update
+results. A PSA ticket could be made from an alert only by pressing **Create ticket** (0.48), and the dashboard showed
+alerts only as counts and in *Work on next*. **Nothing here changes the agent.** Every new monitor reads data the
+server already stores.
+
+#### Added
+- **Four monitor kinds** (`MonitorKind` gains `DRIVE_FREE`, `UPTIME_LONG`, `UPDATES_MISSING`, `UPDATE_FAILED`, migration
+  0076). Each has a strict zod schema, a pure verdict in `monitoring/engine.ts`, a form under Settings → Monitoring,
+  and a line on the device page's monitor list. The sweep evaluates them at most every `MONITOR_INVENTORY_SECONDS`
+  (default 300), because their evidence changes slowly.
+  - **Drive space, every fixed drive.** It reads `EndpointInventory.disks`, which on Windows is every
+    `Win32_LogicalDisk` of type 3 from the six-hourly inventory pass. A pass older than 48 hours is not evidence.
+    - It raises **one alert per drive**. The dedup key is `<rule>:<endpoint>:<letter>`.
+    - A drive must match `^[A-Z]:$` before it reaches a key, a title or a detail. Linux and macOS mount points and
+      anything malformed are skipped. The rule's *only* and *except* lists pass `^[A-Za-z]:?$` and are normalised to
+      `X:`.
+    - It clears at the line plus 2 points (hysteresis). A drive no longer reported resolves its alert.
+    - The orphan check keeps a drive alert while its rule still applies to that computer.
+  - **Not restarted** for *days* (1 – 365, default 30). It reads `lastBootAt`, or `uptimeSeconds`, from a live sample
+    no older than 15 minutes. An offline computer is not judged, and the alert is not cleared on stale data.
+  - **Security updates outstanding** for *days* (1 – 180, default 30), Security and/or Critical (the patch scan's
+    classification GUIDs).
+    - Windows does not report a release date, so the age is counted from when Rem0te first saw the update offered.
+      That first-seen date is kept in `EndpointMonitorState.lastValue.seen`: at most 100 ids, a date in the future
+      reset to now, and an update no longer offered forgotten.
+    - It needs the signed agent's `patchPosture`. A standard agent, a failed scan, or a scan over 36 hours old
+      (`STALE_AFTER_MS`) is *skip*, never *ok*.
+    - Browse-only (optional) updates never count.
+  - **Update install failed** within *days* (1 – 90, default 7). It reads two sources: the scan's Windows Update
+    history (install operations only) and Rem0te's own `windows.update.install` results (`ActionTarget.result.updates`,
+    90-day lookback).
+    - A failure followed by a later success of the same update is forgotten.
+    - An hresult outside `^0x[0-9A-Fa-f]{1,8}$` is dropped.
+    - The detail lists at most ten failures.
+- **Add recommended adds three more**, for ten in all: `drive-free` (10 %, **C: excepted**, so a full system disk is
+  not alerted twice by this and `disk-free`), `updates-missing` (30 days) and `update-failed` (7 days), all *warning*.
+  They are still created only by the click. *Not restarted* is not recommended, because it nags.
+- **Automatic PSA tickets** (`MonitorTicketPolicy`, `MonitorAlertTicket`, `AlertTicketsService`,
+  `PsaService.alertTicket`). A rule at the platform level and optionally per business says: open a ticket when an
+  alert of at least this severity (default critical) opens, optionally only for these kinds. A business's row
+  replaces the platform row there, even when it is switched off. Who may change it is who may change who is notified
+  (`mayManageNotifications`).
+  - **Once per alert.** `MonitorAlertTicket.alertId` is unique. Attempts are `CHECK 1..4`, status is closed, and a
+    retry time exists only on `failed`.
+  - **No backlog.** Only alerts first seen after the rule was switched on (`enabledAt`, `CHECK` that it is set while
+    enabled) are ticketed. Re-saving a rule that is already on keeps its clock.
+  - **Order** (`AlertTicketsService.pass`, called once, from the monitoring sweep after `notifyPass`; `MONITOR_SWEEP=off`
+    stops it):
+    1. `autoTicketDecision`: rule, on, open, a computer (never a site outage), after `enabledAt`, severity, kind,
+       after `notifyFrom` (OFFLINE's correlation hold), not under an open site outage, and not in a maintenance
+       window (the notify pass's own `suppressionFor`).
+    2. A `notifications` containment pause.
+    3. The per-business hourly budget: `PSA_AUTO_TICKETS_PER_HOUR`, default 10, counted in the database.
+    4. `alertTicket`: the effective connector and `ready()`; the claim (a unique insert, or a conditional update from
+       `failed` at the same attempt count); `PSA_AUTO_TICKET_REQUESTED` written with `logOrFail` before the send; the
+       one `drv.send`.
+  - **The draft** is the one **Create ticket** makes for that alert (`buildDraft`): no detail, no note, no AI, and
+    `requestedBy: "Rem0te monitoring (automatic)"`. The `PsaTicket` gets the same fingerprint, so the button sees it
+    was already sent. Audit meta is ids only: connector, `source: 'monitoring'`, `sourceRef`, alert, computer, kind,
+    severity, attempt (and the reference once sent).
+  - **Failures.** A failed send is recorded as a `ticket_failed` alert event and `PSA_TICKET_FAILED`, then retried after
+    5, 30 and 120 minutes, four sends in all, then `gave_up`. A send left `sending` for 15 minutes (an API restart
+    mid-send) is given up, not resent, because the PSA may have made it. A retry stops once its alert resolves or the
+    rule no longer asks for it.
+  - **Shown** on the Alerts list and detail, the device page's Monitoring tab, and the dashboard: the reference, linked
+    when the PSA gave a URL, or *failed, will retry* / *not sent*.
+  - **No connector can add a note or close a ticket,** so resolving an alert leaves its ticket alone.
+  - **Settings → Monitoring → Automatic tickets.** `GET/PUT/DELETE /monitoring/ticket-policy`. Saving and removing need
+    `assertFresh` with the new catalog key `monitoring.autoticket` (Monitoring & notifications, default *ask*), and are
+    audited as `MONITOR_TICKET_POLICY_CHANGED` with before and after.
+- **Recent alerts on the dashboard.** The twelve newest open or acknowledged alerts: severity, computer, business, how
+  long, state, maintenance window, the automatic ticket's reference, and a link to `/alerts?alert=<id>`.
+  - It sits inside the alerts list's own rule (`monitoring:alerts`) **and** `endpointVisibilityWhere` for a
+    computer's alert, so a Business User never sees an alert on a computer assigned to other people.
+  - With no alert it says whether any monitor applies (`monitorsConfigured`). With none, it links to Settings →
+    Monitoring and *Add recommended*.
+  - The desktop grid gained a fourth row. The map spans three and the queue four when the map is hidden.
+
+#### Security invariants
+- **§68** (new): drive letters reach a key only through the charset; the four kinds are server-side
+  (`INVENTORY_KINDS`, `AGENT_KINDS` unchanged); 0076's unique index and CHECKs; the pass runs only in the sweep; rule →
+  pause → budget → `alertTicket`; claim → `logOrFail` → one send; the draft carries no detail, note or AI and the
+  meta no text; `monitoring.autoticket` on PUT and DELETE; `enabledAt`; the dashboard's two scopes; the suites run.
+- §55's count of `drv.send(` in `psa.service.ts` is now 3. §62's `SITE_KEYS` for `monitoring.controller.ts` is
+  `monitoring.autoticket`, `monitoring.notify`. The §46 membership check keeps its exact shape: 0.55's per-tick
+  collections are declared above it.
+
+#### Tests
+- `apps/api/scripts/unit-alert-conditions.mjs` (98 checks, in CI). It covers parameters and charsets, every verdict,
+  drive keys, the recommended set, every reason a ticket is not opened, the retry schedule, the draft and webhook
+  body, and the catalog key.
+- `apps/api/scripts/e2e-alert-tickets.mjs` (73 checks, ports 3811–3812, a loopback webhook stub, in `run-e2e.sh`).
+  It proves the four kinds raise from stored data, then the rule's permissions and fresh authentication, one ticket
+  per alert, the backlog, a maintenance window, a pause (ticketed once lifted), OFFLINE's hold, severity and kind,
+  the budget, retry and give-up, an interrupted send, audit order and content, the reference on alerts, and the
+  dashboard's scoping.
+- `unit-agent-health.mjs` and `e2e-agent-health.mjs` now expect ten recommended monitors.
+- **Not run on real Windows or against a real PSA.** The drive, boot-time and patch data are the shapes the agents
+  already report, written as fixtures.
+
+---
+
 ## [0.54.0] — 2026-11-15 · *Curfew*
 
 **Restarts can be scheduled, and patch policies have restart windows.**

@@ -45,6 +45,11 @@ interface Overview {
   patchDeployments: null | { id: string; name: string; status: string; pausedReason: string | null; business: Biz; createdAt: string }[];
   sessions: null | { liveAfterHours: number; live: { id: string; status: string; connected: boolean; isAdHoc: boolean; startedAt: string; lastSignalAt: string | null; technician: string | null; device: Dev; business: Biz }[] };
   acknowledged: null | { id: string; title: string; severity: string; business: Biz; device: Dev; acknowledgedAt: string | null; by: string | null; href: string }[];
+  /** 0.55: null without monitoring:alerts. */
+  recentAlerts?: null | {
+    monitorsConfigured: number;
+    list: { id: string; title: string; severity: string; state: string; kind: string; suppressed: boolean; since: string; business: Biz; device: Dev; ticket: { ref: string | null; url: string | null } | null; href: string }[];
+  };
   customers: { business: { id: string; name: string }; critical: number; warning: number; outages: number; offline: number; failedActions: number }[];
   attention: { device: { id: string; name: string }; business: Biz; score: number; reasons: string[]; isOnline: boolean; lastSeenAt: string | null }[];
   recentDevices: null | { id: string; name: string; business: Biz; isOnline: boolean; lastSeenAt: string | null; lastSessionAt: string }[];
@@ -200,10 +205,10 @@ export default function DashboardPage() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-12 lg:grid-rows-[minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,1fr)]" data-testid="dashboard-grid">
+      <div className="grid grid-cols-1 gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-12 lg:grid-rows-[minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]" data-testid="dashboard-grid">
         {/* What to do next, ranked, each with its reason. */}
         <Panel id="work-next" testId="dashboard-queue" title="Work on next" action={queueNote}
-          className={`lg:col-span-5 lg:col-start-1 lg:row-start-1 ${mapOn ? 'lg:row-span-1' : 'lg:row-span-3'}`}>
+          className={`lg:col-span-5 lg:col-start-1 lg:row-start-1 ${mapOn ? 'lg:row-span-1' : 'lg:row-span-4'}`}>
           {d.queue.items.length === 0 ? (
             <Empty icon={CheckCircle2}>
               Nothing needs you right now{d.alerts ? '' : ' (alerts are not visible to you, so they are not part of this)'}.
@@ -296,13 +301,21 @@ export default function DashboardPage() {
         )}
 
         {mapOn && (
-          <div className="h-[360px] lg:col-span-5 lg:col-start-1 lg:row-span-2 lg:row-start-2 lg:h-auto lg:min-h-0" data-testid="dashboard-map">
+          <div className="h-[360px] lg:col-span-5 lg:col-start-1 lg:row-span-3 lg:row-start-2 lg:h-auto lg:min-h-0" data-testid="dashboard-map">
             <ClientMap embedded />
           </div>
         )}
 
+        {/* 0.55: the newest open and acknowledged alerts, each linking to the alert. */}
+        {d.recentAlerts && (
+          <Panel testId="dashboard-recent-alerts" title="Recent alerts" className="lg:col-span-7 lg:col-start-6 lg:row-start-3"
+            action={<Link href="/alerts" className="text-xs text-muted-foreground hover:underline">All alerts</Link>}>
+            <RecentAlerts r={d.recentAlerts} now={now} />
+          </Panel>
+        )}
+
         {d.activity && (
-          <Panel testId="dashboard-activity" title="Recent activity" className="lg:col-span-4 lg:col-start-6 lg:row-start-3"
+          <Panel testId="dashboard-activity" title="Recent activity" className="lg:col-span-4 lg:col-start-6 lg:row-start-4"
             action={<Link href="/audit" className="text-xs text-muted-foreground hover:underline">Audit log</Link>}>
             {d.activity.length === 0 ? (
               <Empty icon={Activity}>No alert, action, patch, session or device activity in the last 7 days.</Empty>
@@ -326,7 +339,7 @@ export default function DashboardPage() {
         )}
 
         {d.recentDevices && (
-          <Panel testId="dashboard-recent-devices" title="Your recent devices" className="lg:col-span-3 lg:col-start-10 lg:row-start-3">
+          <Panel testId="dashboard-recent-devices" title="Your recent devices" className="lg:col-span-3 lg:col-start-10 lg:row-start-4">
             {d.recentDevices.length === 0 ? (
               <Empty icon={Clock}>You have not opened a session to a device you can still see.</Empty>
             ) : (
@@ -442,6 +455,42 @@ function PatchBreakdown({ p, now }: { p: NonNullable<Overview['patch']>; now: nu
       </p>
       <p className="text-muted-foreground">{p.definition}</p>
     </div>
+  );
+}
+
+/**
+ * 0.55. With nothing open it says why: no monitor applies here at all (with
+ * the way to add the recommended set), or the monitors found nothing.
+ */
+function RecentAlerts({ r, now }: { r: NonNullable<Overview['recentAlerts']>; now: number }) {
+  if (r.list.length === 0) {
+    return r.monitorsConfigured === 0 ? (
+      <p className="flex items-start gap-2 py-2 text-xs text-muted-foreground" data-testid="dashboard-no-monitors">
+        <Siren className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <span>
+          No monitors are configured, so nothing can alert yet. Open{' '}
+          <Link href="/settings/monitoring" className="underline text-foreground">Settings → Monitoring</Link> and press <strong>Add recommended</strong>: it sets up offline, disk space, failed and outstanding updates and more.
+        </span>
+      </p>
+    ) : <Empty icon={CheckCircle2}>No open alerts. The monitors have found nothing that needs you.</Empty>;
+  }
+  return (
+    <ul className="divide-y">
+      {r.list.map((a) => (
+        <li key={a.id}>
+          <Link href={a.href} className="flex gap-3 py-1.5 hover:bg-muted/40 rounded-sm px-1 -mx-1">
+            <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${SEV_DOT[a.severity.toLowerCase()] ?? 'bg-muted'}`} aria-label={a.severity.toLowerCase()} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm">{a.title}</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                {[where(a.business, a.device), a.state === 'ACKNOWLEDGED' ? 'acknowledged' : null, a.suppressed ? 'maintenance window' : null, a.ticket ? `ticket ${a.ticket.ref ?? 'opened'}` : null].filter(Boolean).join(' · ')}
+              </span>
+            </span>
+            <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{ago(a.since, now)}</span>
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }
 

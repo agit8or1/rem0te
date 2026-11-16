@@ -7,7 +7,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { apiError } from '@/components/security-controls/shared';
-import { AlertDetail, type AlertRow, SeverityBadge, StateBadge } from '@/components/monitoring/alerts';
+import { AlertDetail, type AlertRow, AutoTicketBadge, SeverityBadge, StateBadge } from '@/components/monitoring/alerts';
 import { formatDate } from '@/lib/utils';
 import { ago, CHANGE_LABEL, describeMonitor, MONITOR_KIND_LABEL, monitorSource, openAlerts } from './device-model';
 import { useMonitoringView } from './use-device-data';
@@ -27,7 +27,7 @@ function AlertList({ rows, endpointId }: { rows: AlertRow[]; endpointId: string 
       {rows.map((a) => (
         <div key={a.id} className="border-b last:border-b-0">
           <button type="button" className="flex w-full flex-wrap items-center gap-2 p-3 text-left hover:bg-accent/50" onClick={() => setOpen(open === a.id ? null : a.id)} aria-expanded={open === a.id}>
-            <SeverityBadge s={a.severity} /><span className="font-medium">{a.title}</span><StateBadge a={a} />
+            <SeverityBadge s={a.severity} /><span className="font-medium">{a.title}</span><StateBadge a={a} /><AutoTicketBadge t={a.autoTicket} />
             {a.occurrences > 1 && <span className="text-xs text-muted-foreground">{a.occurrences} times</span>}
             <span className="ml-auto text-xs text-muted-foreground" title={formatDate(a.lastSeenAt)}>last seen {ago(a.lastSeenAt)}</span>
           </button>

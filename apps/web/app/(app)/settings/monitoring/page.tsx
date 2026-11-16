@@ -53,7 +53,7 @@ const SEVERITIES: Severity[] = ['INFO', 'WARNING', 'CRITICAL'];
 const EVENT_LOGS = ['System', 'Application', 'Security', 'Setup'];
 
 /** Form fields per monitor kind. Validation is the server's; this only shapes the input. */
-const KIND: Record<MonitorKindId, { label: string; hint: string; fields: { k: string; label: string; type: 'int' | 'text' | 'bool' | 'list' | 'log'; def: unknown }[] }> = {
+const KIND: Record<MonitorKindId, { label: string; hint: string; fields: { k: string; label: string; type: 'int' | 'text' | 'bool' | 'list' | 'log' | 'drives' | 'classes'; def: unknown }[] }> = {
   OFFLINE: { label: 'Computer offline', hint: 'No heartbeat for this long.', fields: [{ k: 'minutes', label: 'Minutes without a heartbeat', type: 'int', def: 15 }] },
   DISK_FREE: { label: 'Disk space', hint: 'The system disk below this much free.', fields: [{ k: 'minFreePercent', label: 'Minimum free %', type: 'int', def: 10 }] },
   CPU_HIGH: { label: 'Processor busy', hint: 'Above this for several heartbeats in a row.', fields: [{ k: 'percent', label: 'Percent', type: 'int', def: 95 }, { k: 'samples', label: 'Heartbeats in a row', type: 'int', def: 5 }] },
@@ -76,6 +76,30 @@ const KIND: Record<MonitorKindId, { label: string; hint: string; fields: { k: st
     label: 'Agent silent (RustDesk still reachable)',
     hint: 'RustDesk still reaches the computer but its agent has not checked in for this long (30 minutes to 7 days), so its monitoring, patching and inventory values are going stale. It clears when the agent checks in again. Off until someone adds it — here or with “Add recommended”.',
     fields: [{ k: 'minutes', label: 'Minutes without an agent check-in', type: 'int', def: 60 }],
+  },
+  // 0.55: read from what the server already stores; no agent change.
+  DRIVE_FREE: {
+    label: 'Drive space (every fixed drive)',
+    hint: 'Each fixed drive the inventory reports (C:, D:, …), one alert per drive. The inventory runs about every six hours, so this is slower than the system-disk monitor, which reads C: on every heartbeat — leave C: out here if you use both. It clears 2 points above the line.',
+    fields: [
+      { k: 'minFreePercent', label: 'Minimum free %', type: 'int', def: 10 }, { k: 'minFreeMb', label: 'Or minimum free MB (optional)', type: 'int', def: '' },
+      { k: 'drives', label: 'Only these drives (blank = all)', type: 'drives', def: [] }, { k: 'exceptDrives', label: 'Except these drives', type: 'drives', def: ['C:'] },
+    ],
+  },
+  UPTIME_LONG: {
+    label: 'Not restarted for a long time',
+    hint: 'The computer has been up this many days, from the boot time its heartbeat reports. An offline computer is not judged: it may have restarted since.',
+    fields: [{ k: 'days', label: 'Days without a restart', type: 'int', def: 30 }],
+  },
+  UPDATES_MISSING: {
+    label: 'Security updates outstanding',
+    hint: 'Security or critical updates the signed agent’s patch scan has offered for this many days, counted from when Rem0te first saw each one. Needs the signed agent; a scan over 36 hours old is not judged.',
+    fields: [{ k: 'days', label: 'Days outstanding', type: 'int', def: 30 }, { k: 'classes', label: 'Classes', type: 'classes', def: ['security', 'critical'] }],
+  },
+  UPDATE_FAILED: {
+    label: 'Update install failed',
+    hint: 'An update failed to install in this many days — in Windows Update’s own history or in a Rem0te patch deployment. It clears once the update installs, or when the failure is older than the window.',
+    fields: [{ k: 'days', label: 'Look back (days)', type: 'int', def: 7 }],
   },
 };
 
@@ -142,6 +166,7 @@ export default function MonitoringSettingsPage() {
         <TabsContent value="windows"><Windows businessId={businessId} ok={ok} fail={fail} /></TabsContent>
         <TabsContent value="notify" className="space-y-4">
           <Notify businessId={businessId} ok={ok} fail={fail} />
+          <AutoTickets businessId={businessId} ok={ok} fail={fail} />
           <RecipientsCard scope={businessId ? 'business' : 'global'} businessId={businessId} ok={ok} fail={fail} />
         </TabsContent>
       </Tabs>
@@ -158,6 +183,21 @@ function ParamFields({ kind, value, onChange }: { kind: MonitorKindId; value: Re
         const v = value[f.k] ?? f.def;
         const set = (x: unknown) => onChange({ ...value, [f.k]: x });
         if (f.type === 'bool') return <label key={f.k} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!v} onChange={(e) => set(e.target.checked)} />{f.label}</label>;
+        if (f.type === 'classes') return (
+          <div key={f.k} className="space-y-1"><Label>{f.label}</Label>
+            <div className="flex gap-3 text-sm">
+              {(['security', 'critical'] as const).map((c) => {
+                const list = Array.isArray(v) ? (v as string[]) : [];
+                return <label key={c} className="flex items-center gap-1"><input type="checkbox" checked={list.includes(c)} onChange={(e) => set(e.target.checked ? [...list, c] : list.filter((x) => x !== c))} />{c}</label>;
+              })}
+            </div>
+          </div>
+        );
+        if (f.type === 'drives') return (
+          <div key={f.k} className="space-y-1"><Label>{f.label}</Label>
+            <Input value={Array.isArray(v) ? v.join(', ') : ''} placeholder="e.g. D, E" onChange={(e) => set(e.target.value.split(/[,\s]+/).filter(Boolean).map((x) => x.toUpperCase()))} />
+          </div>
+        );
         if (f.type === 'log') return (
           <div key={f.k} className="space-y-1"><Label>{f.label}</Label>
             <select className="w-full rounded-md border bg-background p-2 text-sm" value={String(v)} onChange={(e) => set(e.target.value)}>{EVENT_LOGS.map((l) => <option key={l}>{l}</option>)}</select>
@@ -269,7 +309,7 @@ function Monitors({ businessId, ok, fail }: Props) {
             <Button size="sm" disabled={!key || !name || create.isPending} onClick={() => create.mutate()}>Add monitor</Button>
           </div>
         )}
-        {shown.length === 0 && <p className="text-muted-foreground">No monitors yet. {mayHere ? '“Add recommended” sets up offline, disk, CPU, memory, restart-pending, disk-error and agent-silent monitors you can then adjust.' : ''}</p>}
+        {shown.length === 0 && <p className="text-muted-foreground">No monitors yet. {mayHere ? '“Add recommended” sets up offline, disk, other-drive, CPU, memory, restart-pending, disk-error, agent-silent, outstanding-update and failed-update monitors you can then adjust.' : ''}</p>}
         <div className="divide-y rounded-md border">
           {shown.map((r) => (
             <div key={r.id} className="p-3">
@@ -458,6 +498,94 @@ function Notify({ businessId, ok, fail }: Props) {
           </div>
         )}
         {current && <p className="text-xs text-muted-foreground">Last changed {fmt(current.updatedAt)}.</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+type TicketRule = { scopeKey: string; enabled: boolean; minSeverity: Severity; kinds: MonitorKindId[]; enabledAt: string | null; updatedAt: string };
+type TicketPolicy = {
+  global: TicketRule | null; business: TicketRule | null; effective: 'business' | 'global' | 'none';
+  may: { global: boolean; business: boolean }; kinds: MonitorKindId[];
+  limits: { perBusinessPerHour: number; maxAttempts: number; backoffMinutes: number[] };
+};
+
+/**
+ * 0.55: automatic PSA tickets. "Create a ticket in the PSA when an alert of
+ * at least this severity (optionally only these kinds) opens." Sent through
+ * the PSA connector under Settings → PSA / ticketing, after the alert's
+ * notify hold, never in a maintenance window or under a notifications pause.
+ */
+function AutoTickets({ businessId, ok, fail }: Props) {
+  const qc = useQueryClient();
+  const { data, error } = useQuery<TicketPolicy>({ queryKey: ['mon-ticket-policy', businessId], queryFn: () => monitoringApi.ticketPolicy(businessId).then((r) => r.data.data), retry: false });
+  const scope: 'global' | 'business' = businessId ? 'business' : 'global';
+  const current = data ? (scope === 'business' ? data.business : data.global) : null;
+  const may = !!data && (scope === 'global' ? data.may.global : data.may.business);
+  const [draft, setDraft] = useState<{ enabled: boolean; minSeverity: Severity; kinds: MonitorKindId[] } | null>(null);
+  const edit = draft ?? { enabled: current?.enabled ?? false, minSeverity: current?.minSeverity ?? 'CRITICAL', kinds: current?.kinds ?? [] };
+  const ask = useAsks('monitoring.autoticket');
+  const refresh = () => { setDraft(null); qc.invalidateQueries({ queryKey: ['mon-ticket-policy'] }); };
+  const save = useMutation({
+    mutationFn: () => monitoringApi.setTicketPolicy({ scope, ...(businessId ? { businessId } : {}), ...edit }),
+    onSuccess: () => { ok(edit.enabled ? 'Automatic tickets are on. Alerts that open from now on are ticketed.' : 'Automatic tickets are off here.'); refresh(); }, onError: fail,
+  });
+  const remove = useMutation({
+    mutationFn: () => monitoringApi.removeTicketPolicy(scope, businessId),
+    onSuccess: () => { ok(businessId ? 'Removed. The platform rule applies to this business again.' : 'Removed.'); refresh(); }, onError: fail,
+  });
+  if (error) return <p className="p-4 text-sm text-muted-foreground">{apiError(error).message}</p>;
+  if (!data) return null;
+  const inEffect = data.effective === 'business' ? data.business : data.effective === 'global' ? data.global : null;
+  const whose = data.effective === 'business' ? "this business's rule" : 'the platform rule';
+  const toggleKind = (k: MonitorKindId, on: boolean) => setDraft({ ...edit, kinds: on ? [...edit.kinds, k] : edit.kinds.filter((x) => x !== k) });
+  return (
+    <Card data-testid="mon-ticket-policy">
+      <CardHeader><CardTitle className="text-sm">Automatic tickets {businessId ? 'for this business' : '— platform default'}</CardTitle></CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <p className="text-muted-foreground">
+          Opens one ticket in your PSA (Settings → <Link className="underline" href="/settings/psa">PSA / ticketing</Link>) when an alert of at least the chosen severity opens.
+          It waits for the alert’s notification hold, never tickets an alert in a maintenance window or while notifications are paused, and only tickets alerts that open after it is switched on.
+          The ticket carries what “Create ticket” on that alert would: the alert, the computer and the business, and a link back. At most {data.limits.perBusinessPerHour} sends per business an hour;
+          a failed send is tried again {data.limits.maxAttempts - 1} times (after {data.limits.backoffMinutes.join(', ')} minutes).
+          {businessId ? ' A rule here replaces the platform rule for this business.' : ' A business can set its own rule, which replaces this one there.'}
+        </p>
+        <p>
+          In effect{businessId ? ' here' : ''}:{' '}
+          <strong>
+            {inEffect
+              ? inEffect.enabled
+                ? `on — ${inEffect.minSeverity.toLowerCase()} and above${inEffect.kinds.length ? `, ${inEffect.kinds.length} kind${inEffect.kinds.length === 1 ? '' : 's'}` : ''} (${whose})`
+                : `off (${whose})`
+              : 'nothing — no alert opens a ticket'}
+          </strong>.
+        </p>
+        {!may && <p className="text-muted-foreground">Only {businessId ? 'a Business Owner of this business or the MSP' : 'the MSP'} can change this.</p>}
+        <div className="flex flex-wrap items-center gap-3 rounded-md border p-3">
+          <label className="flex items-center gap-2"><input type="checkbox" disabled={!may} checked={edit.enabled} data-testid="mon-ticket-enabled" onChange={(e) => setDraft({ ...edit, enabled: e.target.checked })} />Open a ticket when an alert of at least</label>
+          <select aria-label="Minimum severity" className="rounded-md border bg-background p-1" disabled={!may} value={edit.minSeverity} onChange={(e) => setDraft({ ...edit, minSeverity: e.target.value as Severity })}>{SEVERITIES.map((s) => <option key={s}>{s}</option>)}</select>
+          <span>opens</span>
+        </div>
+        <div className="space-y-1">
+          <Label>Only these kinds (none ticked = every kind)</Label>
+          <div className="grid gap-1 md:grid-cols-3">
+            {data.kinds.map((k) => (
+              <label key={k} className="flex items-center gap-2"><input type="checkbox" disabled={!may} checked={edit.kinds.includes(k)} onChange={(e) => toggleKind(k, e.target.checked)} />{KIND[k]?.label ?? k}</label>
+            ))}
+          </div>
+        </div>
+        {may && (
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={!draft || save.isPending} onClick={() => save.mutate()}>{`Save${reauthSuffix(ask)}`}</Button>
+            {draft && <Button variant="ghost" onClick={() => setDraft(null)}>Discard changes</Button>}
+            {current && (
+              <Button variant="ghost" disabled={remove.isPending} onClick={() => { if (window.confirm(businessId ? 'Remove this business’s rule? The platform rule applies here again.' : 'Remove the platform rule?')) remove.mutate(); }}>
+                {`Remove${reauthSuffix(ask)}`}
+              </Button>
+            )}
+          </div>
+        )}
+        {current && <p className="text-xs text-muted-foreground">Last changed {fmt(current.updatedAt)}{current.enabled && current.enabledAt ? ` · on since ${fmt(current.enabledAt)}` : ''}.</p>}
       </CardContent>
     </Card>
   );

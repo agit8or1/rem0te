@@ -11,8 +11,14 @@ import { z } from 'zod';
 import { comparePrecedence, PRIORITY_MAX, PRIORITY_MIN, type PolicyScope } from '../group-policy/precedence';
 import { HEARTBEAT_STALE_MS } from '../common/connectivity';
 import { PROGRAM_KEY_RE, REMOVAL_KINDS } from '../actions/catalog';
+import { Posture } from '../patching/posture';
+import { STALE_AFTER_MS } from '../patching/summary';
 
-export const MONITOR_KINDS = ['OFFLINE', 'DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH', 'SERVICE_STOPPED', 'EVENT_MATCH', 'REBOOT_PENDING', 'AGENT_SILENT'] as const;
+export const MONITOR_KINDS = [
+  'OFFLINE', 'DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH', 'SERVICE_STOPPED', 'EVENT_MATCH', 'REBOOT_PENDING', 'AGENT_SILENT',
+  // 0.55: read from what the server already stores — no agent change.
+  'DRIVE_FREE', 'UPTIME_LONG', 'UPDATES_MISSING', 'UPDATE_FAILED',
+] as const;
 export type MonitorKind = (typeof MONITOR_KINDS)[number];
 export const SEVERITIES = ['INFO', 'WARNING', 'CRITICAL'] as const;
 export type Severity = (typeof SEVERITIES)[number];
@@ -48,6 +54,19 @@ const ints = (min: number, max: number) => z.number().int().min(min).max(max);
  */
 export const AGENT_SILENT_BOUNDS = { min: HEARTBEAT_STALE_MS / 60_000, max: 7 * 24 * 60, def: 60 } as const;
 
+/** 0.55: a drive letter as typed in a monitor ("d", "D", "D:"). */
+export const DRIVE_INPUT = /^[A-Za-z]:?$/;
+/** A drive as the inventory names it, after upper-casing: exactly a letter and a colon. Anything else (a Linux mount) is not a drive here. */
+export const DRIVE_LETTER = /^[A-Z]:$/;
+export const driveOf = (v: string) => `${v.slice(0, 1).toUpperCase()}:`;
+
+/** 0.55: the update classes UPDATES_MISSING watches, by the patch scan's classification GUIDs (patching/posture.ts). */
+export const UPDATE_CLASS_NAMES = ['security', 'critical'] as const;
+export const UPDATE_CLASS_GUID: Record<(typeof UPDATE_CLASS_NAMES)[number], string> = {
+  security: '0fa1201d-4330-4fa8-8ae9-b877473b6441',
+  critical: 'e6cf1350-c01b-414d-a61f-263d14d133b4',
+};
+
 export const PARAMS: Record<MonitorKind, z.ZodTypeAny> = {
   OFFLINE: z.object({ minutes: ints(5, 1440).default(15) }).strict(),
   DISK_FREE: z.object({ minFreePercent: ints(1, 90).default(10), minFreeMb: ints(100, 10_000_000).optional() }).strict(),
@@ -71,6 +90,21 @@ export const PARAMS: Record<MonitorKind, z.ZodTypeAny> = {
   // (HEARTBEAT_STALE_MS, 30 min): below it the computer still shows Online,
   // and an alert would contradict the page it links to. The ceiling is a week.
   AGENT_SILENT: z.object({ minutes: ints(AGENT_SILENT_BOUNDS.min, AGENT_SILENT_BOUNDS.max).default(AGENT_SILENT_BOUNDS.def) }).strict(),
+  // 0.55. Every fixed drive the inventory pass reports (Win32_LogicalDisk
+  // DriveType 3), one alert per drive. `drives` narrows it to these letters,
+  // `exceptDrives` leaves some out; both are letters only (DRIVE_INPUT).
+  DRIVE_FREE: z.object({
+    minFreePercent: ints(1, 90).default(10),
+    minFreeMb: ints(100, 10_000_000).optional(),
+    drives: z.array(z.string().regex(DRIVE_INPUT, 'a drive letter, e.g. D or D:').transform(driveOf)).max(26).default([]),
+    exceptDrives: z.array(z.string().regex(DRIVE_INPUT, 'a drive letter, e.g. C or C:').transform(driveOf)).max(26).default([]),
+  }).strict(),
+  UPTIME_LONG: z.object({ days: ints(1, 365).default(30) }).strict(),
+  UPDATES_MISSING: z.object({
+    days: ints(1, 180).default(30),
+    classes: z.array(z.enum(UPDATE_CLASS_NAMES)).min(1).max(2).default(['security', 'critical']),
+  }).strict(),
+  UPDATE_FAILED: z.object({ days: ints(1, 90).default(7) }).strict(),
 };
 
 export const RULE_KEY = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -121,6 +155,11 @@ export const RECOMMENDED: { key: string; kind: MonitorKind; name: string; severi
   { key: 'reboot-pending', kind: 'REBOOT_PENDING', name: 'Restart pending for 3 days', severity: 'INFO', params: { hours: 72 } },
   { key: 'disk-errors', kind: 'EVENT_MATCH', name: 'Disk errors in the System log', severity: 'CRITICAL', params: { log: 'System', ids: [7, 11, 51, 153], levels: [], threshold: 1, clearAfterMinutes: 1440 } },
   { key: 'agent-silent', kind: 'AGENT_SILENT', name: 'Agent silent, RustDesk still reachable', severity: 'WARNING', params: { minutes: AGENT_SILENT_BOUNDS.def } },
+  // 0.55. C: is left to disk-free above (the live system-disk sample), so the
+  // system drive is not alerted twice.
+  { key: 'drive-free', kind: 'DRIVE_FREE', name: 'Other fixed drives nearly full', severity: 'WARNING', params: { minFreePercent: 10, exceptDrives: ['C:'] } },
+  { key: 'updates-missing', kind: 'UPDATES_MISSING', name: 'Security updates outstanding for 30 days', severity: 'WARNING', params: { days: 30, classes: ['security', 'critical'] } },
+  { key: 'update-failed', kind: 'UPDATE_FAILED', name: 'An update failed to install', severity: 'WARNING', params: { days: 7 } },
 ];
 
 // ── Scope and inheritance ───────────────────────────────────────────────────
@@ -433,6 +472,251 @@ export function evaluateEvents(rule: RuleLike, ev: EventReport | undefined, name
   }
   const quietFor = st.lastMatchAt ? now.getTime() - st.lastMatchAt.getTime() : Infinity;
   return { verdict: 'ok', state: { ...st, okCount: st.okCount + (ev ? 1 : 0) }, clear: quietFor >= P.clearAfterMinutes * 60_000 };
+}
+
+// ── Inventory and patch-evidence monitors (0.55) ────────────────────────────
+//
+// Four kinds read only what the server already stores — the inventory pass's
+// drive list, the live sample's boot time, the signed agent's patch scan and
+// Rem0te's own update-install results — so they need no agent change. The
+// sweep evaluates them (monitoring.service.ts, at most every
+// MONITOR_INVENTORY_SECONDS) and they change nothing on a computer.
+
+/** A drive reading counts only from an inventory pass this recent (the pass runs six-hourly). */
+export const INVENTORY_FRESH_MS = 48 * 3_600_000;
+/** Percentage points above the line before a drive alert clears, so a drive hovering at the line does not flap. */
+export const DRIVE_CLEAR_MARGIN = 2;
+/** At most this many drives looked at per computer (the inventory keeps 32). */
+export const MAX_DRIVES = 26;
+
+/** One alert per drive: the computer's key plus the letter. Rule keys have no ':' (RULE_KEY), so the prefix is unambiguous. */
+export const drivePrefixOf = (ruleKey: string, endpointId: string) => `${ruleKey}:${endpointId}:`;
+export const driveKeyOf = (ruleKey: string, endpointId: string, drive: string) => `${drivePrefixOf(ruleKey, endpointId)}${drive.slice(0, 1)}`;
+
+export interface DriveVerdict { drive: string; dedupKey: string; verdict: 'breach' | 'ok' | 'hold'; title: string; detail: Record<string, unknown> }
+
+const finiteNonNeg = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+
+/**
+ * DRIVE_FREE: every fixed drive in the last inventory pass, letters only
+ * (DRIVE_LETTER — a Linux mount point is not a drive here). `hold` is between
+ * the line and the line plus DRIVE_CLEAR_MARGIN: an open alert stays open and
+ * none is raised.
+ */
+export function evaluateDrives(rule: RuleLike, ep: { id: string; name: string }, inv: { disks: unknown; collectedAt: Date | null } | null, now: Date):
+  { verdict: 'skip'; reason: string } | { verdict: 'drives'; drives: DriveVerdict[] } {
+  const p = parseParams(rule.kind, rule.params);
+  if (!p.ok) return { verdict: 'skip', reason: `invalid params: ${p.error}` };
+  const P = p.params as { minFreePercent: number; minFreeMb?: number; drives: string[]; exceptDrives: string[] };
+  if (!inv?.collectedAt || now.getTime() - inv.collectedAt.getTime() > INVENTORY_FRESH_MS) return { verdict: 'skip', reason: 'no recent inventory pass' };
+  if (!Array.isArray(inv.disks)) return { verdict: 'skip', reason: 'drives not reported' };
+  const out: DriveVerdict[] = [];
+  const seen = new Set<string>();
+  for (const raw of inv.disks.slice(0, 64)) {
+    const d = (raw ?? {}) as Record<string, unknown>;
+    const drive = typeof d.drive === 'string' ? d.drive.trim().toUpperCase() : '';
+    if (!DRIVE_LETTER.test(drive) || seen.has(drive)) continue;
+    if (P.drives.length && !P.drives.includes(drive)) continue;
+    if (P.exceptDrives.includes(drive)) continue;
+    const total = finiteNonNeg(d.totalBytes), free = finiteNonNeg(d.freeBytes);
+    if (!total || free === null || free > total) continue;
+    seen.add(drive);
+    const pct = (100 * free) / total;
+    const freeMb = Math.floor(free / 1_048_576), totalMb = Math.floor(total / 1_048_576);
+    const breach = pct < P.minFreePercent || (typeof P.minFreeMb === 'number' && freeMb < P.minFreeMb);
+    const clear = pct >= P.minFreePercent + DRIVE_CLEAR_MARGIN && (typeof P.minFreeMb !== 'number' || freeMb >= P.minFreeMb * 1.05);
+    out.push({
+      drive, dedupKey: driveKeyOf(rule.key, ep.id, drive), verdict: breach ? 'breach' : clear ? 'ok' : 'hold',
+      title: `${ep.name}: drive ${drive} ${pct.toFixed(1)}% free`,
+      detail: { drive, freeMb, totalMb, freePercent: Math.round(pct * 10) / 10, minFreePercent: P.minFreePercent, minFreeMb: P.minFreeMb ?? null, inventoryAt: inv.collectedAt.toISOString() },
+    });
+    if (out.length >= MAX_DRIVES) break;
+  }
+  return { verdict: 'drives', drives: out };
+}
+
+/**
+ * UPTIME_LONG: not restarted in P.days, from the live sample's boot time.
+ * Only a live sample under LIVE_FRESH_MS counts: an offline computer may have
+ * restarted since, so its alert is neither raised nor cleared.
+ */
+export function evaluateUptime(rule: RuleLike, live: { name: string; lastBootAt: Date | null; uptimeSeconds: number | null; liveSampledAt: Date | null }, now: Date): Verdict {
+  const p = parseParams(rule.kind, rule.params);
+  if (!p.ok) return { verdict: 'skip', reason: `invalid params: ${p.error}` };
+  const P = p.params as { days: number };
+  if (!live.liveSampledAt || now.getTime() - live.liveSampledAt.getTime() >= LIVE_FRESH_MS) return { verdict: 'skip', reason: 'no recent live sample' };
+  const bootMs = live.lastBootAt ? live.lastBootAt.getTime()
+    : typeof live.uptimeSeconds === 'number' && live.uptimeSeconds >= 0 ? live.liveSampledAt.getTime() - live.uptimeSeconds * 1000 : null;
+  if (bootMs === null || !Number.isFinite(bootMs)) return { verdict: 'skip', reason: 'boot time not reported' };
+  if (bootMs > now.getTime() + 5 * 60_000) return { verdict: 'skip', reason: 'boot time is in the future' };
+  const days = (now.getTime() - bootMs) / 86_400_000;
+  if (days < P.days) return { verdict: 'ok', state: { ...EMPTY_STATE, okCount: 1 }, clear: true };
+  return {
+    verdict: 'breach', title: `${live.name}: not restarted for ${Math.floor(days)} days`,
+    detail: { lastBootAt: new Date(bootMs).toISOString(), uptimeDays: Math.floor(days), thresholdDays: P.days },
+    state: { ...EMPTY_STATE, breachCount: 1, breachSince: new Date(bootMs) },
+  };
+}
+
+/** The scan's updates of the watched classes, by update id, with when Rem0te first saw each offered. */
+export type SeenUpdates = Record<string, string>;
+export const MAX_SEEN_UPDATES = 100;
+
+/**
+ * UPDATES_MISSING: security or critical updates the signed agent's patch
+ * scan has offered for P.days. A scan does not say when Windows first
+ * offered an update, so the age is from when Rem0te first saw it in a scan
+ * (`seen`, kept in EndpointMonitorState.lastValue); the alert says so. A
+ * stale or failed scan changes nothing. Optional (browse-only) updates do
+ * not count.
+ */
+export function evaluateMissingUpdates(rule: RuleLike, name: string, posture: unknown, seen: SeenUpdates, now: Date):
+  { verdict: 'skip'; reason: string } | { verdict: 'breach'; title: string; detail: Record<string, unknown>; seen: SeenUpdates } | { verdict: 'ok'; seen: SeenUpdates } {
+  const p = parseParams(rule.kind, rule.params);
+  if (!p.ok) return { verdict: 'skip', reason: `invalid params: ${p.error}` };
+  const P = p.params as { days: number; classes: (typeof UPDATE_CLASS_NAMES)[number][] };
+  const scan = Posture.safeParse(posture);
+  if (!scan.success) return { verdict: 'skip', reason: 'no patch scan from the signed agent' };
+  if (scan.data.error) return { verdict: 'skip', reason: 'the last patch scan failed' };
+  if (now.getTime() - Date.parse(scan.data.scannedAt) > STALE_AFTER_MS) return { verdict: 'skip', reason: 'the last patch scan is stale' };
+  const want = new Map(P.classes.map((c) => [UPDATE_CLASS_GUID[c], c]));
+  const next: SeenUpdates = {};
+  const old: { kb: string | null; title: string; class: string; since: string }[] = [];
+  for (const u of scan.data.updates) {
+    const cls = want.get(u.classification);
+    if (!cls || u.browseOnly || next[u.updateId]) continue;
+    if (Object.keys(next).length >= MAX_SEEN_UPDATES) break;
+    const prev = typeof seen[u.updateId] === 'string' ? Date.parse(seen[u.updateId]) : NaN;
+    const since = Number.isFinite(prev) && prev <= now.getTime() ? new Date(prev) : now;
+    next[u.updateId] = since.toISOString();
+    if (now.getTime() - since.getTime() >= P.days * 86_400_000) old.push({ kb: u.kb ?? null, title: u.title.slice(0, 160), class: cls, since: since.toISOString() });
+  }
+  if (!old.length) return { verdict: 'ok', seen: next };
+  return {
+    verdict: 'breach', seen: next,
+    title: `${name}: ${old.length} security or critical update${old.length === 1 ? '' : 's'} outstanding for over ${P.days} days`,
+    detail: { count: old.length, thresholdDays: P.days, classes: P.classes, updates: old.slice(0, 10), scannedAt: scan.data.scannedAt, note: 'counted from when Rem0te first saw each update offered' },
+  };
+}
+
+/** One update-install result Rem0te recorded: an ActionTarget of windows.update.install. */
+export interface DeploymentResultLike { resultAt: Date | null; result: unknown }
+const UPDATE_OK = new Set(['installed', 'restart_required', 'already_installed']);
+
+/**
+ * UPDATE_FAILED: an update install that failed in the last P.days, from two
+ * sources — Windows Update's own history in the patch scan (an install by
+ * anyone) and Rem0te's deployment results (the signed agent's final result).
+ * A failure is forgotten once a later install of the same update succeeded,
+ * or once it is older than the window, which is how the alert clears.
+ */
+export function evaluateFailedUpdates(rule: RuleLike, name: string, posture: unknown, deployments: DeploymentResultLike[], now: Date): Verdict {
+  const p = parseParams(rule.kind, rule.params);
+  if (!p.ok) return { verdict: 'skip', reason: `invalid params: ${p.error}` };
+  const P = p.params as { days: number };
+  const scan = Posture.safeParse(posture);
+  const history = scan.success ? scan.data.history : [];
+  if (!scan.success && !deployments.length) return { verdict: 'skip', reason: 'no update history or deployment result' };
+  const since = now.getTime() - P.days * 86_400_000;
+  const titles = new Map<string, { kb: string | null; title: string }>();
+  if (scan.success) for (const u of [...scan.data.history, ...scan.data.updates]) if (!titles.has(u.updateId)) titles.set(u.updateId, { kb: u.kb ?? null, title: u.title.slice(0, 160) });
+  // When each update last installed successfully, from either source.
+  const okAt = new Map<string, number>();
+  const bump = (id: string, at: number) => { if (at > (okAt.get(id) ?? -Infinity)) okAt.set(id, at); };
+  for (const h of history) { const at = Date.parse(h.date); if (h.operation === 'install' && (h.result === 'succeeded' || h.result === 'succeeded_with_errors') && Number.isFinite(at)) bump(h.updateId, at); }
+  const results: { updateId: string; at: number; state: string; hresult: string | null }[] = [];
+  for (const d of deployments) {
+    const at = d.resultAt?.getTime();
+    const ups = (d.result as { updates?: unknown } | null)?.updates;
+    if (!at || !Array.isArray(ups)) continue;
+    for (const u of ups.slice(0, 200)) {
+      const o = (u ?? {}) as Record<string, unknown>;
+      if (typeof o.updateId !== 'string' || typeof o.state !== 'string') continue;
+      results.push({ updateId: o.updateId, at, state: o.state, hresult: typeof o.hresult === 'string' && /^0x[0-9A-Fa-f]{1,8}$/.test(o.hresult) ? o.hresult : null });
+      if (UPDATE_OK.has(o.state)) bump(o.updateId, at);
+    }
+  }
+  const failures = new Map<string, { at: number; source: 'windows_update' | 'deployment'; hresult: string | null }>();
+  const add = (id: string, at: number, source: 'windows_update' | 'deployment', hresult: string | null) => {
+    if (!Number.isFinite(at) || at < since || at > now.getTime() + 5 * 60_000) return;
+    if ((okAt.get(id) ?? -Infinity) > at) return;
+    const cur = failures.get(id);
+    if (!cur || at > cur.at) failures.set(id, { at, source, hresult });
+  };
+  for (const h of history) if (h.operation === 'install' && h.result === 'failed') add(h.updateId, Date.parse(h.date), 'windows_update', h.hresult ?? null);
+  for (const r of results) if (r.state === 'failed') add(r.updateId, r.at, 'deployment', r.hresult);
+  if (!failures.size) return { verdict: 'ok', state: { ...EMPTY_STATE, okCount: 1 }, clear: true };
+  const list = [...failures.entries()].sort((a, b) => b[1].at - a[1].at).map(([id, f]) => ({ kb: titles.get(id)?.kb ?? null, title: titles.get(id)?.title ?? id, at: new Date(f.at).toISOString(), source: f.source, hresult: f.hresult }));
+  return {
+    verdict: 'breach', title: `${name}: ${list.length} update install${list.length === 1 ? '' : 's'} failed in the last ${P.days} days`,
+    detail: { count: list.length, days: P.days, failures: list.slice(0, 10) },
+    state: { ...EMPTY_STATE, breachCount: 1 },
+  };
+}
+
+// ── Automatic PSA tickets (0.55) ────────────────────────────────────────────
+
+export const AUTO_TICKET = {
+  /** Sends per alert, the first included (0076's CHECK says the same). */
+  maxAttempts: 4,
+  /** Wait after the 1st, 2nd and 3rd failed send. */
+  backoffMinutes: [5, 30, 120],
+  /** A 'sending' row older than this was interrupted (a restart mid-send); it is given up, not resent, so a ticket is never made twice. */
+  stuckMs: 15 * 60_000,
+  /** Sends (first tries and retries) per business per hour; PSA_AUTO_TICKETS_PER_HOUR overrides. */
+  perBusinessPerHour: 10,
+  /** Alerts looked at per pass. */
+  batch: 100,
+} as const;
+
+/** When to try again after `attempts` sends, or null when that was the last. */
+export function autoTicketRetryAt(attempts: number, now: Date): Date | null {
+  if (attempts >= AUTO_TICKET.maxAttempts) return null;
+  const m = AUTO_TICKET.backoffMinutes[Math.max(0, Math.min(attempts - 1, AUTO_TICKET.backoffMinutes.length - 1))];
+  return new Date(now.getTime() + m * 60_000);
+}
+
+/** Kinds an automatic ticket may name: a computer's monitors (a site outage has no computer to ticket). */
+export const TicketPolicyInput = z.object({
+  scope: z.enum(['global', 'business']),
+  businessId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/).optional(),
+  enabled: z.boolean(),
+  minSeverity: z.enum(SEVERITIES).default('CRITICAL'),
+  kinds: z.array(z.enum(MONITOR_KINDS)).max(MONITOR_KINDS.length).default([]),
+}).strict();
+
+export interface TicketPolicyLike { scopeKey: string; enabled: boolean; minSeverity: Severity; kinds: string[]; enabledAt: Date | null }
+
+/** A business's own row if it has one (switched on or off), else the platform default — as policyFor does for notifications. */
+export function ticketPolicyFor<P extends TicketPolicyLike>(policies: P[], customerId: string | null): P | null {
+  return (customerId ? policies.find((p) => p.scopeKey === `b:${customerId}`) : undefined) ?? policies.find((p) => p.scopeKey === 'global') ?? null;
+}
+
+export interface TicketCandidate extends AlertScope {
+  kind: string; severity: Severity; state: string; firstSeenAt: Date; notifyFrom: Date; parentOpen: boolean;
+}
+
+/**
+ * Whether an alert is to be ticketed now — before the connector, the
+ * `notifications` pause and the budget, which are the service's. Only after
+ * the notify hold (the offline correlation hold, the end of a maintenance
+ * window), never while a maintenance window covers it, never under an open
+ * site outage (the outage has no computer, and its offline alerts are not
+ * ticketed one by one while it is open), and only for alerts first seen
+ * after the rule was switched on.
+ */
+export function autoTicketDecision(a: TicketCandidate, policy: TicketPolicyLike | null, sups: SuppressionLike[], now: Date): { ok: true } | { ok: false; reason: string } {
+  if (!policy) return { ok: false, reason: 'no_rule' };
+  if (!policy.enabled || !policy.enabledAt) return { ok: false, reason: 'off' };
+  if (a.state === 'RESOLVED') return { ok: false, reason: 'resolved' };
+  if (!a.endpointId || a.kind === 'SITE_OUTAGE') return { ok: false, reason: 'no_computer' };
+  if (a.firstSeenAt < policy.enabledAt) return { ok: false, reason: 'before_rule' };
+  if (SEVERITY_RANK[a.severity] < SEVERITY_RANK[policy.minSeverity]) return { ok: false, reason: 'severity' };
+  if (policy.kinds.length && !policy.kinds.includes(a.kind)) return { ok: false, reason: 'kind' };
+  if (a.notifyFrom > now) return { ok: false, reason: 'held' };
+  if (a.parentOpen) return { ok: false, reason: 'in_outage' };
+  if (suppressionFor(a, sups, now)) return { ok: false, reason: 'maintenance' };
+  return { ok: true };
 }
 
 export const dedupKeyOf = (ruleKey: string, endpointId: string) => `${ruleKey}:${endpointId}`;
