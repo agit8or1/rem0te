@@ -318,7 +318,16 @@ async function all() {
   await waitFor(async () => (await prisma.endpoint.findUnique({ where: { id: z840.id } })).warrantySource === 'hp');
   await sleep(5000);
   const asked = hits.filter((h) => h.method === 'POST' && h.url === '/hp/productwarranty/v2/jobs').map((h) => JSON.parse(h.body)[0].sn);
-  check(asked.length === 1 && asked[0] === SN2, 'the hourly budget allows one more: only the Z840 (never asked) was asked, once', JSON.stringify(asked));
+  const sweepState = async () => JSON.stringify({
+    usedBefore,
+    usedNow: await prisma.endpoint.count({ where: { warrantyLookupAt: { gte: new Date(Date.now() - 3_600_000) } } }),
+    vendors: (await prisma.warrantyVendor.findMany()).map((v) => ({ vendor: v.vendor, enabled: v.enabled, secret: !!v.secretEnc, last: v.lastResult })),
+    pauses: (await prisma.containmentPause.findMany({ where: { clearedAt: null } })).map((x) => ({ scope: x.scope, kinds: x.kinds, biz: x.customerId === B.id ? 'B' : x.customerId })),
+    z840: await prisma.endpoint.findUnique({ where: { id: z840.id }, select: { status: true, warrantyLookupAt: true, warrantySource: true, warrantyLookupResult: true, inventory: { select: { manufacturer: true, model: true, serialNumber: true } } } }),
+    endpoints: await prisma.endpoint.count(),
+    sweepLog: api.log.split('\n').filter((l) => /warranty/i.test(l) && !/RouterExplorer|Mapped/.test(l)).slice(-10),
+  });
+  check(asked.length === 1 && asked[0] === SN2, 'the hourly budget allows one more: only the Z840 (never asked) was asked, once', asked.length === 1 && asked[0] === SN2 ? JSON.stringify(asked) : `${JSON.stringify(asked)} ${await sweepState()}`);
   check(!hits.some((h) => h.body.includes(SNB)), 'the paused business\'s HP was not asked about');
   const z = await prisma.endpoint.findUnique({ where: { id: z840.id } });
   check(z.warrantySource === 'hp' && z.warrantyLookupResult === 'OK', 'the answer was stored', JSON.stringify({ s: z.warrantySource, r: z.warrantyLookupResult }));
