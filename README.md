@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.60.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.61.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -66,7 +66,7 @@ it, its default and its limits: **Settings → Security → Security Features**,
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
 
-## What's new in 0.40 to 0.60
+## What's new in 0.40 to 0.61
 
 Every change on a computer below (services, processes, installing and removing software) needs the full (signed)
 Windows agent and an approval signer, and none of those changes has yet run on a real Windows computer: they have
@@ -74,6 +74,12 @@ been tested against a simulated one. Ask AI and Create ticket have been tested o
 real provider or PSA. [What each agent can do](docs/capabilities.md)
 says what is proven and what is not.
 
+- **HP and Apple warranty lookups, and why a warranty is empty (0.61).** Settings → Warranty can now look up HP
+  Inc. computers (HP's Warranty API, after HP approves your developers.hp.com enrolment) and Macs in your Apple
+  Business Manager, beside Dell and Lenovo. Only the serial is sent. Every computer with no warranty date now says
+  why — vendor has no lookup (HPE, Surface, ASUS, Acer), lookup not switched on, serial missing, no record, or the
+  failure — on its card, in the report and on the dashboard. The HP and Apple lookups have been tested only against
+  a stand-in. [Hardware warranty](docs/warranty.md)
 - **Restart windows (0.60).** "Restart if Windows needs it, nightly 02:00–04:00" on a business, a device group or
   one computer, which can also say *No automatic restarts*; the computer's own setting wins, then a group's, then the
   business's. A window is approved once on the approval signer (or is in force at once in direct mode), and each

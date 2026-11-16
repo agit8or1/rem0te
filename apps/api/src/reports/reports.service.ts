@@ -12,7 +12,9 @@ import { deviceCompliance, tally, PATCH_COMPLIANCE_DEFINITION, PATCH_INVENTORY_S
 import { csvCell, EXPORT_MAX_ROWS } from '../endpoints/endpoint-list.service';
 import { reportCoverage, retentionConfig } from '../retention/retention-policy';
 import { SOFTWARE_INSTALL, SOFTWARE_UNINSTALL } from '../actions/catalog';
-import { daysLeft, supportInfo, warrantyState, WARRANTY_SOURCE_LABEL, WARRANTY_STATE_LABEL, type WarrantyState } from '../warranty/vendors';
+import {
+  daysLeft, supportInfo, warrantyGap, warrantyState, WARRANTY_GAP_LABEL, WARRANTY_GAPS, WARRANTY_SOURCE_LABEL, WARRANTY_STATE_LABEL, type WarrantyGapReason, type WarrantyState,
+} from '../warranty/vendors';
 import { EVIDENCE_STALE_DAYS, complianceOf, evidenceFor, programsOf, tallyCompliance, type ComplianceState } from '../software/definition';
 
 /**
@@ -587,10 +589,13 @@ export class ReportsService {
       select: {
         id: true, name: true, hostname: true, serialNumber: true,
         warrantyStartsAt: true, warrantyEndsAt: true, warrantySource: true, warrantyCoverage: true, warrantyCheckedAt: true,
+        warrantyLookupAt: true, warrantyLookupResult: true,
         customer: { select: { id: true, name: true } }, site: { select: { id: true, name: true } },
         inventory: { select: { manufacturer: true, model: true, serialNumber: true } },
       },
     });
+    // 0.61: which lookups are switched on — only the vendor names, to say why a computer has no date.
+    const enabled = (await this.prisma.warrantyVendor.findMany({ where: { enabled: true, secretEnc: { not: null } }, select: { vendor: true } })).map((v) => v.vendor);
     const order: Record<WarrantyState, number> = { expired: 0, expiring_30: 1, expiring_60: 2, expiring_90: 3, active: 4, unknown: 5 };
     return eps.map((e) => {
       const support = supportInfo(e.inventory?.manufacturer, e.inventory?.model, e.inventory?.serialNumber ?? e.serialNumber);
@@ -600,6 +605,10 @@ export class ReportsService {
         virtual: support.maker.kind === 'virtual',
         state: warrantyState(e.warrantyEndsAt, now), daysLeft: daysLeft(e.warrantyEndsAt, now),
         startsAt: e.warrantyStartsAt, endsAt: e.warrantyEndsAt, source: e.warrantySource, coverage: e.warrantyCoverage, checkedAt: e.warrantyCheckedAt,
+        gap: e.warrantyEndsAt ? null : warrantyGap({
+          hasInventory: !!e.inventory, manufacturer: e.inventory?.manufacturer, model: e.inventory?.model,
+          serial: e.inventory?.serialNumber ?? e.serialNumber, enabled, lookupResult: e.warrantyLookupResult, lookupAt: e.warrantyLookupAt,
+        }),
       };
     }).sort((a, b) => order[a.state] - order[b.state] || (a.endsAt?.getTime() ?? 0) - (b.endsAt?.getTime() ?? 0) || a.device.name.localeCompare(b.device.name));
   }
@@ -618,21 +627,30 @@ export class ReportsService {
       active: l.filter((r) => r.state === 'active').length,
       unknown: l.filter((r) => r.state === 'unknown').length,
       unknownVirtual: l.filter((r) => r.state === 'unknown' && r.virtual).length,
+      // 0.61: why the unknown ones have no date, counted by reason.
+      unknownBy: Object.fromEntries(WARRANTY_GAPS.map((g) => [g, l.filter((r) => r.gap?.reason === g).length])) as Record<WarrantyGapReason, number>,
     });
     const byBiz = new Map<string, Row[]>();
     for (const r of rows) { const k = r.business?.id ?? ''; const l = byBiz.get(k) ?? []; l.push(r); byBiz.set(k, l); }
     const view = (r: Row) => ({
       device: r.device, business: r.business, site: r.site, manufacturer: r.manufacturer, model: r.model, virtual: r.virtual,
       state: r.state, daysLeft: r.daysLeft, startsAt: iso(r.startsAt), endsAt: iso(r.endsAt), source: r.source, coverage: r.coverage, checkedAt: iso(r.checkedAt),
+      gap: r.gap,
     });
     const attention = rows.filter((r) => r.state !== 'active' && r.state !== 'unknown');
+    // Unknown, and not a virtual machine: the ones a person can do something about, the fixable first.
+    const gapOrder = (r: Row) => (r.gap?.settings ? 0 : r.gap?.reason === 'failed' ? 1 : 2);
+    const missing = rows.filter((r) => r.state === 'unknown' && r.gap && r.gap.reason !== 'virtual')
+      .sort((a, b) => gapOrder(a) - gapOrder(b) || a.device.name.localeCompare(b.device.name));
     return {
       ...head,
-      definition: 'From the warranty end date stored for each computer — entered by hand on its device page, or read from Dell or Lenovo when a Platform Admin has switched that lookup on. Ends within 60 and 90 days include the shorter windows. Unknown means no date is stored; a virtual machine has no hardware warranty.',
+      definition: 'From the warranty end date stored for each computer — entered by hand on its device page, or read from the vendor (Dell, Lenovo, HP or Apple) when a Platform Admin has switched that lookup on in Settings → Warranty. Ends within 60 and 90 days include the shorter windows. Unknown means no date is stored, and each such computer says why; a virtual machine has no hardware warranty.',
       totals: summarise(rows),
       byBusiness: [...byBiz.values()].map((l) => ({ business: l[0].business, ...summarise(l) })).sort((a, b) => byName(a.business, b.business)),
       devices: attention.slice(0, PAGE_LIST_MAX).map(view),
       devicesTotal: attention.length,
+      missing: missing.slice(0, PAGE_LIST_MAX).map(view),
+      missingTotal: missing.length,
       facets,
     };
   }
@@ -675,11 +693,12 @@ export class ReportsService {
       ]);
     } else if (report === 'warranty') {
       const rows = await this.warrantyRows(actor, q, now);
-      header = ['Business', 'Site', 'Device', 'Manufacturer', 'Model', 'Serial', 'Warranty', 'Days left', 'Starts (UTC)', 'Ends (UTC)', 'Source', 'Coverage', 'Checked (UTC)'];
+      header = ['Business', 'Site', 'Device', 'Manufacturer', 'Model', 'Serial', 'Warranty', 'Days left', 'Starts (UTC)', 'Ends (UTC)', 'Source', 'Coverage', 'Checked (UTC)', 'Why no date'];
       lines = rows.map((r) => [
         r.business?.name ?? '', r.site?.name ?? '', r.device.name, r.manufacturer ?? '', r.model ?? '', r.serial ?? '',
         r.virtual && r.state === 'unknown' ? 'Virtual machine' : WARRANTY_STATE_LABEL[r.state], r.daysLeft ?? '', iso(r.startsAt) ?? '', iso(r.endsAt) ?? '',
         r.source ? WARRANTY_SOURCE_LABEL[r.source] ?? r.source : '', r.coverage ?? '', iso(r.checkedAt) ?? '',
+        r.gap ? `${WARRANTY_GAP_LABEL[r.gap.reason]}: ${r.gap.text}` : '',
       ]);
     } else if (report === 'software-compliance') {
       const { rows } = await this.softwareRows(actor, q, now);

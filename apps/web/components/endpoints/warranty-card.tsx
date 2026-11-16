@@ -1,11 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BadgeCheck, Copy, ExternalLink } from 'lucide-react';
 import { warrantyApi, type WarrantyView } from '@/lib/api-client';
 import { usePermissions, CAP } from '@/lib/auth';
-import { WARRANTY_STATE_LABEL } from '@/lib/hardware-support';
+import { lookupResultText, WARRANTY_GAP_LABEL, WARRANTY_STATE_LABEL } from '@/lib/hardware-support';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,7 +36,7 @@ function Line({ label, children }: { label: string; children: React.ReactNode })
 }
 
 export function WarrantyCard({ endpointId }: { endpointId: string }) {
-  const { can } = usePermissions();
+  const { can, isPlatformAdmin } = usePermissions();
   const mayEdit = can(CAP.COMPUTERS_EDIT);
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -55,7 +56,7 @@ export function WarrantyCard({ endpointId }: { endpointId: string }) {
   });
   const check = useMutation({
     mutationFn: () => warrantyApi.lookup(endpointId).then((r) => r.data.data as WarrantyView & { result: string }),
-    onSuccess: (r) => { done(r); toast({ title: r.result === 'OK' ? 'Warranty updated from the vendor' : 'The vendor did not answer with a warranty', description: r.result === 'OK' ? undefined : r.result }); },
+    onSuccess: (r) => { done(r); toast({ title: r.result === 'OK' ? 'Warranty updated from the vendor' : 'The vendor did not answer with a warranty', description: r.result === 'OK' ? undefined : `${lookupResultText(r.result)} (${r.result})` }); },
     onError: (e) => toast({ title: 'Lookup refused', description: apiError(e).message, variant: 'destructive' }),
   });
 
@@ -99,10 +100,16 @@ export function WarrantyCard({ endpointId }: { endpointId: string }) {
             {w.coverage && <Line label="Coverage">{w.coverage}</Line>}
             <Line label="Source">{w.sourceLabel}{w.checkedAt ? <span className="text-muted-foreground"> · {new Date(w.checkedAt).toLocaleDateString()}</span> : null}</Line>
           </>
-        ) : s.maker.kind !== 'virtual' ? (
-          <p className="text-muted-foreground">No warranty date stored.{l.implemented ? (l.enabled ? ` ${l.vendorLabel} lookups are on: it is looked up automatically.` : ` A Platform Admin can switch on ${l.vendorLabel} lookups under Settings → Warranty.`) : ' Enter it by hand.'}</p>
+        ) : data.gap && data.gap.reason !== 'virtual' ? (
+          <div className="space-y-1 rounded-md border border-dashed p-2" data-testid="warranty-gap" data-reason={data.gap.reason}>
+            <p><span className="font-medium">No warranty date</span> <span className="text-muted-foreground">· {WARRANTY_GAP_LABEL[data.gap.reason]}</span></p>
+            <p className="text-xs text-muted-foreground">{data.gap.text}</p>
+            {data.gap.settings && (isPlatformAdmin
+              ? <Link href="/settings/warranty" className="text-xs underline" data-testid="warranty-gap-settings">Open Settings → Warranty</Link>
+              : <p className="text-xs text-muted-foreground">Ask a Platform Admin: lookups are set up in Settings → Warranty.</p>)}
+          </div>
         ) : null}
-        {l.lastAttemptAt && l.lastResult && l.lastResult !== 'OK' && <p className="text-xs text-muted-foreground">Last vendor lookup {new Date(l.lastAttemptAt).toLocaleString()}: {l.lastResult}.</p>}
+        {l.lastAttemptAt && l.lastResult && l.lastResult !== 'OK' && w.endsAt && <p className="text-xs text-muted-foreground">Last vendor lookup {new Date(l.lastAttemptAt).toLocaleString()}: {lookupResultText(l.lastResult)} ({l.lastResult}).</p>}
 
         {mayEdit && !editing && (
           <div className="flex flex-wrap gap-2 pt-1">

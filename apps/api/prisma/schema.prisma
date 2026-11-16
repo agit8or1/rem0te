@@ -4370,10 +4370,15 @@ model MonitorAlertTicket {
 /// until a Platform Admin enables it. The credential is AES-256-GCM under
 /// ENCRYPTION_KEY (purpose rem0te-warranty-key-v1); only its last four
 /// characters are kept in the clear, and it is in no response or audit row.
+///
+/// 0.61 (0082): HP and Apple join Dell and Lenovo. clientId is Dell's
+/// TechDirect client id, HP's API key or Apple's client id; keyId is Apple's
+/// key id only. Both are identifiers, not secrets, and are shown back.
 model WarrantyVendor {
   vendor       String    @id
   enabled      Boolean   @default(false)
   clientId     String?
+  keyId        String?
   secretEnc    String?
   secretLast4  String?
   updatedById  String

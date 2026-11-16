@@ -8,7 +8,7 @@ import { STALE_AFTER_MS } from '../patching/summary';
 import { deviceCompliance, PATCH_COMPLIANCE_DEFINITION, PATCH_INVENTORY_SELECT } from '../patching/compliance';
 import { catalogEntry } from '../actions/catalog';
 import { restartPendingSentence } from '../common/platform';
-import { warrantyState } from '../warranty/vendors';
+import { warrantyGap, warrantyState } from '../warranty/vendors';
 import { connectivityOf, HEARTBEAT_STALE_MS, type Connectivity } from '../common/connectivity';
 import { age, rankQueue, type QueueItem } from './queue';
 
@@ -114,8 +114,9 @@ export class DashboardOverviewService {
           where: visible,
           select: {
             id: true, name: true, hostname: true, isOnline: true, lastSeenAt: true, platform: true, warrantyEndsAt: true,
+            serialNumber: true, warrantyLookupAt: true, warrantyLookupResult: true,
             customer: { select: { id: true, name: true } },
-            inventory: { select: PATCH_INVENTORY_SELECT },
+            inventory: { select: { ...PATCH_INVENTORY_SELECT, manufacturer: true, model: true, serialNumber: true } },
           },
         })
       : [];
@@ -174,11 +175,23 @@ export class DashboardOverviewService {
     }
     offline.sort((a, b) => (b.lastSeenAt ?? '').localeCompare(a.lastSeenAt ?? ''));
     // 0.56: hardware warranty, from the stored end dates (warranty/vendors.ts warrantyState).
-    const warranty = { expired: 0, within30: 0, within90: 0, unknown: 0 };
+    // 0.61: of the unknown ones, how many a vendor lookup that is not switched on (or failing on its
+    // credential) could answer — the tile says so and links to the report, which says why per computer.
+    const warranty = { expired: 0, within30: 0, within90: 0, unknown: 0, unknownFixable: 0 };
+    const lookupsOn = endpoints.some((e) => !e.warrantyEndsAt)
+      ? (await this.prisma.warrantyVendor.findMany({ where: { enabled: true, secretEnc: { not: null } }, select: { vendor: true } })).map((v) => v.vendor)
+      : [];
     for (const e of endpoints) {
       const w = warrantyState(e.warrantyEndsAt, now);
       if (w === 'expired') warranty.expired++;
-      else if (w === 'unknown') warranty.unknown++;
+      else if (w === 'unknown') {
+        warranty.unknown++;
+        const g = warrantyGap({
+          hasInventory: !!e.inventory, manufacturer: e.inventory?.manufacturer, model: e.inventory?.model,
+          serial: e.inventory?.serialNumber ?? e.serialNumber, enabled: lookupsOn, lookupResult: e.warrantyLookupResult, lookupAt: e.warrantyLookupAt,
+        });
+        if (g.settings) warranty.unknownFixable++;
+      }
       if (w === 'expiring_30') warranty.within30++;
       if (w === 'expiring_30' || w === 'expiring_60' || w === 'expiring_90') warranty.within90++;
     }

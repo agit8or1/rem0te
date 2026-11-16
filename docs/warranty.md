@@ -14,8 +14,10 @@ Nothing on the card or in the list asks a vendor anything. The links are built i
 computer's firmware reported. A warranty date comes from one of two places:
 
 - a person entered it by hand;
-- a Platform Admin switched on an automatic lookup for **Dell** or **Lenovo**. These are the only two vendors with a
-  lookup, and it is off by default.
+- a Platform Admin switched on an automatic lookup for **Dell**, **Lenovo**, **HP** or **Apple** (HP and Apple from
+  0.61). Each lookup is off by default.
+
+Every computer with no date says **why** (0.61): see [Why is there no date?](#why-is-there-no-date).
 
 ## Support links
 
@@ -61,7 +63,7 @@ save is refused (`WARRANTY_CHANGED`) and you reload.
 
 An entry made by hand is **never overwritten by a vendor lookup**. Clear it if you want the lookup to fill it.
 
-## Automatic lookup (Dell and Lenovo)
+## Automatic lookup (Dell, Lenovo, HP, Apple)
 
 **Settings → Warranty** is for Platform Admins only. Saving there asks you to confirm it is you, under the catalog
 key *Warranty lookups* in Settings → Confirm it is you. A lookup can be switched on for each vendor:
@@ -70,30 +72,81 @@ key *Warranty lookups* in Settings → Confirm it is you. A lookup can be switch
 |---|---|---|
 | Dell | A TechDirect **client id** and **client secret** for the Warranty API | Dell TechDirect → APIs → request Warranty API access |
 | Lenovo | A Lenovo **ClientID** token for the warranty API (v2.5) | Lenovo partner / PSREF API access |
+| HP (0.61) | An HP Developer Portal app's **API key** and **API secret**, with the Warranty API enabled | See [Getting HP credentials](#getting-hp-credentials) |
+| Apple (0.61) | An Apple Business Manager API account's **client id**, **key id** and **private key** (`.pem`) | Apple Business Manager → Preferences → API (an Administrator creates it and downloads the key once) |
 
-**When it is on, the computer's serial number is sent to that vendor.** Only the serial is sent, as the Dell service
-tag or the Lenovo `Serial`. Nothing else goes with it: no computer name, hostname, user, business or model. The
-settings page says this beside the switch.
+**When it is on, the computer's serial number is sent to that vendor.** Only the serial is sent: the Dell service
+tag, the Lenovo `Serial`, HP's `sn`, or the serial in Apple's device path. Nothing else goes with it: no computer
+name, hostname, user, business or model. HP's API also accepts an optional product number (SKU); the agent's
+inventory does not collect one, so none is sent. The settings page says this beside the switch.
 
 The key is stored encrypted, sealed with its own purpose (`rem0te-warranty-key-v1`). It never appears in a response,
 an audit row or a log. The page shows only its last four characters, and you cannot read it back. Changing the Dell
-client id drops the old secret. `WARRANTY_SETTINGS_CHANGED` records whether a key was set, kept or cleared, never
-the key itself.
+client id, the HP API key, or Apple's client id or key id drops the old secret. `WARRANTY_SETTINGS_CHANGED` records
+whether a key was set, kept or cleared, never the key itself. Apple's private key is checked to be an EC P-256
+private key before it is saved (PKCS#8 or `EC PRIVATE KEY` PEM), and stored as PKCS#8.
 
-There is no automatic lookup for HP, HPE, Microsoft Surface, Apple, ASUS or Acer:
+### Getting HP credentials
 
-- HP's warranty API is a batch-job service with a separate onboarding. It is a documented TODO in
-  `apps/api/src/warranty/client.ts`.
-- The others have no public warranty API.
+HP Inc.'s Warranty API is free, but HP approves each account:
 
-Enter their dates by hand.
+1. Create an account (or sign in) at **developers.hp.com**.
+2. Submit the **CSS API enrolment** form at **developers.hp.com/css-enroll**. Say you want the **Warranty API** for
+   the HP computers you manage.
+3. **Wait for HP** to tell you the Warranty API is enabled on your account. HP's customer advocacy team reviews the
+   request, sometimes with your HP account manager (warrantyapi.customers@hp.com is the contact some vendors give).
+   Third-party reports say HP has refused some IT-service companies; there is nothing this server can do about that.
+4. In the portal, **create an app** with the Warranty API and copy its **API key** and **API secret**.
+5. In Rem0te, **Settings → Warranty → HP**: paste the API key and the secret, tick *Look up HP warranties*, save
+   (you will be asked to confirm it is you).
+6. Open one HP computer and press **Check now with HP**. Read the result before leaving the sweep to do the rest.
+
+How the HP lookup works: an OAuth client-credentials token from `warranty.api.hp.com/oauth/v1/token` (the key and
+secret as HTTP Basic), then HP's batch-job API with one serial per job: `POST /productwarranty/v2/jobs` with
+`[{"sn":"<serial>"}]`, `GET /productwarranty/v2/jobs/<id>` until the status is *completed* (at most six polls, about
+30 seconds), then `GET /productwarranty/v2/jobs/<id>/results`. The latest-ending `offers[]` entry
+(`serviceObligationLineItemEndDate`) gives the end date and its `offerDescription` the coverage; the earliest start
+is the start. A job that has not finished is `VENDOR_PENDING` and is asked again within a day. HP's synchronous
+`/queries` endpoint is reported as deprecated in favour of jobs, so it is not used. The token is kept in memory for
+its lifetime (about an hour) so a sweep does not ask for one per computer.
+
+**HP rate limits are not published.** Each HP lookup is several requests (a job, one to six status polls, the
+results). If HP answers `429`, the computer's result is *rate limited* and it is asked again within a day; lower
+`WARRANTY_LOOKUPS_PER_HOUR` if that keeps happening.
+
+**HP is not HPE.** HP workstations and PCs (Z440, Z840, EliteDesk, EliteBook…) are HP Inc.'s and are looked up
+here. ProLiant, Synergy, Apollo and the other servers, including old ones whose firmware says *Hewlett-Packard*, are
+HPE's: HP's API does not cover them.
+
+### Apple
+
+The Apple lookup uses the **Apple Business Manager API** (*Get AppleCare coverage for a device*). Each token request
+carries a client assertion signed here with the API account's private key (ES256, valid for five minutes, the key id
+in its header), exchanged at `account.apple.com/auth/oauth2/token` for a token with the `business.api` scope; then
+`GET api-business.apple.com/v1/orgDevices/<serial>/appleCareCoverage`. Cancelled plans are ignored; the latest end
+date wins. **Only devices in your organisation's Apple Business Manager are known to it** — a Mac bought elsewhere
+is *no record*.
+
+### Vendors with no lookup
+
+There is no automatic lookup for these, and the console says so on the computer's card, in the report and in
+Settings → Warranty. Enter their dates by hand.
+
+- **HPE.** HPE publishes no warranty API a customer can sign up for. Its Support Center *Warranty Check API*
+  (`api-gw.support.hpe.com/…/warrantyCheck`) was a pilot that closed to new applicants, with no published request or
+  response format. HPE GreenLake's Compute Ops Management has a documented `server-warranty` API, but it covers only
+  servers already onboarded to a Compute Ops Management subscription, by GreenLake device id, through regional
+  GreenLake hosts and a GreenLake workspace credential — not a serial lookup this server can make.
+- **Microsoft Surface.** No public warranty API: coverage is shown in the Surface Management Portal (in Intune) and
+  on mybusinessservice.surface.com.
+- **ASUS** and **Acer.** No public warranty API: their pages take one serial at a time.
 
 ### The sweep
 
 Once a lookup is on, a background sweep runs every 10 minutes (`WARRANTY_SWEEP_SECONDS`). It asks about computers
 that meet all of these:
 
-- the computer is active, has reported a recognised Dell or Lenovo manufacturer and a usable serial, and has no
+- the computer is active, has reported a manufacturer whose lookup is switched on and a usable serial, and has no
   manual entry;
 - it has not been asked about in the last **30 days**. After a failure that may pass, such as a timeout or a
   vendor 5xx, it is asked again after a day;
@@ -116,7 +169,8 @@ audited as `WARRANTY_LOOKUP_REQUESTED`, which names only the vendor.
 
 Every request goes through the same outbound client as the AI provider (`common/safe-https.ts`), which:
 
-- uses fixed public HTTPS hosts (`apigtwb2c.us.dell.com`, `supportapi.lenovo.com`);
+- uses fixed public HTTPS hosts (`apigtwb2c.us.dell.com`, `supportapi.lenovo.com`, `warranty.api.hp.com`,
+  `account.apple.com`, `api-business.apple.com`), and nothing else;
 - resolves the address and checks it on every call;
 - verifies certificates;
 - refuses redirects;
@@ -147,10 +201,32 @@ as the device list. It shows:
 
 - figures for expired, within 30 days, within 90 days and unknown;
 - a table by business;
-- a list of every computer that has expired or ends within 90 days.
+- a list of every computer that has expired or ends within 90 days;
+- (0.61) **No warranty date: why** — every computer with no date except virtual machines, with the reason, the
+  ones a Platform Admin can fix in Settings → Warranty first, and the counts by reason.
 
-The CSV export (audited) lists every computer with its manufacturer, model, serial, state, days left, dates, source
-and coverage. The report cannot be scheduled by email.
+The CSV export (audited) lists every computer with its manufacturer, model, serial, state, days left, dates, source,
+coverage and (0.61) *Why no date*. The report cannot be scheduled by email.
+
+## Why is there no date?
+
+From 0.61, a computer with no warranty date says why — on its Warranty & support card, in the report and its CSV —
+worked out from what is stored, never by asking a vendor:
+
+| Reason | What it means | What to do |
+|---|---|---|
+| No hardware inventory yet | The agent has not reported the maker and serial | Wait for the inventory |
+| Virtual machine | No hardware warranty | Nothing |
+| Manufacturer not recognised | Not one of the vendors above | Enter the dates by hand |
+| Vendor has no lookup | HPE, Microsoft Surface, ASUS or Acer (the card says why) | Enter the dates by hand |
+| Serial missing | No serial, or a placeholder such as *To be filled by O.E.M.* | Enter the dates by hand |
+| Lookup not switched on | The vendor has a lookup, but it is off in Settings → Warranty | A Platform Admin switches it on |
+| Waiting for the lookup | It is on, and this computer has not been asked yet | Wait for the sweep, or press *Check now* |
+| Vendor had no record | The vendor was asked and knows nothing of this serial | Enter the dates by hand |
+| Lookup failed | The last lookup failed; the reason is shown (credential refused, rate limited, timed out…) | A refused credential is fixed in Settings → Warranty; the rest are asked again within a day |
+
+The dashboard tile adds *N no date* to its line, and says how many of those a lookup that is not switched on could
+answer.
 
 ## The dashboard
 
@@ -173,13 +249,23 @@ The monitor is evaluated by the monitoring sweep (every 60 seconds) from stored 
 
 ## What is not proven
 
-- **No real Dell or Lenovo API has been called from this server.** Both lookups are built from the vendors'
-  published documentation:
+- **No real Dell, Lenovo, HP or Apple API has been called from this server.** Every lookup is built from the
+  vendors' published documentation and examples:
   - Dell: TechDirect OAuth client credentials, then `GET /PROD/sbil/eapi/v5/asset-entitlements?servicetags=`;
-  - Lenovo: `GET /v2.5/warranty?Serial=` with a `ClientID` header.
+  - Lenovo: `GET /v2.5/warranty?Serial=` with a `ClientID` header;
+  - HP (0.61): token, then the v2 batch-job API. HP's reference pages sit behind a sign-in, so the request and
+    response shapes come from HP's published sample scripts and from open-source integrations that call it; the
+    offer fields (`serviceObligationLineItemStartDate`, `…EndDate`, `offerDescription`) match a captured response
+    published with one of them;
+  - Apple (0.61): the client-assertion token and *Get AppleCare coverage for a device*, from Apple's developer
+    documentation and its example response.
 
-  Both are tested only against a loopback stand-in. Expect to adjust the response parsing the first time a real
-  answer comes back. When an answer cannot be read, the computer's last result is `RESPONSE_INVALID` and nothing
-  is stored.
+  All four are tested only against a stand-in on loopback that mimics those responses (including token refusal, no
+  record, rate limits, unfinished and failed HP jobs). Expect to adjust the parsing the first time a real answer
+  comes back: use *Check now* on one computer first. When an answer cannot be read, the computer's last result is
+  `RESPONSE_INVALID` and nothing is stored.
+- The HP product number (SKU) is not collected by the agent, so HP is asked by serial alone. HP's API takes the
+  product number as optional; a recycled or ambiguous serial may come back as *no record* where the SKU would have
+  found it. Collecting it (`Win32_ComputerSystem.SystemSKUNumber`) would be an agent and inventory change.
 - The vendors' support URLs were taken from their public sites in November 2026, and vendors move pages. Only
   Dell's takes the serial.
