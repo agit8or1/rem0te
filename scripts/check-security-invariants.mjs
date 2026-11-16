@@ -5092,7 +5092,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /recentAlerts: active\s*\n?\s*\?/.test(ovw),
     'overview.service.ts recentAlerts inside `active` (the alerts list where) and endpointVisibilityWhere');
   check('alert conditions: the suites run',
-    /unit-alert-conditions\.mjs/.test(read('.github/workflows/ci.yml')) && / confirm-policy alert-tickets; do run/.test(read('scripts/run-e2e.sh')),
+    /unit-alert-conditions\.mjs/.test(read('.github/workflows/ci.yml')) && / alert-tickets[ ;]/.test(read('scripts/run-e2e.sh')),
     'unit-alert-conditions.mjs in CI, e2e-alert-tickets.mjs in run-e2e.sh');
 }
 
@@ -5255,7 +5255,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /ALTER TYPE "MonitorKind" ADD VALUE 'WARRANTY_EXPIRING';/.test(mig),
     'engine.ts PARAMS / RECOMMENDED; monitoring.service SWEEP_KINDS');
   check('warranty: the suites run — unit in CI, e2e in run-e2e.sh with the sweep off for everything else',
-    /unit-warranty\.mjs/.test(read('.github/workflows/ci.yml')) && / confirm-policy warranty; do/.test(read('scripts/run-e2e.sh'))
+    /unit-warranty\.mjs/.test(read('.github/workflows/ci.yml')) && / warranty; do/.test(read('scripts/run-e2e.sh'))
       && /^export WARRANTY_SWEEP=off$/m.test(read('scripts/run-e2e.sh')),
     'ci.yml / run-e2e.sh');
 }

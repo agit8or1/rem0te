@@ -40,7 +40,11 @@ const J = (x) => JSON.stringify(x);
   check('the eight 0.29–0.36 kinds are still there, in order', J(m.MONITOR_KINDS.slice(0, 8)) === J(['OFFLINE', 'DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH', 'SERVICE_STOPPED', 'EVENT_MATCH', 'REBOOT_PENDING', 'AGENT_SILENT']));
   const migration = readFileSync(join(here, '..', 'prisma', 'migrations', '0076_alert_conditions', 'migration.sql'), 'utf8');
   check('0076 adds exactly the four kinds to the enum', ['DRIVE_FREE', 'UPTIME_LONG', 'UPDATES_MISSING', 'UPDATE_FAILED'].every((k) => migration.includes(`ADD VALUE '${k}'`)));
-  check('0076 lets a ticket rule name every monitor kind and no other', m.MONITOR_KINDS.every((k) => migration.includes(`'${k}'`)) && !migration.includes("'SITE_OUTAGE'"));
+  // The kinds CHECK is re-made by later migrations as kinds are added (0077:
+  // WARRANTY_EXPIRING); the newest one is what the database holds.
+  const kindsSql = ['0076_alert_conditions', '0077_warranty'].map((d) => readFileSync(join(here, '..', 'prisma', 'migrations', d, 'migration.sql'), 'utf8'))
+    .map((s) => (s.match(/"MonitorTicketPolicy_kinds" CHECK \([\s\S]*?::TEXT\[\]/g) ?? []).pop() ?? '').filter(Boolean).pop() ?? '';
+  check('the newest ticket-rule CHECK names every monitor kind and no other', m.MONITOR_KINDS.every((k) => kindsSql.includes(`'${k}'`)) && !kindsSql.includes("'SITE_OUTAGE'"), kindsSql.slice(0, 80));
 
   let p = m.parseParams('DRIVE_FREE', {});
   check('DRIVE_FREE defaults: 10%, every drive, none excepted', p.ok && p.params.minFreePercent === 10 && J(p.params.drives) === '[]' && J(p.params.exceptDrives) === '[]', J(p));

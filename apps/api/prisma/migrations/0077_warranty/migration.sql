@@ -58,3 +58,11 @@ CREATE TABLE "WarrantyVendor" (
     CONSTRAINT "WarrantyVendor_enabled_check" CHECK (NOT "enabled" OR "secretEnc" IS NOT NULL),
     CONSTRAINT "WarrantyVendor_lastResult_check" CHECK ("lastResult" IS NULL OR "lastResult" ~ '^[A-Z0-9_]{1,40}$')
 );
+
+-- 0.55's automatic-ticket rule (0076) lists the monitor kinds a rule may name.
+-- WARRANTY_EXPIRING is a computer alert like the others, so a rule may name it
+-- too. Same rule as 0076: every computer-alert kind, never SITE_OUTAGE.
+ALTER TABLE "MonitorTicketPolicy" DROP CONSTRAINT "MonitorTicketPolicy_kinds";
+ALTER TABLE "MonitorTicketPolicy" ADD CONSTRAINT "MonitorTicketPolicy_kinds" CHECK (
+    "kinds" IS NULL OR "kinds" <@ ARRAY['OFFLINE', 'DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH', 'SERVICE_STOPPED', 'EVENT_MATCH', 'REBOOT_PENDING', 'AGENT_SILENT', 'DRIVE_FREE', 'UPTIME_LONG', 'UPDATES_MISSING', 'UPDATE_FAILED', 'WARRANTY_EXPIRING']::TEXT[]
+);
