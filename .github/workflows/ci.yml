@@ -142,6 +142,12 @@ jobs:
       # pause, direct mode and the CLI.
       - name: Automation schedule tests
         run: node apps/api/scripts/unit-automation-schedule.mjs
+      # 0.60: restart windows — the restart task in the automation document,
+      # every evaluateAutomationRestart refusal and the per-computer ledger,
+      # precedence (computer > group > business), when a restart is asked
+      # again, and the signer's approval page.
+      - name: Restart window tests
+        run: node apps/api/scripts/unit-restart-window-settings.mjs
       # 0.50: company-wide and assignable patch policies — the rings the
       # portal builds (checked with the signer's own validatePolicyDoc), the
       # membership fingerprint and the bounded revision decision.

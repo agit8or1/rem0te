@@ -36,7 +36,7 @@ import {
 } from '../actions/patch-policy';
 import { resultKeyFingerprint } from '../actions/device-result';
 import {
-  AUTOMATION_PROPOSAL_DAYS, AutomationDoc, automationDigest, automationLedgerEntry, automationQuorum, automationSigningBytes, evaluateAutomationPlan, validateAutomationDoc,
+  AUTOMATION_PROPOSAL_DAYS, AutomationDoc, RESTART_LEDGER_KEEP_DAYS, automationDigest, automationLedgerEntry, automationQuorum, automationSigningBytes, evaluateAutomationPlan, validateAutomationDoc,
   type AutomationApproval, type AutomationLedgerEntry, type AutomationStatus,
 } from '../actions/automation-policy';
 import {
@@ -427,7 +427,7 @@ export function admitAutomation(
     if (canonical(t.script) !== canonical(scriptBlockOf(entry.proposal))) throw new Refused('script_mismatch', 'the policy does not describe the allowlisted script exactly');
     const why = argumentsProblem(entry.proposal.parameters, t.params.parameters);
     if (why) throw new Refused('arguments_not_allowed', why);
-  } else if (t.operation === 'install' && softwareRevoked(t.display.entryId)) {
+  } else if (t.kind === 'software' && t.operation === 'install' && softwareRevoked(t.display.entryId)) {
     throw new Refused('software_revoked', 'this software catalog entry was archived; nothing from it is installed any more');
   }
   return { doc, digest: automationDigest(doc) };
@@ -506,6 +506,13 @@ export function signUnderAutomation(
   signJob(job, k, now);
   const planSha256 = createHash('sha256').update(Buffer.from(job.envelope!.plan, 'base64')).digest('hex');
   const entry = automationLedgerEntry(plan, decision.occurrence, now, planSha256);
+  // 0.60: a restart window signs one plan per computer per night; its decisions
+  // look back one occurrence at most, so entries older than a week are dropped
+  // rather than rewriting an ever-longer file on every plan.
+  if (r.doc.task.kind === 'restart') {
+    const keep = now.getTime() - RESTART_LEDGER_KEEP_DAYS * 86_400_000;
+    r.ledger = r.ledger.filter((e) => Date.parse(e.notAfter) > keep);
+  }
   r.ledger.push(entry); r.updatedAt = now.toISOString();
   return { job, entry };
 }

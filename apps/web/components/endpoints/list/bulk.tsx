@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAsks } from '@/lib/confirm-policy';
 import { BULK_MAX, bulkApi, describeRule, deviceGroupsApi, refusalMessage } from './api';
+import { restartWindowsApi } from '@/lib/api-client';
 import type { BulkAction, BulkResponse, DeviceGroup, DeviceRule, SortKey } from './types';
 
 const ACTION_LABEL: Record<BulkAction, string> = {
@@ -55,6 +56,10 @@ export function BulkBar({
   const [restartOpen, setRestartOpen] = React.useState(false);
   const [restartReason, setRestartReason] = React.useState('');
   const [restartOpts, setRestartOpts] = React.useState<RestartValue>(() => defaultRestart({}));
+  // 0.60: Restart window… — no automatic restarts, or inherit, for the selection (its own route, not /endpoints/bulk).
+  const [windowOpen, setWindowOpen] = React.useState(false);
+  const [windowMode, setWindowMode] = React.useState<'off' | 'inherit'>('off');
+  const askWindow = useAsks('restart.window');
   const ids = [...selected.keys()];
   const askMigrate = useAsks('agent.migrate');
   // Only a static group can be added to or removed from; a rule group's members follow its rule.
@@ -71,6 +76,24 @@ export function BulkBar({
       if (action === 'restart.schedule') { setRestartOpen(false); setRestartReason(''); setRestartOpts(defaultRestart({})); }
     } catch (e) {
       toast({ title: `${ACTION_LABEL[action]} refused`, description: await refusalMessage(e, 'The request failed.'), variant: 'destructive' });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function setRestartWindow() {
+    setBusy('restart.window');
+    try {
+      const r = (await restartWindowsApi.bulk(ids, windowMode)).data?.data as { results: { endpointId: string; ok: boolean; reason?: string }[] };
+      const refused = r.results.filter((x) => !x.ok);
+      toast({
+        title: windowMode === 'off' ? 'No automatic restarts' : 'Inherit restart window',
+        description: `${r.results.length - refused.length} of ${r.results.length} done.${refused.length ? ` Refused: ${refused.slice(0, 3).map((x) => `${selected.get(x.endpointId) ?? 'a computer'} — ${x.reason}`).join('; ')}${refused.length > 3 ? '…' : ''}` : ''}`,
+        variant: refused.length ? 'destructive' : undefined,
+      });
+      setWindowOpen(false);
+    } catch (e) {
+      toast({ title: 'Restart window refused', description: await refusalMessage(e, 'The request failed.'), variant: 'destructive' });
     } finally {
       setBusy(null);
     }
@@ -154,8 +177,35 @@ export function BulkBar({
             title="Requests an approved restart (windows.reboot.schedule) for each Windows computer, now or at a time. Each is its own signed plan, checked on its own. At most 200.">
             <Power className="h-4 w-4 mr-1.5" />Schedule restart…
           </Button>
+          {!target && (
+            <Button size="sm" variant="outline" className="h-8" disabled={!!busy} onClick={() => setWindowOpen(true)} data-testid="bulk-restart-window"
+              title="Set these computers to no automatic restarts, or back to inheriting their restart window (device group or business). A window itself is set on the business page or a computer's Patches tab.">
+              <Power className="h-4 w-4 mr-1.5" />Restart window…
+            </Button>
+          )}
         </>
       )}
+      <Dialog open={windowOpen} onOpenChange={(o) => { if (!o && busy !== 'restart.window') setWindowOpen(false); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Restart window for {selected.size} device{selected.size === 1 ? '' : 's'}</DialogTitle>
+            <DialogDescription>
+              A computer&apos;s own setting wins over its device group&apos;s and its business&apos;s. Each computer is checked on its own and
+              recorded in the audit log. To give computers a window, set it on their business, a device group, or a computer&apos;s Patches tab.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-sm">
+            <label className="flex items-start gap-2"><input type="radio" name="bulk-window" checked={windowMode === 'off'} onChange={() => setWindowMode('off')} data-testid="bulk-restart-window-off" />
+              <span><strong>No automatic restarts</strong> — nothing restarts these computers on its own. Takes effect at once.</span></label>
+            <label className="flex items-start gap-2"><input type="radio" name="bulk-window" checked={windowMode === 'inherit'} onChange={() => setWindowMode('inherit')} data-testid="bulk-restart-window-inherit" />
+              <span><strong>Inherit</strong> — remove each computer&apos;s own setting, so its device group&apos;s or business&apos;s window applies. {askWindow ? 'This can let them restart, so it asks you to confirm it is you.' : ''}</span></label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setWindowOpen(false)} disabled={busy === 'restart.window'}>Cancel</Button>
+            <Button onClick={setRestartWindow} disabled={!!busy} data-testid="bulk-restart-window-submit">{busy === 'restart.window' && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}Apply</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={restartOpen} onOpenChange={(o) => { if (!o && busy !== 'restart.schedule') setRestartOpen(false); }}>
         <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto">
           <DialogHeader>

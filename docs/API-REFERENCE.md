@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **583** of them across
-**88** controllers.
+integration, under `/api/integration/v1`). There are **592** of them across
+**89** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -755,6 +755,22 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/reports/software-compliance/export.csv` | signed in, throttled | `COMPUTERS_VIEW` |
 | `GET` | `/api/v1/reports/warranty` | signed in | `COMPUTERS_VIEW` |
 | `GET` | `/api/v1/reports/warranty/export.csv` | signed in, throttled | `COMPUTERS_VIEW` |
+
+## Restart windows
+
+`apps/api/src/restart-windows/restart-windows.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/restart-windows/businesses/:businessId` | signed in | — |
+| `PUT` | `/api/v1/restart-windows/businesses/:businessId` | signed in, throttled | — |
+| `DELETE` | `/api/v1/restart-windows/businesses/:businessId` | signed in | — |
+| `PUT` | `/api/v1/restart-windows/businesses/:businessId/groups/:groupId` | signed in, throttled | — |
+| `DELETE` | `/api/v1/restart-windows/businesses/:businessId/groups/:groupId` | signed in | — |
+| `GET` | `/api/v1/restart-windows/computers/:endpointId` | signed in | — |
+| `PUT` | `/api/v1/restart-windows/computers/:endpointId` | signed in, throttled | — |
+| `DELETE` | `/api/v1/restart-windows/computers/:endpointId` | signed in | — |
+| `POST` | `/api/v1/restart-windows/computers/bulk` | signed in, throttled | — |
 
 ## Retention
 

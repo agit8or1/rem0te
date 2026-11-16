@@ -5,6 +5,160 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.60.0] — 2026-11-16 · *Nightshift*
+
+**A simple restart window: "restart if Windows needs it, nightly 02:00–04:00" on a business, a device group or one
+computer.**
+
+**What broke.** A computer (dewey-wks2022) installed its updates and then sat with *restart required*: it did not
+restart overnight. Nothing was wrong with the restart path. Before this release the only automatic restart rem0te
+had was a **patch policy's** restart window (0.54), and that only for the computers named in such a policy, on the
+signed agent. A computer whose updates were installed some other way — Windows Update on its own, a deployment, a
+person — had no rule anywhere that said "restart it tonight", so nothing did. The symptom looked like a failed
+restart; it was a restart nobody had asked for.
+
+**What 0.60 adds** is that rule, settable where people think about it, without building a patch policy:
+
+- on a **business** — the default for every computer in it;
+- on a **device group**, with a priority;
+- on **one computer** — a window, or **No automatic restarts**.
+
+The computer's own setting wins, then a group's (priority 1 first), then the business's: the 0.35 precedence rule,
+the same as monitors and client updates. **With nothing set, nothing restarts a computer automatically**, as before.
+
+A window is an automation policy (0.58) with a new task, `restart`, so it adds no new way to sign anything. Two
+people approve it once with passkeys on the approval signer — never the person who set it — or it is in force at once
+in direct mode (0.40). Inside the window, each restart is one ordinary signed `windows.reboot.schedule@1` plan for one
+computer. It carries the fixed 15-minute warning and `onlyIfRequired` under "if Windows needs it". The RustDesk
+exception goes in only if a person ticked it, and it is never ticked by default (§67).
+
+#### Added
+- **Restart window card** on a business's overview (its own window, its device groups', and its computers with their
+  own setting, each with *Inherit*) and on a computer's **Patches** tab (what governs it and where from — *from
+  business Acme*, *from device group Servers*, *set on this computer*, or **None — this computer is never restarted
+  automatically** — its own setting, its next window, and its recent automatic restarts). A window that is not in
+  force says why in words; one awaiting approval says **Waiting for approval** with a link to the signer's page.
+- **The "restart required" banners** on the Patches tab now say whether, and when, the computer will be restarted
+  automatically: "Restarts automatically if Windows needs it, next window Tue 17 Nov, 02:00–04:00 America/Chicago
+  (from business Acme)", "Restart scheduled for …", "the last try was deferred because a technician was connected
+  through RustDesk", or "No restart window applies, so this computer is never restarted automatically".
+- **Devices → select → Restart window…**: *No automatic restarts* or *Inherit* for up to 200 computers, each checked
+  and audited on its own. Its own route (`POST /restart-windows/computers/bulk`), not `/endpoints/bulk`, so §29's
+  list is unchanged.
+- **A window** is "Restart if Windows needs it" (default) or "Restart every time the window opens" (a maintenance
+  restart). It can be daily, weekly or monthly — the 0.53 window union, unchanged — and at least 30 minutes long, in
+  one IANA zone (the editor offers the business's site zones first). It lasts up to 90 days; the card warns two
+  weeks before it expires, and Change → Save renews it.
+- **API** (`apps/api/src/restart-windows/`): `GET/PUT/DELETE /restart-windows/businesses/:id`,
+  `PUT/DELETE /restart-windows/businesses/:id/groups/:groupId`, `GET/PUT/DELETE /restart-windows/computers/:id`,
+  `POST /restart-windows/computers/bulk`. There is no approve, activate or sign route.
+- **The sweep, `RESTART_WINDOW_SWEEP`** (every 60 s; `=off` stops it; `RESTART_WINDOW_SWEEP_SECONDS`, floor 2; at most
+  100 plans a pass). It mirrors each window's status from the signer, lets an approved change take over, and then,
+  per business and inside each open window:
+  1. no `actions` containment pause (else the window says *contained*);
+  2. the window's author still active and reaching the business;
+  3. per computer: the winning setting by precedence; not governed by a patch policy's own restart window; online;
+     signed agent and still the computer the window named; 0.54 or later if the plan carries a flag; under "if
+     required", its last scan says a restart is pending; no restart or update install already open;
+  4. claim an attempt row (unique per window, computer and try), then one `ActionsService.createPlan` as the author,
+     under `underPolicy.kind: 'automation'`.
+- **Deferred, and tried again.** A restart held back by a RustDesk session (`remote_session_open`) or "cannot tell"
+  (`session_state_unknown`), or a plan that never reached the computer, is asked for again 15 minutes later in the
+  same window, up to three tries a window, and in the next window. That is 0.54's rule, so a computer the window
+  missed last night is tried again tonight. A restart that ran, or one the agent said was not needed, is not retried.
+- **The approval signer's `restart` task** (`actions/automation-policy.ts`, `approval-signer/core.ts`, `server.ts`,
+  `page.ts`):
+  - `RestartTask` is strict: `{ kind: 'restart', rule: 'if_required' | 'always', ignoreRemoteSession?: true }`.
+  - **Targets.** Two new kinds, allowed only for a restart: `business` (any computer of the document's business) and
+    `group_members` (every member of a group; the signer cannot see the group, and its page says so). A computer's
+    own window names it as enrolled (RustDesk ID and device-secret hash), as before.
+  - **Document rules.** No hourly schedule (`restart_schedule_kind`), `run_when_online` only
+    (`restart_offline_rule`), at least 30 minutes (`restart_window_too_short`), never the capped `group` target
+    (`restart_target_kind`), and a script or software task never names a whole business (`target_restart_only`).
+  - **`evaluateAutomationRestart`** decides every restart plan, in order: `restart_rule_unknown`,
+    `action_not_in_policy`, `override_not_allowed`, `restart_params_not_allowed` (the parameters must equal
+    `restartParamsFor(task)` exactly), `script_not_in_policy`, `bad_display`, `requester_mismatch`,
+    `computer_not_in_policy` (one computer, this business, the named computer as enrolled),
+    `outside_restart_window` (starts now, and its last moment plus the warning falls inside the window, by the
+    shared occurrence function), `restart_already_signed` (an open plan for this computer in this window — per
+    computer, from the signer's own ledger), `restart_retry_limit` (three a window).
+  - Script and software policies decide as in 0.58, with runs never overlapping; restart windows are per computer.
+  - A restart window's ledger keeps eight days. Its approval page is its own (*Approve restart window: …*): the rule
+    in words, the warning, that a signed-in user does not stop it and a RustDesk session does, the window and its next
+    openings, the expiry, and that it has not run on real Windows. The signer reports `restartWindows: 1`.
+- **Confirm-it-is-you key `restart.window`** (§62) for setting or changing a window and for removing a group's or
+  computer's own setting (its computers then inherit the window above). *No automatic restarts* and removing a
+  business's window only narrow and never ask.
+- **Migration `0081_restart_windows`.**
+  - `RestartWindowSetting`: one per business, group or computer, `mode` `window` | `off`. Its CHECKs: a business
+    is never `off`; a window has a policy; a group has a priority, unique per business.
+  - Two triggers: a group or computer belongs to the setting's business, and a computer that changes business drops
+    its own setting.
+  - `RestartWindowAttempt` (`attempt BETWEEN 1 AND 3`, unique per window, computer and try).
+  - `AutomationPolicy.taskKind` may be `restart`.
+  - Audit actions `RESTART_WINDOW_SET` and `RESTART_WINDOW_CLEARED`.
+- `docs/restart-windows.md` (in the in-app docs), `/help`, and a pointer from `docs/staged-patching.md`.
+
+#### Changed
+- **A device group carrying a restart window cannot be deleted** (`GROUP_HAS_POLICIES`, now naming restart windows
+  too), as for monitors and client-update policies.
+- Changing a window **replaces the one in force only once it is approved**; until then the old one keeps working and
+  the card shows the change waiting. Removing a window, or setting *No automatic restarts*, revokes it at once in the
+  portal and on the signer, and cancels its restart plans that have not reached their computer.
+- Automation → Schedules does not list restart windows; they are managed only from their cards.
+- Development dependencies merged since 0.59 (#160): `typescript-eslint` 8.72.2, `@vitejs/plugin-react` 6.3.0,
+  `vite` 8.3.8, `marked` 18.2.0. None reaches the deploy target.
+
+#### For whoever deploys this
+- **Reinstall the approval signer** from this build (`apps/api/scripts/build-approval-signer.mjs`). An older signer
+  does not know the `restart` task. The card says *The approval signer answering is older than 0.60*, and the portal
+  refuses to create a window (`SIGNER_TOO_OLD`).
+- **The agent is unchanged.** Agents from 0.54 honour `onlyIfRequired` and `ignoreRemoteSession`; the portal does not
+  ask an older agent for a plan carrying either.
+- **A schema change:** apply `0081_restart_windows` and regenerate the Prisma client at the target (see `CLAUDE.md`,
+  *Deploying*). No production dependency changed.
+- Nothing is on until a person sets a window. `RESTART_WINDOW_SWEEP=off` must never be set in production; every test
+  stack sets it.
+- Set a window for the business that owns dewey-wks2022 (or on the computer itself), approve it on the signer, and
+  check its Patches tab: the banner should name the next window.
+
+#### Tests
+- `apps/api/scripts/unit-restart-window-settings.mjs` (CI): 84 checks.
+  - The restart task and its parameters, and the document rules.
+  - That a 0.58 document keeps its bytes and digest.
+  - Every `evaluateAutomationRestart` refusal, and the ledger: per computer, three a window, the next window afresh.
+  - Precedence: computer > group > business, *off*, a window waiting for approval falling through, another business
+    never.
+  - When a restart is asked again, and the approval page.
+- `apps/api/scripts/e2e-restart-window-settings.mjs` (in `run-e2e.sh`; ports 3871–3873; `RELEASE_BIN` / `ACTION_SIM`,
+  no pwsh): 86 checks.
+  - Nothing set → nothing asked for. Who may set a window, the fresh sign-in, and bad bodies.
+  - A signed-mode window *Waiting for approval* restarting nothing; the author refused as approver; two approvals →
+    in force.
+  - *No automatic restarts* on one computer, with no fresh sign-in. Restarts asked only where Windows needs one,
+    each run by the agent's real verifier and executor (`rem0te-action-sim`).
+  - Direct mode at once; a closed group window beating an open business window; a computer's own "always" window.
+  - A RustDesk session deferring a restart and the retry 15 minutes later in the same window.
+  - Ten forged plans a compromised portal could send, refused by the signer (including a fourth try,
+    `restart_retry_limit`).
+  - A change waiting for approval while the old window keeps working; removal and bulk with and without a fresh
+    sign-in; a group with a window refusing deletion; and containment stopping restarts.
+- §73 in `scripts/check-security-invariants.mjs` (15 checks). §62's `SITE_KEYS` names `restart.window`. §37's count
+  of `REBOOT_UNPROVEN` on the signer's pages is 4 (the restart window page shows it too). `e2e-ui.mjs` sets
+  `RESTART_WINDOW_SWEEP=off` (§44).
+
+#### Not proven
+- **No restart window has restarted a real Windows computer.** Every restart was decided by the agent's verifier and
+  executor against a simulated registry and RustDesk session state, as for 0.54.
+- The new cards and the bulk dialog have not been driven in a browser by `e2e-ui.mjs`; they are type-checked and
+  linted only.
+- The signer cannot see which computers a business or group window governs; it holds each plan to the business and
+  the window. A compromised portal could ask for a restart of another computer of the same business inside an
+  approved window. It could never do so outside the window, with a shorter warning, without *only if required*
+  under a window that has it, or more than three times a window.
+
+---
+
 ## [0.59.0] — 2026-11-16 · *Passport*
 
 **Agit8or Identity P0: the groundwork for trusting a self-hosted Keycloak.**

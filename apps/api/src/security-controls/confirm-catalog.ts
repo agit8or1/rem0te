@@ -75,6 +75,9 @@ export const CONFIRM_CATALOG = [
   { key: 'automation.policy', group: 'Approved actions & scripts', label: 'Automation schedules', default: 'ask',
     prompt: 'create, resume or revoke an automation schedule',
     description: 'Proposing a recurring script run or software install (0.58), resuming a paused one, or revoking one. Pausing never asks.' },
+  { key: 'restart.window', group: 'Approved actions & scripts', label: 'Restart windows', default: 'ask',
+    prompt: 'set a restart window',
+    description: 'Setting or changing a restart window on a business, device group or computer (0.60), or removing one so a computer inherits another. Setting "no automatic restarts", and removing a business\'s window, never ask.' },
 
   // ── Agents ──────────────────────────────────────────────────────────────
   { key: 'agent.migrate', group: 'Agents', label: 'Upgrade to the full agent', default: 'ask',
