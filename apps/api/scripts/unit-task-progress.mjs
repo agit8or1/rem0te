@@ -71,6 +71,7 @@ section('Scheduled, approval, containment, a quiet computer');
   check(L.matchesState(v, 'scheduled') && L.matchesState(v, 'in_flight') && !L.matchesState(v, 'done'), 'state filters: scheduled and in flight, not done');
   v = L.actionTask(job({ status: 'AWAITING_APPROVAL' }), target({ status: 'PENDING', dispatchedAt: null }), ctx(T('20:30:00')));
   check(v.stage === 'awaiting_approval' && v.waitingFor === 'approval' && v.cancelJobId, 'awaiting approval on the signer, cancelable');
+  check(L.matchesState(v, 'approval') && !L.matchesState(v, 'problem') && !L.matchesState(v, 'scheduled'), 'awaiting approval: only the approval filter (the dashboard tile) picks it');
   v = L.actionTask(job({ status: 'APPROVED' }), target({ status: 'PENDING', dispatchedAt: null }), ctx(T('23:40:00'), { held: true }));
   check(v.state === 'held' && v.waitingFor === 'containment' && /paused for this business \(containment\)/.test(v.text), 'held by a containment pause, and says so');
   v = L.actionTask(job({ status: 'APPROVED' }), target({ status: 'PENDING', dispatchedAt: null }), ctx(T('23:40:00'), { endpoint: { ...EP, lastSeenAt: T('23:05:00') } }));

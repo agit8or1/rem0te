@@ -5,6 +5,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.59.2] — 2026-11-16 · *Passport*
+
+**Four dashboard tiles now open what they count.** The owner reported that "Restart pending" and "Patch compliance"
+both went to `/patching`, and that "Failed actions" and "Awaiting approval" did nothing when clicked. The last two
+linked to `#work-next`, the *Work on next* panel on the same page, so a click only scrolled (or, with the panel in
+view, did nothing visible), and that panel lists the top items of every kind rather than the ones the tile counted.
+
+| Tile | Was | Now |
+|---|---|---|
+| Restart pending | `/patching` | `/endpoints?restartPending=true` — the device list's existing *Restart pending* filter |
+| Patch compliance | `/patching` | `/reports/patch-compliance` — the report built on the same `deviceCompliance` rule as the tile |
+| Failed actions | `#work-next` | `/automation/tasks?state=problem` — *Failed or overdue* in Tasks |
+| Awaiting approval | `#work-next` | `/automation/tasks?state=approval` — a new *Waiting for approval* filter |
+
+The Tasks API takes `state=approval` (`STATE_FILTERS`; `matchesState` keeps only `awaiting_approval`), and the Tasks
+page offers it as *Waiting for approval*. `unit-task-progress` checks that only that filter picks an unapproved plan.
+
+The Restart pending tile also counts a computer whose only evidence is an open restart alert. The device-list filter
+reads the update scan, so a computer flagged only by an alert can be on the tile and not in the list.
+
 ## [0.59.1] — 2026-11-16 · *Passport*
 
 Production dependency patch release (Dependabot #159). No behaviour changes; nothing to configure.

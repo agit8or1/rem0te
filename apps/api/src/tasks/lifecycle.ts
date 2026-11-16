@@ -38,7 +38,7 @@ export type TaskState = typeof TASK_STATES[number];
 export type TaskStage = 'scheduled' | 'awaiting_approval' | 'queued' | 'handed_out' | 'running' | 'done';
 
 /** The states the Tasks page's "State" filter groups. */
-export const STATE_FILTERS = ['in_flight', 'scheduled', 'done', 'problem', 'all'] as const;
+export const STATE_FILTERS = ['in_flight', 'scheduled', 'approval', 'done', 'problem', 'all'] as const;
 export type StateFilter = typeof STATE_FILTERS[number];
 
 export interface TaskItem { label: string; state: string; detail: string | null }
@@ -519,6 +519,8 @@ export function matchesState(v: TaskView, f: StateFilter): boolean {
   switch (f) {
     case 'in_flight': return v.inFlight;
     case 'scheduled': return v.state === 'scheduled';
+    // 0.59.2: the dashboard's Awaiting approval tile opens this.
+    case 'approval': return v.state === 'awaiting_approval';
     case 'done': return !v.inFlight;
     case 'problem': return v.overdue || ['failed', 'refused', 'uncertain', 'expired', 'not_executed'].includes(v.state);
     default: return true;

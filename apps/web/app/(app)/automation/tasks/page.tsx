@@ -23,7 +23,7 @@ import { Label } from '@/components/ui/label';
 import { LastChecked, TaskRow } from '@/components/tasks/task-ui';
 
 const STATES: { v: string; label: string }[] = [
-  { v: 'in_flight', label: 'In progress' }, { v: 'scheduled', label: 'Scheduled' }, { v: 'problem', label: 'Failed or overdue' },
+  { v: 'in_flight', label: 'In progress' }, { v: 'scheduled', label: 'Scheduled' }, { v: 'approval', label: 'Waiting for approval' }, { v: 'problem', label: 'Failed or overdue' },
   { v: 'done', label: 'Finished' }, { v: 'all', label: 'All (last 14 days)' },
 ];
 const select = 'flex h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm';
