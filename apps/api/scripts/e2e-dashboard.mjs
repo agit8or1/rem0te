@@ -38,8 +38,8 @@ const dist = path.join(here, '..', 'dist');
 const DB = process.env.DATABASE_URL ?? '';
 const dbName = DB.split('/').pop()?.split('?')[0] ?? '';
 if (!/scratch|test/.test(dbName)) { console.error(`Refusing to run against database "${dbName}": name must contain "scratch" or "test".`); process.exit(2); }
-const PORT = Number(process.env.DASH_API_PORT ?? 3201);
-if ([3000, 3001, 4000, 4001, 443].includes(PORT)) { console.error(`Refusing port ${PORT}.`); process.exit(2); }
+const PORT = Number(process.env.DASH_API_PORT ?? 3862);
+if ([3000, 3001, 3201, 3202, 4000, 4001, 443].includes(PORT)) { console.error(`Refusing port ${PORT}.`); process.exit(2); }
 const API = `http://127.0.0.1:${PORT}/api/v1`;
 const prisma = new PrismaClient();
 const sfx = randomBytes(3).toString('hex');
