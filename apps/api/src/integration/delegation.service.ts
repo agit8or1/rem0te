@@ -5,6 +5,7 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { CAP, effectiveCapabilities } from '../rbac/capabilities';
 import { DelegationClaims, MAX_DELEGATION_TTL_S } from './contract';
 import { parseJws, verifyEd25519 } from './crypto';
+import { looksLikeIdpToken } from '../sso/identity-policy';
 import { E } from './errors';
 import type { Peer } from './peers';
 import { ReplayGuardService } from './replay-guard.service';
@@ -54,6 +55,9 @@ export class DelegationService {
     if (!token) throw E.delegation('Delegation token required');
     let parsed;
     try { parsed = parseJws(token); } catch { throw E.delegation('Malformed delegation token'); }
+    // 0.59: an identity provider's token (ID, access or logout token) is
+    // never a delegation token, whoever signed it.
+    if (looksLikeIdpToken(parsed.header as Record<string, unknown>, parsed.payload)) throw E.delegation('An identity-provider token is not a delegation token');
     if (parsed.header.alg !== 'EdDSA' || parsed.header.typ !== 'rem0te-delegation+jwt') throw E.delegation('Unsupported token type');
     const key = peer.delegationKeys.find((k) => k.kid === parsed.header.kid);
     if (!key || !verifyEd25519(key.key, parsed.signingInput, parsed.signature)) throw E.delegation('Delegation signature invalid');

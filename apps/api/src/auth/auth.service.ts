@@ -3,7 +3,10 @@ import {
   UnauthorizedException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Logger,
+  OnModuleDestroy,
+  OnModuleInit,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -15,9 +18,22 @@ import { AuditService } from '../audit/audit.service';
 import { MfaService } from '../mfa/mfa.service';
 import type { JwtPayload } from './strategies/jwt.strategy';
 import type { LoginDto, RegisterDto } from './dto/login.dto';
+import { isSsoMode, localSignInRefused, type SsoMode } from '../sso/identity-policy';
+
+/**
+ * Hooks the SSO module registers at start (0.59), so AuthService needs no
+ * import of it: what to do when a break-glass account signs in, and how to
+ * end an SSO session at its provider on sign-out.
+ */
+export interface AuthHooks {
+  /** After the BREAK_GLASS_LOGIN audit entry is written: raise the alert, email Platform Admins. */
+  breakGlassSignIn?(userId: string, method: string, ip: string): Promise<void>;
+  /** The provider's end-session URL for the SSO session minted at `sessionIat`, or null. */
+  endSessionUrl?(userId: string, sessionIat: number | undefined): Promise<string | null>;
+}
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AuthService.name);
 
   /**
@@ -42,11 +58,31 @@ export class AuthService {
    * route; this half is per-account, so distributing an attack across addresses
    * does not buy the attacker anything.
    *
-   * In process, like the recovery-code backoff in MfaService, because the API
-   * runs as a single unit. Moving to Redis is the change to make if that stops
-   * being true.
+   * 0.59: in the database (LoginLockout, 0080), one row per account. It was
+   * a Map in this process, so a restart forgot every lockout and a second
+   * process (the integration worker, a second API) kept its own count.
+   * `lockedUntil` doubles as the time of the last failure while the account
+   * is not locked, as the Map's did. Rows are pruned once they say nothing.
    */
-  private readonly loginFailures = new Map<string, { count: number; lockedUntil: number }>();
+  private pruneTimer: ReturnType<typeof setInterval> | null = null;
+  private hooks: AuthHooks = {};
+
+  /** Called once by the SSO module at start. */
+  setHooks(h: AuthHooks) { this.hooks = { ...this.hooks, ...h }; }
+
+  onModuleInit() {
+    this.pruneTimer = setInterval(() => { void this.pruneLockouts(); }, 60 * 60_000);
+    this.pruneTimer.unref?.();
+  }
+  onModuleDestroy() { if (this.pruneTimer) clearInterval(this.pruneTimer); }
+
+  /** A row whose lock has passed and that has not moved for a day has nothing left to say. */
+  async pruneLockouts(now = Date.now()): Promise<number> {
+    const r = await this.prisma.loginLockout.deleteMany({
+      where: { updatedAt: { lt: new Date(now - 24 * 60 * 60_000) }, lockedUntil: { lt: new Date(now) } },
+    }).catch((e: Error) => { this.logger.warn(`lockout prune failed: ${e.message}`); return { count: 0 }; });
+    return r.count;
+  }
 
   private async lockoutPolicy(): Promise<{ max: number; minutes: number }> {
     const cfg = await this.prisma.platformSecurityConfig.findFirst({
@@ -59,19 +95,28 @@ export class AuthService {
   }
 
   /** Remaining lockout in seconds, or 0 when the account is not locked. */
-  private lockedFor(userId: string): number {
-    const state = this.loginFailures.get(userId);
-    if (!state || state.lockedUntil <= Date.now()) return 0;
-    return Math.ceil((state.lockedUntil - Date.now()) / 1000);
+  private async lockedFor(userId: string): Promise<number> {
+    const state = await this.prisma.loginLockout.findUnique({ where: { userId }, select: { lockedUntil: true } });
+    if (!state || state.lockedUntil.getTime() <= Date.now()) return 0;
+    return Math.ceil((state.lockedUntil.getTime() - Date.now()) / 1000);
   }
 
   private async recordLoginFailure(userId: string, ip: string): Promise<void> {
     const { max, minutes } = await this.lockoutPolicy();
     if (max <= 0) return;                       // 0 disables the policy
-    const state = this.loginFailures.get(userId);
-    const count = (state && state.lockedUntil > Date.now() - minutes * 60_000 ? state.count : 0) + 1;
-    const lockedUntil = count >= max ? Date.now() + minutes * 60_000 : Date.now();
-    this.loginFailures.set(userId, { count, lockedUntil });
+    const now = new Date();
+    const windowStart = new Date(now.getTime() - minutes * 60_000);
+    // One statement, so two failures at once both count.
+    const rows = await this.prisma.$queryRaw<{ count: number }[]>`
+      INSERT INTO "LoginLockout" ("userId", "count", "lockedUntil", "updatedAt")
+      VALUES (${userId}, 1, ${now}, ${now})
+      ON CONFLICT ("userId") DO UPDATE SET
+        "count" = CASE WHEN "LoginLockout"."lockedUntil" > ${windowStart} THEN "LoginLockout"."count" + 1 ELSE 1 END,
+        "updatedAt" = ${now}
+      RETURNING "count"`;
+    const count = Number(rows[0]?.count ?? 1);
+    const lockedUntil = new Date(count >= max ? now.getTime() + minutes * 60_000 : now.getTime());
+    await this.prisma.loginLockout.updateMany({ where: { userId }, data: { lockedUntil } });
     if (count >= max) {
       await this.audit.log({
         action: 'LOGIN_FAILURE', actorId: userId, actorIp: ip,
@@ -80,8 +125,61 @@ export class AuthService {
     }
   }
 
-  private clearLoginFailures(userId: string): void {
-    this.loginFailures.delete(userId);
+  private async clearLoginFailures(userId: string): Promise<void> {
+    await this.prisma.loginLockout.deleteMany({ where: { userId } });
+  }
+
+  // ── SSO enforcement (0.59) ───────────────────────────────────────────────
+
+  /**
+   * The sign-in mode that governs an account: its business's `ssoMode`, or
+   * for staff (no business membership: Platform Admins, technicians) the
+   * platform's `staffSsoMode`. Several memberships take the strictest.
+   */
+  async ssoModeFor(userId: string): Promise<{ mode: SsoMode; scope: 'business' | 'staff'; businessId: string | null }> {
+    const ms = await this.prisma.membership.findMany({
+      where: { userId, isActive: true, customerId: { not: null } },
+      select: { customerId: true, customer: { select: { ssoMode: true } } },
+    });
+    if (ms.length) {
+      const order: SsoMode[] = ['off', 'optional', 'required'];
+      let best: { mode: SsoMode; businessId: string | null } = { mode: 'off', businessId: ms[0].customerId };
+      for (const m of ms) {
+        const raw = m.customer?.ssoMode;
+        const mode: SsoMode = isSsoMode(raw) ? raw : 'off';
+        if (order.indexOf(mode) > order.indexOf(best.mode)) best = { mode, businessId: m.customerId };
+      }
+      return { ...best, scope: 'business' };
+    }
+    const s = await this.prisma.platformSettings.findUnique({ where: { id: 'singleton' }, select: { staffSsoMode: true } });
+    const raw = s?.staffSsoMode;
+    return { mode: isSsoMode(raw) ? raw : 'off', scope: 'staff', businessId: null };
+  }
+
+  /**
+   * Refuse a password or Rem0te-passkey sign-in when the account's scope
+   * requires SSO and the account is linked to an enabled provider. Checked
+   * only after the credential itself verified, so it says nothing about an
+   * account to someone without its password. A break-glass account is exempt.
+   */
+  async assertLocalSignInAllowed(user: { id: string; breakGlass?: boolean | null }, method: 'password' | 'passkey', ip: string): Promise<void> {
+    const { mode, businessId } = await this.ssoModeFor(user.id);
+    if (mode !== 'required') return;
+    const linked = (await this.prisma.externalIdentity.count({ where: { userId: user.id, provider: { enabled: true } } })) > 0;
+    if (!localSignInRefused({ mode, linked, breakGlass: user.breakGlass === true })) return;
+    await this.audit.log({ action: 'LOGIN_FAILURE', actorId: user.id, actorIp: ip, customerId: businessId ?? undefined, meta: { reason: 'sso_required', method } });
+    throw new ForbiddenException({ code: 'SSO_REQUIRED', message: 'Your organisation signs in with single sign-on. Use the single sign-on button instead.' });
+  }
+
+  /**
+   * A break-glass account just got a session. The sealed audit entry is
+   * written first and must succeed (logOrFail): no entry, no session. Then
+   * the SSO module raises the security alert and emails Platform Admins.
+   */
+  private async breakGlassUsed(user: { id: string; breakGlass?: boolean | null }, method: string, ip: string, userAgent?: string) {
+    if (user.breakGlass !== true) return;
+    await this.audit.logOrFail({ action: 'BREAK_GLASS_LOGIN', actorId: user.id, actorIp: ip, actorAgent: userAgent, resource: 'user', resourceId: user.id, meta: { method } });
+    await this.hooks.breakGlassSignIn?.(user.id, method, ip).catch((e: Error) => this.logger.error(`break-glass alert failed: ${e.message}`));
   }
 
   private partialSecret(): string {
@@ -128,7 +226,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const locked = this.lockedFor(user.id);
+    const locked = await this.lockedFor(user.id);
     if (locked > 0) {
       await this.audit.log({ action: 'LOGIN_FAILURE', actorId: user.id, actorIp: ip, meta: { reason: 'locked_out' } });
       throw new UnauthorizedException(
@@ -148,7 +246,8 @@ export class AuthService {
       await this.recordLoginFailure(user.id, ip);
       throw new UnauthorizedException('Invalid credentials');
     }
-    this.clearLoginFailures(user.id);
+    await this.clearLoginFailures(user.id);
+    await this.assertLocalSignInAllowed(user, 'password', ip);
     return this.startSession(user, ip, userAgent, { method: 'password', mfaSatisfied: false });
   }
 
@@ -168,7 +267,7 @@ export class AuthService {
    * TOTP where the account has it or the tenant requires it — unless the
    * method itself satisfied multi-factor (a user-verified passkey).
    */
-  async signInVerifiedUser(userId: string, ip: string, userAgent: string, method: 'sso' | 'passkey', mfaSatisfied: boolean) {
+  async signInVerifiedUser(userId: string, ip: string, userAgent: string, method: 'sso' | 'passkey', mfaSatisfied: boolean, sso?: { ssoSessionId: string }) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -178,19 +277,20 @@ export class AuthService {
     });
     if (!user) throw new UnauthorizedException('Invalid credentials');
     this.assertMaySignIn(user);
-    const locked = this.lockedFor(user.id);
+    const locked = await this.lockedFor(user.id);
     if (locked > 0) throw new UnauthorizedException(`Too many failed sign-in attempts. Try again in ${Math.ceil(locked / 60)} minute(s).`);
-    return this.startSession(user, ip, userAgent, { method, mfaSatisfied });
+    if (method === 'passkey') await this.assertLocalSignInAllowed(user, 'passkey', ip);
+    return this.startSession(user, ip, userAgent, { method, mfaSatisfied, sso });
   }
 
   private async startSession(
     user: {
-      id: string; email: string; firstName: string | null; lastName: string | null; isPlatformAdmin: boolean; sessionsValidAfter?: Date | null;
+      id: string; email: string; firstName: string | null; lastName: string | null; isPlatformAdmin: boolean; sessionsValidAfter?: Date | null; breakGlass?: boolean | null;
       memberships: { tenantId: string; customerId: string | null; capabilities: string[]; role: { type: unknown } }[];
       mfaMethods: unknown[];
     },
     ip: string, userAgent: string,
-    opts: { method: 'password' | 'sso' | 'passkey'; mfaSatisfied: boolean },
+    opts: { method: 'password' | 'sso' | 'passkey'; mfaSatisfied: boolean; sso?: { ssoSessionId: string } },
   ) {
     let tenantId: string | null = null;
     let roleType = null;
@@ -243,6 +343,8 @@ export class AuthService {
         {
           sub: user.id, email: user.email, tenantId, roleType,
           isPlatformAdmin: user.isPlatformAdmin, mfaVerified: false, partial: true,
+          // 0.59: the SSO session this sign-in started, bound once TOTP passes.
+          ...(opts.sso ? { sso: opts.sso.ssoSessionId } : {}),
         },
         { expiresIn: '10m', secret: this.partialSecret() },
       );
@@ -252,6 +354,8 @@ export class AuthService {
     // A passkey sign-in satisfies MFA itself; a password or SSO sign-in that
     // reached here did not pass a second factor (none is enrolled or required).
     const token = this.issueFullToken(user, tenantId, roleType, businessId, capabilities, opts.mfaSatisfied);
+    if (opts.sso) await this.bindSsoSession(opts.sso.ssoSessionId, user.id, this.iatOf(token));
+    await this.breakGlassUsed(user, opts.method, ip, userAgent);
     await this.audit.log({
       action: 'LOGIN_SUCCESS', actorId: user.id,
       tenantId: tenantId ?? undefined, customerId: businessId ?? undefined,
@@ -266,7 +370,7 @@ export class AuthService {
   }
 
   async verifyMfaAndLogin(partialToken: string, code: string, ip: string) {
-    let payload: JwtPayload & { partial?: boolean };
+    let payload: JwtPayload & { partial?: boolean; sso?: string };
     try {
       payload = this.jwtService.verify(partialToken, { secret: this.partialSecret() });
     } catch {
@@ -309,6 +413,8 @@ export class AuthService {
       matchingMembership?.capabilities ?? [],
       true, // the TOTP code above
     );
+    if (typeof payload.sso === 'string') await this.bindSsoSession(payload.sso, user.id, this.iatOf(token));
+    await this.breakGlassUsed(user, 'totp', ip);
     return {
       accessToken: token,
       user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName },
@@ -351,6 +457,17 @@ export class AuthService {
       iat: issueAt(user.sessionsValidAfter),
     };
     return this.jwtService.sign(payload);
+  }
+
+  private iatOf(token: string): number | undefined {
+    const d = this.jwtService.decode(token) as { iat?: number } | null;
+    return typeof d?.iat === 'number' ? d.iat : undefined;
+  }
+
+  /** Tie an SSO sign-in to the session token it produced (once). */
+  private async bindSsoSession(ssoSessionId: string, userId: string, sessionIat: number | undefined) {
+    if (sessionIat === undefined) return;
+    await this.prisma.ssoSession.updateMany({ where: { id: ssoSessionId, userId, sessionIat: null, endedAt: null }, data: { sessionIat } });
   }
 
   async getProfile(userId: string) {
@@ -456,7 +573,7 @@ export class AuthService {
   async verifyStepUp(userId: string, input: { password?: string; totpCode?: string }, ip: string): Promise<string> {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, passwordHash: true, status: true } });
     if (!user || user.status !== 'ACTIVE') throw new UnauthorizedException('Account is not active');
-    const locked = this.lockedFor(user.id);
+    const locked = await this.lockedFor(user.id);
     if (locked > 0) throw new UnauthorizedException(`Too many failed attempts. Try again in ${Math.ceil(locked / 60)} minute(s).`);
 
     // An enrolled authenticator is the stronger proof; accepting the
@@ -482,7 +599,7 @@ export class AuthService {
       await this.audit.log({ action: 'STEP_UP_FAILED', actorId: user.id, actorIp: ip, meta: { method: method || 'none' } });
       throw new UnauthorizedException('That did not match. Try again.');
     }
-    this.clearLoginFailures(user.id);
+    await this.clearLoginFailures(user.id);
     await this.audit.log({ action: 'STEP_UP_VERIFIED', actorId: user.id, actorIp: ip, meta: { method } });
     return method;
   }
@@ -492,7 +609,27 @@ export class AuthService {
     return (await this.prisma.userMfaMethod.count({ where: { userId, type: 'TOTP', isActive: true } })) > 0;
   }
 
-  async revokeSessions(userId: string): Promise<void> {
-    await this.prisma.user.update({ where: { id: userId }, data: { sessionsValidAfter: revocationInstant() } });
+  async revokeSessions(userId: string, reason = 'revoked'): Promise<void> {
+    const at = revocationInstant();
+    // Revocation is per second. A session minted after one revocation gets an
+    // iat equal to the revocation point (issueAt), so a second revocation in
+    // the same second must move the point past it, or that session survives
+    // (0.59: a back-channel logout right after a sign-in hit this). Always
+    // strictly later than the previous point, never earlier than now.
+    await this.prisma.$executeRaw`UPDATE "User" SET "sessionsValidAfter" = GREATEST(${at}::timestamp, COALESCE("sessionsValidAfter" + interval '1 second', ${at}::timestamp)) WHERE "id" = ${userId}`;
+    // Every SSO sign-in of the account ended with it: nothing left to check or log out.
+    await this.prisma.ssoSession.updateMany({ where: { userId, endedAt: null }, data: { endedAt: at, endReason: reason.slice(0, 40) } });
+  }
+
+  /**
+   * Sign-out (0.59: and RP-initiated logout). The provider's end-session URL
+   * is read before the revocation ends the SSO session it belongs to; it is
+   * returned for the browser to follow, never fetched from here.
+   */
+  async logout(userId: string, sessionIat: number | undefined): Promise<{ redirectTo: string | null }> {
+    let redirectTo: string | null;
+    try { redirectTo = (await this.hooks.endSessionUrl?.(userId, sessionIat)) ?? null; } catch { redirectTo = null; }
+    await this.revokeSessions(userId, 'sign_out');
+    return { redirectTo };
   }
 }

@@ -26,9 +26,12 @@ const USAGE = `Usage: node dist/cli/auth-recovery.js <action> [--yes]
   --unlink-sso <email>          remove that account's linked SSO identities
   --sign-out <email>            end every signed-in session of that account
   --clear-public-url            clear the public address setting (falls back to FRONTEND_URL / PUBLIC_API_URL)
+  --sso-mode <off|optional> <business id | staff>
+                                lower a sign-in mode (0.59): password and passkey sign-in work again
+                                for that business, or for staff; it never sets required
   --yes                         actually do it (otherwise: dry run)`;
 
-const ACTIONS = ['--status', '--disable-sso', '--remove-passkeys', '--unlink-sso', '--sign-out', '--clear-public-url'];
+const ACTIONS = ['--status', '--disable-sso', '--remove-passkeys', '--unlink-sso', '--sign-out', '--clear-public-url', '--sso-mode'];
 
 async function main(argv: string[]): Promise<number> {
   const has = (f: string) => argv.includes(f);
@@ -69,6 +72,12 @@ async function main(argv: string[]): Promise<number> {
         console.log(`  ${p.enabled ? 'ENABLED ' : 'disabled'}  ${p.name}  ${p.issuer}  linked=${p._count.identities}${p.allowProvisioning ? '  provisioning=on' : ''}`);
       }
       console.log(`Passkeys registered: ${await prisma.userMfaMethod.count({ where: { type: 'WEBAUTHN', isActive: true } })}`);
+      const staff = await prisma.platformSettings.findUnique({ where: { id: 'singleton' }, select: { staffSsoMode: true } });
+      const req = await prisma.customer.findMany({ where: { ssoMode: { not: 'off' } }, select: { id: true, name: true, ssoMode: true } });
+      console.log(`Sign-in mode: staff=${staff?.staffSsoMode ?? 'off'}`);
+      for (const b of req) console.log(`  ${b.ssoMode.padEnd(8)}  ${b.name}  ${b.id}`);
+      const bg = await prisma.user.findMany({ where: { breakGlass: true }, select: { email: true } });
+      console.log(`Break-glass accounts: ${bg.length ? bg.map((u) => u.email).join(', ') : '(none)'}`);
       const s = await prisma.platformSettings.findUnique({ where: { id: 'singleton' }, select: { publicUrl: true } });
       console.log(`Public address: ${s?.publicUrl ? `${s.publicUrl} (setting)` : `not set; using FRONTEND_URL=${process.env.FRONTEND_URL ?? '(unset)'} PUBLIC_API_URL=${process.env.PUBLIC_API_URL ?? '(unset)'}`}`);
     }
@@ -118,6 +127,32 @@ async function main(argv: string[]): Promise<number> {
         if (apply) {
           await prisma.platformSettings.update({ where: { id: 'singleton' }, data: { publicUrl: null } });
           await audit('PLATFORM_SETTINGS_UPDATED', 'platform_settings', { field: 'publicUrl', from: s.publicUrl, to: null }, 'singleton');
+        }
+      }
+    }
+    if (has('--sso-mode')) {
+      const i = argv.indexOf('--sso-mode');
+      const mode = argv[i + 1];
+      const target = argv[i + 2];
+      // Recovery only ever lowers: `required` is set from the console, after
+      // every account is linked and with fresh authentication.
+      if (mode !== 'off' && mode !== 'optional') throw new UsageError('--sso-mode takes off or optional (recovery never sets required)');
+      if (!target || target.startsWith('--')) throw new UsageError('--sso-mode needs a business id, or staff');
+      if (target === 'staff') {
+        const s = await prisma.platformSettings.findUnique({ where: { id: 'singleton' }, select: { staffSsoMode: true } });
+        const before = s?.staffSsoMode ?? 'off';
+        console.log(`${apply ? 'Setting' : 'Would set'} the staff sign-in mode from ${before} to ${mode}.`);
+        if (apply) {
+          await prisma.platformSettings.upsert({ where: { id: 'singleton' }, create: { id: 'singleton', staffSsoMode: mode }, update: { staffSsoMode: mode } });
+          await audit('SSO_MODE_CHANGED', 'platform_settings', { scope: 'staff', before, after: mode }, 'singleton');
+        }
+      } else {
+        const b = await prisma.customer.findUnique({ where: { id: target }, select: { id: true, name: true, ssoMode: true } });
+        if (!b) throw new UsageError(`No business with id ${target}`, 1);
+        console.log(`${apply ? 'Setting' : 'Would set'} the sign-in mode of ${b.name} from ${b.ssoMode} to ${mode}.`);
+        if (apply) {
+          await prisma.customer.update({ where: { id: b.id }, data: { ssoMode: mode } });
+          await audit('SSO_MODE_CHANGED', 'customer', { scope: 'business', before: b.ssoMode, after: mode }, b.id);
         }
       }
     }

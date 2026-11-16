@@ -312,6 +312,14 @@ enum ActivityAction {
   PASSKEY_REGISTERED
   PASSKEY_REMOVED
   PASSKEY_LOGIN
+  SSO_BACKCHANNEL_LOGOUT
+  SSO_SESSION_REVOKED
+  SSO_LOGOUT
+  SSO_STEP_UP
+  SSO_MODE_CHANGED
+  SSO_LINK_SUGGESTION_DISMISSED
+  BREAK_GLASS_CHANGED
+  BREAK_GLASS_LOGIN
   STEP_UP_VERIFIED
   STEP_UP_FAILED
   INTEGRATION_JOB_ACCEPTED
@@ -438,6 +446,9 @@ model User {
   status          UserStatus @default(ACTIVE)
   emailVerifiedAt DateTime?
   isPlatformAdmin Boolean    @default(false)
+  // 0.59: a break-glass account (a Platform Admin, at most two; 0080 CHECK
+  // and trigger). Exempt from ssoMode=required; every sign-in is alerted.
+  breakGlass      Boolean    @default(false)
 
   // Session tokens issued before this instant are refused. Moved on password
   // change, MFA change and sign-out; null means no revocation has happened.
@@ -480,6 +491,9 @@ model User {
   claimedSupportRequests SupportRequest[]        @relation("SupportRequestClaimer")
   savedViews             SavedView[]
   chatReadStates         ChatReadState[]
+  ssoSessions            SsoSession[]
+  ssoLinkSuggestions     SsoLinkSuggestion[]
+  loginLockout           LoginLockout?
 
   @@index([email])
 }
@@ -639,6 +653,9 @@ model Customer {
   // (PlatformSettings.chatRecordingDefault). Off: messages are relayed and
   // deleted once both sides have them, and at the end of the chat.
   chatRecording        Boolean?
+  // 0.59: off | optional | required (0080 CHECK). required refuses password
+  // and local-passkey sign-in for this business's linked accounts.
+  ssoMode              String   @default("off")
 
   technicianAssignments TechnicianAssignment[]
   supportRequests       SupportRequest[]
@@ -1779,6 +1796,9 @@ model PlatformSettings {
   // See platform/public-url.service.ts.
   publicUrl String?
 
+  // 0.59: ssoMode for staff (Platform Admins, technicians with no business).
+  staffSsoMode String @default("off")
+
   // Signed update chain (0.24). `legacy_allowed`: agents on the legacy path
   // keep receiving portal-served installer re-runs. `signed_only`: the portal
   // stops handing legacy agents anything to execute, and the legacy installer
@@ -2201,11 +2221,31 @@ model OidcProvider {
   allowProvisioning Boolean  @default(false)
   // Claim holding group ids for explicit group mappings (e.g. "groups").
   groupsClaim       String?
+  // 0.59 (0080): client_secret_post | private_key_jwt.
+  tokenAuth            String   @default("client_secret_post")
+  // P-256 private key, PKCS#8 PEM, sealed (rem0te-oidc-client-key-v1). Never returned.
+  clientKeyEnc         String?
+  clientKeyKid         String?
+  clientPublicJwk      Json?
+  // Keycloak Organization id that must be in the `organization` claim.
+  bindOrgId            String?
+  // The provider's acr value for each level.
+  acrPassword          String?
+  acrMfa               String?
+  acrPasskey           String?
+  trustIdpMfa          Boolean  @default(false)
+  trustIdpPasskey      Boolean  @default(false)
+  allowPlatformAdmin   Boolean  @default(false)
+  // open | closed: the session safety-net when the provider cannot be reached.
+  sessionCheckFailMode String   @default("open")
+  postLogoutRedirectUri String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  identities    ExternalIdentity[]
-  groupMappings OidcGroupMapping[]
+  identities      ExternalIdentity[]
+  groupMappings   OidcGroupMapping[]
+  ssoSessions     SsoSession[]
+  linkSuggestions SsoLinkSuggestion[]
 }
 
 model OidcGroupMapping {
@@ -2249,8 +2289,79 @@ model OidcLoginState {
   purpose      String
   userId       String?
   returnTo     String?
+  // 0.59: STEP_UP — the level asked for and the session it is bound to.
+  requiredLevel String?
+  sessionIat    Int?
   createdAt    DateTime @default(now())
   expiresAt    DateTime
+}
+
+/// 0.59: one SSO-originated sign-in (0080).
+model SsoSession {
+  id              String       @id @default(cuid())
+  userId          String
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  providerId      String
+  provider        OidcProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  subject         String
+  sid             String?
+  authTime        DateTime?
+  acr             String?
+  amr             String[]     @default([])
+  // none | password | mfa | passkey — what the provider proved, corroborated.
+  level           String
+  sessionIat      Int?
+  refreshTokenEnc String?
+  idTokenEnc      String?
+  createdAt       DateTime     @default(now())
+  expiresAt       DateTime
+  lastCheckedAt   DateTime     @default(now())
+  endedAt         DateTime?
+  endReason       String?
+
+  @@index([userId])
+  @@index([providerId, sid])
+  @@index([providerId, subject])
+  @@index([endedAt, lastCheckedAt])
+}
+
+/// 0.59: a back-channel logout_token's jti, consumed once.
+model SsoLogoutReplay {
+  key       String   @id
+  expiresAt DateTime
+
+  @@index([expiresAt])
+}
+
+/// 0.59: a verified-email match for a Platform Admin to confirm, one by one.
+model SsoLinkSuggestion {
+  id          String       @id @default(cuid())
+  providerId  String
+  provider    OidcProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  issuer      String
+  subject     String
+  email       String
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status      String       @default("PENDING")
+  createdAt   DateTime     @default(now())
+  lastSeenAt  DateTime     @default(now())
+  decidedById String?
+  decidedAt   DateTime?
+
+  @@unique([issuer, subject, userId])
+  @@index([status, lastSeenAt])
+}
+
+/// 0.59: failed password attempts per account (was in process memory).
+model LoginLockout {
+  userId      String   @id
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  count       Int      @default(0)
+  lockedUntil DateTime
+  updatedAt   DateTime @default(now())
+
+  @@index([updatedAt])
 }
 
 // ─── WebAuthn challenges ─────────────────────────────────────────────────────

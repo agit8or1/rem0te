@@ -111,6 +111,11 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[sign-in.md](sign-in.md)** — passwords, SSO (OIDC), passkeys, step-up and which
   functions ask for it (*Settings → Confirm it is you*, 0.49), and
   recovering from a sign-in misconfiguration.
+- **[sso-keycloak.md](sso-keycloak.md)** — trusting a self-hosted Keycloak (0.59):
+  PKCE, private_key_jwt, back-channel logout, ACR-to-LoA levels and the
+  organization claim. Not yet run against a real Keycloak.
+- **[break-glass.md](break-glass.md)** — the at-most-two Platform Admin accounts
+  that can always sign in, and the runbook for when one is used (0.59).
 
 ## Building on it
 

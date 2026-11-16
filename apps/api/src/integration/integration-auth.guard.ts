@@ -38,9 +38,14 @@ export class IntegrationAuthGuard implements CanActivate {
   constructor(private readonly replay: ReplayGuardService) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
+    const req = ctx.switchToHttp().getRequest<IntegrationRequest>();
+    // 0.59: Agit8or Connect is signed requests and nothing else. A bearer
+    // token — an identity provider's ID or access token, a console session,
+    // an API key — is refused outright, before any signature header is read,
+    // so an IdP-issued JWT can never stand in for a peer.
+    if (req.headers.authorization !== undefined) throw E.unauthenticated('Bearer tokens are not accepted on the integration API');
     const trust = loadTrust();
     if (!trust || trust.peers.size === 0) throw E.notConfigured();
-    const req = ctx.switchToHttp().getRequest<IntegrationRequest>();
 
     const keyId = String(req.headers[HDR.keyId] ?? '');
     const ts = String(req.headers[HDR.timestamp] ?? '');

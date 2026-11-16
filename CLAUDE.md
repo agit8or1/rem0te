@@ -1144,6 +1144,58 @@ with `assertFresh` naming `warranty.settings`.
 Behavioural proof: `e2e-warranty.mjs` (ports 3821–3823, a loopback vendor stub,
 in `run-e2e.sh`). Unit: `unit-warranty.mjs`.
 
+§72 (0.59, "Agit8or Identity P0") is SSO identity: the groundwork for trusting
+a self-hosted Keycloak. Every decision made from a provider's claims lives in
+`apps/api/src/sso/identity-policy.ts`, which imports nothing. A sign-in's
+level is its `acr`, lowered until `amr` agrees. A Platform Admin is refused
+through SSO unless the provider has `allowPlatformAdmin` (off by default), and
+then admitted only at the passkey level. `bindOrgId` is a gate on the
+`organization` claim, never a grant.
+
+The SSO step-up asks `max_age=0`, `prompt=login` and the acr. It is judged
+against the login-state row's own start, user and session `iat`. It issues
+`sso-passkey` only from a provider with `trustIdpPasskey`;
+`PHISHING_RESISTANT_METHODS` is exactly `passkey` and `sso-passkey`, and
+there is no catalog key for the step-up itself.
+
+Back-channel logout (public, rate-limited) checks the signature against the
+provider's JWKS (asymmetric algorithms only) before acting on any claim. It
+refuses a `nonce`, then records the `jti` in `SsoLogoutReplay`, and only then
+revokes. Revocation is per account. Refresh and ID tokens and the
+private_key_jwt key are sealed under their own secret-box purposes; the
+private key is in no view.
+
+`SSO_SESSION_SWEEP=off` is exact, exported by `run-e2e.sh` and set by
+`e2e-ui.mjs`. **Never set it in production**: no session ended at a provider
+without back-channel logout would end here. `invalid_grant` ends a session;
+an unreachable provider keeps it (`open`, with an alert) or ends it
+(`closed`).
+
+A link suggestion is never acted on automatically. The only ExternalIdentity
+insert in `SsoIdentityService` is the admin's confirm (`sso.configure`). No
+Platform Admin or break-glass account is ever suggested.
+
+`ssoMode` (`Customer`, and `PlatformSettings.staffSsoMode`) `required`
+refuses a *linked* account's password and passkey sign-in, only after the
+credential verifies. It needs every active account in scope linked and
+`sso.enforce` to tighten; lowering never asks. The recovery CLI's
+`--sso-mode` only lowers.
+
+`User.breakGlass` is Platform Admins only (0080 CHECK), at most two (0080
+trigger), needs TOTP and a passkey, and changes under `breakglass.manage`.
+Each use is a sealed `BREAK_GLASS_LOGIN` written with `logOrFail` before the
+session, plus an alert and mail to confirmed Platform Admin recipients.
+
+`JwtStrategy` accepts HS256 only and refuses any payload with integration or
+IdP claims. The integration guard refuses any `Authorization` header. The
+delegation check refuses an IdP-looking token.
+
+The login lockout is the `LoginLockout` table, not memory. **No real identity
+provider has been called**; `docs/sso-keycloak.md` is untried.
+
+Behavioural proof: `e2e-sso-identity.mjs` (ports 3851–3853, a loopback mock
+provider, `SSO_SESSION_SWEEP` on and fast); unit: `unit-sso-identity.mjs`.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

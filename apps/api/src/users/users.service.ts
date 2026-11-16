@@ -400,6 +400,8 @@ export class UsersService {
       select: {
         id: true, email: true, firstName: true, lastName: true,
         status: true, createdAt: true,
+        // 0.59: whether this admin is a break-glass account (SsoIdentityService sets it).
+        breakGlass: true,
         mfaMethods: { where: { type: 'TOTP', isActive: true }, select: { id: true } },
       },
       orderBy: { createdAt: 'asc' },
@@ -424,6 +426,10 @@ export class UsersService {
 
     const user = await this.prisma.user.findUnique({ where: { id: targetUserId } });
     if (!user) throw new NotFoundException('User not found');
+    // 0.59: a break-glass account is a Platform Admin by definition (0080's CHECK).
+    if (!enabled && user.breakGlass) {
+      throw new BadRequestException('This is a break-glass account. Clear break-glass under Settings → Single sign-on first.');
+    }
 
     const updated = await this.prisma.user.update({
       where: { id: targetUserId },

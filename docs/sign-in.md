@@ -4,7 +4,9 @@
 
 ## Password
 
-Password sign-in always works. Nothing on this page can switch it off, so a broken SSO provider or a lost passkey never locks anyone out by itself. The exception is an account created through SSO provisioning, which has no password until one is set for it. TOTP, lockout and the tenant's *require MFA* policy apply as before.
+Password sign-in works unless a business (or staff) is set to **SSO required** and the account is linked to a provider ([below](#who-must-use-sso-059)). Even then, the [break-glass accounts](break-glass.md) and the recovery CLI keep a way in that does not depend on the provider. An account created through SSO provisioning has no password until one is set for it. TOTP, lockout and the tenant's *require MFA* policy apply as before.
+
+**The lockout is in the database (0.59).** Failed attempts are counted in `LoginLockout`, so restarting the API no longer forgets them and every API process sees the same count. Before 0.59 the count was in memory.
 
 ## Single sign-on (OIDC)
 
@@ -29,7 +31,40 @@ Only HTTPS issuers are accepted. `OIDC_ALLOW_INSECURE_LOOPBACK=true` relaxes tha
 - **Linking.** A signed-in person goes to **My Account → Single sign-on → Link** (needs step-up), signs in at the provider, and that identity is attached to their account. One identity per provider per account. An identity already linked to someone else is refused.
 - **Provisioning**, only if the provider has *Create accounts* turned on. An unknown identity with a **verified** email that no Rem0te account uses gets a **new** account. That account has no business and no permissions unless a **group mapping** matches: a value in the provider's groups claim, mapped to exactly one business with exactly the listed capabilities, as a Business User. Provisioning never creates an owner or an admin. If the email already belongs to an account, sign-in is refused with a message to sign in by password and link instead.
 
-After the provider, the rest of sign-in is the same as for a password: account status, lockout, and **TOTP, if the account has it** or the tenant requires it. SSO does not skip Rem0te's own second factor.
+After the provider, the rest of sign-in is the same as for a password: account status, lockout, and **TOTP, if the account has it** or the tenant requires it. SSO does not skip Rem0te's own second factor — unless the provider's MFA is trusted (below).
+
+**Suggested links (0.59).** When someone signs in at a provider with an unlinked identity whose **verified** email matches an active account here, nothing is linked: the sign-in is refused as before and a *suggestion* is recorded. A Platform Admin sees it under **Settings → Single sign-on → Suggested links** and may confirm it (fresh confirmation, `sso.configure`; audited `SSO_LINKED {by: 'admin'}`; the account holder is emailed when their address is a confirmed mail recipient) or dismiss it. Platform Admin and break-glass accounts are never suggested.
+
+### How far a provider is trusted (0.59)
+
+Each provider has settings that start at the safest value. Every change needs a fresh confirmation (`sso.configure`). A Keycloak walk-through is in [sso-keycloak.md](sso-keycloak.md).
+
+- **acr values.** Name the provider's `acr` value for each level: password, MFA, passkey. Rem0te's level for a sign-in is the `acr` it maps to, **lowered until `amr` agrees**: MFA needs a second factor in `amr` (`otp`, `mfa`, `hwk`, `swk`, `sms`, `fpt`…), passkey needs `hwk`, `swk` or `pop`. An unknown `acr` is level *none*.
+- **Trust the provider's MFA** (off). When on, a sign-in at the MFA level or above counts as Rem0te's second factor: no TOTP is asked, and the session is MFA-verified.
+- **Trust the provider's passkeys** (off). When on, a step-up at the passkey level through the provider counts as a passkey (`sso-passkey`) for the actions that need one.
+- **Platform Admins** (off). A Platform Admin is refused through the provider (`admin_not_allowed`). When on, only at the passkey level (`admin_needs_passkey` otherwise).
+- **Organization** (empty). When set, the ID token's `organization` claim must name it (Keycloak 26 organizations: an alias, or an object carrying the id). It is a gate, never a grant: it gives no access.
+- **Token authentication.** A client secret, or `private_key_jwt`: Rem0te generates a P-256 key for the provider, keeps the private half sealed, and shows the public JWK and a JWKS URL (`/api/v1/auth/sso/<id>/jwks.json`) to register at the provider.
+- **If the provider cannot be reached** — see *Sessions* below.
+
+### Sessions and sign-out (0.59)
+
+Each SSO sign-in records an `SsoSession`: the provider's `sid`, `acr`, `amr`, `auth_time`, the level, and the refresh and ID tokens, sealed.
+
+- **Back-channel logout.** Register `https://<your server>/api/v1/auth/sso/backchannel-logout` at the provider. A `logout_token` is checked against the provider's JWKS (RS256, PS256, ES256 or EdDSA only), its issuer, audience, `iat` (within 5 minutes), the back-channel event, the absence of a `nonce`, and a `jti` that may be used once. It ends **every** Rem0te session of the account it names (by `sid`, or `sub`), because Rem0te's revocation is per account. Audited `SSO_BACKCHANNEL_LOGOUT`.
+- **Signing out** of an SSO session also signs out at the provider (RP-initiated logout) when it publishes an `end_session_endpoint`, with `id_token_hint` and the post-logout redirect (`/login?signed_out=1` by default; register it at the provider).
+- **The safety net.** About every ten minutes the API uses each session's refresh token at the provider. `invalid_grant` (the session was ended there) ends it here too, audited `SSO_SESSION_REVOKED`. If the provider cannot be reached, a provider set to *fail open* (the default) keeps the session and raises a security alert at most hourly; *fail closed* ends it. `SSO_SESSION_SWEEP=off` stops the sweep; never set it in production.
+
+### Who must use SSO (0.59)
+
+**Settings → Single sign-on → Who must use single sign-on**, per business and for staff (accounts with no business):
+
+- **Off** and **Optional** sign in the same way. Optional asks unlinked people, on My Account, to link.
+- **Required** refuses password and passkey sign-in (`403 SSO_REQUIRED`, after the password was checked, so a wrong password still says only *invalid credentials*) for every account **linked** to a provider. The last linked identity cannot be unlinked under it. It can be set only when every active account in scope is linked (the page shows the unlinked count), a provider is enabled, and — for staff — there is a break-glass account. Setting it needs a fresh confirmation (`sso.enforce`); lowering it never does. Audited `SSO_MODE_CHANGED`.
+- An account in several businesses takes the strictest mode.
+- [Break-glass accounts](break-glass.md) are always exempt.
+
+If the provider is down, lower the mode from the server (the recovery CLI below): `--sso-mode optional <business id | staff>`.
 
 ## Passkeys
 
@@ -46,6 +81,8 @@ The relying party is the web app's address: `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGI
 Some actions need you to confirm it is you, even with a valid session: re-enter your password, a TOTP code, or use a passkey. The confirmation lasts 10 minutes and applies only to the sign-in it was made in.
 
 **With an authenticator enrolled, the password alone is not accepted (0.30.1).** Use the authenticator code or a passkey; the API answers `401 TOTP_REQUIRED` to a password, and the dialog offers only the code. Otherwise a stolen session plus a known password would be enough.
+
+**Through the provider (0.59).** An account linked to a provider can confirm there instead: the dialog's *Confirm with <provider>* sends you to the provider with `max_age=0`, `prompt=login` and the `acr` it needs. Coming back, Rem0te accepts it only for the same linked identity, with an `auth_time` after the round trip began, at the MFA level (the confirmation method is `sso-mfa`) or, for an action that needs a passkey, at the passkey level from a provider trusted for passkeys (`sso-passkey`). The request that asked for the confirmation is not kept across the round trip; do it again. An account with no password (SSO-only) confirms only this way.
 
 **A session remembers whether its sign-in passed a second factor.** A sign-in that went through the authenticator, or a passkey sign-in, is MFA-verified; a password or SSO sign-in by someone with no authenticator is not. Revealing a computer's password needs an MFA-verified session from anyone who has an authenticator, so a session that began before the authenticator was enrolled must sign in again (`403 MFA_REQUIRED`).
 
@@ -76,7 +113,7 @@ Further down, *Always asks* lists the confirmations that are not settings (below
 | Monitoring & notifications | `monitoring.notify` — changing who is notified; `monitoring.autoticket` (0.55) — changing or removing the automatic-ticket rule |
 | Reports & email | `email.relay` — the SMTP relay; `email.recipients` — adding, re-sending to or removing a recipient; `reports.schedule` — creating or changing a scheduled report |
 | Integrations | `ai.settings` — the AI provider and key; `psa.connector` — ticketing connectors; `apikey.create` — creating any API key |
-| Security & access | `containment.lift` — lifting a pause; `temporary.access` — deciding or activating temporary access; `security.controls` — presets, policies, device classes, technician devices, maintenance exceptions, alert suppressions; `security.trust` — trust-change decisions; `chat.recording`; `update.trust` — the update-trust mode; `scripts.review` — approving a script version; `permissions.change` — a user's permissions or level, technician-access approvals, offboarding; `technicians.manage` — technician assignments, groups, platform permissions, ClientSt0r mappings; `sso.configure` — SSO providers and linking your own identity; `platform.configure` — the server's public address |
+| Security & access | `containment.lift` — lifting a pause; `temporary.access` — deciding or activating temporary access; `security.controls` — presets, policies, device classes, technician devices, maintenance exceptions, alert suppressions; `security.trust` — trust-change decisions; `chat.recording`; `update.trust` — the update-trust mode; `scripts.review` — approving a script version; `permissions.change` — a user's permissions or level, technician-access approvals, offboarding; `technicians.manage` — technician assignments, groups, platform permissions, ClientSt0r mappings; `sso.configure` — SSO providers, linking your own identity and confirming a suggested link; `sso.enforce` — setting SSO to required (0.59; lowering never asks); `breakglass.manage` — marking or clearing a break-glass account (0.59); `platform.configure` — the server's public address |
 
 The list is one file in the API (`apps/api/src/security-controls/confirm-catalog.ts`); the page, the step-up dialog's
 wording and the console's "(re-authenticate)" labels all come from it through `GET /security/confirm-policy`, so a page
@@ -151,7 +188,11 @@ node dist/cli/auth-recovery.js --remove-passkeys a@b.com --yes # that account's 
 node dist/cli/auth-recovery.js --unlink-sso a@b.com --yes      # that account's SSO links
 node dist/cli/auth-recovery.js --sign-out a@b.com --yes        # end every session
 node dist/cli/auth-recovery.js --clear-public-url --yes        # back to FRONTEND_URL / PUBLIC_API_URL
+node dist/cli/auth-recovery.js --sso-mode optional <business id> --yes  # lower SSO required (0.59)
+node dist/cli/auth-recovery.js --sso-mode optional staff --yes
 ```
+
+`--sso-mode` takes only `off` or `optional`: required is set from the console, after every account is linked.
 
 Without `--yes` it prints what it would do and changes nothing. Every change is written to the audit log.
 
@@ -160,5 +201,7 @@ Without `--yes` it prints what it would do and changes nothing. Every change is 
 ## Limitations
 
 - Tested against a standards-compliant mock provider, not against any particular one (Entra ID, Google, Okta…). Provider-specific quirks, such as groups overage claims, are not handled.
-- No single logout or back-channel logout: signing out of the provider does not sign you out of Rem0te, or the reverse.
-- No SSO-only enforcement. Password sign-in cannot be turned off.
+- Single logout (0.59) has been tested against a mock provider only, not a real Keycloak. A Keycloak setup is described in [sso-keycloak.md](sso-keycloak.md) and has not been run.
+- Ending one provider session ends every Rem0te session of that account: Rem0te has no per-session revocation.
+- The session safety net checks each session about every ten minutes, so a session ended at a provider without back-channel logout can last that long here.
+- Turning *Trust the provider's passkeys* off takes up to 10 minutes to reach a confirmation already given.

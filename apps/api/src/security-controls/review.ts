@@ -31,7 +31,13 @@ export function assertIndependentReviewer(actor: ActorContext, requesterId: stri
  * it to `off`. An unknown key, an always-ask key or an unread policy asks. A
  * phishing-resistant check (a protected-device exception) always asks,
  * whatever the policy says.
+ *
+ * 0.59: a phishing-resistant check accepts a Rem0te passkey, or `sso-passkey`
+ * — which the SSO step-up issues only from a provider with `trustIdpPasskey`
+ * whose acr and amr both say passkey (sso/identity-policy.ts stepUpMethod).
+ * `sso-mfa` is an ordinary step-up, like a TOTP code.
  */
+export const PHISHING_RESISTANT_METHODS: ReadonlySet<string> = new Set(['passkey', 'sso-passkey']);
 export function assertFresh(method: string | null, opts: { action: StepUpKey; phishingResistant?: boolean; message?: string }) {
   if (!opts.phishingResistant && !confirmRequired(opts.action)) return;
   if (!method) {
@@ -40,7 +46,7 @@ export function assertFresh(method: string | null, opts: { action: StepUpKey; ph
       message: opts.message ?? 'Confirm it is you to continue: re-enter your password, an authenticator code, or use a passkey.',
     });
   }
-  if (opts.phishingResistant && method !== 'passkey') {
+  if (opts.phishingResistant && !PHISHING_RESISTANT_METHODS.has(method)) {
     throw new ForbiddenException({ code: 'STEP_UP_REQUIRED', action: 'fresh.auth.passkey', message: 'This action needs a fresh passkey confirmation (password and authenticator codes are not accepted).' });
   }
 }

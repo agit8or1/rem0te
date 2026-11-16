@@ -827,10 +827,14 @@ function PlatformAdminsTab() {
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {admins.map((a: { id: string; email: string; firstName: string; lastName: string; createdAt: string; mfaMethods?: unknown[] }) => (
+                {admins.map((a: { id: string; email: string; firstName: string; lastName: string; createdAt: string; mfaMethods?: unknown[]; breakGlass?: boolean }) => (
                   <tr key={a.id} className="hover:bg-muted/40">
                     <td className="px-4 py-3">
-                      <div className="font-medium">{fullName(a)}</div>
+                      <div className="font-medium">
+                        {fullName(a)}
+                        {/* 0.59: set under Settings → Single sign-on (break-glass). */}
+                        {a.breakGlass && <Badge variant="warning" className="ml-2" data-testid="break-glass-badge">Break-glass</Badge>}
+                      </div>
                       <div className="text-xs text-muted-foreground">{a.email}</div>
                     </td>
                     <td className="px-4 py-3">
@@ -840,7 +844,7 @@ function PlatformAdminsTab() {
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{formatDate(a.createdAt)}</td>
                     <td className="px-4 py-3 text-right">
-                      {a.id !== user?.id && (
+                      {a.id !== user?.id && !a.breakGlass && (
                         <Button
                           size="sm"
                           variant="ghost"
