@@ -171,6 +171,8 @@ a window's portal records back an hour.
 
 ---
 
+**Agent tests on real Windows (found by 0.56's new `agent-real-os` job).** Two Go tests assumed Unix and failed on GitHub's `windows-latest` runner; neither was an agent defect. `TestLoadCreatesOnceAndKeepsTheKey` (devsig) checked the key file's mode bits, which mean nothing on Windows: there the key is private because the state directory carries a protected SYSTEM + Administrators DACL (`winPlatform.SecureDir`), so the mode check now runs off Windows only. `TestPwshTimeoutKillsTheTree` starts its child through `/bin/sh`, so it is skipped on Windows, where the tree kill is the job object in `action_windows.go`.
+
 ## [0.57.0] — 2026-11-16 · *Muster*
 
 **Deploying agents to a fleet, and adopting the computers that arrive.**

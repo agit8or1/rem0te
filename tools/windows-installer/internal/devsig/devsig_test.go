@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 )
@@ -25,7 +26,10 @@ func TestLoadCreatesOnceAndKeepsTheKey(t *testing.T) {
 		t.Fatal("a second Load made a new key")
 	}
 	st, err := os.Stat(filepath.Join(dir, KeyFile))
-	if err != nil || st.Mode().Perm()&0o077 != 0 {
+	// Mode bits mean nothing on Windows: there the key is private because the
+	// state directory carries a protected SYSTEM + Administrators DACL
+	// (winPlatform.SecureDir), not because of the file's mode.
+	if err != nil || (runtime.GOOS != "windows" && st.Mode().Perm()&0o077 != 0) {
 		t.Fatalf("key file %v %v: must exist and be private", st, err)
 	}
 	// The file holds the seed only; no other field, no public key to trust.
