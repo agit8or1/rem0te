@@ -183,6 +183,8 @@ These files are touched by both branches, so expect merge work in them:
 
 ---
 
+**Test fix: two suites defaulted to production's approval-signer port.** `e2e-add-device.mjs` and `e2e-dashboard.mjs` started their own API on 3201 by default, which on this host is the approval signer's public port. With the signer listening, `e2e-dashboard.mjs` could not bind and sent one login for a `@test.invalid` user to the signer, which answered 404; nothing else reached it. The defaults are now 3861 and 3862, and both suites refuse 3201 and 3202 along with 3000, 3001, 443, 4000 and 4001.
+
 ## [0.55.0] — 2026-11-16 · *Tripwire*
 
 **Alerts for drives, uptime and updates; automatic PSA tickets from alerts; Recent alerts on the dashboard.**
