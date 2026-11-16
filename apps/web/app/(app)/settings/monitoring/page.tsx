@@ -77,6 +77,12 @@ const KIND: Record<MonitorKindId, { label: string; hint: string; fields: { k: st
     hint: 'RustDesk still reaches the computer but its agent has not checked in for this long (30 minutes to 7 days), so its monitoring, patching and inventory values are going stale. It clears when the agent checks in again. Off until someone adds it — here or with “Add recommended”.',
     fields: [{ k: 'minutes', label: 'Minutes without an agent check-in', type: 'int', def: 60 }],
   },
+  // 0.56. Never on by default and not in “Add recommended”: add it here.
+  WARRANTY_EXPIRING: {
+    label: 'Hardware warranty ending',
+    hint: 'The computer’s stored warranty end date (entered on its device page, or read from Dell or Lenovo when that lookup is on) is within this many days, or has passed. One alert per computer; it clears when the date moves out of the window and is raised again, naming the new date, when the date changes. A computer with no date stored never alerts.',
+    fields: [{ k: 'daysBefore', label: 'Days before the end date', type: 'int', def: 30 }],
+  },
 };
 
 const fmt = (d: string | null | undefined) => (d ? new Date(d).toLocaleString() : '—');

@@ -5,6 +5,184 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.56.0] — 2026-11-16 · *Coverage*
+
+**Hardware warranty status and support links.**
+
+The owner asked to "add warranty status checks, links to support pages for the hardware, etc". Until now a computer's
+Hardware card showed the manufacturer, model and serial its firmware reported, and nothing else. To find a warranty,
+a technician copied the serial into a vendor's site by hand, and nothing recorded the answer. No list, report or
+alert could say which machines were out of warranty. This release adds the links, somewhere to keep the dates, an
+optional lookup for the two vendors with a usable API, and the reporting around them.
+
+This branch was developed alongside 0.55 (alerts), so it uses migration **0077** and invariant **§69**. 0.55 has
+0076 and §68.
+
+#### Added
+- **Warranty & support card** on the device page, next to Hardware (`components/endpoints/warranty-card.tsx`).
+  - It links to the vendor's support, warranty and driver pages for Dell, Lenovo, HP, HPE, Microsoft Surface, Apple,
+    ASUS and Acer.
+  - Manufacturer strings are normalised: `Dell Inc.`, `DELL` and `Dell Computer Corporation` are all Dell, and an
+    `HP` ProLiant is HPE.
+  - **Only Dell's link carries the serial.** That is the only vendor with a stable URL that takes it. The 7-character
+    service tag is checked against `^[A-Za-z0-9]{7}$` and passed through `encodeURIComponent`. Every other vendor gets
+    its fixed page and a *Copy serial* button.
+  - Serials are cleaned first. Placeholders (`To be filled by O.E.M.`, `Default string`, `0000000000`, `None`…) and
+    anything outside 4–40 letters, digits and hyphens are dropped.
+  - Every link opens in a new tab with `rel="noopener noreferrer"`.
+  - VMware, Hyper-V, QEMU/KVM, VirtualBox, Xen, Parallels, EC2 and GCE guests say *Virtual machine — no hardware
+    warranty* and get no links.
+  - The table is one pure module, `apps/api/src/warranty/vendors.ts`. Its web copy, `apps/web/lib/hardware-support.ts`,
+    is byte-identical, and both §69 and `unit-warranty.mjs` check that.
+- **Warranty dates per computer.** Seven new `Endpoint` columns: start, end, source (`manual` / `dell` /
+  `lenovo`), coverage, checked-at, and the last lookup's time and result.
+  - **Entering by hand** (`PUT /endpoints/:id/warranty`) needs *Edit computers* on that computer.
+  - The write is conditional on the dates that were read (`WARRANTY_CHANGED` otherwise), and it is audited as
+    `WARRANTY_SET` with before and after.
+  - A vendor answer never overwrites a manual entry: not in the sweep, not in *Check now*, and not if the entry was
+    made while a request was out.
+- **Dell and Lenovo lookups**, off by default, set up in **Settings → Warranty** (Platform Admin, class guard).
+  - Saving needs fresh authentication under a new catalog key, `warranty.settings` (*Warranty lookups*, in the
+    Integrations group), which is added to §62's `SITE_KEYS`.
+  - Dell needs a TechDirect client id and secret. It sends an OAuth client-credentials token request, then
+    `GET /PROD/sbil/eapi/v5/asset-entitlements?servicetags=`.
+  - Lenovo needs a ClientID token. It sends `GET /v2.5/warranty?Serial=` with a `ClientID` header.
+  - **The settings page says that serial numbers are sent to the vendor.** Only the serial is sent, never a name,
+    hostname, user, business or model.
+  - The key is sealed with its own purpose (`rem0te-warranty-key-v1`, added to `SecretPurpose`). Only its last four
+    characters are kept in the clear, it is never returned, and changing the Dell client id drops the old secret.
+  - `WARRANTY_SETTINGS_CHANGED` records whether the key was `set`, `kept`, `cleared` or `cleared_client_changed`.
+  - Every call goes through `common/safe-https.ts` with a 20 s bound and a 256 KB cap. Redirects are refused, and
+    the address is resolved and checked on every call.
+  - Several entitlements: the latest end date wins, with its coverage text reduced to an inert charset.
+  - HP, HPE, Surface, Apple, ASUS and Acer are **manual only**. HP's API is a batch-job service with separate
+    onboarding (a documented TODO in `warranty/client.ts`). The others have no public API.
+- **The warranty sweep** (`WarrantyService`).
+  - It runs every `WARRANTY_SWEEP_SECONDS` (600) and asks about at most `WARRANTY_LOOKUPS_PER_HOUR` computers an hour
+    (60, capped at 500), at most 25 in a pass.
+  - Each computer is asked at most every 30 days. A failure that may pass (timeout, 5xx, 429) is retried after a day.
+  - It skips a business under an `integration` containment pause, and a global pause stops every lookup.
+  - Each computer is claimed with a conditional write before it is asked about.
+  - `WARRANTY_SWEEP=off` stops it. `run-e2e.sh` exports it, the scratch API line sets it, and `e2e-ui.mjs` sets it
+    (§44 found it from the source).
+  - **Check now** (`POST /endpoints/:id/warranty/lookup`) is one lookup for one computer. It needs *Edit computers*,
+    honours the same pause, and is audited as `WARRANTY_LOOKUP_REQUESTED`, naming only the vendor.
+- **Device list**: a Warranty column (off by default), a filter (`warranty=expired|d30|d60|d90|active|unknown`, in
+  *More filters*), a sort (soonest first, unknown last), and two CSV columns. Rule-based device groups can use the
+  filter, because `RULE_KEYS` gained `warranty`. The windows count only warranties that have not yet ended.
+- **Reports → Warranty** (`GET /reports/warranty`, `/reports/warranty/export.csv`, *View computers*).
+  - It reads through `devicesWhere`, which uses `endpointVisibilityWhere`.
+  - It shows figures, a table by business and the list of computers expired or ending within 90 days. The CSV has
+    every computer.
+  - It cannot be scheduled: `SCHEDULABLE_REPORTS` and 0054's CHECK are unchanged.
+- **Dashboard tile**: expired plus ending within 30 days, with 90-day and unknown counts on hover. The overview
+  gains `warranty`.
+- **`WARRANTY_EXPIRING` monitor kind** (`daysBefore`, 1–365, default 30).
+  - **Opt-in.** It is not in `RECOMMENDED`, and nothing creates it.
+  - It raises one alert per computer inside the window or past its date, naming the date.
+  - When the date moves, the open alert closes (*the warranty end date changed*) and one names the new date. When
+    the date moves out of the window, the alert resolves. A computer with no date never raises one.
+  - It is evaluated by the existing monitoring sweep from stored dates. The 0.36 `SWEEP_KINDS` set is unchanged.
+- `docs/warranty.md` (in the docs bundle), a */help* section, and a README bullet.
+
+#### Changed
+- **`common/safe-https.ts`** (shared).
+  - `safePost` now delegates to a private `safeRequest(method, …)`, and a new `safeGet` uses the same checked path.
+    No second client.
+  - `testLoopbackAllowed` accepts a query string in the narrow charset `[A-Za-z0-9._~=&-]`, because the warranty
+    stubs take `?servicetags=` / `?Serial=`. It is still only http://127.0.0.1 and only under `NODE_ENV=test`.
+  - `unit-ai-psa.mjs`'s assertion that `?x=1` was refused now asserts it is allowed, and that `%`, `#` and `@` are
+    still refused.
+- §41's "only ai/ and the PSA webhook use the typed-destination client" check now also allows
+  `warranty/client.ts`. The reports route count went from 10 to 12.
+
+#### Files shared with 0.55 (alerts)
+These files are touched by both branches, so expect merge work in them:
+
+- `prisma/schema.prisma`: new enum values (`WARRANTY_SET`, `WARRANTY_SETTINGS_CHANGED`,
+  `WARRANTY_LOOKUP_REQUESTED`, `WARRANTY_EXPIRING`), the Endpoint columns and `WarrantyVendor`;
+- `monitoring/engine.ts`: one kind, one `PARAMS` entry and `evaluateWarranty`;
+- `monitoring/monitoring.service.ts`: one select field, `detail` on the open-alert read, and one branch;
+- `dashboard/overview.service.ts`;
+- `security-controls/confirm-catalog.ts`;
+- `common/safe-https.ts` and `common/secret-box.ts`;
+- `app.module.ts`;
+- the web monitoring settings page, `device-model.ts`, the alert-frequency page and `api-client.ts`'s
+  `MonitorKindId`;
+- `scripts/check-security-invariants.mjs`, `scripts/run-e2e.sh`, `e2e-ui.mjs`, `ci.yml`, `CLAUDE.md` and this
+  changelog.
+
+#### Deploying
+- **Migration 0077** (`0077_warranty`):
+  - enum values, Endpoint columns and the `WarrantyVendor` table;
+  - CHECKs on the source, the dates (a source needs an end, start ≤ end), the coverage charset and length, the
+    lookup-result charset, the vendor list, and *enabled needs a key*;
+  - an index on `warrantyEndsAt`.
+
+  Run `prisma migrate deploy`, copy `prisma/` to the target and run `prisma generate` there, or the API throws
+  `Unknown field warrantyEndsAt`.
+- No production dependency changed. No agent or signer change.
+- New routes:
+  - `GET /warranty/settings`, `PUT /warranty/settings/:vendor`;
+  - `GET`/`PUT /endpoints/:id/warranty`, `POST /endpoints/:id/warranty/lookup`;
+  - `GET /reports/warranty`, `GET /reports/warranty/export.csv`.
+
+  `docs/API-REFERENCE.md` is regenerated.
+- Nothing is looked up until a Platform Admin enters a key and switches a vendor on.
+
+#### Invariants
+- **§69** (new): about thirty checks.
+  - The two copies of the table are identical and import nothing.
+  - Every link is https to a host on `VENDOR_HOSTS`. Only Dell interpolates the serial, after `DELL_TAG_RE`, through
+    `encodeURIComponent`. Both vendor anchors have `target="_blank"` and `rel="noopener noreferrer"`.
+  - Vendor hosts and `WARRANTY_TEST_BASE_URL` appear only in `warranty/client.ts`. It reads the test URL only through
+    `testLoopbackAllowed`. There is no fetch or raw request in `warranty/`, and three bounded requests.
+  - `lookup()` takes the serial alone and is called once, from the service.
+  - The sealed purpose. No credential in a view or an audit row. One logger line.
+  - `PlatformAdminGuard` with `assertFresh('warranty.settings')` first. View, edit and edit-only *Check now* on the
+    computer. The conditional, audited manual write.
+  - The sweep: its off switch, the per-hour budget, the 30-day interval and the conditional claim. The integration
+    pause before `lookupAndStore`, in the sweep and in *Check now*. Manual entries never touched.
+  - 0077's CHECKs. The report through `devicesWhere`. `WARRANTY_EXPIRING` not in `RECOMMENDED`, with `SWEEP_KINDS`
+    unchanged.
+  - The suites wired into CI and `run-e2e.sh`.
+- **§41**: `safeGet` and `safePost` both return `safeRequest`. The loopback rule's new form is pinned.
+- **§62**: `warranty/warranty.controller.ts` names `warranty.settings`.
+
+#### Tests
+- `unit-warranty.mjs` (new, in CI): **123 passed**. It covers:
+  - 31 manufacturer strings, the VMs included;
+  - placeholder and charset serials;
+  - every vendor's links, and that only Dell carries the serial;
+  - the buckets at their edges, the coverage charset, the list filter, the rule key and the monitor;
+  - the sweep budget;
+  - the Dell and Lenovo parsers against a loopback stub: token, entitlements, not found, a refused credential, a
+    redirect refused, a 5xx as transient, and a response over 256 KB refused.
+- `e2e-warranty.mjs` (new, in `run-e2e.sh`; ports 3821–3823; refuses a database not named scratch/test):
+  **64 passed**, against a database named `warranty056_scratch_test`. It covers:
+  - links, the VM note and another business's 404;
+  - manual edit validation, scope and audit;
+  - settings: admin only, fresh authentication, no key in responses, the database, audit or logs;
+  - *Check now* for Lenovo and Dell through the stub, where only the serial reached it;
+  - the pause refusing before anything is sent;
+  - the list filter, sort and CSV; the report and its CSV scoped per owner; the dashboard counts;
+  - manual entries never overwritten;
+  - a second API run with the sweep on: two of three Dell computers asked at `WARRANTY_LOOKUPS_PER_HOUR=2`, the
+    paused business never asked, computers checked recently not asked again;
+  - the monitor raising, staying single, moving with the date and resolving.
+- Unchanged suites re-run: `unit-monitoring` 91, `unit-device-views` 77, `unit-dynamic-groups` 68,
+  `unit-confirm-policy` 40, `unit-agent-health` 53, `unit-ai-psa` 32, `unit-email` 122.
+
+#### Not done
+- **No real Dell or Lenovo API has been called.** The response parsing follows their published documentation and is
+  tested only against a stand-in. Expect to adjust it on the first real answer. An unreadable one is stored as
+  `RESPONSE_INVALID` and changes no dates.
+- No HP lookup (see above). No lookup for any other vendor.
+- The vendors' support URLs were taken from their public sites in November 2026. Vendors move pages.
+- The warranty report is not schedulable by email.
+
+---
+
 ## [0.54.0] — 2026-11-15 · *Curfew*
 
 **Restarts can be scheduled, and patch policies have restart windows.**

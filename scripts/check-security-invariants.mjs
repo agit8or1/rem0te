@@ -866,9 +866,9 @@ check(
   check('reports: the visibility rule is never spread into another object', !/\.\.\.\s*this\.acl\.endpointVisibilityWhere/.test(rsvc), 'spread found');
   const routes = rctl.split('@Get(').slice(1);
   check('reports: every route names its capability; every export is throttled',
-    routes.length === 10 && routes.every((r) => /^\s*'[^']+'\)\s*@RequireCapability\(CAP\.(COMPUTERS_VIEW|ALERTS_VIEW)\)/.test(r)) && routes.filter((r) => /export\.csv/.test(r.slice(0, 60))).every((r) => /@RateLimit\(10\)/.test(r.slice(0, 200)))
+    routes.length === 12 && routes.every((r) => /^\s*'[^']+'\)\s*@RequireCapability\(CAP\.(COMPUTERS_VIEW|ALERTS_VIEW)\)/.test(r)) && routes.filter((r) => /export\.csv/.test(r.slice(0, 60))).every((r) => /@RateLimit\(10\)/.test(r.slice(0, 200)))
       && routes.filter((r) => /^'(alert-frequency|offline-time)/.test(r)).every((r) => /CAP\.ALERTS_VIEW/.test(r.slice(0, 120))),
-    'ten routes (0.34 added software compliance and its export), each @RequireCapability; alert reports need ALERTS_VIEW; exports @RateLimit');
+    'twelve routes (0.34 added software compliance, 0.56 warranty, each with its export), each @RequireCapability; alert reports need ALERTS_VIEW; exports @RateLimit');
   const ex = rsvc.slice(rsvc.indexOf('async exportCsv('));
   check('reports: an export is capped, neutralised and audited (logOrFail) before it is returned',
     /if \(lines\.length > EXPORT_MAX_ROWS\) \{\s*throw new BadRequestException/.test(ex) && /cells\.map\(csvCell\)/.test(ex)
@@ -2215,8 +2215,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('AI: the one provider call site is ai/client.ts, through safePost, with the 60 s bound and a size cap',
     callers.length === 1 && callers[0].endsWith('/ai/client.ts') && /export const AI_TIMEOUT_MS = 60_000;/.test(A('client.ts')) && /safePost\(req\.url, req\.headers, req\.body, \{ timeoutMs: AI_TIMEOUT_MS, maxBytes: AI_MAX_RESPONSE \}\)/.test(A('client.ts')),
     `safePost callers: ${callers.join(', ')}`);
-  const outside = files.filter((f) => /from '[./]*common\/safe-https'|from '\.\/safe-https'/.test(read(f))).filter((f) => !f.startsWith('apps/api/src/ai/') && f !== 'apps/api/src/psa/connectors/webhook.ts');
-  check('AI/PSA: only ai/ and the PSA webhook connector use the typed-destination client', outside.length === 0, outside.join(', '));
+  // 0.56: and the warranty lookup client (warranty/client.ts), held to the same rule by § 69.
+  const outside = files.filter((f) => /from '[./]*common\/safe-https'|from '\.\/safe-https'/.test(read(f))).filter((f) => !f.startsWith('apps/api/src/ai/') && f !== 'apps/api/src/psa/connectors/webhook.ts' && f !== 'apps/api/src/warranty/client.ts');
+  check('AI/PSA/warranty: only ai/, the PSA webhook connector and the warranty client use the typed-destination client', outside.length === 0, outside.join(', '));
   const sh = read('apps/api/src/common/safe-https.ts');
   const post = sh.slice(sh.indexOf('export async function safePost('));
   check('safe-https: the URL is checked, resolved, every address judged with no local allowance, and the checked address is what is connected to',
@@ -2227,7 +2228,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('safe-https: redirects are refused, never followed; the response is capped',
     /if \(status >= 300 && status < 400\) \{ res\.destroy\(\); return done\(\(\) => reject\(new OutboundError\('REDIRECT_REFUSED'/.test(post) && /if \(total > opts\.maxBytes\)/.test(post), 'a 3xx must reject; the body must be capped');
   check('safe-https: plain http only to 127.0.0.1 and only under NODE_ENV=test; https, public DNS names otherwise',
-    /return process\.env\.NODE_ENV === 'test' && TEST_LOOPBACK\.test\(raw\);/.test(sh) && /const TEST_LOOPBACK = \/\^http:\\\/\\\/127\\\.0\\\.0\\\.1:\[0-9\]\{2,5\}/.test(sh)
+    /return process\.env\.NODE_ENV === 'test' && TEST_LOOPBACK\.test\(base\) && \(q < 0 \|\| TEST_QUERY\.test\(raw\.slice\(q \+ 1\)\)\);/.test(sh) && /const TEST_QUERY = \/\^\[A-Za-z0-9\._~=&-\]\{0,200\}\$\/;/.test(sh) && /const TEST_LOOPBACK = \/\^http:\\\/\\\/127\\\.0\\\.0\\\.1:\[0-9\]\{2,5\}/.test(sh)
       && /if \(u\.protocol !== 'https:'\) return \{ ok: false/.test(sh) && /if \(isIP\(h\)\) return \{ ok: false/.test(sh) && /INTERNAL_SUFFIX\.test\(h\)\) \{\s*\n\s*return \{ ok: false/.test(sh),
     'checkPublicHttpsUrl must refuse http, IP literals, localhost and internal names; the loopback exception must stay test-only');
   check('AI: AI_TEST_BASE_URL is honoured only through testLoopbackAllowed',
@@ -4507,6 +4508,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'tray/tray.controller.ts': ['chat.recording'],
     'update-trust/update-trust.controller.ts': ['update.trust'],
     'users/users.controller.ts': ['permissions.change'],
+    'warranty/warranty.controller.ts': ['warranty.settings'],
   };
   const named = {};
   for (const f of files) {
@@ -4995,6 +4997,170 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /unit-restart-windows\.mjs/.test(read('.github/workflows/ci.yml')) && / service-process task-progress restart-windows; do/.test(read('scripts/run-e2e.sh'))
       && /P\.policyDigest\(parsed\) === '466423a5bb889e289b536d62ac25ddf66450179770f1161c576003fc3644f99b'/.test(unitR),
     'unit-restart-windows.mjs in CI (pinning the 0.52 digest), e2e-restart-windows.mjs in run-e2e.sh');
+}
+
+// 69. Hardware warranty and support links (0.56). A computer's serial number
+//     leaves this server only to a hardware vendor a Platform Admin switched
+//     on, and nothing else about the computer goes with it:
+//       - the support-link table is one pure module with a byte-identical web
+//         copy; links are https to a fixed vendor host list, the serial goes
+//         into a URL only for Dell, after its own charset check, through
+//         encodeURIComponent, and every vendor link opens with
+//         rel="noopener noreferrer";
+//       - the vendor APIs are called only from warranty/client.ts, only through
+//         safe-https (safeGet / safePost), with a bound and a cap; the test
+//         base URL only through testLoopbackAllowed; lookup() takes the
+//         serial as a string and nothing else about the computer;
+//       - the credential is sealed with its own purpose, never in a response
+//         or audit row (last four only), and setting it is a Platform Admin's
+//         with assertFresh naming warranty.settings (§ 62);
+//       - the sweep is off with WARRANTY_SWEEP=off, bounded per hour and per
+//         computer (30 days), skips a business under an integration pause,
+//         claims each computer with a conditional write, and never overwrites
+//         a manual entry; "Check now" checks the pause too;
+//       - a manual entry needs computers:edit on the computer and is audited
+//         with before and after; 0077 CHECKs the source, the dates, the
+//         coverage charset and the vendor list;
+//       - the report is scoped by endpointVisibilityWhere; WARRANTY_EXPIRING
+//         is opt-in (never in RECOMMENDED) and the 0.36 SWEEP_KINDS set is
+//         unchanged.
+{
+  const strip = (x) => x.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const vApi = read('apps/api/src/warranty/vendors.ts');
+  const vWeb = read('apps/web/lib/hardware-support.ts');
+  check('warranty: the support-link table has one copy for the API and an identical one for the web, with no imports',
+    vApi === vWeb && !/^import /m.test(vApi) && !/\brequire\(/.test(vApi),
+    'apps/api/src/warranty/vendors.ts and apps/web/lib/hardware-support.ts must be byte-identical and import nothing');
+  const urls = [...vApi.matchAll(/'(https?:\/\/[^'`]+)'/g)].map((m) => m[1]);
+  const hosts = (vApi.match(/export const VENDOR_HOSTS = \[([\s\S]*?)\] as const;/) ?? [])[1] ?? '';
+  const hostList = [...hosts.matchAll(/'([a-z0-9.-]+)'/g)].map((m) => m[1]);
+  const badUrls = urls.filter((u) => { try { const x = new URL(u); return x.protocol !== 'https:' || !hostList.includes(x.hostname); } catch { return true; } });
+  check('warranty: every support link is https to a host on VENDOR_HOSTS',
+    urls.length >= 12 && hostList.length >= 8 && badUrls.length === 0, `not https or not on VENDOR_HOSTS: ${badUrls.join(', ')}`);
+  const dellFn = vApi.slice(vApi.indexOf("if (maker.vendor === 'dell') {"), vApi.indexOf('const f = FIXED[maker.vendor];'));
+  const interp = [...strip(vApi).matchAll(/\$\{([^}]+)\}/g)].map((m) => m[1]).filter((x) => /serial|tag/i.test(x));
+  check('warranty: only Dell puts the serial in a link, after DELL_TAG_RE, through encodeURIComponent',
+    /if \(serial && DELL_TAG_RE\.test\(serial\)\) \{\s*const tag = encodeURIComponent\(serial\);/.test(dellFn)
+      && interp.every((x) => x === 'tag') && /export const DELL_TAG_RE = \/\^\[A-Za-z0-9\]\{7\}\$\/;/.test(vApi)
+      && /export const SERIAL_RE = \/\^\[A-Za-z0-9-\]\{4,40\}\$\/;/.test(vApi) && /if \(!s \|\| PLACEHOLDER\.test\(s\) \|\| !SERIAL_RE\.test\(s\)\) return null;/.test(vApi),
+    `serial interpolations: ${interp.join(', ')}`);
+  const anchors = ['apps/web/components/endpoints/warranty-card.tsx', 'apps/web/components/endpoints/list/columns.tsx'].map((f) => [f, read(f)]);
+  const badA = anchors.flatMap(([f, src]) => [...src.matchAll(/<a\s[^>]*href=\{(?:k|link)\.url\}[^>]*>/g)].filter((m) => !/target="_blank"/.test(m[0]) || !/rel="noopener noreferrer"/.test(m[0])).map(() => f));
+  const count = anchors.reduce((n, [, src]) => n + (src.match(/<a\s[^>]*href=\{(?:k|link)\.url\}/g) ?? []).length, 0);
+  check('warranty: every vendor link in the console opens in a new tab with rel="noopener noreferrer"',
+    count === 2 && badA.length === 0, `${count} vendor anchors; without target/rel: ${badA.join(', ')}`);
+
+  const files = walk('apps/api/src');
+  const cl = read('apps/api/src/warranty/client.ts');
+  const hostHits = files.filter((f) => /apigtwb2c\.us\.dell\.com|supportapi\.lenovo\.com|WARRANTY_TEST_BASE_URL/.test(strip(read(f))) && f !== 'apps/api/src/warranty/client.ts');
+  check('warranty: vendor API hosts and the test base URL appear only in warranty/client.ts', hostHits.length === 0, hostHits.join(', '));
+  const wFiles = files.filter((f) => f.startsWith('apps/api/src/warranty/'));
+  const raw = wFiles.filter((f) => /\bfetch\(|\bhttps?\.request\(|axios|got\(|undici/.test(read(f)));
+  check('warranty: no fetch or raw request in warranty/ — only safeGet / safePost', raw.length === 0, raw.join(', '));
+  const callers = files.filter((f) => /\bsafe(Get|Post)\(/.test(read(f)) && !f.endsWith('common/safe-https.ts'));
+  check('warranty: safeGet is called only by warranty/client.ts, with the 20 s bound and the 256 KB cap',
+    files.filter((f) => /\bsafeGet\(/.test(read(f)) && !f.endsWith('common/safe-https.ts')).every((f) => f === 'apps/api/src/warranty/client.ts')
+      && /export const WARRANTY_TIMEOUT_MS = 20_000;/.test(cl) && /export const WARRANTY_MAX_RESPONSE = 256 \* 1024;/.test(cl)
+      && /const OPTS = \{ timeoutMs: WARRANTY_TIMEOUT_MS, maxBytes: WARRANTY_MAX_RESPONSE \};/.test(cl)
+      && (cl.match(/safe(Get|Post)\([^;]*OPTS\)/g) ?? []).length === 3 && callers.includes('apps/api/src/warranty/client.ts'),
+    'client.ts: three vendor requests (Dell token, Dell entitlements, Lenovo), each with OPTS');
+  const sh = read('apps/api/src/common/safe-https.ts');
+  const req = sh.slice(sh.indexOf('async function safeRequest('));
+  check('safe-https: safeGet goes through the same checked request as safePost (no second client)',
+    /export async function safeGet\([^)]*\): Promise<SafeResponse> \{\s*return safeRequest\('GET', rawUrl, headers, null, opts\);\s*\}/.test(sh)
+      && /export async function safePost\([^)]*\): Promise<SafeResponse> \{\s*return safeRequest\('POST', rawUrl, headers, body, opts\);\s*\}/.test(sh)
+      && req.indexOf('checkPublicHttpsUrl(rawUrl)') > 0 && /const r = checkResolved\(addrs, 'none'\);/.test(req),
+    'safeGet/safePost both return safeRequest(...)');
+  check('warranty: WARRANTY_TEST_BASE_URL is honoured only through testLoopbackAllowed',
+    /const v = process\.env\.WARRANTY_TEST_BASE_URL;\s*\n\s*return v && testLoopbackAllowed\(v\)/.test(cl) && (cl.match(/WARRANTY_TEST_BASE_URL/g) ?? []).length <= 3,
+    'client.ts testBase()');
+  check('warranty: lookup takes the serial as a string and nothing else about the computer; each request carries only it',
+    /export async function lookup\(vendor: LookupVendor, creds: Credentials, serial: string\): Promise<LookupResult>/.test(cl)
+      && /\/PROD\/sbil\/eapi\/v5\/asset-entitlements\?servicetags=\$\{encodeURIComponent\(serial\)\}`/.test(cl)
+      && /\/v2\.5\/warranty\?Serial=\$\{encodeURIComponent\(serial\)\}`/.test(cl)
+      && /new URLSearchParams\(\{ grant_type: 'client_credentials', client_id: c\.clientId, client_secret: c\.secret \}\)/.test(cl)
+      && !/endpoint|hostname|customer|business/i.test(strip(cl).replace(/asset-entitlements/g, '')),
+    'client.ts must not take or send anything but the serial (and the vendor credential)');
+  const svc = read('apps/api/src/warranty/warranty.service.ts');
+  const lookCalls = [...svc.matchAll(/await lookup\(([^)]*)\)/g)].map((m) => m[1]);
+  check('warranty: the service asks the vendor in one place, with the serial alone',
+    lookCalls.length === 1 && lookCalls[0] === 'vendor, creds, serial' && files.filter((f) => (f.startsWith('apps/api/src/warranty/') && /from '\.\/client'/.test(read(f))) || /from '[./]*warranty\/client'/.test(read(f))).every((f) => f === 'apps/api/src/warranty/warranty.service.ts'),
+    `lookup calls: ${lookCalls.join(' | ')}`);
+  check('warranty: the credential is sealed with its own purpose; only its last four characters are kept in the clear',
+    /secretEnc = sealSecret\(this\.encKey, 'rem0te-warranty-key-v1', d\.data\.secret\); secretLast4 = last4\(d\.data\.secret\);/.test(svc)
+      && /openSecret\(this\.encKey, 'rem0te-warranty-key-v1', v\.secretEnc\)/.test(svc)
+      && /'rem0te-warranty-key-v1'/.test(read('apps/api/src/common/secret-box.ts')),
+    'warranty.service putVendor()/credentials()');
+  const vview = svc.slice(svc.indexOf('  private vendorView('), svc.indexOf('  async settings()'));
+  const putV = svc.slice(svc.indexOf('  async putVendor('));
+  check('warranty: no response carries the credential or its ciphertext; the audit says only whether it changed',
+    vview.length > 100 && !/secretEnc:|secret:|\.\.\.v\b/.test(vview) && /secretSet: !!v\?\.secretEnc, secretLast4: v\?\.secretEnc \? v\.secretLast4 : null/.test(vview)
+      && /meta: \{ vendor, before: pub\(cur\), after: pub\(row\), key: keyChange \}/.test(putV)
+      && /const pub = \(s: WarrantyVendor \| null\) => s && \{ enabled: s\.enabled, clientIdSet: !!s\.clientId \};/.test(putV),
+    'vendorView() / WARRANTY_SETTINGS_CHANGED meta');
+  check('warranty: nothing in warranty/ logs a credential or a serial (the one Logger prints only the sweep error message)',
+    wFiles.every((f) => !/console\./.test(read(f))) && (svc.match(/this\.logger\.\w+\(/g) ?? []).length === 1 && /this\.logger\.error\(`warranty sweep: \$\{\(e as Error\)\.message\}`\)/.test(svc),
+    'warranty/*.ts');
+  const ctl = read('apps/api/src/warranty/warranty.controller.ts');
+  check('warranty: settings are a Platform Admin\'s (class guard), with assertFresh first, naming warranty.settings',
+    /@Controller\('warranty\/settings'\)\s*\n@UseGuards\(PlatformAdminGuard\)/.test(ctl)
+      && /@Put\(':vendor'\)\s*\n\s*@RateLimit\(20\)\s*\n\s*async put\([^\n]*\) \{\s*\n\s*const u = [^\n]*\n\s*assertFresh\([^\n]*\{ action: 'warranty\.settings'/.test(ctl)
+      && /key: 'warranty\.settings', group: 'Integrations'/.test(read('apps/api/src/security-controls/confirm-catalog.ts')),
+    'WarrantySettingsController');
+  check('warranty: a computer\'s warranty is read with computers:view and changed with computers:edit, on that computer',
+    /async get\(actor: ActorContext, endpointId: string\) \{\s*await this\.acl\.assertEndpointInScope\(actor, endpointId, CAP\.COMPUTERS_VIEW\);/.test(svc)
+      && /async setManual\(actor: ActorContext, endpointId: string, raw: unknown\) \{\s*const ep = await this\.acl\.assertEndpointInScope\(actor, endpointId, CAP\.COMPUTERS_EDIT\);/.test(svc)
+      && /async checkNow\(actor: ActorContext, endpointId: string\) \{\s*const ep = await this\.acl\.assertEndpointInScope\(actor, endpointId, CAP\.COMPUTERS_EDIT\);/.test(svc)
+      && /@Put\(\)\s*\n\s*@RequireCapability\(CAP\.COMPUTERS_EDIT\)/.test(ctl) && /@Post\('lookup'\)\s*\n\s*@HttpCode\(HttpStatus\.OK\)\s*\n\s*@RequireCapability\(CAP\.COMPUTERS_EDIT\)/.test(ctl),
+    'WarrantyController / WarrantyService get/setManual/checkNow');
+  const setM = svc.slice(svc.indexOf('  async setManual('), svc.indexOf('  async checkNow('));
+  check('warranty: a manual entry is a conditional write audited with before and after (logOrFail)',
+    /const w = await this\.prisma\.endpoint\.updateMany\(\{\s*where: \{ id: endpointId, warrantySource: cur\.warrantySource, warrantyEndsAt: cur\.warrantyEndsAt, warrantyStartsAt: cur\.warrantyStartsAt \},/.test(setM)
+      && /action: 'WARRANTY_SET'/.test(setM) && /meta: \{ before: pub\(cur\), after: pub\(\{ \.\.\.cur, \.\.\.data \}\), cleared: clear \}/.test(setM) && /await this\.audit\.logOrFail\(/.test(setM),
+    'setManual()');
+  const tick = svc.slice(svc.indexOf('  private async tick('), svc.indexOf('  // ── Settings'));
+  const lands = svc.slice(svc.indexOf('  private async lookupAndStore('), svc.indexOf('  // ── The sweep'));
+  const chk = svc.slice(svc.indexOf('  async checkNow('), svc.indexOf('  private async credentials('));
+  check('warranty: the sweep is off with WARRANTY_SWEEP=off, bounded per hour and per computer, and claims each computer conditionally',
+    /if \(process\.env\.WARRANTY_SWEEP === 'off'\) return;/.test(svc) && /export const LOOKUP_INTERVAL_DAYS = 30;/.test(svc)
+      && /let left = budget\(perHour\(\), used\);/.test(tick) && /return Math\.max\(0, Math\.min\(PER_TICK_MAX, limitPerHour - usedLastHour\)\);/.test(svc)
+      && /Math\.min\(n, 500\) : 60;/.test(svc)
+      && /const claim = await this\.prisma\.endpoint\.updateMany\(\{\s*where: \{ id: e\.id, OR: \[\{ warrantyLookupAt: null \}, \{ warrantyLookupAt: \{ lt: cutoff \} \}\] \},/.test(tick)
+      && tick.indexOf('if (!claim.count) continue;') < tick.indexOf('await this.lookupAndStore('),
+    'WarrantyService onModuleInit / tick');
+  check('warranty: an integration pause stops the lookup (sweep and Check now) before anything is sent',
+    tick.indexOf("activePause(this.prisma, 'integration', e.customerId)") > 0 && tick.indexOf("activePause(this.prisma, 'integration', e.customerId)") < tick.indexOf('await this.lookupAndStore(')
+      && chk.indexOf("activePause(this.prisma, 'integration', ep.customerId)") > 0 && chk.indexOf("activePause(this.prisma, 'integration', ep.customerId)") < chk.indexOf('await this.lookupAndStore('),
+    'tick() and checkNow() must consult activePause(integration) before lookupAndStore');
+  check('warranty: a vendor answer never overwrites a manual entry; the sweep never picks one',
+    /where: \{ id: e\.id, OR: \[\{ warrantySource: null \}, \{ warrantySource: \{ not: 'manual' \} \}\] \},/.test(lands)
+      && /OR: \[\{ warrantySource: null \}, \{ warrantySource: \{ not: 'manual' \} \}\],/.test(tick)
+      && /if \(e\.warrantySource === 'manual'\) throw new ConflictException\(\{ code: 'WARRANTY_MANUAL'/.test(chk),
+    'lookupAndStore / tick / checkNow');
+  const mig = read('apps/api/prisma/migrations/0077_warranty/migration.sql');
+  check('0077 CHECKs the source, the dates, the coverage charset and the vendor list',
+    /CHECK \("warrantySource" IS NULL OR "warrantySource" IN \('manual', 'dell', 'lenovo'\)\)/.test(mig)
+      && /"warrantyStartsAt" <= "warrantyEndsAt"/.test(mig) && /char_length\("warrantyCoverage"\) <= 200/.test(mig)
+      && /CHECK \("vendor" IN \('dell', 'lenovo'\)\)/.test(mig) && /CHECK \(NOT "enabled" OR "secretEnc" IS NOT NULL\)/.test(mig)
+      && /export const LOOKUP_VENDORS = \['dell', 'lenovo'\] as const;/.test(cl),
+    'migration 0077');
+  const rep = read('apps/api/src/reports/reports.service.ts');
+  const wr = rep.slice(rep.indexOf('  private async warrantyRows('), rep.indexOf('  async warranty('));
+  check('warranty: the report reads only the caller\'s visible computers (devicesWhere → endpointVisibilityWhere)',
+    /where: this\.devicesWhere\(actor, q\),/.test(wr) && /this\.acl\.endpointVisibilityWhere\(actor, q\.businessId\)/.test(rep)
+      && /@Get\('warranty'\)\s*\n\s*@RequireCapability\(CAP\.COMPUTERS_VIEW\)/.test(read('apps/api/src/reports/reports.controller.ts')),
+    'ReportsService.warrantyRows');
+  const eng = read('apps/api/src/monitoring/engine.ts');
+  const recBlock = eng.slice(eng.indexOf('export const RECOMMENDED'), eng.indexOf('\n];', eng.indexOf('export const RECOMMENDED')));
+  check('warranty: WARRANTY_EXPIRING is opt-in (not in RECOMMENDED), and the 0.36 sweep-kind set is unchanged',
+    /WARRANTY_EXPIRING: z\.object\(\{ daysBefore: ints\(1, 365\)\.default\(30\) \}\)\.strict\(\),/.test(eng) && !/WARRANTY/.test(recBlock)
+      && /const SWEEP_KINDS = new Set\(\['OFFLINE', 'REBOOT_PENDING', 'AGENT_SILENT'\]\);/.test(read('apps/api/src/monitoring/monitoring.service.ts'))
+      && /ALTER TYPE "MonitorKind" ADD VALUE 'WARRANTY_EXPIRING';/.test(mig),
+    'engine.ts PARAMS / RECOMMENDED; monitoring.service SWEEP_KINDS');
+  check('warranty: the suites run — unit in CI, e2e in run-e2e.sh with the sweep off for everything else',
+    /unit-warranty\.mjs/.test(read('.github/workflows/ci.yml')) && / confirm-policy warranty; do/.test(read('scripts/run-e2e.sh'))
+      && /^export WARRANTY_SWEEP=off$/m.test(read('scripts/run-e2e.sh')),
+    'ci.yml / run-e2e.sh');
 }
 
 if (failures.length > 0) {

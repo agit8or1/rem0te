@@ -191,7 +191,11 @@ t('plain http only to 127.0.0.1, only in NODE_ENV=test', () => {
     process.env.NODE_ENV = 'test';
     assert.equal(H.checkPublicHttpsUrl('http://127.0.0.1:3752/hook').ok, true);
     assert.equal(H.checkPublicHttpsUrl('http://127.0.0.2:3752/hook').ok, false);
-    assert.equal(H.checkPublicHttpsUrl('http://127.0.0.1:3752/hook?x=1').ok, false);
+    // 0.56: a query in the same narrow charset is allowed (the warranty stubs take ?Serial=); anything else is not.
+    assert.equal(H.checkPublicHttpsUrl('http://127.0.0.1:3752/hook?x=1').ok, true);
+    assert.equal(H.checkPublicHttpsUrl('http://127.0.0.1:3752/hook?x=%3C').ok, false);
+    assert.equal(H.checkPublicHttpsUrl('http://127.0.0.1:3752/hook?x=1#f').ok, false);
+    assert.equal(H.checkPublicHttpsUrl('http://127.0.0.1:3752/hook?x=1@evil.example').ok, false);
   } finally { process.env.NODE_ENV = prev; }
 });
 

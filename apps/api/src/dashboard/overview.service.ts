@@ -8,6 +8,7 @@ import { STALE_AFTER_MS } from '../patching/summary';
 import { deviceCompliance, PATCH_COMPLIANCE_DEFINITION, PATCH_INVENTORY_SELECT } from '../patching/compliance';
 import { catalogEntry } from '../actions/catalog';
 import { restartPendingSentence } from '../common/platform';
+import { warrantyState } from '../warranty/vendors';
 import { connectivityOf, HEARTBEAT_STALE_MS, type Connectivity } from '../common/connectivity';
 import { age, rankQueue, type QueueItem } from './queue';
 
@@ -112,7 +113,7 @@ export class DashboardOverviewService {
       ? await this.prisma.endpoint.findMany({
           where: visible,
           select: {
-            id: true, name: true, hostname: true, isOnline: true, lastSeenAt: true, platform: true,
+            id: true, name: true, hostname: true, isOnline: true, lastSeenAt: true, platform: true, warrantyEndsAt: true,
             customer: { select: { id: true, name: true } },
             inventory: { select: PATCH_INVENTORY_SELECT },
           },
@@ -172,6 +173,15 @@ export class DashboardOverviewService {
       }
     }
     offline.sort((a, b) => (b.lastSeenAt ?? '').localeCompare(a.lastSeenAt ?? ''));
+    // 0.56: hardware warranty, from the stored end dates (warranty/vendors.ts warrantyState).
+    const warranty = { expired: 0, within30: 0, within90: 0, unknown: 0 };
+    for (const e of endpoints) {
+      const w = warrantyState(e.warrantyEndsAt, now);
+      if (w === 'expired') warranty.expired++;
+      else if (w === 'unknown') warranty.unknown++;
+      if (w === 'expiring_30') warranty.within30++;
+      if (w === 'expiring_30' || w === 'expiring_60' || w === 'expiring_90') warranty.within90++;
+    }
 
     // ── Alerts ──────────────────────────────────────────────────────────────
     const active: Prisma.MonitorAlertWhereInput | null = alertWhere ? { AND: [alertWhere, { state: { in: ['OPEN', 'ACKNOWLEDGED'] } }] } : null;
@@ -427,6 +437,7 @@ export class DashboardOverviewService {
           }
         : null,
       restart: visible ? { devices: restart.length, list: restart.slice(0, 10) } : null,
+      warranty: visible ? { ...warranty, total: endpoints.length } : null,
       patch: visible
         ? {
             definition: PATCH_COMPLIANCE_DEFINITION,

@@ -9,7 +9,7 @@
  */
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 
-export type SecretPurpose = 'rem0te-ai-key-v1' | 'rem0te-psa-webhook-secret-v1';
+export type SecretPurpose = 'rem0te-ai-key-v1' | 'rem0te-psa-webhook-secret-v1' | 'rem0te-warranty-key-v1';
 
 function key(hex: string | undefined): Buffer {
   const k = Buffer.from(hex ?? '', 'hex');

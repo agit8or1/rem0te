@@ -12,7 +12,7 @@ import { comparePrecedence, PRIORITY_MAX, PRIORITY_MIN, type PolicyScope } from 
 import { HEARTBEAT_STALE_MS } from '../common/connectivity';
 import { PROGRAM_KEY_RE, REMOVAL_KINDS } from '../actions/catalog';
 
-export const MONITOR_KINDS = ['OFFLINE', 'DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH', 'SERVICE_STOPPED', 'EVENT_MATCH', 'REBOOT_PENDING', 'AGENT_SILENT'] as const;
+export const MONITOR_KINDS = ['OFFLINE', 'DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH', 'SERVICE_STOPPED', 'EVENT_MATCH', 'REBOOT_PENDING', 'AGENT_SILENT', 'WARRANTY_EXPIRING'] as const;
 export type MonitorKind = (typeof MONITOR_KINDS)[number];
 export const SEVERITIES = ['INFO', 'WARNING', 'CRITICAL'] as const;
 export type Severity = (typeof SEVERITIES)[number];
@@ -71,6 +71,8 @@ export const PARAMS: Record<MonitorKind, z.ZodTypeAny> = {
   // (HEARTBEAT_STALE_MS, 30 min): below it the computer still shows Online,
   // and an alert would contradict the page it links to. The ceiling is a week.
   AGENT_SILENT: z.object({ minutes: ints(AGENT_SILENT_BOUNDS.min, AGENT_SILENT_BOUNDS.max).default(AGENT_SILENT_BOUNDS.def) }).strict(),
+  // 0.56: opt-in, never in RECOMMENDED. See evaluateWarranty.
+  WARRANTY_EXPIRING: z.object({ daysBefore: ints(1, 365).default(30) }).strict(),
 };
 
 export const RULE_KEY = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -368,6 +370,32 @@ export function evaluateLive(rule: RuleLike, live: Live, st: MonitorStateLike, n
     default:
       return { verdict: 'skip', reason: 'not a live rule' };
   }
+}
+
+/**
+ * WARRANTY_EXPIRING (0.56): the computer's hardware warranty ends within
+ * `daysBefore` days, or has ended. Swept, stateless: the stored end date
+ * (Endpoint.warrantyEndsAt, manual or from a vendor lookup) is the evidence.
+ * No date clears (unknown is not "expiring"), and so does a date moved beyond
+ * the window; the sweep also resolves and re-raises when an open alert's
+ * date is not the stored one, so one alert always names the current date.
+ */
+export function evaluateWarranty(rule: RuleLike, endsAt: Date | null, name: string, st: MonitorStateLike, now: Date): Verdict {
+  const p = parseParams(rule.kind, rule.params);
+  if (!p.ok) return { verdict: 'skip', reason: `invalid params: ${p.error}` };
+  const daysBefore = (p.params as { daysBefore: number }).daysBefore;
+  const ok: Verdict = { verdict: 'ok', state: { ...st, breachCount: 0, okCount: st.okCount + 1, breachSince: null }, clear: true };
+  if (!endsAt || !Number.isFinite(endsAt.getTime())) return ok;
+  const daysLeft = Math.floor((endsAt.getTime() - now.getTime()) / 86_400_000);
+  if (daysLeft >= daysBefore) return ok;
+  const day = endsAt.toISOString().slice(0, 10);
+  const ended = endsAt.getTime() <= now.getTime();
+  return {
+    verdict: 'breach',
+    title: ended ? `${name}: hardware warranty ended ${day}` : `${name}: hardware warranty ends ${day}`,
+    detail: { endsAt: endsAt.toISOString(), daysLeft, daysBefore, ended },
+    state: { ...st, breachCount: 1, okCount: 0, breachSince: st.breachSince ?? now },
+  };
 }
 
 /**

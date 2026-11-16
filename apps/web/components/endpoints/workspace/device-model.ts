@@ -218,6 +218,7 @@ export const MONITOR_KIND_LABEL: Record<string, string> = {
   EVENT_MATCH: 'Event log',
   REBOOT_PENDING: 'Restart pending',
   AGENT_SILENT: 'Agent silent',
+  WARRANTY_EXPIRING: 'Warranty ending',
 };
 
 const EVENT_LEVEL: Record<number, string> = { 0: 'any', 1: 'Critical', 2: 'Error', 3: 'Warning', 4: 'Information', 5: 'Verbose' };
@@ -233,6 +234,7 @@ export function describeMonitor(kind: string, p: Record<string, unknown>): strin
     case 'SERVICE_STOPPED': return `${String(p.service ?? '?')} not running${p.alertIfMissing ? ' or missing' : ''}`;
     case 'REBOOT_PENDING': return `a restart pending for over ${n('hours') ?? 72} hours`;
     case 'AGENT_SILENT': return `RustDesk reachable but no agent check-in for ${n('minutes') ?? 60} minutes`;
+    case 'WARRANTY_EXPIRING': return `hardware warranty ends within ${n('daysBefore') ?? 30} days, or has ended`;
     case 'EVENT_MATCH': {
       const ids = Array.isArray(p.ids) && p.ids.length ? `event ID ${(p.ids as number[]).join(', ')}` : null;
       const levels = Array.isArray(p.levels) && p.levels.length ? (p.levels as number[]).map((l) => EVENT_LEVEL[l] ?? l).join(' / ') : null;

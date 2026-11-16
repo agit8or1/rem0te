@@ -3,7 +3,7 @@ import { Prisma, type MonitorAlert, type MonitorRule } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { validatePeerUrl } from '../integration/peers';
 import {
-  agentMonitorConfig, dedupKeyOf, type Destination, isEmailDestination, dueLevels, effectiveRules, EMPTY_STATE, evaluateEvents, evaluateLive, evaluateService,
+  agentMonitorConfig, dedupKeyOf, type Destination, isEmailDestination, dueLevels, effectiveRules, EMPTY_STATE, evaluateEvents, evaluateLive, evaluateService, evaluateWarranty,
   NotifyLevel, OUTAGE, outageDecision, outageKeyOf, sanitizeReport, scopesFor, SEVERITY_RANK, suppressionFor,
   type Live, type MonitorStateLike, type RuleLike, type Severity, type Verdict,
 } from './engine';
@@ -268,10 +268,10 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
     const rules = (await this.prisma.monitorRule.findMany()).map((r) => this.asRule(r));
     const eps = await this.prisma.endpoint.findMany({
       where: { status: 'ACTIVE' },
-      select: { id: true, tenantId: true, customerId: true, siteId: true, name: true, isOnline: true, lastSeenAt: true, inventory: { select: { rebootRequired: true, updatesCheckedAt: true } } },
+      select: { id: true, tenantId: true, customerId: true, siteId: true, name: true, isOnline: true, lastSeenAt: true, warrantyEndsAt: true, inventory: { select: { rebootRequired: true, updatesCheckedAt: true } } },
     });
     const valid = new Set<string>();
-    const openRows = await this.prisma.monitorAlert.findMany({ where: { state: { not: 'RESOLVED' }, kind: { not: 'SITE_OUTAGE' } }, select: { id: true, dedupKey: true, kind: true, endpointId: true, title: true } });
+    const openRows = await this.prisma.monitorAlert.findMany({ where: { state: { not: 'RESOLVED' }, kind: { not: 'SITE_OUTAGE' } }, select: { id: true, dedupKey: true, kind: true, endpointId: true, title: true, detail: true } });
     const open = new Map(openRows.map((a) => [a.dedupKey, a]));
     const sweepKeys = [...new Set(rules.filter((r) => SWEEP_KINDS.has(r.kind) || r.kind === 'EVENT_MATCH').map((r) => r.key))];
     const stateRows = sweepKeys.length ? await this.prisma.endpointMonitorState.findMany({ where: { ruleKey: { in: sweepKeys } } }) : [];
@@ -302,6 +302,19 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
           if (v.verdict === 'breach' && isOpen && !moved && !stale) continue;
           if (v.verdict !== 'breach' && !isOpen && !moved) continue;
           await this.apply(ep, r, v, now, { repeat: false, saveState: moved || v.verdict === 'breach' });
+        } else if (r.kind === 'WARRANTY_EXPIRING') {
+          // 0.56: stateless, from the stored end date. A date that moved
+          // closes the open alert and raises one naming the new date.
+          const v = evaluateWarranty(r, ep.warrantyEndsAt, ep.name, st, now);
+          const was = open.get(dk);
+          if (v.verdict === 'breach') {
+            const wasEnds = (was?.detail as { endsAt?: unknown } | null)?.endsAt;
+            if (was && wasEnds !== v.detail.endsAt) await this.resolveOpen(dk, null, 'Cleared: the warranty end date changed.', now);
+            else if (was && was.title === v.title.slice(0, 300)) continue;
+            await this.apply(ep, r, v, now, { repeat: false, saveState: false });
+          } else if (v.verdict === 'ok' && was) {
+            await this.resolveOpen(dk, null, 'Cleared: the warranty end date is no longer within the warning period.', now);
+          }
         } else if (r.kind === 'EVENT_MATCH' && open.has(dk)) {
           const v = evaluateEvents(r, undefined, ep.name, st, now);
           if (v.verdict === 'ok' && v.clear) await this.resolveOpen(dk, null, 'Cleared: no matching events for the quiet period.', now);
