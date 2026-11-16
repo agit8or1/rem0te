@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.59.1] — 2026-11-16 · *Passport*
+
+Production dependency patch release (Dependabot #159). No behaviour changes; nothing to configure.
+
+**API** (these reach the target's `node_modules`, so the deploy regenerates the production manifest with
+`pnpm deploy:manifest` and runs `npm install --omit=dev` there — `npm install --package-lock-only` resolved the
+tree cleanly before anything was copied):
+
+- `@nestjs/common`, `@nestjs/core`, `@nestjs/platform-express` 11.2.8 → 11.2.10
+- `@simplewebauthn/server` 14.0.3 → 14.1.0 (passkeys; `e2e-sso-passkeys` and `e2e-security-audit` pass on it in CI)
+- `nodemailer` 10.2.1 → 10.5.0 (outbound email, §42; `e2e-email` passes, still pinned exactly)
+- `maxmind` 5.0.8 → 5.0.9 (GeoIP reader)
+
+**Web:** `next` 16.4.5 → 16.4.6, `axios` 1.21.0 → 1.21.1, `lucide-react` 1.70.0 → 1.72.0.
+
+**Development only** (#160, merged on its own without a release, as the dev-dependency rule says):
+`typescript-eslint` 8.72.1 → 8.72.2 (api, web), `vite` 8.3.6 → 8.3.8, `@vitejs/plugin-react` 6.2.1 → 6.3.0 and
+`marked` 18.1.3 → 18.2.0.
+
 ## [0.59.0] — 2026-11-16 · *Passport*
 
 **Agit8or Identity P0: the groundwork for trusting a self-hosted Keycloak.**
