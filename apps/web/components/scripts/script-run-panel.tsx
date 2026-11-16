@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { apiMessage, selectClass, shortHash } from './script-ui';
 import { ConnectivityIndicator } from '@/components/common/connectivity-indicator';
+import { ScheduleChoice, defaultSchedule, scheduleBody, type ScheduleValue } from '@/components/patching/schedule-choice';
 
 /**
  * Running an approved version (0.34). Three steps, and this panel only ever
@@ -142,6 +143,12 @@ export function ScriptRunPanel({ versionId }: { versionId: string }) {
           )}
         </div>
 
+        {r.you.canRun && (
+          <p className="text-xs" data-testid="script-schedule-link">
+            <Link className="underline" href={`/automation/schedules/new?script=${r.version.id}${r.version.businessId ? `&business=${r.version.businessId}` : ''}`}>Run it on a schedule</Link>
+            <span className="text-muted-foreground"> — every few hours, daily, weekly or monthly, approved once.</span>
+          </p>
+        )}
         {r.you.canRun && <RunForm r={r} />}
 
         {r.you.canRevoke && (
@@ -167,6 +174,8 @@ function RunForm({ r }: { r: Readiness }) {
   const [timeout, setTimeoutMinutes] = useState<number>(r.timeouts.includes(5) ? 5 : r.timeouts[0]);
   const [reason, setReason] = useState('');
   const [ack, setAck] = useState(false);
+  // 0.58: run now, or once at a time (the signed plan's notBefore). Recurring runs are Automation → Schedules.
+  const [when, setWhen] = useState<ScheduleValue>(() => defaultSchedule({}));
   const askRun = useAsks('actions.direct');
   const [q, setQ] = useState('');
   const [requested, setRequested] = useState<{ id: string; approvalUrl: string; endpointIds: string[]; direct?: string } | null>(null);
@@ -177,7 +186,7 @@ function RunForm({ r }: { r: Readiness }) {
   });
   const { args, problem } = argumentsFrom(decls, raw);
   const run = useMutation({
-    mutationFn: () => scriptRunsApi.run({ scriptVersionId: r.version.id, endpointIds: ids, parameters: args, timeoutMinutes: timeout, reason: reason.trim() }),
+    mutationFn: () => scriptRunsApi.run({ scriptVersionId: r.version.id, endpointIds: ids, parameters: args, timeoutMinutes: timeout, reason: reason.trim(), ...scheduleBody(when) }),
     onSuccess: (x) => {
       const j = x.data.data as { id: string; approvalUrl: string; direct?: boolean; requestedByName?: string | null; createdAt: string };
       setRequested({ id: j.id, approvalUrl: j.approvalUrl, endpointIds: ids, ...(j.direct ? { direct: directApproved(j.requestedByName, j.createdAt) } : {}) });
@@ -254,6 +263,11 @@ function RunForm({ r }: { r: Readiness }) {
         </div>
       </div>
       <p className="text-xs text-muted-foreground">The first {Math.round(r.maxOutputBytes / 1024)} KB of its output and of its errors are kept, redacted on the computer and again here, for {r.retentionDays} days, on each computer&apos;s Actions tab.</p>
+      <ScheduleChoice id="script-run-when" value={when} onChange={setWhen} zones={{}} nowLabel="Run now" />
+      <p className="text-xs text-muted-foreground">
+        To run it on a schedule — every few hours, daily, weekly or monthly — make an{' '}
+        <Link className="underline" href="/automation/schedules/new">automation schedule</Link>: it is approved once, and each run is signed under it.
+      </p>
       <div className="space-y-1">
         <Label htmlFor="run-reason" className="text-xs">Why (shown to the approvers)</Label>
         <Textarea id="run-reason" rows={2} maxLength={500} value={reason} onChange={(x) => setReason(x.target.value)} placeholder="e.g. Ticket 77: clear the stuck print queue on reception" />

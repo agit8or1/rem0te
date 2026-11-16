@@ -6,6 +6,7 @@
 import { IGNORE_REMOTE_SESSION_LABEL, REBOOT_UNPROVEN, SIGNED_IN_USER_NOTE, UPDATE_RESTART_WARNING_MINUTES, type Plan } from '../actions/catalog';
 import { CLASSIFICATIONS as CLASS_NAME, describePolicyWindow, nextOccurrences, restartInWords, type PolicyDoc } from '../actions/patch-policy';
 import { resultKeyFingerprint } from '../actions/device-result';
+import { SKIP_GRACE_MINUTES, automationNextOccurrences, offlineInWords, recurrenceInWords, recurrenceKind, taskInWords, type AutomationDoc } from '../actions/automation-policy';
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 
@@ -266,4 +267,71 @@ ${v.status === 'AWAITING_APPROVAL' ? `
 <p><button class="primary" id="approve">Approve with passkey</button><button id="reject">Reject</button></p>` : ''}
 <div id="msg" role="status"></div>
 ${decideScript(nonce, `/approve/script/${v.id}`, 'script')}</body></html>`;
+}
+
+interface AutomationView {
+  policyId: string; status: string; digest: string; doc: AutomationDoc;
+  decisions: { name: string; role: string; decision: string; at: string }[];
+  revokedAt: string | null; revokeReason: string | null; signedPlans: number;
+  /** For a script task: the content from this signer's allowlist; null when the entry is gone. */
+  scriptContent: string | null;
+}
+
+/**
+ * The approval page for an automation policy (0.58). Approving it is
+ * approving every occurrence's plan, so it says so first, and it says what
+ * the signer cannot check: a device group's membership is the portal's.
+ */
+export function renderAutomationApprovalPage(v: AutomationView, nonce: string): string {
+  const d = v.doc;
+  const row = (k: string, val: string) => `<tr><th>${esc(k)}</th><td>${val}</td></tr>`;
+  const fmt = (iso: string) => `${esc(new Date(iso).toUTCString())}`;
+  const tz = (d.recurrence as { timezone: string }).timezone;
+  const local = (t: Date) => new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(t);
+  const openings = recurrenceKind(d.recurrence) ? automationNextOccurrences(new Date(), d.recurrence, 3, new Date(d.expiresAt)) : [];
+  const next = openings.length
+    ? `<br><span class="mut">Next runs before it expires: ${openings.map((o) => esc(`${local(o.start)} → ${local(o.end)}`)).join('; ')}</span>`
+    : '<br><strong>It never runs before the policy expires.</strong>';
+  const t = d.task;
+  const targets = d.targets.kind === 'computers'
+    ? `<ul>${d.targets.computers.map((c) => `<li>${esc(c.hostname)} <span class="mut">(RustDesk ID ${esc(c.rustdeskId)})</span></li>`).join('')}</ul><span class="mut">Bound to each computer's enrolled identity. A re-enrolled computer is not covered.</span>`
+    : `the device group <strong>${esc(d.targets.groupName)}</strong>, at most ${esc(d.targets.maxTargets)} computer(s) per run<br><strong>This signer cannot see the group.</strong> <span class="mut">The portal works out its members at each run; the signer checks only that each one belongs to ${esc(d.businessName)} and that there are no more than ${esc(d.targets.maxTargets)}. Name the computers instead if that matters.</span>`;
+  const what = t.kind === 'script'
+    ? `${esc(taskInWords(t))}<br><span class="mut">Library script, allowlist entry <code>${esc(t.script.allowlistId)}</code>, content SHA-256 <code>${esc(t.script.contentSha256)}</code>. Removing it from the allowlist stops every later run.</span>`
+      + (v.scriptContent === null ? '<br><strong>The allowlist entry is not on this signer: nothing can be signed.</strong>' : `<details><summary>The script (${esc(t.script.contentBytes)} bytes)</summary><pre>${esc(v.scriptContent)}</pre></details>`)
+    : `${esc(taskInWords(t))}<br><span class="mut">Catalog entry <code>${esc(t.display.entryId)}</code> revision ${esc(t.display.entryRevision)}, installer SHA-256 <code>${esc(t.params.installerSha256)}</code> (${esc(t.display.hashSource === 'winget_pkgs' ? 'from winget-pkgs' : 'pasted by an administrator')}). Archiving the entry stops every later install.</span>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Approve automation: ${esc(d.name)}</title>
+<style nonce="${nonce}">${STYLE}</style></head><body>
+<p class="mut">Rem0te approval — this page is served by the approval signer, not the portal.</p>
+<h1>Automation: ${esc(d.name)}</h1>
+<p>Approve this once, and the approval signer signs a plan for each run below by itself, on the schedule below, until the policy expires or is revoked. It does not ask you again for each run.</p>
+<div class="warn"><strong>Before you approve</strong><ul>
+<li>Your approval stands in for yours on every plan signed under this policy. The signer refuses any plan outside it: another script, version, argument or package, another computer, outside the schedule, after expiry, a run while the previous one is still open, or more than ${esc(d.maxRunsPerOccurrence)} plan(s) in one run.</li>
+<li>${t.kind === 'script' ? 'A script runs as SYSTEM and can change anything on the computer.' : 'Installing or removing software changes computers, and can break an application that depends on it.'} It does this every time the schedule opens, with nobody watching.</li>
+<li>A containment pause, a revocation here, or removing the ${t.kind === 'script' ? 'script from the allowlist' : 'package from the catalog'} stops every later run. Pausing it in the portal stops the portal asking.</li>
+</ul></div>
+<table>
+${row('Customer', esc(d.businessName))}
+${row('Does', what)}
+${row('On', targets)}
+${row('Schedule', `${esc(recurrenceInWords(d.recurrence))}${next}`)}
+${row('Offline computers', `${esc(offlineInWords(d.offline))}<br><span class="mut">This is each plan's signed expiry; a computer refuses a plan after it.${d.offline.mode === 'skip_if_offline' ? ` Plans are valid for ${SKIP_GRACE_MINUTES} minutes.` : ''}</span>`)}
+${row('Per run', `at most ${esc(d.maxRunsPerOccurrence)} plan(s) — ${d.maxRunsPerOccurrence > 1 ? 'later ones only for computers the earlier ones missed' : 'one, never retried'}; never two at once`)}
+${row('Proposed by', `${esc(d.createdBy.name)} <span class="mut">(cannot approve it${t.kind === 'script' ? ', nor can anyone who wrote the script' : ''})</span>`)}
+${row('Reason', esc(d.reason))}
+${d.supersedes ? row('Replaces', `<code>${esc(d.supersedes)}</code> <span class="mut">(a new revision is approved again; nothing is widened in place)</span>`) : ''}
+${row('Expires', `${fmt(d.expiresAt)} <span class="mut">(then approved again)</span>`)}
+${row('Needs', '2 approvers, other than the person who proposed it, plus customer sign-off where this business requires it')}
+${row('Policy digest', `<code>${esc(v.digest)}</code>`)}
+${row('Status', `<strong id="status">${esc(v.status.replace(/_/g, ' ').toLowerCase())}</strong>${v.revokedAt ? ` — revoked ${fmt(v.revokedAt)}: ${esc(v.revokeReason ?? '')}` : ''}`)}
+${row('Plans signed under it', esc(v.signedPlans))}
+${row('Decisions', v.decisions.length ? v.decisions.map((x) => `${esc(x.name)} — ${esc(x.decision)} as ${esc(x.role)}, ${fmt(x.at)}`).join('<br>') : '<span class="mut">none yet</span>')}
+</table>
+${v.status === 'AWAITING_APPROVAL' ? `
+<p>Deciding asks for your passkey. Your decision is bound to the digest above and to nothing else.</p>
+<label>Decide as <select id="role"><option value="approver">approver</option><option value="customer">customer sign-off</option></select></label>
+<p><button class="primary" id="approve">Approve with passkey</button><button id="reject">Reject</button></p>` : ''}
+<div id="msg" role="status"></div>
+${decideScript(nonce, `/approve/automation/${v.policyId}`, 'automation policy')}</body></html>`;
 }

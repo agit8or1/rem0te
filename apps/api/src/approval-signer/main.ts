@@ -15,6 +15,8 @@
  *   node dist/approval-signer/main.js pause clear --id <id> --reason '<why>'
  *   node dist/approval-signer/main.js patch-policy list
  *   node dist/approval-signer/main.js patch-policy revoke --id <id> --reason '<why>'
+ *   node dist/approval-signer/main.js automation list
+ *   node dist/approval-signer/main.js automation revoke --id <id> --reason '<why>'
  *   node dist/approval-signer/main.js device-key list
  *   node dist/approval-signer/main.js device-key forget --endpoint <id> --reason '<why>'
  *   node dist/approval-signer/main.js script list
@@ -36,7 +38,7 @@ import { createPublicKey, generateKeyPairSync } from 'node:crypto';
 import * as path from 'node:path';
 import {
   approvalsOf, effectivePolicyStatus, effectiveScriptStatus, fingerprint, keysDocument, loadSigningKey, mergeRevocations, resultKeyFingerprint, revocationStatement,
-  SOFTWARE_ENTRY_ID, verifyPolicy, type RosterMember,
+  SOFTWARE_ENTRY_ID, verifyPolicy, automationApprovalsOf, effectiveAutomationStatus, verifyAutomation, type RosterMember,
 } from './core';
 import { SignerStore } from './store';
 import { startSigner } from './server';
@@ -200,6 +202,32 @@ switch (cmd) {
     die('patch-policy list|revoke --id <id> --reason <why>');
     break;
   }
+  case 'automation': {
+    // 0.58. As patch-policy: the portal proposes and may revoke, approval is
+    // on the public page with passkeys, the operator lists and revokes, and
+    // nothing reactivates a revoked one.
+    if (sub === 'list') {
+      const now = new Date();
+      for (const id of store.automations()) {
+        const r = store.automation(id)!;
+        const ok = verifyAutomation(r, createPublicKey(loadSigningKey(store.keyPem()).key));
+        console.log(`${r.policyId}  ${effectiveAutomationStatus(r, now)}  ${!r.signature ? 'unsigned' : ok ? 'signature ok' : 'SIGNATURE DOES NOT VERIFY'}  ${r.doc.businessId}  "${r.doc.name}"  ${r.doc.task.kind}  expires ${r.doc.expiresAt}  approvals=${automationApprovalsOf(r).map((a) => a.name).join(',') || (r.direct ? 'direct' : '-')}  plans=${r.ledger.length}${r.revokedAt ? `  revoked ${r.revokedAt} by ${r.revokedBy}: ${r.revokeReason}` : ''}`);
+        for (const f of r.refusals.slice(-3)) console.log(`    refused ${f.at} ${f.jobId}: ${f.code} — ${f.message}`);
+      }
+      break;
+    }
+    if (sub === 'revoke') {
+      const id = arg('id') || die('--id is required');
+      const reason = arg('reason') || die('--reason is required');
+      const r = store.automation(id) || die(`no automation policy ${id}`);
+      if (r.revokedAt) die(`${id} was already revoked at ${r.revokedAt}`);
+      if (!store.revokeAutomation(id, { at: new Date().toISOString(), by: 'operator', reason })) die(`${id} was revoked a moment ago`);
+      console.log(`revoked ${id}`);
+      break;
+    }
+    die('automation list|revoke --id <id> --reason <why>');
+    break;
+  }
   case 'device-key': {
     // v0.34. Pins are made when a policy naming a computer is first approved,
     // and the serving process never changes one. A computer that really has a
@@ -275,5 +303,5 @@ switch (cmd) {
     break;
   }
   default:
-    die('usage: main.js serve|keygen|keys|roster list|roster add|roster disable|policy set|pause list|set|clear|patch-policy list|revoke|device-key list|forget|script list|revoke|software list|revoke|revocations show');
+    die('usage: main.js serve|keygen|keys|roster list|roster add|roster disable|policy set|pause list|set|clear|patch-policy list|revoke|automation list|revoke|device-key list|forget|script list|revoke|software list|revoke|revocations show');
 }

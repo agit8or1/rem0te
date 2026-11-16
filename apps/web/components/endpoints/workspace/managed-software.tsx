@@ -19,6 +19,7 @@ import { WingetIndexStatus, describeDetection, refusalText, type WingetIndex } f
 import { usePermissions } from '@/lib/auth';
 import { useAsks } from '@/lib/confirm-policy';
 import { ago } from './device-model';
+import { ScheduleChoice, defaultSchedule, scheduleBody, type ScheduleValue } from '@/components/patching/schedule-choice';
 
 /**
  * Managed software on one computer (0.34): every catalog entry that applies
@@ -172,7 +173,8 @@ export function ManagedSoftware({ endpointId }: { endpointId: string }) {
           title={`${asking.op === 'install' ? 'Install' : 'Uninstall'} ${asking.row.name} ${asking.op === 'install' ? asking.row.version : ''}`}
           fallback={`${asking.op === 'install' ? 'Installs' : 'Uninstalls'} ${asking.row.packageId} on this computer.`}
           verb={asking.op}
-          send={(reason, windowHours) => softwareApi.single(endpointId, asking.row.id, asking.op, { reason, windowHours })}
+          send={(reason, windowHours, schedule) => softwareApi.single(endpointId, asking.row.id, asking.op, { reason, windowHours, ...schedule })}
+          schedulable
           onClose={() => setAsking(null)}
         />
       )}
@@ -252,14 +254,17 @@ function WingetSearch({ canInstall, architecture, onInstall }: { canInstall: boo
  * treat it: in direct mode it is signed at once (the reason goes to the audit
  * log); otherwise it waits for two approvers on the approval page.
  */
-export function RequestDialog({ endpointId, direct, actionId, warning, title, fallback, verb, note, send, optionalReason, onClose }: {
+export function RequestDialog({ endpointId, direct, actionId, warning, title, fallback, verb, note, send, optionalReason, schedulable, onClose }: {
   endpointId: string; direct: boolean; actionId: string; warning: string | null; title: string; fallback: string; verb: string; note?: string;
-  send: (reason: string, windowHours: number) => Promise<{ data: { data: unknown } }>; optionalReason?: boolean; onClose: () => void;
+  send: (reason: string, windowHours: number, schedule: ReturnType<typeof scheduleBody>) => Promise<{ data: { data: unknown } }>; optionalReason?: boolean;
+  /** 0.58: offer "at a time" (the signed plan's notBefore). */
+  schedulable?: boolean; onClose: () => void;
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [reason, setReason] = useState('');
   const [windowHours, setWindowHours] = useState(8);
+  const [when, setWhen] = useState<ScheduleValue>(() => defaultSchedule({}));
   const [ack, setAck] = useState(false);
   const [done, setDone] = useState<{ approvalUrl: string | null; deploymentId: string | null; jobDirect: boolean } | null>(null);
   const { data: catalog } = useQuery({
@@ -269,7 +274,7 @@ export function RequestDialog({ endpointId, direct, actionId, warning, title, fa
   const isDirect = catalog ? catalog.approval === 'direct' : direct;
   const action = catalog?.actions.find((a) => a.id === actionId);
   const m = useMutation({
-    mutationFn: () => send(reason.trim(), windowHours),
+    mutationFn: () => send(reason.trim(), windowHours, schedulable ? scheduleBody(when) : {}),
     onSuccess: (r) => {
       const d = r.data.data as { job?: { approvalUrl?: string; direct?: boolean }; deployment?: { id: string } };
       setDone({ approvalUrl: d.job?.approvalUrl ?? null, deploymentId: d.deployment?.id ?? null, jobDirect: !!d.job?.direct });
@@ -314,6 +319,8 @@ export function RequestDialog({ endpointId, direct, actionId, warning, title, fa
               <Label htmlFor="ms-window" className="text-xs">May run within (hours, 1–24)</Label>
               <Input id="ms-window" type="number" min={1} max={24} value={windowHours} onChange={(e) => setWindowHours(Number(e.target.value))} />
             </div>
+            {schedulable && <ScheduleChoice id="ms-when" value={when} onChange={setWhen} zones={{}} nowLabel={`${verb[0]!.toUpperCase()}${verb.slice(1)} at the next check-in`} />}
+            {schedulable && <p className="text-xs text-muted-foreground">To do it on a schedule, make an <Link className="underline" href="/automation/schedules/new">automation schedule</Link>.</p>}
             {action ? (
               <label className="flex items-start gap-2 text-xs"><input type="checkbox" className="mt-0.5" checked={ack} onChange={(e) => setAck(e.target.checked)} />{action.acknowledge}</label>
             ) : <p className="text-xs text-muted-foreground">Loading the action&apos;s terms…</p>}
@@ -348,7 +355,8 @@ export function RemoveProgramDialog({ endpointId, program, data, onClose }: { en
         endpointId={endpointId} direct={direct} actionId="windows.software.uninstall" warning={data.uninstall.warning}
         title={`Uninstall ${program.name}`} fallback={`Uninstalls ${program.name} with winget, through its catalog entry.`} verb="uninstall"
         note="A software catalog entry describes this program, so it is uninstalled through that entry (winget uninstall of its package)."
-        send={(reason, windowHours) => softwareApi.single(endpointId, program.entryId!, 'uninstall', { reason, windowHours })}
+        send={(reason, windowHours, schedule) => softwareApi.single(endpointId, program.entryId!, 'uninstall', { reason, windowHours, ...schedule })}
+        schedulable
         onClose={onClose}
       />
     );

@@ -91,6 +91,10 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   versions, static-check warnings, and review by someone other than the author. From 0.34 an approved version
   runs on Windows as the signed action `windows.script.run@1`, only once its hash is on the approval signer's own
   allowlist; the page covers that path, its limits, the threat model, and that it hasn't run on real Windows yet.
+- **[automation.md](automation.md)** — automation schedules (0.58): an approved script or a catalog package run
+  every few hours, daily, weekly or monthly on named computers or a device group. Two passkey approvers approve the
+  schedule once on the approval signer, which signs each run under it and holds it to the same task, computers,
+  window and offline rule, one run at a time. Pause, revoke, revisions, history, and one-time scheduling of a run.
 - **[patching-setup.md](patching-setup.md)** — turning on signed patching in production, in order (0.32): signed
   release, signed channel, signer, approvers, the first policy; where each key lives; the live pre-flight.
 - **[containment.md](containment.md)** — stopping writes during an incident (0.28): a global write pause and

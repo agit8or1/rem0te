@@ -1,3 +1,4 @@
+import { scheduledPlanWindow } from '../common/schedule';
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
 import { assertAssigned } from '../common/unassigned';
 import { Prisma, type ActionJob, type ActionTarget, type SoftwareCatalogEntry, type SoftwareDeployment } from '@prisma/client';
@@ -100,6 +101,30 @@ export class SoftwareService {
     // Another business's entry looks like a missing one.
     if (!e || !this.canRead(actor, e)) throw new NotFoundException('Catalog entry not found');
     return e;
+  }
+
+  /**
+   * 0.58: what an automation policy installs or uninstalls, as its author sees
+   * the entry now: the same params and display a deployment would carry.
+   * Requests nothing; the signer refuses an archived (revoked) entry itself.
+   */
+  async automationTask(actor: ActorContext, entryId: string, operation: 'install' | 'uninstall', businessId: string) {
+    const e = await this.entry(actor, entryId);
+    if (e.archivedAt) throw new ConflictException({ code: 'ENTRY_ARCHIVED', message: 'This catalog entry is archived; it cannot be scheduled.' });
+    if (e.scope === 'BUSINESS' && e.customerId !== businessId) throw new NotFoundException('Catalog entry not found');
+    const display = {
+      name: e.name.slice(0, 120), publisher: e.publisher?.slice(0, 120) ?? null, hashSource: e.hashSource === 'WINGET_PKGS' ? 'winget_pkgs' as const : 'admin_pasted' as const,
+      manifestSha256: e.manifestSha256, entryId: e.id, entryRevision: e.revision,
+    };
+    return { action: ACTIONS[operation], params: paramsOf(e), display };
+  }
+
+  /** 0.58: is this entry still the one an automation policy names (not archived, same revision)? Null if so, else why not. */
+  async automationEntryProblem(entryId: string, revision: number): Promise<string | null> {
+    const e = await this.prisma.softwareCatalogEntry.findUnique({ where: { id: entryId }, select: { archivedAt: true, revision: true } });
+    if (!e || e.archivedAt) return 'its catalog entry was archived; nothing from it is installed any more';
+    if (e.revision !== revision) return 'its catalog entry changed since the policy was approved; make a new revision from the current entry';
+    return null;
   }
 
   private view(actor: ActorContext, e: SoftwareCatalogEntry & { customer?: { name: string } | null }) {
@@ -377,7 +402,7 @@ export class SoftwareService {
     const e = await this.entry(actor, entryId);
     await this.actions.assertDirectFresh(ep.customerId, freshMethod);
     const d = await this.build(actor, { entryId: e.id, operation, rings: [[endpointId]], soakHours: 0, failureThreshold: 0, windowHours: p.data.windowHours, name: `${operation === 'install' ? 'Install' : 'Uninstall'} ${e.name} on ${(ep.hostname ?? ep.name).slice(0, 60)}`.slice(0, 120) }, true);
-    return this.requestRing(actor, d.id, 0, { reason: p.data.reason, startsInMinutes: p.data.startsInMinutes }, freshMethod);
+    return this.requestRing(actor, d.id, 0, { reason: p.data.reason, startsInMinutes: p.data.startsInMinutes, ...(p.data.schedule ? { schedule: p.data.schedule } : {}) }, freshMethod);
   }
 
   // ── The winget catalog: search, add, one-click install (0.41) ──────────────
@@ -856,6 +881,7 @@ export class SoftwareService {
     const p = RequestRingDto.safeParse(raw);
     if (!p.success) bad(p.error);
     const dto = p.data;
+    if (dto.schedule && dto.startsInMinutes) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Give a schedule or startsInMinutes, not both.' });
     const d = await this.scoped(actor, id);
     const entry = d.entryId ? await this.prisma.softwareCatalogEntry.findUnique({ where: { id: d.entryId } }) : null;
     if (!entry || entry.archivedAt) throw new ConflictException({ code: 'ENTRY_ARCHIVED', message: 'Its catalog entry has been archived (or removed); no further ring is requested.' });
@@ -882,6 +908,8 @@ export class SoftwareService {
       action, endpointIds, params: params.data,
       reason: `${d.name} — ${ring === 0 ? (d.single ? 'one computer' : 'canary') : `ring ${ring}`}: ${dto.reason}`.slice(0, 500),
       startsInMinutes: dto.startsInMinutes, windowHours: d.windowHours,
+      // 0.58: a scheduled install. The plan's signed window opens at the scheduled time.
+      ...(dto.schedule ? { window: scheduledPlanWindow(dto.schedule, d.windowHours, new Date(), d.operation === 'install' ? 'An install' : 'An uninstall') } : {}),
       display: {
         updates: [], deployment: { id: d.id, name: d.name.slice(0, 120), ring, rings: (d.rings as unknown as Ring[]).length },
         software: d.display as unknown as NonNullable<NonNullable<Parameters<ActionsService['createPlan']>[1]['display']>['software']>,
@@ -889,7 +917,7 @@ export class SoftwareService {
       softwareDeployment: { id: d.id, ring },
       freshMethod,
     });
-    await this.audit.log({ tenantId: d.tenantId ?? undefined, customerId: d.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'SOFTWARE_RING_REQUESTED', resource: 'software_deployment', resourceId: d.id, meta: { ring, jobId: job.id, computers: endpointIds.length, excluded: Object.fromEntries(excluded), operation: d.operation, packageId: params.data.packageId, version: params.data.version } });
+    await this.audit.log({ tenantId: d.tenantId ?? undefined, customerId: d.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'SOFTWARE_RING_REQUESTED', resource: 'software_deployment', resourceId: d.id, meta: { ring, jobId: job.id, computers: endpointIds.length, excluded: Object.fromEntries(excluded), operation: d.operation, packageId: params.data.packageId, version: params.data.version, scheduledFor: dto.schedule ? job.notBefore.toISOString() : null } });
     return { job: await this.actions.view(job, actor), deployment: await this.detail(actor, id) };
   }
 

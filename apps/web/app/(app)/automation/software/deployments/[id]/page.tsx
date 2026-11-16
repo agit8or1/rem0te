@@ -18,6 +18,7 @@ import { formatDate } from '@/lib/utils';
 import { DIRECT_TOAST, directApproved } from '@/lib/direct-mode';
 import { DEPLOYMENT_STATUS } from '@/lib/patching';
 import { describeDetection, plural, refusalText } from '@/components/software/software-ui';
+import { ScheduleChoice, defaultSchedule, scheduleBody, type ScheduleValue } from '@/components/patching/schedule-choice';
 
 /**
  * One software deployment (0.34), modelled on a patch deployment: its rings,
@@ -74,6 +75,8 @@ export default function SoftwareDeploymentPage() {
   const [reason, setReason] = useState('');
   const [exclude, setExclude] = useState<Record<string, string>>({});
   const [startsIn, setStartsIn] = useState(0);
+  // 0.58: or at a date and time (the plan's signed notBefore), up to 14 days ahead.
+  const [when, setWhen] = useState<ScheduleValue>(() => defaultSchedule({}));
   const [requested, setRequested] = useState<string | null>(null);
   const [directDone, setDirectDone] = useState<string | null>(null);
   const [changing, setChanging] = useState<'pause' | 'resume' | 'cancel' | null>(null);
@@ -81,7 +84,7 @@ export default function SoftwareDeploymentPage() {
 
   const request = useMutation({
     mutationFn: () => softwareApi.requestRing(id, d!.next.ring!, {
-      reason: reason.trim(), startsInMinutes: startsIn,
+      reason: reason.trim(), ...(when.mode === 'schedule' ? scheduleBody(when) : { startsInMinutes: startsIn }),
       exclude: Object.entries(exclude).filter(([, w]) => w.trim()).map(([endpointId, w]) => ({ endpointId, why: w.trim() })),
     }),
     onSuccess: (r) => {
@@ -201,13 +204,16 @@ export default function SoftwareDeploymentPage() {
                   <Label htmlFor="ring-reason" className="text-xs">Why (shown to the approvers)</Label>
                   <Textarea id="ring-reason" rows={2} maxLength={400} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Canary confirmed; rolling out to the office" />
                 </div>
-                <div className="space-y-1">
-                  <Label htmlFor="ring-start" className="text-xs">Starts in (minutes, 0–1440)</Label>
-                  <Input id="ring-start" type="number" min={0} max={1440} value={startsIn} onChange={(e) => setStartsIn(Number(e.target.value))} />
-                </div>
+                {when.mode === 'now' && (
+                  <div className="space-y-1">
+                    <Label htmlFor="ring-start" className="text-xs">Starts in (minutes, 0–1440)</Label>
+                    <Input id="ring-start" type="number" min={0} max={1440} value={startsIn} onChange={(e) => setStartsIn(Number(e.target.value))} />
+                  </div>
+                )}
               </div>
+              <ScheduleChoice id="sw-ring-when" value={when} onChange={setWhen} zones={{}} nowLabel="Start now (or in a few minutes)" />
               <Button size="sm" disabled={reason.trim().length < 3 || startsIn < 0 || startsIn > 1440 || badExclusion || excludedAll || request.isPending} onClick={() => request.mutate()}>
-                {request.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Request {nextRing.canary ? (d.single ? 'the plan' : 'canary') : `ring ${nextRing.ring}`}
+                {request.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}{when.mode === 'schedule' ? 'Schedule' : 'Request'} {nextRing.canary ? (d.single ? 'the plan' : 'canary') : `ring ${nextRing.ring}`}
               </Button>
             </>
           )}

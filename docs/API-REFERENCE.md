@@ -3,7 +3,7 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **554** of them across
+integration, under `/api/integration/v1`). There are **553** of them across
 **84** controllers.
 
 For request and response shapes, worked examples and error codes, see
@@ -47,22 +47,7 @@ Admins and Business Owners are not confined by it; see
 | `PATCH` | `/api/v1/admin/platform-settings` | signed in | — |
 | `GET` | `/api/v1/admin/status` | signed in | — |
 | `GET` | `/api/v1/admin/unassigned-devices` | signed in | — |
-
-## Adoption
-
-`apps/api/src/adoption/adoption.controller.ts`
-
-| Method | Path | Access | Capability |
-|---|---|---|---|
-| `GET` | `/api/v1/adoption/deployment-keys` | signed in | — |
-| `POST` | `/api/v1/adoption/deployment-keys` | signed in, throttled | — |
-| `POST` | `/api/v1/adoption/deployment-keys/:id/revoke` | signed in | — |
-| `GET` | `/api/v1/adoption/devices` | signed in | — |
-| `POST` | `/api/v1/adoption/devices/assign` | signed in, throttled | — |
-| `POST` | `/api/v1/adoption/devices/forget` | signed in, throttled | — |
-| `GET` | `/api/v1/adoption/mappings` | signed in | — |
-| `POST` | `/api/v1/adoption/mappings` | signed in, throttled | — |
-| `DELETE` | `/api/v1/adoption/mappings/:id` | signed in | — |
+| `POST` | `/api/v1/admin/unassigned-devices/:id/assign` | signed in | — |
 
 ## Agent auto migration adminagentautomigration
 
@@ -174,6 +159,20 @@ Admins and Business Owners are not confined by it; see
 | `PATCH` | `/api/v1/auth/profile` | signed in | — |
 | `POST` | `/api/v1/auth/step-up` | signed in, throttled | — |
 | `GET` | `/api/v1/auth/step-up` | signed in | — |
+
+## Automation
+
+`apps/api/src/automation/automation.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/automation/schedules` | signed in | — |
+| `POST` | `/api/v1/automation/schedules` | signed in, throttled | — |
+| `GET` | `/api/v1/automation/schedules/:id` | signed in | — |
+| `POST` | `/api/v1/automation/schedules/:id/pause` | signed in | — |
+| `POST` | `/api/v1/automation/schedules/:id/resume` | signed in | — |
+| `POST` | `/api/v1/automation/schedules/:id/revoke` | signed in | — |
+| `POST` | `/api/v1/automation/schedules/preview` | signed in, throttled | — |
 
 ## Businesses
 

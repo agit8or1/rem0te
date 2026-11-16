@@ -607,7 +607,8 @@ DATABASE_URL=… npx tsx prisma/_docs-demo-refresh.ts    # last, right before ca
 #   METRIC_SWEEP=off RETENTION_SWEEP=off REPORT_SCHEDULE_SWEEP=off \
 #   SCRIPT_OUTPUT_SWEEP=off CHAT_RETENTION_SWEEP=off AUDIT_SEALER=off \
 #   STALE_SWEEP=off SNAPSHOT_SWEEP=off TRAY_SWEEP=off \
-#   AUTO_MIGRATION_SWEEP=off WINGET_INDEX_SWEEP=off AGENT_AUTO_UPDATE=off
+#   AUTO_MIGRATION_SWEEP=off WINGET_INDEX_SWEEP=off AGENT_AUTO_UPDATE=off \
+#   AUTOMATION_SWEEP=off
 #   GEOIP_DB_PATH=docs-geoip.mmdb   # from apps/api/scripts/docs-geoip-fixture.mjs; unset, it reads this
 #                                   # host's GeoIP, and a missing file leaves the maps empty
 # For the 0.41–0.48 pages the demo API also needs (see below):

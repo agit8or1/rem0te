@@ -113,6 +113,15 @@ enum ActivityAction {
   PATCH_POLICY_SERIES_CREATED
   PATCH_POLICY_SERIES_RETIRED
   PATCH_POLICY_OVERRIDE_SET
+  // 0.58: automation policies (recurring script runs and software installs).
+  AUTOMATION_POLICY_CREATED
+  AUTOMATION_POLICY_UPDATED
+  AUTOMATION_POLICY_PAUSED
+  AUTOMATION_POLICY_RESUMED
+  AUTOMATION_POLICY_REVOKED
+  AUTOMATION_POLICY_SUPERSEDED
+  AUTOMATION_RUN_PROPOSED
+  AUTOMATION_RUN_REFUSED
   PATCH_INSTALL_REQUESTED
   CONTAINMENT_PAUSED
   CONTAINMENT_CLEARED
@@ -4248,4 +4257,76 @@ model WarrantyVendor {
   updatedAt    DateTime  @updatedAt
   lastResultAt DateTime?
   lastResult   String?
+}
+
+/// 0.58: an automation policy — a library script or a catalog software
+/// package on a recurring schedule, approved once on the approval signer
+/// (actions/automation-policy.ts). The signer holds the document and decides
+/// every occurrence's plan; this row mirrors it for the pages and the sweep.
+/// customerId is a plain column (no relation), as PatchPolicyRestart's is.
+model AutomationPolicy {
+  /// The policy id in the signed document (32 hex).
+  id              String                 @id
+  tenantId        String?
+  customerId      String
+  name            String
+  /// 'script' or 'software' (CHECK).
+  taskKind        String
+  /// The exact document the approvers sign (rem0te-automation-policy/1).
+  document        Json
+  digest          String
+  status          PatchPolicyStatus      @default(AWAITING_APPROVAL)
+  approvalUrl     String
+  approvals       Json?
+  /// Activated at admission because the business was in direct mode (the signer's word).
+  direct          Boolean                @default(false)
+  expiresAt       DateTime
+  createdById     String
+  /// Paused in the portal: the sweep proposes nothing until resumed. Audited.
+  pausedAt        DateTime?
+  pausedById      String?
+  pauseReason     String?
+  revokedAt       DateTime?
+  revokedById     String?
+  revokeReason    String?
+  /// When the signer confirmed the revocation; until then the sweep keeps asking.
+  signerRevokedAt DateTime?
+  /// A revision names the policy it replaces; the old one is revoked when the new one is ACTIVE.
+  supersedesId    String?
+  supersededAt    DateTime?
+  /// The sweep's last word: { at, occurrence, ok, code, message, jobId? }.
+  lastProposal    Json?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  occurrences     AutomationOccurrence[]
+
+  @@index([customerId, createdAt])
+  @@index([status])
+}
+
+/// 0.58: one plan the sweep asked the signer for, in one occurrence of an
+/// automation policy. Per-computer outcomes are the plan's ActionTargets.
+model AutomationOccurrence {
+  id            String           @id @default(cuid())
+  policyId      String
+  policy        AutomationPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  customerId    String
+  /// The occurrence's UTC start (ISO): what the per-occurrence limit counts by.
+  occurrenceKey String
+  /// 1..3: a plan (the policy's maxRunsPerOccurrence, the same bound the signer keeps).
+  /// 0: the occurrence's note when no plan was made (refused, contained, nobody ready), kept current.
+  attempt       Int
+  jobId         String?
+  ok            Boolean
+  code          String
+  message       String
+  /// Computers named in the plan; `skipped` lists those left out (offline, not ready, over the cap).
+  targets       Int              @default(0)
+  skipped       Json?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@unique([policyId, occurrenceKey, attempt])
+  @@index([policyId, createdAt])
+  @@index([jobId])
 }
