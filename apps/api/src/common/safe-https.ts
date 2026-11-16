@@ -1,6 +1,7 @@
 /**
  * The one outbound HTTPS client for destinations a person typed (0.48): a
- * custom AI provider base URL and a PSA webhook. Both are the shape of an
+ * custom AI provider base URL and a PSA webhook — and, from 0.56, the fixed
+ * hardware-vendor warranty APIs (warranty/client.ts), held to the same rule. Both are the shape of an
  * SSRF — the server POSTs where a portal administrator said — so the rule is
  * §42's for the SMTP relay, applied to HTTPS:
  *
@@ -28,10 +29,14 @@ import { checkResolved, classifyAddress, isHostName } from '../email/smtp-host';
 
 const INTERNAL_SUFFIX = /\.(local|internal|lan|home|corp|localdomain|localhost|intranet|private|arpa)$/;
 const TEST_LOOPBACK = /^http:\/\/127\.0\.0\.1:[0-9]{2,5}(?:$|\/[A-Za-z0-9._~/-]{0,200}$)/;
+/** 0.56: an optional query in a narrow charset (the warranty stubs take ?servicetags= / ?Serial=). */
+const TEST_QUERY = /^[A-Za-z0-9._~=&-]{0,200}$/;
 
 /** Only the e2e suites: NODE_ENV=test and http://127.0.0.1:<port>/… exactly. */
 export function testLoopbackAllowed(raw: string): boolean {
-  return process.env.NODE_ENV === 'test' && TEST_LOOPBACK.test(raw);
+  const q = raw.indexOf('?');
+  const base = q < 0 ? raw : raw.slice(0, q);
+  return process.env.NODE_ENV === 'test' && TEST_LOOPBACK.test(base) && (q < 0 || TEST_QUERY.test(raw.slice(q + 1)));
 }
 
 export type UrlCheck = { ok: true; url: URL } | { ok: false; reason: string };
@@ -66,6 +71,18 @@ export interface SafeResponse { status: number; body: Buffer; contentType: strin
  * short code (never the server's text) for anything but an answer.
  */
 export async function safePost(rawUrl: string, headers: Record<string, string>, body: string, opts: { timeoutMs: number; maxBytes: number }): Promise<SafeResponse> {
+  return safeRequest('POST', rawUrl, headers, body, opts);
+}
+
+/**
+ * GET `rawUrl` under the same rules (0.56: a hardware vendor's warranty
+ * API, which answers a GET). No body is sent.
+ */
+export async function safeGet(rawUrl: string, headers: Record<string, string>, opts: { timeoutMs: number; maxBytes: number }): Promise<SafeResponse> {
+  return safeRequest('GET', rawUrl, headers, null, opts);
+}
+
+async function safeRequest(method: 'GET' | 'POST', rawUrl: string, headers: Record<string, string>, body: string | null, opts: { timeoutMs: number; maxBytes: number }): Promise<SafeResponse> {
   const chk = checkPublicHttpsUrl(rawUrl);
   if (!chk.ok) throw new OutboundError('URL_REFUSED', chk.reason);
   const u = chk.url;
@@ -82,10 +99,10 @@ export async function safePost(rawUrl: string, headers: Record<string, string>, 
     if (!r.ok) throw new OutboundError('ADDRESS_REFUSED', `The host resolved to a disallowed address (${addrs.map(classifyAddress).find((c) => c !== 'public') ?? 'blocked'}).`);
     address = r.address;
   }
-  const payload = Buffer.from(body, 'utf8');
-  const reqHeaders: Record<string, string | number> = { ...headers, host: u.host, 'content-length': payload.length };
+  const payload = body === null ? null : Buffer.from(body, 'utf8');
+  const reqHeaders: Record<string, string | number> = { ...headers, host: u.host, ...(payload ? { 'content-length': payload.length } : {}) };
   const common = {
-    host: address, port: u.port ? Number(u.port) : plain ? 80 : 443, path: `${u.pathname}${u.search}`, method: 'POST',
+    host: address, port: u.port ? Number(u.port) : plain ? 80 : 443, path: `${u.pathname}${u.search}`, method,
     headers: reqHeaders, agent: false as const, timeout: opts.timeoutMs,
   };
   return new Promise<SafeResponse>((resolve, reject) => {
@@ -111,6 +128,6 @@ export async function safePost(rawUrl: string, headers: Record<string, string>, 
     const timer = setTimeout(() => { req.destroy(); done(() => reject(new OutboundError('TIMEOUT', 'The server did not answer in time.'))); }, opts.timeoutMs);
     req.on('timeout', () => { req.destroy(); done(() => reject(new OutboundError('TIMEOUT', 'The server did not answer in time.'))); });
     req.on('error', (e: NodeJS.ErrnoException) => done(() => reject(new OutboundError(/CERT|SSL|TLS|SELF_SIGNED|UNABLE_TO_VERIFY/i.test(e.code ?? '') ? 'TLS_FAILED' : 'NETWORK', 'The connection failed.'))));
-    req.end(payload);
+    if (payload) req.end(payload); else req.end();
   });
 }

@@ -16,7 +16,7 @@ export function toParams(f: DeviceFilters, sort: SortKey, dir: 'asc' | 'desc', p
   if (f.agent) p.agent = f.agent;
   if (f.status !== 'current') p.status = f.status;
   if (f.groupId) p.groupId = f.groupId;
-  for (const k of ['platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays'] as const) {
+  for (const k of ['platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays', 'warranty'] as const) {
     if (f[k].trim()) p[k] = f[k].trim();
   }
   if (page) p.page = String(page);
@@ -35,6 +35,7 @@ export function viewFilters(f: SavedView['filters']): DeviceFilters {
     platform: (s('platform') as DeviceFilters['platform']) || '', os: s('os'), tag: s('tag'),
     patches: (s('patches') as DeviceFilters['patches']) || '',
     rustdeskMin: s('rustdeskMin'), rustdeskMax: s('rustdeskMax'), notSeenDays: s('notSeenDays'), seenWithinDays: s('seenWithinDays'),
+    warranty: (s('warranty') as DeviceFilters['warranty']) || '',
   };
 }
 
@@ -51,6 +52,11 @@ export function ruleFromFilters(f: DeviceFilters): { rule: DeviceRule; left: str
 }
 
 const PLATFORM_LABEL: Record<string, string> = { windows: 'Windows', linux: 'Linux', macos: 'macOS', other: 'other OS' };
+/** 0.56: the Warranty filter in words. */
+export const WARRANTY_FILTER_LABEL: Record<string, string> = {
+  expired: 'warranty expired', d30: 'warranty ends within 30 days', d60: 'warranty ends within 60 days', d90: 'warranty ends within 90 days',
+  active: 'warranty still running', unknown: 'no warranty date',
+};
 const PATCH_LABEL: Record<string, string> = { pending: 'updates pending', current: 'no updates pending', unknown: 'never scanned for updates', stale: 'update scan stale' };
 
 /** A rule in words, for the groups dialog and the save dialog. Site names come from the caller. */
@@ -70,6 +76,7 @@ export function describeRule(r: DeviceRule, siteName?: (id: string) => string | 
   else if (r.rustdeskMax) out.push(`RustDesk ≤ ${r.rustdeskMax}`);
   if (r.notSeenDays) out.push(`not seen for ${r.notSeenDays}+ day${r.notSeenDays === '1' ? '' : 's'}`);
   if (r.seenWithinDays) out.push(`seen in the last ${r.seenWithinDays} day${r.seenWithinDays === '1' ? '' : 's'}`);
+  if (r.warranty) out.push(WARRANTY_FILTER_LABEL[String(r.warranty)] ?? String(r.warranty));
   return out.length ? out.join(' · ') : 'no conditions';
 }
 

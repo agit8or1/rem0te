@@ -26,7 +26,7 @@ import { EMPTY_FILTERS, type BulkResponse, type Density, type DeviceFilters, typ
 
 const PAGE_SIZES = [25, 50, 100, 200];
 const ALL = '__all__'; // Radix Select cannot carry an empty value.
-const DEFAULT_DIR: Partial<Record<SortKey, 'asc' | 'desc'>> = { online: 'asc', name: 'asc', business: 'asc', site: 'asc', os: 'asc', user: 'asc' };
+const DEFAULT_DIR: Partial<Record<SortKey, 'asc' | 'desc'>> = { online: 'asc', name: 'asc', business: 'asc', site: 'asc', os: 'asc', user: 'asc', warranty: 'asc' };
 
 /** Filters, sort and page in the address bar, so a view can be bookmarked or shared (the server scopes it for whoever opens it). */
 function readUrl(): { filters: DeviceFilters; sort: SortKey; dir: 'asc' | 'desc'; page: number } | null {
@@ -37,7 +37,7 @@ function readUrl(): { filters: DeviceFilters; sort: SortKey; dir: 'asc' | 'desc'
     // allowed values include '' came back as null, and toParams threw on its
     // .trim(): any /endpoints?… link without a platform crashed the list.)
     const pick = <T extends string>(k: string, ok: readonly T[], d: T): T => { const v = q.get(k) ?? ''; return (ok as readonly string[]).includes(v) ? (v as T) : d; };
-    const sort = pick<SortKey>('sort', ['online', 'name', 'business', 'site', 'os', 'lastSeen', 'agent', 'user', 'cpu', 'memory', 'disk', 'patches', 'alerts', 'health'], 'online');
+    const sort = pick<SortKey>('sort', ['online', 'name', 'business', 'site', 'os', 'lastSeen', 'agent', 'user', 'cpu', 'memory', 'disk', 'patches', 'alerts', 'health', 'warranty'], 'online');
     return {
       filters: {
         search: q.get('search') ?? '', businessId: q.get('businessId') ?? '', siteId: q.get('siteId') ?? '',
@@ -52,6 +52,7 @@ function readUrl(): { filters: DeviceFilters; sort: SortKey; dir: 'asc' | 'desc'
         patches: pick('patches', ['', 'pending', 'current', 'unknown', 'stale'] as const, ''),
         rustdeskMin: q.get('rustdeskMin') ?? '', rustdeskMax: q.get('rustdeskMax') ?? '',
         notSeenDays: q.get('notSeenDays') ?? '', seenWithinDays: q.get('seenWithinDays') ?? '',
+        warranty: pick('warranty', ['', 'expired', 'd30', 'd60', 'd90', 'active', 'unknown'] as const, ''),
       },
       sort, dir: pick('dir', ['asc', 'desc'] as const, DEFAULT_DIR[sort] ?? 'desc'),
       page: Math.max(1, parseInt(q.get('page') ?? '1', 10) || 1),
@@ -331,7 +332,7 @@ export function DeviceList() {
       toast({ title: 'Rule group not created', description: await refusalMessage(e, 'The group could not be created.'), variant: 'destructive' });
     }
   }
-  const MORE_KEYS = ['platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays'] as const;
+  const MORE_KEYS = ['platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays', 'warranty'] as const;
   const moreActive = MORE_KEYS.filter((k) => !!filters[k]).length;
   const siteName = (id: string) => data?.facets.sites.find((x) => x.id === id)?.name;
 
@@ -682,6 +683,17 @@ export function DeviceList() {
                   <SelectItem value={ALL}>Any</SelectItem>
                   <SelectItem value="pending">Updates pending</SelectItem><SelectItem value="current">No updates pending</SelectItem>
                   <SelectItem value="stale">Scan is stale</SelectItem><SelectItem value="unknown">Never scanned</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
+            <label className="space-y-1"><span className="text-xs text-muted-foreground">Warranty</span>
+              <Select value={moreDraft.warranty || ALL} onValueChange={(v) => setMoreDraft((d) => ({ ...d, warranty: (v === ALL ? '' : v) as DeviceFilters['warranty'] }))}>
+                <SelectTrigger className="h-9" aria-label="Warranty" data-testid="filter-warranty"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>Any</SelectItem>
+                  <SelectItem value="expired">Expired</SelectItem><SelectItem value="d30">Ends within 30 days</SelectItem>
+                  <SelectItem value="d60">Ends within 60 days</SelectItem><SelectItem value="d90">Ends within 90 days</SelectItem>
+                  <SelectItem value="active">Still running</SelectItem><SelectItem value="unknown">No date stored</SelectItem>
                 </SelectContent>
               </Select>
             </label>

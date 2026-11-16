@@ -330,6 +330,13 @@ jobs:
       - name: AI provider and PSA ticket tests
         run: node apps/api/scripts/unit-ai-psa.mjs
 
+      # Hardware warranty (0.56): manufacturer normalisation, virtual-machine
+      # detection, every vendor's support links (the serial in a URL only for
+      # Dell, checked and encoded), the warranty buckets, the Dell and Lenovo
+      # response parsers against loopback stubs, and the sweep budget.
+      - name: Warranty tests
+        run: node apps/api/scripts/unit-warranty.mjs
+
       # Outbound email (0.34): the SMTP host rule (every address class, IPv4-
       # mapped IPv6, what SMTP_ALLOW_LOCAL_RELAY admits, every resolved address
       # checked), the report schedule maths across zones and both DST

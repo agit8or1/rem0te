@@ -3,7 +3,8 @@
 import * as React from 'react';
 import { CONNECTIVITY_DOT, CONNECTIVITY_TEXT, connectivityFrom, connectivityHint, connectivityLabel } from '@/lib/connectivity';
 import Link from 'next/link';
-import { Apple, Monitor, Terminal, HelpCircle } from 'lucide-react';
+import { Apple, Monitor, Terminal, HelpCircle, ExternalLink } from 'lucide-react';
+import { supportInfo, WARRANTY_STATE_LABEL } from '@/lib/hardware-support';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { DeviceRow, SortKey } from './types';
@@ -195,6 +196,34 @@ export const COLUMNS: ColumnDef[] = [
             {p.rebootPending ? <Badge variant="warning" className="text-[10px] px-1.5 py-0">restart</Badge> : null}
           </div>
           <p className="text-muted-foreground">{isStale ? 'stale · ' : ''}{ago(p.checkedAt, c.now)}</p>
+        </div>
+      );
+    },
+  },
+  {
+    // 0.56: the stored warranty end date, and the vendor's warranty page for this machine.
+    id: 'warranty', label: 'Warranty', defaultOn: false, sort: 'warranty',
+    cell: (r) => {
+      const w = r.warranty;
+      if (!w) return dash;
+      const hw = r.hardware;
+      const info = hw ? supportInfo(hw.manufacturer, hw.model, hw.serialNumber) : null;
+      const link = info?.links.find((l) => l.kind === 'warranty') ?? info?.links[0];
+      const variant = w.state === 'expired' ? 'destructive' : w.state === 'expiring_30' || w.state === 'expiring_60' ? 'warning' : w.state === 'unknown' ? 'outline' : 'secondary';
+      return (
+        <div className="text-xs whitespace-nowrap" data-testid="warranty-cell" data-state={w.state}>
+          <div className="flex items-center gap-1.5">
+            {info?.maker.kind === 'virtual' && w.state === 'unknown'
+              ? <span className="text-muted-foreground" title={info.note ?? undefined}>Virtual machine</span>
+              : <Badge variant={variant} className="text-[10px] px-1.5 py-0 font-normal">{WARRANTY_STATE_LABEL[w.state]}</Badge>}
+            {link ? (
+              <a href={link.url} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground"
+                title={`${info?.vendorLabel ?? 'Vendor'}: ${link.label}${link.serialInUrl ? '' : ' (copy the serial from the device page)'}`} aria-label={`${info?.vendorLabel ?? 'Vendor'} ${link.label}`}>
+                <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+              </a>
+            ) : null}
+          </div>
+          {w.endsAt ? <p className="text-muted-foreground">{new Date(w.endsAt).toISOString().slice(0, 10)}</p> : null}
         </div>
       );
     },

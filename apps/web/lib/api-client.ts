@@ -831,7 +831,8 @@ export const securityControlsApi = {
 export type MonitorScope = 'global' | 'business' | 'site' | 'group' | 'endpoint';
 export type Severity = 'INFO' | 'WARNING' | 'CRITICAL';
 export type MonitorKindId = 'OFFLINE' | 'DISK_FREE' | 'CPU_HIGH' | 'MEMORY_HIGH' | 'SERVICE_STOPPED' | 'EVENT_MATCH' | 'REBOOT_PENDING' | 'AGENT_SILENT'
-  | 'DRIVE_FREE' | 'UPTIME_LONG' | 'UPDATES_MISSING' | 'UPDATE_FAILED'; // 0.55
+  | 'DRIVE_FREE' | 'UPTIME_LONG' | 'UPDATES_MISSING' | 'UPDATE_FAILED' // 0.55
+  | 'WARRANTY_EXPIRING'; // 0.56
 /** A notification destination: a webhook, or (0.34) a confirmed email recipient of the policy's own scope. */
 export type NotifyDestination = { label: string; url: string } | { label: string; recipientId: string };
 const bq = (businessId?: string | null) => ({ params: businessId ? { businessId } : {} });
@@ -984,6 +985,36 @@ export const aiApi = {
   status: () => api.get('/ai/status'),
   explain: (endpointId: string, src: EntrySource) => api.post(`/endpoints/${endpointId}/ai/explain`, src),
   preview: (endpointId: string, src: EntrySource) => api.post(`/endpoints/${endpointId}/ai/preview`, src),
+};
+
+// Hardware warranty and support links (0.56).
+export type WarrantyStateId = 'expired' | 'expiring_30' | 'expiring_60' | 'expiring_90' | 'active' | 'unknown';
+export interface WarrantyView {
+  warranty: {
+    startsAt: string | null; endsAt: string | null; coverage: string | null; source: string | null; sourceLabel: string | null;
+    checkedAt: string | null; state: WarrantyStateId; daysLeft: number | null;
+  };
+  support: import('./hardware-support').SupportInfo;
+  lookup: {
+    vendor: 'dell' | 'lenovo' | null; vendorLabel: string | null; implemented: boolean; enabled: boolean;
+    lastAttemptAt: string | null; lastResult: string | null; intervalDays: number;
+  };
+}
+export interface WarrantyVendorView {
+  vendor: 'dell' | 'lenovo'; label: string; enabled: boolean; clientId: string | null; secretSet: boolean; secretLast4: string | null;
+  updatedAt: string | null; lastResultAt: string | null; lastResult: string | null; keyChange?: string;
+}
+export interface WarrantySettingsView {
+  vendors: WarrantyVendorView[]; manualOnly: { vendor: string; label: string }[];
+  sweep: { enabled: boolean; perHour: number; intervalDays: number };
+}
+export const warrantyApi = {
+  get: (endpointId: string) => api.get(`/endpoints/${endpointId}/warranty`),
+  set: (endpointId: string, body: { startsAt?: string | null; endsAt: string | null; coverage?: string | null }) => api.put(`/endpoints/${endpointId}/warranty`, body),
+  lookup: (endpointId: string) => api.post(`/endpoints/${endpointId}/warranty/lookup`, {}),
+  settings: () => api.get('/warranty/settings'),
+  saveVendor: (vendor: 'dell' | 'lenovo', body: { enabled: boolean; clientId?: string | null; secret?: string | null }) => api.put(`/warranty/settings/${vendor}`, body),
+  report: (params: Record<string, string>) => api.get('/reports/warranty', { params }),
 };
 
 // PSA tickets (0.48). Connector writes need fresh authentication.

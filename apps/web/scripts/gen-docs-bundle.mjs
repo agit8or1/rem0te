@@ -53,6 +53,7 @@ const ORDER = [
   ['group-policies.md', 'Device-group policies', 'Computers and monitoring', 'Monitors and client-update policies for a device group: precedence, priorities, live membership and cost.'],
   ['metric-history.md', 'Metric history', 'Computers and monitoring', 'CPU, memory and disk over time: the Performance tab, gaps, roll-up, retention and storage.'],
   ['reports.md', 'Reports', 'Computers and monitoring', 'Patch compliance, agent coverage, alert frequency, offline time and software compliance, from stored data, with audited CSV export.'],
+  ['warranty.md', 'Hardware warranty', 'Computers and monitoring', 'Support and driver links per vendor, warranty dates by hand or from Dell and Lenovo, the list filter, the report and the expiring monitor.'],
   ['email.md', 'Email and scheduled reports', 'Computers and monitoring', 'The SMTP relay, confirmed recipients, alert emails, and reports emailed weekly or monthly.'],
   ['ai-and-tickets.md', 'AI and tickets', 'Computers and monitoring', 'Ask AI about an event-log entry or alert, and create a ticket in the PSA: providers, redaction, connectors and limits.'],
   ['updates.md', 'Updates', 'Computers and monitoring', 'Updating the portal, RustDesk and the agent, and client rollouts.'],

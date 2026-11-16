@@ -347,6 +347,11 @@ enum ActivityAction {
   SOFTWARE_RING_REQUESTED
   // 0.41: a Platform Admin asked for the winget index to be read now.
   WINGET_INDEX_REFRESH_REQUESTED
+  // 0.56 hardware warranty: a person set or cleared a computer's dates, a
+  // Platform Admin changed a vendor lookup, or someone asked for a lookup now.
+  WARRANTY_SET
+  WARRANTY_SETTINGS_CHANGED
+  WARRANTY_LOOKUP_REQUESTED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -761,6 +766,19 @@ model Endpoint {
   signedSeenAt         DateTime?
   legacySeenAt         DateTime?
   legacySeenVersion    String?
+  // Hardware warranty (0.56, migration 0077). Entered by hand (source
+  // 'manual', which the vendor sweep never overwrites) or read from a vendor's
+  // warranty API (source 'dell' / 'lenovo'). warrantyCheckedAt is when the
+  // dates were last set; warrantyLookupAt / warrantyLookupResult are the last
+  // vendor attempt, successful or not — the sweep asks again only 30 days
+  // after it. Coverage is the vendor's service-level text in an inert charset.
+  warrantyStartsAt     DateTime?
+  warrantyEndsAt       DateTime?
+  warrantySource       String?
+  warrantyCheckedAt    DateTime?
+  warrantyCoverage     String?
+  warrantyLookupAt     DateTime?
+  warrantyLookupResult String?
   // Staged patching (v0.27): when someone asked for a fresh Windows Update
   // scan. The heartbeat asks the agent to scan until a posture newer than
   // this arrives.
@@ -2964,6 +2982,7 @@ enum MonitorKind {
   UPTIME_LONG // 0.55: not restarted in N days
   UPDATES_MISSING // 0.55: security/critical updates offered for N days (signed patch scan)
   UPDATE_FAILED // 0.55: an update install failed (Windows Update history, deployment results)
+  WARRANTY_EXPIRING // 0.56: the hardware warranty ends within daysBefore days (opt-in)
 }
 
 enum AlertSeverity {
@@ -4130,4 +4149,21 @@ model MonitorAlertTicket {
 
   @@index([status, nextAttemptAt])
   @@index([customerId, lastAttemptAt])
+}
+
+/// A hardware vendor's warranty API (0.56, Settings → Warranty). One row per
+/// vendor whose lookup is implemented (warranty/client.ts: dell, lenovo). Off
+/// until a Platform Admin enables it. The credential is AES-256-GCM under
+/// ENCRYPTION_KEY (purpose rem0te-warranty-key-v1); only its last four
+/// characters are kept in the clear, and it is in no response or audit row.
+model WarrantyVendor {
+  vendor       String    @id
+  enabled      Boolean   @default(false)
+  clientId     String?
+  secretEnc    String?
+  secretLast4  String?
+  updatedById  String
+  updatedAt    DateTime  @updatedAt
+  lastResultAt DateTime?
+  lastResult   String?
 }

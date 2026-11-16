@@ -1108,6 +1108,42 @@ webhook stub, in `run-e2e.sh`). Unit: `unit-alert-conditions.mjs`. **No real
 PSA has been called, and none of it has run against a real Windows
 inventory.**
 
+§69 (0.56) is hardware warranty and support links. (§68 is 0.55's.) The support-link
+table is one pure module, `apps/api/src/warranty/vendors.ts`, with a byte-identical
+web copy, `apps/web/lib/hardware-support.ts`. Every link in it is https to a host on
+`VENDOR_HOSTS`. Only Dell puts the serial in a URL, after `DELL_TAG_RE` and
+`encodeURIComponent`, and every vendor anchor in the console has `target="_blank"`
+and `rel="noopener noreferrer"`. A virtual machine gets no links and is never
+looked up.
+
+The Dell and Lenovo lookups are called only from `warranty/client.ts`, only through
+safe-https (`safeGet` / `safePost`, which share one `safeRequest`), with a 20 s
+bound and a 256 KB cap. The client reads `WARRANTY_TEST_BASE_URL` only through
+`testLoopbackAllowed`, which from 0.56 admits a query in `[A-Za-z0-9._~=&-]`.
+`lookup()` takes the serial and nothing else about the computer, and the service
+calls it in one place.
+
+The credential is sealed (`rem0te-warranty-key-v1`) and appears in no response or
+audit row; only its last four characters are kept. Settings are a Platform Admin's,
+with `assertFresh` naming `warranty.settings`.
+
+- **The sweep.** `WARRANTY_SWEEP=off` stops it, and `run-e2e.sh` and `e2e-ui.mjs`
+  set it. It is bounded per hour (`WARRANTY_LOOKUPS_PER_HOUR`, at most 500) and asks
+  each computer at most every 30 days. It skips an `integration` pause and claims
+  each computer with a conditional write.
+- **Check now** needs computers:edit, checks the same pause, and is audited.
+- **Manual entries.** One needs computers:edit, is a conditional write, and is
+  audited (`WARRANTY_SET`, before and after). A vendor answer never overwrites one.
+- **Migration 0077** CHECKs the source, the dates, the coverage charset and the
+  vendor list.
+- **The report** reads through `devicesWhere`.
+- **`WARRANTY_EXPIRING`** is opt-in, never in `RECOMMENDED`, and the 0.36
+  `SWEEP_KINDS` set is unchanged.
+
+**No real vendor API has been called from this server; never point a test at one.**
+Behavioural proof: `e2e-warranty.mjs` (ports 3821–3823, a loopback vendor stub,
+in `run-e2e.sh`). Unit: `unit-warranty.mjs`.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

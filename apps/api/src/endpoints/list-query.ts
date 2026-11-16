@@ -9,13 +9,15 @@ import { BadRequestException } from '@nestjs/common';
 
 export const SORT_KEYS = [
   'online', 'name', 'business', 'site', 'os', 'lastSeen', 'agent', 'user',
-  'cpu', 'memory', 'disk', 'patches', 'alerts', 'health',
+  'cpu', 'memory', 'disk', 'patches', 'alerts', 'health', 'warranty',
 ] as const;
 export type SortKey = (typeof SORT_KEYS)[number];
 
 export const PAGE_SIZES = [25, 50, 100, 200];
 export const PLATFORMS = ['windows', 'linux', 'macos', 'other'] as const;
 export const PATCH_STATES = ['pending', 'current', 'unknown', 'stale'] as const;
+/** 0.56: the hardware warranty's end date — passed, within 30 / 60 / 90 days (cumulative), still running, or none stored. */
+export const WARRANTY_FILTERS = ['expired', 'd30', 'd60', 'd90', 'active', 'unknown'] as const;
 /** Dotted numeric versions only (1.4.2, at most four parts of up to six digits): compared as integer arrays, never as text. */
 export function isVersion(v: string): boolean {
   const parts = v.split('.');
@@ -63,6 +65,8 @@ export interface ListQuery {
   notSeenDays?: number;
   /** Last seen within this many days. */
   seenWithinDays?: number;
+  /** 0.56: by hardware warranty end date (WARRANTY_FILTERS). */
+  warranty?: (typeof WARRANTY_FILTERS)[number];
   /**
    * Set by EndpointListService only, never parsed from a request: the rule of
    * the RULE group named by groupId, AND-ed with that group's business.
@@ -98,7 +102,7 @@ function oneOf<T extends string>(v: unknown, allowed: readonly T[], name: string
  */
 export const LIST_FILTER_KEYS = [
   'search', 'businessId', 'siteId', 'online', 'alerts', 'restartPending', 'agent', 'status', 'groupId',
-  'platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays',
+  'platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays', 'warranty',
 ] as const;
 export type ListFilterKey = (typeof LIST_FILTER_KEYS)[number];
 /** The filter half of a ListQuery (no sort, page or internal fields). */
@@ -146,6 +150,7 @@ export function parseListFilters(q: Record<string, unknown>): ListFilters {
     os, tag,
     patches: oneOf(q.patches, PATCH_STATES, 'patches'),
     rustdeskMin, rustdeskMax, notSeenDays, seenWithinDays,
+    warranty: oneOf(q.warranty, WARRANTY_FILTERS, 'warranty'),
   };
 }
 
@@ -170,7 +175,7 @@ export function parseListQuery(q: Record<string, unknown>): ListQuery {
     sort,
     // Online-first and name ascending read naturally; every other column
     // starts with the "worst / most / newest" end first.
-    dir: oneOf(q.dir, ['asc', 'desc'] as const, 'dir') ?? (sort === 'name' || sort === 'business' || sort === 'site' || sort === 'os' || sort === 'user' || sort === 'online' ? 'asc' : 'desc'),
+    dir: oneOf(q.dir, ['asc', 'desc'] as const, 'dir') ?? (sort === 'name' || sort === 'business' || sort === 'site' || sort === 'os' || sort === 'user' || sort === 'online' || sort === 'warranty' ? 'asc' : 'desc'),
     page, pageSize,
   };
 }

@@ -38,7 +38,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Activity, ArrowRightLeft, BarChart3, BellRing, Building2, Cpu, WifiOff, Download, FileCode2, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
   Monitor, MonitorCheck, MonitorX, Package, PackageCheck, PlayCircle, RefreshCw, Settings, Shield, ShieldCheck, Siren,
-  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail, Sparkles, Ticket, ListChecks,
+  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail, Sparkles, Ticket, ListChecks, BadgeCheck,
 } from 'lucide-react';
 import { CAP, type Capability } from '@/lib/auth';
 
@@ -137,6 +137,7 @@ export const NAV: NavSection[] = [
       { href: '/reports/alert-frequency', label: 'Alert frequency', icon: BellRing, show: (c) => c.can(CAP.ALERTS_VIEW) },
       { href: '/reports/offline-time', label: 'Offline time', icon: WifiOff, show: (c) => c.can(CAP.ALERTS_VIEW) },
       { href: '/reports/software-compliance', label: 'Software compliance', icon: Package, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
+      { href: '/reports/warranty', label: 'Warranty', icon: BadgeCheck, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
       // 0.34. Last, so /reports still opens a report. The API decides who may
       // set one up (a Business Owner in their own business, or a Platform Admin).
       { href: '/reports/schedules', label: 'Scheduled reports', icon: CalendarClock, show: (c) => c.isPlatformAdmin || (c.isBusinessOwner && !c.technician) },
@@ -164,6 +165,7 @@ export const NAV: NavSection[] = [
       { href: '/settings/email', label: 'Email', icon: Mail, show: (c) => c.isPlatformAdmin },
       // 0.48: the AI provider is the operator's; a Business Owner may set their business's own PSA.
       { href: '/settings/ai', label: 'AI', icon: Sparkles, show: (c) => c.isPlatformAdmin },
+      { href: '/settings/warranty', label: 'Warranty', icon: BadgeCheck, show: (c) => c.isPlatformAdmin },
       { href: '/settings/psa', label: 'PSA / ticketing', icon: Ticket, show: (c) => c.isPlatformAdmin || (c.isBusinessOwner && !c.technician) },
       { href: '/admin/security', label: 'Security', icon: Shield, show: (c) => c.isPlatformAdmin },
       { href: '/admin/status', label: 'System status', icon: Activity, show: (c) => c.isPlatformAdmin },

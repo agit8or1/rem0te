@@ -12,6 +12,7 @@ import { deviceCompliance, tally, PATCH_COMPLIANCE_DEFINITION, PATCH_INVENTORY_S
 import { csvCell, EXPORT_MAX_ROWS } from '../endpoints/endpoint-list.service';
 import { reportCoverage, retentionConfig } from '../retention/retention-policy';
 import { SOFTWARE_INSTALL, SOFTWARE_UNINSTALL } from '../actions/catalog';
+import { daysLeft, supportInfo, warrantyState, WARRANTY_SOURCE_LABEL, WARRANTY_STATE_LABEL, type WarrantyState } from '../warranty/vendors';
 import { EVIDENCE_STALE_DAYS, complianceOf, evidenceFor, programsOf, tallyCompliance, type ComplianceState } from '../software/definition';
 
 /**
@@ -52,7 +53,7 @@ import { EVIDENCE_STALE_DAYS, complianceOf, evidenceFor, programsOf, tallyCompli
  * written with logOrFail before the file leaves.
  */
 
-export const REPORT_KEYS = ['patch-compliance', 'agent-coverage', 'alert-frequency', 'offline-time', 'software-compliance'] as const;
+export const REPORT_KEYS = ['patch-compliance', 'agent-coverage', 'alert-frequency', 'offline-time', 'software-compliance', 'warranty'] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
 export const PERIOD_DAYS = [1, 7, 30, 90, 365] as const;
@@ -572,6 +573,70 @@ export class ReportsService {
     };
   }
 
+  // ── Warranty (0.56) ───────────────────────────────────────────────────────
+
+  /**
+   * Every visible ACTIVE computer with its stored warranty end date, worst
+   * first: expired, then ending soonest, then none stored. The dates are
+   * whatever was entered by hand or read from a vendor's warranty API; a
+   * computer with neither is "unknown", never assumed covered.
+   */
+  private async warrantyRows(actor: ActorContext, q: ReportQuery, now: Date) {
+    const eps = await this.prisma.endpoint.findMany({
+      where: this.devicesWhere(actor, q),
+      select: {
+        id: true, name: true, hostname: true, serialNumber: true,
+        warrantyStartsAt: true, warrantyEndsAt: true, warrantySource: true, warrantyCoverage: true, warrantyCheckedAt: true,
+        customer: { select: { id: true, name: true } }, site: { select: { id: true, name: true } },
+        inventory: { select: { manufacturer: true, model: true, serialNumber: true } },
+      },
+    });
+    const order: Record<WarrantyState, number> = { expired: 0, expiring_30: 1, expiring_60: 2, expiring_90: 3, active: 4, unknown: 5 };
+    return eps.map((e) => {
+      const support = supportInfo(e.inventory?.manufacturer, e.inventory?.model, e.inventory?.serialNumber ?? e.serialNumber);
+      return {
+        device: { id: e.id, name: label(e) }, business: e.customer as Ref | null, site: e.site as Ref | null,
+        manufacturer: e.inventory?.manufacturer ?? null, model: e.inventory?.model ?? null, serial: support.serial,
+        virtual: support.maker.kind === 'virtual',
+        state: warrantyState(e.warrantyEndsAt, now), daysLeft: daysLeft(e.warrantyEndsAt, now),
+        startsAt: e.warrantyStartsAt, endsAt: e.warrantyEndsAt, source: e.warrantySource, coverage: e.warrantyCoverage, checkedAt: e.warrantyCheckedAt,
+      };
+    }).sort((a, b) => order[a.state] - order[b.state] || (a.endsAt?.getTime() ?? 0) - (b.endsAt?.getTime() ?? 0) || a.device.name.localeCompare(b.device.name));
+  }
+
+  async warranty(actor: ActorContext, q: ReportQuery) {
+    const now = new Date();
+    const head = this.head(actor, q, now);
+    const [rows, facets] = await Promise.all([this.warrantyRows(actor, q, now), this.facets(actor, 'devices')]);
+    type Row = (typeof rows)[number];
+    const summarise = (l: Row[]) => ({
+      total: l.length,
+      expired: l.filter((r) => r.state === 'expired').length,
+      within30: l.filter((r) => r.state === 'expiring_30').length,
+      within60: l.filter((r) => r.state === 'expiring_30' || r.state === 'expiring_60').length,
+      within90: l.filter((r) => r.state === 'expiring_30' || r.state === 'expiring_60' || r.state === 'expiring_90').length,
+      active: l.filter((r) => r.state === 'active').length,
+      unknown: l.filter((r) => r.state === 'unknown').length,
+      unknownVirtual: l.filter((r) => r.state === 'unknown' && r.virtual).length,
+    });
+    const byBiz = new Map<string, Row[]>();
+    for (const r of rows) { const k = r.business?.id ?? ''; const l = byBiz.get(k) ?? []; l.push(r); byBiz.set(k, l); }
+    const view = (r: Row) => ({
+      device: r.device, business: r.business, site: r.site, manufacturer: r.manufacturer, model: r.model, virtual: r.virtual,
+      state: r.state, daysLeft: r.daysLeft, startsAt: iso(r.startsAt), endsAt: iso(r.endsAt), source: r.source, coverage: r.coverage, checkedAt: iso(r.checkedAt),
+    });
+    const attention = rows.filter((r) => r.state !== 'active' && r.state !== 'unknown');
+    return {
+      ...head,
+      definition: 'From the warranty end date stored for each computer — entered by hand on its device page, or read from Dell or Lenovo when a Platform Admin has switched that lookup on. Ends within 60 and 90 days include the shorter windows. Unknown means no date is stored; a virtual machine has no hardware warranty.',
+      totals: summarise(rows),
+      byBusiness: [...byBiz.values()].map((l) => ({ business: l[0].business, ...summarise(l) })).sort((a, b) => byName(a.business, b.business)),
+      devices: attention.slice(0, PAGE_LIST_MAX).map(view),
+      devicesTotal: attention.length,
+      facets,
+    };
+  }
+
   // ── Export ────────────────────────────────────────────────────────────────
 
   /**
@@ -607,6 +672,14 @@ export class ReportsService {
         r.firstSeenAt.toISOString(), r.customer?.name ?? '', r.site?.name ?? '', r.endpoint ? label(r.endpoint) : '', r.kind, r.ruleKey, r.severity, r.title, r.state, yn(r.suppressed),
         r.state === 'RESOLVED' ? iso(r.resolvedAt) ?? '' : '', r.state === 'RESOLVED' ? (r.resolvedById ? 'person' : 'monitor') : '',
         r.state === 'RESOLVED' && r.resolvedAt ? minutes(r.resolvedAt.getTime() - r.firstSeenAt.getTime()) : '',
+      ]);
+    } else if (report === 'warranty') {
+      const rows = await this.warrantyRows(actor, q, now);
+      header = ['Business', 'Site', 'Device', 'Manufacturer', 'Model', 'Serial', 'Warranty', 'Days left', 'Starts (UTC)', 'Ends (UTC)', 'Source', 'Coverage', 'Checked (UTC)'];
+      lines = rows.map((r) => [
+        r.business?.name ?? '', r.site?.name ?? '', r.device.name, r.manufacturer ?? '', r.model ?? '', r.serial ?? '',
+        r.virtual && r.state === 'unknown' ? 'Virtual machine' : WARRANTY_STATE_LABEL[r.state], r.daysLeft ?? '', iso(r.startsAt) ?? '', iso(r.endsAt) ?? '',
+        r.source ? WARRANTY_SOURCE_LABEL[r.source] ?? r.source : '', r.coverage ?? '', iso(r.checkedAt) ?? '',
       ]);
     } else if (report === 'software-compliance') {
       const { rows } = await this.softwareRows(actor, q, now);
