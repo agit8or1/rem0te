@@ -205,8 +205,12 @@ if (new Date().getUTCMinutes() >= 57) await new Promise((r) => setTimeout(r, (61
   // The skip rule: a plan valid more than 15 minutes is refused.
   const ds = doc({ offline: { mode: 'skip_if_offline' } });
   const ss = state({ doc: ds, digest: A.automationDigest(ds) });
-  const evs = (p) => code(A.evaluateAutomationPlan(ss, { plan: p, policyDigest: ss.digest }, { now, customerSignoff: false }));
-  check('skip-if-offline: 15 minutes is accepted, 16 refused', evs(planFor(ds, ss.digest, { notAfter: new Date(now.getTime() + 15 * 60_000) })) === 'ok' && evs(planFor(ds, ss.digest, { notAfter: new Date(now.getTime() + 16 * 60_000) })) === 'offline_rule_mismatch');
+  // Pinned 5 minutes into the current hour: the hourly window closes on the
+  // hour, so with the real clock in the last 15 minutes of an hour both plans
+  // ran past the window and the check failed for a reason it does not test.
+  const sNow = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000 + 5 * 60_000);
+  const evs = (p) => code(A.evaluateAutomationPlan(ss, { plan: p, policyDigest: ss.digest }, { now: sNow, customerSignoff: false }));
+  check('skip-if-offline: 15 minutes is accepted, 16 refused', evs(planFor(ds, ss.digest, { notBefore: sNow, notAfter: new Date(sNow.getTime() + 15 * 60_000) })) === 'ok' && evs(planFor(ds, ss.digest, { notBefore: sNow, notAfter: new Date(sNow.getTime() + 16 * 60_000) })) === 'offline_rule_mismatch');
 }
 
 // ── The approval signer, in-process ─────────────────────────────────────────
