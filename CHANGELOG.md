@@ -147,6 +147,13 @@ that a console series is all at once.
   - signed mode keeps *Propose for approval* and the approvers' reason;
   - direct mode says *Create policy*, with no reason and the active note.
 
+### Dependency audit
+
+`pnpm audit` began failing on 2026-11-17 when GHSA-fc5q-39xc-vjpf (picomatch ReDoS) was widened to `<= 4.0.7`, the
+latest release, with no patched version. It is accepted in `pnpm-workspace.yaml` with its reason, like the
+braces, deepmerge and minimatch entries: every path is development tooling (`@nestjs/cli`, tailwindcss,
+typescript-eslint), and `pnpm why picomatch -r --prod` is empty. No dependency changed.
+
 ### Deploying 0.62
 
 1. **Reinstall the approval signer from 0.62 first** (`apps/api/scripts/build-approval-signer.mjs`, then the usual
