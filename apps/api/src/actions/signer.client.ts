@@ -42,7 +42,7 @@ export class SignerClient {
   // The portal proposes a policy and may revoke one. It cannot approve one
   // (that is passkeys on the signer's own page), cannot un-revoke one, and
   // cannot make the signer sign a plan the policy does not cover.
-  capabilities() { return this.call<{ patchPolicies?: number; kid?: string; roster?: { approvers: number }; approval?: { default: 'direct' | 'signed'; directBusinesses: number } }>('GET', '/internal/v1/capabilities'); }
+  capabilities() { return this.call<{ patchPolicies?: number; patchStaging?: number; kid?: string; roster?: { approvers: number }; approval?: { default: 'direct' | 'signed'; directBusinesses: number } }>('GET', '/internal/v1/capabilities'); }
   keys() { return this.call<{ keys?: { kid: string }[] }>('GET', '/internal/v1/keys'); }
   submitPolicy(policy: unknown) { return this.call<{ policyId?: string; digest?: string; status?: string; direct?: boolean; approvalUrl?: string; error?: string; message?: string }>('POST', '/internal/v1/policies', { policy }); }
   policyStatus(id: string) {

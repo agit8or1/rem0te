@@ -4,9 +4,14 @@ rem0te 0.27 can install **Windows updates** on customer computers in stages. 0.3
 [installing from one computer's Patches tab](#installing-from-one-computers-patches-tab) and
 [patch policies](#patch-policies), which are approved once and then run inside a maintenance window. 0.34 adds a
 [restart rule](#restarting-after-updates): restart, if Windows requires it, inside the plan's window. For production
-setup, see [Patching setup](patching-setup.md). A **canary** computer goes first, then
-one or more **rings**. Each ring is a single signed plan that two people on the approval roster authorize with a
-passkey. The next ring can't be requested until the canary reports that the updates took effect.
+setup, see [Patching setup](patching-setup.md).
+
+**From 0.62 a rollout installs [all at once](#all-at-once-062) by default:** you tick the computers and every one of
+them installs together in the window, with no canary and nothing waiting for anything else. **Test on one computer
+first** is an option, off by default, and gives the staged behaviour this page describes below: a **canary** computer
+goes first, then one or more **rings**. Each ring is a single signed plan that two people on the approval roster
+authorize with a passkey (in direct mode it is signed at once). The next ring can't be requested until the canary
+reports that the updates took effect.
 
 The plan is approved, delivered and executed exactly like the [approved Print Spooler action](approved-actions.md):
 the same approval signer, roster, signature and agent checks. This page covers only what is different for updates.
@@ -43,6 +48,46 @@ approvers *see*, and they are signed, but the agent never consults them. A misle
 can't widen what gets installed.
 
 At most 20 updates per plan; ring 0 is exactly one computer; later rings have up to 25 computers; at most five rings.
+
+## All at once (0.62)
+
+0.62 removes the canary as the default, at the owner's request ("remove the goofy canary thing in update policy").
+Every way to start patching — a one-off deployment, a patch policy and a company-wide policy — now asks one question,
+**Test on one computer first**, and it is not ticked.
+
+**All at once (the default).**
+
+- You tick the computers (or **Select all**). They are split evenly into plans of at most 25 computers, at most five
+  plans — so at most **125 computers** in one deployment or policy. A plan is still one signed document per 25
+  computers; that limit is the agent's and the signer's, and it did not move.
+- **No plan waits for another.** There is no canary, no soak and no gate. Requesting a deployment's rings is one
+  press — **Install on every computer** in direct mode — which requests every plan at once. A policy's sweep proposes
+  every plan in the same window.
+- One computer's failure does not stop the others. A plan that is rejected, canceled, expired, or has more failures
+  than its threshold can be requested again on its own.
+- No computer needs a [result key](#signed-results-034), because no result opens anything.
+
+**Test on one computer first (optional).** Everything below this section: a canary, gated rings, soak, a failure
+threshold and signed results. A rollout made before 0.62, or by an API caller that does not say, is this kind.
+
+**How it is signed.** The policy document carries a new field, `staging`, written only when it is `"none"`. A document
+without it is a canary document, so every policy approved before 0.62 keeps its exact bytes, digest and gate. The
+signer:
+
+- refuses any other value (`staging_unknown`), at admission and again when it signs a plan;
+- under `"none"`, still checks the policy's standing, the computers by identity, the filter, the window, the restart
+  rule, the signed pause and its ledger; it skips only ring order and the gate, refuses any gate evidence
+  (`bad_evidence`), and keeps one open plan per ring (`ring_already_signed`) and the retry limit
+  (`ring_retry_limit`);
+- can't be fooled by a portal that flips the field afterwards: the field is inside the signed digest, so an edited
+  document is `policy_digest_mismatch`.
+
+A signer older than 0.62 refuses a `"none"` document outright (its schema is strict), so the portal asks the signer
+whether it knows the field (`patchStaging`) before proposing one, and says `SIGNER_TOO_OLD` if not. **Reinstall the
+approval signer from 0.62 before anyone makes an all-at-once policy.** One-off deployments are signed by the portal's
+own request path and need no signer change.
+
+The agent is unchanged: an all-at-once plan is an ordinary update plan.
 
 ## How a deployment runs
 
@@ -292,8 +337,9 @@ policy card — computed from the running revision's signed window. From 0.53 a 
 
 ## Patch policies
 
-A **patch policy** (0.32) approves a bounded kind of patching once, so the nightly canary doesn't need two people
-every time. Two approvers other than its author approve the policy on the approval signer. After that, **the signer
+A **patch policy** (0.32) approves a bounded kind of patching once, so the nightly install doesn't need two people
+every time. From 0.62 a policy installs [all at once](#all-at-once-062) unless *Test on one computer first* is ticked;
+the canary and ring rules in this section apply to a policy that tests first. Two approvers other than its author approve the policy on the approval signer. After that, **the signer
 itself**, not the portal, signs each ring plan, but only if the plan falls inside the policy.
 
 **What the policy binds** (the signer checks each one):
@@ -407,7 +453,10 @@ the same signer. The signer knows nothing about series. It signs a ring plan onl
 exactly as before. The portal can't widen a running revision. It can only propose another one, which is admitted
 (direct mode) or approved (signed mode) like any policy.
 
-**How the portal builds the rings:**
+**How the portal builds the rings.** From 0.62 a company-wide policy installs [all at once](#all-at-once-062) unless
+*Test on one computer first* is ticked: every computer, in at most five plans of 25 that wait for nothing (at most
+125), with no canary and no result keys needed. A company-wide policy made before 0.62 keeps its canary. With *Test on
+one computer first*:
 
 - **The canary** is the computer you chose, while it is eligible. Otherwise it is the previous revision's canary.
   Failing both, it is the computer that checks in most reliably: the most hours with a check-in in the last seven

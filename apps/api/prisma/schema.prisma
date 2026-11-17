@@ -2939,8 +2939,11 @@ model PatchDeployment {
   name             String
   /// [{ updateId, revision, kb, title, className, severity }]
   updates          Json
-  /// [{ endpointIds: string[] }] — ring 0 is the canary, exactly one computer.
+  /// [{ endpointIds: string[] }] — under canary staging ring 0 is the canary, exactly one computer.
   rings            Json
+  /// 0.62: 'none' (all at once: no ring waits for another) or 'canary' (a
+  /// canary, then gated rings). CHECKed in 0083; rows before 0.62 are 'canary'.
+  staging          String                @default("canary")
   soakHours        Int                   @default(24)
   /// Failed computers a ring may have before the deployment pauses itself.
   failureThreshold Int                   @default(0)

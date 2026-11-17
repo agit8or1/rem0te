@@ -597,6 +597,85 @@ async function all() {
     check(p.status === 201 && /^[0-9a-f]{32}$/.test(p.body?.jobId ?? ''), 'a ring plan inside the monthly window is signed under it, with no person approving it', JSON.stringify(p.body));
   }
 
+  section('0.62: all at once — no canary, every ring signed in the same window, nothing waits');
+  {
+    check(!('staging' in pol.document), 'a policy proposed without staging is a canary policy, and its document carries no staging field (0.61\'s bytes)', JSON.stringify(Object.keys(pol.document)));
+    const a1 = await mkPc('PP-AAO-1', [CU, NET]), a2 = await mkPc('PP-AAO-2', [CU]), a3 = await mkPc('PP-AAO-3', [CU]);
+    for (const pc of [a1, a2]) { await sleep(1100); await heartbeat(pc, { patchPosture: scan(pc) }); }
+    await sleep(1100); await heartbeat(a3, { patchPosture: unsignedScan(a3) }); // an agent that cannot sign its results
+    const aao = { ...body, name: 'Acme all at once', rings: [[a1.id, a2.id], [a3.id]], soakHours: 0, failureThreshold: 25, staging: 'none' };
+    let r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...aao, staging: undefined } });
+    check(r.status === 400 && code(r) === 'BAD_RINGS', 'an API caller that leaves staging out gets a canary policy: two computers in ring 0 → BAD_RINGS', msg(r));
+    r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: { ...aao, staging: 'later' } });
+    check(r.status === 400, 'an unknown staging is refused by the portal', msg(r));
+    const raw = { ...pol.document, policyId: hex(16), staging: 'sometimes', createdAt: new Date().toISOString() };
+    const refused = await sj(`${INTERNAL}/internal/v1/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy: raw }) });
+    check(refused.status >= 400 && refused.status < 500 && refused.body?.error === 'invalid_policy', 'an unknown staging sent straight to the signer is refused (invalid_policy)', JSON.stringify(refused.body));
+    r = await req('POST', '/patching/policies', { s: S.owenF, business: acme.id, body: aao });
+    const ap = r.body?.data;
+    check(r.status === 201 && ap?.status === 'AWAITING_APPROVAL' && ap.document.staging === 'none' && ap.staging === 'none',
+      'an all-at-once policy: two computers in ring 0, and a computer that cannot sign its results is no reason to refuse it', msg(r));
+    if (!ap) throw new Error('no all-at-once policy; stopping');
+    check(!ap.document.rings[1][0].resultKey, 'the keyless computer is admitted without a result key (no result opens anything)', JSON.stringify(ap.document.rings[1][0]));
+    const page = await (await fetch(ap.approvalUrl)).text();
+    check(page.includes('All at once') && !page.includes('Ring 0 — canary'), 'the signer\'s approval page says All at once, and names no canary', page.slice(0, 200));
+    await approvePolicy(ap.id, pk.olivia);
+    const ok = await approvePolicy(ap.id, pk.quinn);
+    check(ok.body?.status === 'ACTIVE', 'approved by two', JSON.stringify(ok.body).slice(0, 200));
+    const both = await until('both rings', async () => {
+      const jobs = await prisma.actionJob.findMany({ where: { deployment: { policyId: ap.id }, status: { notIn: SIGNED_NOT } }, include: { targets: true } });
+      return jobs.some((j) => j.ring === 0) && jobs.some((j) => j.ring === 1) ? jobs : null;
+    });
+    check(!!both && resultsOf(a1).length === 0 && resultsOf(a3).length === 0, 'the sweep has BOTH rings signed under the policy before any computer has installed anything — ring 1 waits for nothing',
+      both ? '' : JSON.stringify((await prisma.patchPolicy.findUnique({ where: { id: ap.id } }))?.lastProposal));
+    if (!both) throw new Error('all at once: rings not signed; stopping');
+    const j0 = both.find((j) => j.ring === 0), j1 = both.find((j) => j.ring === 1);
+    check(j0.targets.length === 2 && j1.targets.length === 1 && j1.targets[0].endpointId === a3.id, 'ring 0 names both its computers, ring 1 the third', JSON.stringify(both.map((j) => [j.ring, j.targets.length])));
+    const dd = await prisma.patchDeployment.findUnique({ where: { id: j0.deploymentId } });
+    check(dd.staging === 'none', 'its deployment is stored as all at once (0083)', dd.staging);
+    // A compromised portal: evidence offered for an all-at-once plan, or a second plan for a ring still open.
+    const ev = await underPolicy(ap.id, { plan: craft(j1.plan, {}), policyDigest: ap.digest, evidence: { deploymentId: dd.id, ring: 0, targets: [] } });
+    check(ev.status === 409 && ev.body?.error === 'bad_evidence', 'the signer refuses any gate evidence for an all-at-once plan (bad_evidence)', JSON.stringify(ev.body));
+    const again = await underPolicy(ap.id, { plan: craft(j0.plan, {}), policyDigest: ap.digest, evidence: null });
+    check(again.status === 409 && again.body?.error === 'ring_already_signed', 'and a second plan for a ring still open (ring_already_signed)', JSON.stringify(again.body));
+    const stranger = await underPolicy(ap.id, { plan: craft(j1.plan, { targets: [{ ...j1.plan.targets[0], endpointId: outsider.id, hostname: 'PP-OUTSIDER', rustdeskId: outsider.rid, deviceSecretSha256: sha(outsider.secret) }] }), policyDigest: ap.digest, evidence: null });
+    check(stranger.status === 409 && stranger.body?.error !== 'bad_evidence' && /computer|ring_already/.test(stranger.body?.error ?? ''), 'a computer the policy does not name is still refused', JSON.stringify(stranger.body));
+    for (const pc of [a1, a2, a3]) {
+      const c = await cycle(pc);
+      check(c.outs[0]?.updates?.find((x) => x.kb === 'KB5046001')?.state === 'installed', `${pc.hostname} installs the CU`, JSON.stringify(c.outs[0]));
+    }
+    for (const pc of [a1, a2, a3]) await rescan(pc);
+    const done = await until('completed', async () => (await req('GET', `/patching/deployments/${dd.id}`, { s: S.owen, business: acme.id })).body?.data?.status === 'COMPLETED', 15_000);
+    check(!!done, 'the all-at-once deployment completes once every computer has reported');
+  }
+
+  section('0.62: a one-off deployment all at once — every ring requestable now, in any order');
+  {
+    const d1 = await mkPc('PP-DEP-1', [CU]), d2 = await mkPc('PP-DEP-2', [CU]), d3 = await mkPc('PP-DEP-3', [CU]);
+    for (const pc of [d1, d2, d3]) { await sleep(1100); await heartbeat(pc, { patchPosture: scan(pc) }); }
+    const dep0 = { businessId: acme.id, name: 'Acme all at once by hand', updates: [id(CU)], rings: [[d1.id, d2.id], [d3.id]], soakHours: 0, failureThreshold: 25, windowHours: 8 };
+    let r = await req('POST', '/patching/deployments', { s: S.owen, business: acme.id, body: dep0 });
+    check(r.status === 400 && code(r) === 'BAD_RINGS', 'left out, staging is canary: two computers in ring 0 → BAD_RINGS', msg(r));
+    r = await req('POST', '/patching/deployments', { s: S.owen, business: acme.id, body: { ...dep0, staging: 'none' } });
+    const d = r.body?.data;
+    check(r.status === 201 && d?.staging === 'none' && JSON.stringify(d.next.requestable) === '[0,1]', 'created all at once: both rings requestable at once', msg(r));
+    if (!d) throw new Error('no all-at-once deployment; stopping');
+    const q1 = await req('POST', `/patching/deployments/${d.id}/rings/1/request`, { s: S.owen, business: acme.id, body: { reason: 'Patch Tuesday' } });
+    check(q1.status === 201 && q1.body?.data?.job?.status === 'AWAITING_APPROVAL', 'ring 1 can be requested first — it waits for no canary', msg(q1));
+    const q0 = await req('POST', `/patching/deployments/${d.id}/rings/0/request`, { s: S.owen, business: acme.id, body: { reason: 'Patch Tuesday' } });
+    check(q0.status === 201, 'and ring 0 alongside it', msg(q0));
+    const q1b = await req('POST', `/patching/deployments/${d.id}/rings/1/request`, { s: S.owen, business: acme.id, body: { reason: 'twice' } });
+    check(q1b.status === 409 && code(q1b) === 'RING_GATE', 'but not a ring that is already running', msg(q1b));
+    for (const j of [q0.body?.data?.job, q1.body?.data?.job]) { await approveJob(j.id, pk.olivia); await approveJob(j.id, pk.quinn); }
+    for (const pc of [d1, d2, d3]) {
+      const c = await cycle(pc);
+      check(c.outs[0]?.updates?.find((x) => x.kb === 'KB5046001')?.state === 'installed', `${pc.hostname} installs the CU`, JSON.stringify(c.outs[0]));
+    }
+    for (const pc of [d1, d2, d3]) await rescan(pc);
+    const done = await until('completed', async () => (await req('GET', `/patching/deployments/${d.id}`, { s: S.owen, business: acme.id })).body?.data?.status === 'COMPLETED', 15_000);
+    check(!!done, 'the deployment completes with no canary confirmed effective');
+  }
+
   section('Revoke: one-way, and it reaches the signer');
   {
     let r = await req('POST', `/patching/policies/${pol.id}/revoke`, { s: S.owen, business: acme.id, body: { reason: 'pausing for the holidays' } });

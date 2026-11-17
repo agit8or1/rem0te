@@ -15,7 +15,7 @@ import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { PUBLISH_COMMAND } from '../update-trust/agent-migration';
 import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, REBOOT_SCHEDULE, UPDATE_INSTALL, UpdateReboot } from '../actions/catalog';
 import {
-  MAX_POLICY_DAYS, MAX_POLICY_RINGS, MAX_RESTART_ATTEMPTS, MAX_RESTART_PLAN_HOURS, POLICY_RESTART_DELAY_MINUTES, POLICY_SCHEMA, PolicyAllow, PolicyDoc, PolicyRestart, PolicyWindow,
+  MAX_POLICY_DAYS, MAX_POLICY_RINGS, MAX_RESTART_ATTEMPTS, STAGINGS, stagingOf, MAX_RESTART_PLAN_HOURS, POLICY_RESTART_DELAY_MINUTES, POLICY_SCHEMA, PolicyAllow, PolicyDoc, PolicyRestart, PolicyWindow,
   allowParams, describePolicyWindow, localTime, nextOccurrence, nextOccurrences, occurrenceAt, policyAllowsUpdate, policyDigest, restartInWords, restartRuleOf, scheduleInWords, validatePolicyDoc, windowKind,
   type RestartRule,
 } from '../actions/patch-policy';
@@ -36,6 +36,13 @@ import { PatchingService } from './patching.service';
  * inside the document*: the portal cannot widen the computers, the classes,
  * the window or the ring order, nor skip the canary or its proof.
  *
+ * 0.62, at the owner's request: that is the canary staging. A policy may
+ * instead install all at once (staging none, signed into the document):
+ * every ring is proposed in the window together, with no canary, no evidence
+ * and no soak, and a computer without a result key may be in any ring. A
+ * document without the field is canary, so every policy before 0.62 keeps
+ * its bytes and its gate.
+ *
  * This service proposes policies, mirrors their status from the signer,
  * revokes them, and runs the sweep that proposes ring plans inside an open
  * window. It has no approve route and cannot sign anything.
@@ -53,8 +60,10 @@ const PolicyIdRe = /^[a-f0-9]{32}$/;
 export const CreatePolicyDto = z.object({
   businessId: Id,
   name: z.string().trim().min(3).max(120),
-  /** Endpoint ids. Ring 0 is the canary: exactly one. */
+  /** Endpoint ids. Under canary staging ring 0 is the canary: exactly one. */
   rings: z.array(z.array(Id).min(1).max(MAX_RING_TARGETS)).min(1).max(MAX_POLICY_RINGS),
+  /** 0.62: 'none' (all at once) or 'canary'. Absent means canary, as before 0.62; the console sends it explicitly. */
+  staging: z.enum(STAGINGS).default('canary'),
   allow: PolicyAllow,
   soakHours: z.number().int().min(0).max(168).default(24),
   failureThreshold: z.number().int().min(0).max(MAX_RING_TARGETS).default(0),
@@ -275,14 +284,42 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     await this.nextRing(r, doc, actor, d, windowKey, now, notAfter, rec);
   }
 
-  /** The canary's offered, installable, policy-allowed updates become this window's deployment. */
+  /**
+   * The canary's offered, installable, policy-allowed updates become this
+   * window's deployment. 0.62, all at once: there is no canary, so they are
+   * those of every computer ready now, together (each computer's agent
+   * installs only what Windows Update offers it).
+   */
   private async startDeployment(r: PatchPolicy, doc: PolicyDoc, actor: ActorContext, windowKey: string, now: Date, rec: (ok: boolean, code: string, message: string, extra?: Partial<LastProposal>, audit?: boolean) => Promise<void>): Promise<PatchDeployment | null> {
-    const canary = doc.rings[0][0];
-    const why = await this.notReady(actor, canary, doc.rings.length > 1, r.id);
-    if (why) { await rec(false, 'canary_not_ready', `The canary, ${canary.hostname}: ${why}`); return null; }
-    const posture = (await this.patching.postures([canary.endpointId])).get(canary.endpointId)!;
-    const updates = posture.updates.filter((u) => eligibility(u).ok && policyAllowsUpdate(doc.allow, u).ok).slice(0, MAX_UPDATES_PER_PLAN);
-    if (!updates.length) { await rec(true, 'nothing_to_install', `Windows Update offers the canary nothing this policy installs (scan of ${posture.scannedAt}).`, {}, false); return null; }
+    const staging = stagingOf(doc);
+    if (!staging) { await rec(false, 'staging_unknown', 'The policy\'s staging is not one this version knows; nothing is proposed under it.'); return null; }
+    let updates: { updateId: string; revision: number }[];
+    if (staging === 'none') {
+      const ready: string[] = [];
+      let firstWhy = '';
+      for (const c of doc.rings.flat()) {
+        const no = await this.notReady(actor, c, false, r.id);
+        if (no) { firstWhy ||= `${c.hostname}: ${no}`; continue; }
+        ready.push(c.endpointId);
+      }
+      if (!ready.length) { await rec(false, 'none_ready', `No computer in the policy is ready (${firstWhy})`); return null; }
+      const postures = await this.patching.postures(ready);
+      const seen = new Map<string, { updateId: string; revision: number }>();
+      for (const id of ready) {
+        for (const u of postures.get(id)?.updates ?? []) {
+          if (eligibility(u).ok && policyAllowsUpdate(doc.allow, u).ok && !seen.has(`${u.updateId}@${u.revision}`)) seen.set(`${u.updateId}@${u.revision}`, u);
+        }
+      }
+      updates = [...seen.values()].slice(0, MAX_UPDATES_PER_PLAN);
+      if (!updates.length) { await rec(true, 'nothing_to_install', `Windows Update offers the ${ready.length} ready computer(s) nothing this policy installs.`, {}, false); return null; }
+    } else {
+      const canary = doc.rings[0][0];
+      const why = await this.notReady(actor, canary, doc.rings.length > 1, r.id);
+      if (why) { await rec(false, 'canary_not_ready', `The canary, ${canary.hostname}: ${why}`); return null; }
+      const posture = (await this.patching.postures([canary.endpointId])).get(canary.endpointId)!;
+      updates = posture.updates.filter((u) => eligibility(u).ok && policyAllowsUpdate(doc.allow, u).ok).slice(0, MAX_UPDATES_PER_PLAN);
+      if (!updates.length) { await rec(true, 'nothing_to_install', `Windows Update offers the canary nothing this policy installs (scan of ${posture.scannedAt}).`, {}, false); return null; }
+    }
     const local = localTime(new Date(windowKey), doc.window.timezone);
     const date = `${local.y}-${String(local.m).padStart(2, '0')}-${String(local.d).padStart(2, '0')}`;
     try {
@@ -290,7 +327,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
         businessId: r.customerId, name: `${doc.name} — ${date}`.slice(0, 120),
         updates: updates.map((u) => ({ updateId: u.updateId, revision: u.revision })),
         rings: doc.rings.map((ring) => ring.map((c) => c.endpointId)),
-        soakHours: doc.soakHours, failureThreshold: doc.failureThreshold, windowHours: 24, reboot: doc.reboot,
+        soakHours: doc.soakHours, failureThreshold: doc.failureThreshold, windowHours: 24, reboot: doc.reboot, staging,
       }, 'POLICY', { policyId: r.id, windowKey, createdById: doc.createdBy.userId });
     } catch (e) {
       // Another sweep (another process) made this window's deployment first.
@@ -304,15 +341,27 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
   private async nextRing(r: PatchPolicy, doc: PolicyDoc, actor: ActorContext, d: PatchDeployment, windowKey: string, now: Date, notAfter: Date, rec: (ok: boolean, code: string, message: string, extra?: Partial<LastProposal>, audit?: boolean) => Promise<void>) {
     const detail = await this.patching.detail(actor, d.id, now);
     if (detail.status !== 'ACTIVE') return;
+    if (stagingOf(doc) === 'none') {
+      // 0.62, all at once: every ring not yet running is proposed now, each
+      // its own plan, and none waits for another.
+      if (!detail.next.requestable.length) return rec(true, 'waiting', detail.next.why, { deploymentId: d.id, ring: null }, false);
+      for (const ring of detail.next.requestable) await this.requestPolicyRing(r, doc, actor, d, ring, windowKey, now, notAfter, rec, false);
+      return;
+    }
     const { ring, canRequest, why } = detail.next;
     if (ring === null || !canRequest) return rec(true, 'waiting', why, { deploymentId: d.id, ring }, false);
+    await this.requestPolicyRing(r, doc, actor, d, ring, windowKey, now, notAfter, rec, true);
+  }
+
+  /** One ring of a policy deployment, proposed to the signer; a computer not ready now is left out, with why. */
+  private async requestPolicyRing(r: PatchPolicy, doc: PolicyDoc, actor: ActorContext, d: PatchDeployment, ring: number, windowKey: string, now: Date, notAfter: Date, rec: (ok: boolean, code: string, message: string, extra?: Partial<LastProposal>, audit?: boolean) => Promise<void>, canary: boolean) {
     // A computer not ready now is left out of this ring's plan, with why — it
     // is never swapped for another, and the signer checks each one against
     // the approved identity.
     const exclude: { endpointId: string; why: string }[] = [];
-    if (ring > 0) {
+    if (ring > 0 || !canary) {
       for (const c of doc.rings[ring]) {
-        const no = await this.notReady(actor, c, ring < doc.rings.length - 1, r.id);
+        const no = await this.notReady(actor, c, canary && ring < doc.rings.length - 1, r.id);
         if (no) exclude.push({ endpointId: c.endpointId, why: no.slice(0, 200) });
       }
       if (exclude.length === doc.rings[ring].length) return rec(false, 'ring_not_ready', `No computer in ring ${ring} is ready: ${exclude.map((x) => x.why).slice(0, 2).join('; ')}`, { deploymentId: d.id, ring });
@@ -525,10 +574,13 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     if (!this.signer.configured()) throw new ServiceUnavailableException({ code: 'APPROVAL_SIGNER_NOT_CONFIGURED', message: 'Patch policies need the approval signer (APPROVAL_SIGNER_INTERNAL_URL). See Patching setup.' });
     const caps = await this.signer.capabilities();
     if (caps.status !== 200 || caps.body.patchPolicies !== 1) throw new ConflictException({ code: 'SIGNER_TOO_OLD', message: 'The approval signer does not support patch policies. Install the 0.32 signer.' });
+    // 0.62: an older signer refuses a document carrying staging (its schema is strict); say why first.
+    const canary = dto.staging === 'canary';
+    if (!canary && caps.body.patchStaging !== 1) throw new ConflictException({ code: 'SIGNER_TOO_OLD', message: 'The approval signer cannot sign a policy that installs all at once. Install the 0.62 signer, or tick "Test on one computer first".' });
 
     const all = dto.rings.flat();
     if (new Set(all).size !== all.length) this.bad('BAD_RINGS', 'A computer can be in one ring only.');
-    if (dto.rings[0].length !== 1) this.bad('BAD_RINGS', 'Ring 0 is the canary: exactly one computer.');
+    if (canary && dto.rings[0].length !== 1) this.bad('BAD_RINGS', 'Ring 0 is the canary: exactly one computer.');
     const rings: PolicyDoc['rings'] = [];
     let businessName = '';
     let tenantId: string | null = null;
@@ -543,7 +595,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
         if (!dec.ok) throw new ForbiddenException({ code: dec.reason.toUpperCase(), message: `${name}: ${dec.message}`, endpointId: id });
         if (!ep.rustdeskNode?.rustdeskId || !ep.rustdeskNode.agentSecretHash) throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: `${name}: this computer has no enrolled device identity.`, endpointId: id });
         if (ep.updateChannel !== 'signed') throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: `${name}: runs the standard agent. Move it to the signed channel first.`, endpointId: id });
-        if (i === 0) {
+        if (canary && i === 0) {
           const nr = this.actions.readiness(ep, `${UPDATE_INSTALL.id}@${UPDATE_INSTALL.version}`);
           if (nr) throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: `${name} (the canary): ${nr}`, endpointId: id });
         }
@@ -554,7 +606,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
         // can only stop the policy, never open a ring.
         const posture = (await this.patching.postures([id])).get(id) ?? null;
         const resultKey = this.resultKeyOf(posture, ep.rustdeskNode.rustdeskId, ep.rustdeskNode.agentSecretHash);
-        if (!resultKey && dto.rings.length > 1 && i < dto.rings.length - 1) {
+        if (canary && !resultKey && dto.rings.length > 1 && i < dto.rings.length - 1) {
           throw new ConflictException({ code: 'RESULT_KEY_MISSING', message: `${name}${i === 0 ? ' (the canary)' : ''}: no signed scan from a 0.34+ agent, so its results cannot be verified, and they would open ring ${i + 1}. Update its agent and let it scan, or put it in the last ring.`, endpointId: id });
         }
         // 0.50: one policy per computer. A hand-made policy names only
@@ -572,7 +624,10 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     const expiresAt = new Date(now.getTime() + dto.expiresInDays * 86_400_000);
     const doc: PolicyDoc = {
       schema: POLICY_SCHEMA, policyId: randomBytes(16).toString('hex'), name: dto.name, businessId: dto.businessId, businessName,
-      rings, allow: dto.allow, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, window: dto.window, reboot: dto.reboot,
+      rings,
+      // 0.62: signed only for all at once. A canary document leaves it out and is byte-for-byte what 0.61 made.
+      ...(canary ? {} : { staging: 'none' as const }),
+      allow: dto.allow, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, window: dto.window, reboot: dto.reboot,
       // 0.54: only when chosen, so a document without them is byte-for-byte what 0.53 made.
       ...(dto.restart ? { restart: dto.restart } : {}),
       ...(dto.ignoreRemoteSession ? { ignoreRemoteSession: true as const } : {}),
@@ -604,7 +659,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     await this.goLive(row);
     await this.audit.log({
       tenantId: tenantId ?? undefined, customerId: dto.businessId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_POLICY_CREATED', resource: 'patch_policy', resourceId: row.id,
-      meta: { name: dto.name, digest, approval: sub.body.direct === true ? 'direct' : 'signed', ...(series ? { seriesId: series.seriesId, revision: series.revision, supersedes: series.supersedesId } : {}), rings: rings.map((x) => x.length), allow: allowParams(dto.allow), window: dto.window, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, reboot: dto.reboot, restart: dto.restart ?? null, ...(dto.ignoreRemoteSession ? { ignoreRemoteSession: true } : {}), expiresAt: doc.expiresAt, reason: dto.reason },
+      meta: { name: dto.name, digest, approval: sub.body.direct === true ? 'direct' : 'signed', ...(series ? { seriesId: series.seriesId, revision: series.revision, supersedes: series.supersedesId } : {}), rings: rings.map((x) => x.length), staging: dto.staging, allow: allowParams(dto.allow), window: dto.window, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, reboot: dto.reboot, restart: dto.restart ?? null, ...(dto.ignoreRemoteSession ? { ignoreRemoteSession: true } : {}), expiresAt: doc.expiresAt, reason: dto.reason },
     });
     return this.detail(actor, row.id, now);
   }
@@ -682,7 +737,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
       out.push({
         id: r.id, name: r.name, status: r.status, expiresAt: r.expiresAt, createdAt: r.createdAt,
         seriesId: r.seriesId, revision: r.revision, supersededAt: r.supersededAt,
-        computers: doc.rings.flat().length, rings: doc.rings.length, window: doc.window,
+        computers: doc.rings.flat().length, rings: doc.rings.length, staging: stagingOf(doc), window: doc.window,
         nextWindow: r.status === 'ACTIVE' ? nextOccurrence(now, doc.window, r.expiresAt) : null,
         // 0.54: the install and restart schedule in plain words, and when restarts next run.
         schedule: scheduleInWords(doc), reboot: doc.reboot, restart: doc.restart ?? null, ignoreRemoteSession: doc.ignoreRemoteSession === true,
@@ -704,7 +759,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
       revokedAt: r.revokedAt, revokeReason: r.revokeReason, signerConfirmedRevocation: !!r.signerRevokedAt,
       // 0.50: a revision of a company-wide or assignable policy, and what it replaced.
       seriesId: r.seriesId, revision: r.revision, supersedesId: r.supersedesId, supersededAt: r.supersededAt,
-      document: doc,
+      document: doc, staging: stagingOf(doc),
       // v0.34: compare these with `rem0te-agent.exe status` on each computer.
       resultKeys: Object.fromEntries(doc.rings.flat().map((c) => [c.endpointId, c.resultKey ? resultKeyFingerprint(c.resultKey) : null])),
       currentWindow: r.status === 'ACTIVE' ? occurrenceAt(now, doc.window) : null,

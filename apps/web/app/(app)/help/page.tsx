@@ -1222,6 +1222,17 @@ const SECTIONS: Section[] = [
           More in <Link href="/docs/approved-actions#maintenance-actions-032" className="underline text-foreground">Approved actions</Link>.
         </p>
         <p>
+          From 0.62, a patch policy, a company-wide policy or a deployment on{' '}
+          <Link href="/patching" className="underline text-foreground">Patching</Link> installs{' '}
+          <strong className="text-foreground">all at once</strong> by default: tick the computers, and every one installs
+          together in the window, with no test computer and nothing waiting for another. More than 25 computers go out as
+          plans of up to 25 (at most 125), still all at the same time. Tick{' '}
+          <strong className="text-foreground">Test on one computer first</strong> for the staged rollout described below.
+          The choice is signed into the policy, so the approval signer holds it to it; a policy made before 0.62 keeps its
+          test computer. In direct mode the forms say <em>Create policy</em> and <em>Install</em>, ask for no reason, and
+          what you create is active at once.
+        </p>
+        <p>
           From 0.27, Windows updates can be installed in stages from{' '}
           <Link href="/patching" className="underline text-foreground">Patching</Link>: one{' '}
           <strong className="text-foreground">canary</strong> computer first, then rings. Each ring is one plan that two
@@ -1273,8 +1284,9 @@ const SECTIONS: Section[] = [
           approvers still approve on the approval signer. When it cannot be patched there is no button; the tab says why
           (for example, the standard agent) and what to do instead.{' '}
           <strong className="text-foreground">Patch policies</strong> on the Patching page are approved once, by two
-          people on the approval signer, and then run inside their maintenance window: the canary first, the next ring
-          only once the canary is confirmed effective. The approval signer, not this portal, signs each ring, and only if
+          people on the approval signer, and then run inside their maintenance window: from 0.62 every computer together,
+          or, with <em>Test on one computer first</em>, the canary first and the next ring only once the canary is
+          confirmed effective. The approval signer, not this portal, signs each ring, and only if
           it stays inside the policy&apos;s computers, update classes, excluded KBs, window and expiry. Revoking one is
           one-way. Platform Admins see a pre-flight listing what a production
           install still lacks. Fixture-tested only so far. More in{' '}
@@ -1283,8 +1295,9 @@ const SECTIONS: Section[] = [
         </p>
         <p>
           From 0.50, a business can have a <strong className="text-foreground">company-wide patch policy</strong>:
-          the portal names every Windows computer of the business on the signed agent, picks a canary (yours, or the
-          one that checks in most reliably) and puts the rest in rings of at most 25. Each set of computers is still an
+          the portal names every Windows computer of the business on the signed agent and, from 0.62, installs on them all
+          together; with <em>Test on one computer first</em> it picks a canary (yours, or the one that checks in most
+          reliably) and puts the rest in rings of at most 25. Each set of computers is still an
           ordinary signed policy, a revision, approved like any other. When computers join or leave, the next revision
           is proposed after the change has held a few minutes, at most once an hour per business and never during a
           deployment; in signed mode the old revision keeps running until the new one is approved. Each
@@ -1388,7 +1401,9 @@ const SECTIONS: Section[] = [
           From 0.34, computers <strong className="text-foreground">sign their own patch results</strong> with a key
           they generate and never send. A policy names each computer&apos;s key, and the approval signer checks the
           canary&apos;s signed results and scan before it opens the next ring, so a result this portal altered or made
-          up is refused. Every ring of a policy except the last needs computers running the 0.34 agent. Before approving
+          up is refused. Every ring of a policy except the last needs computers running the 0.34 agent. From 0.62 this
+          applies only with <em>Test on one computer first</em>: a policy that installs all at once opens no ring on
+          anyone&apos;s results, so it needs no result keys. Before approving
           a computer&apos;s first policy, compare the key fingerprint on the approval page with{' '}
           <code>rem0te-agent.exe status</code> on the computer. Policies approved before 0.34 can still run their
           canary, but no later ring. More in{' '}

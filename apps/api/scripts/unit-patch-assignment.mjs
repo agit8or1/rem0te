@@ -146,6 +146,30 @@ const docOf = (plan, cs) => {
   check('settings: an unknown window kind is refused', !A.SeriesSettings.safeParse({ ...s, window: { ...pt, kind: 'yearly' } }).success && !A.SeriesSettings.safeParse({ ...s, window: { ...s.window, kind: 'weekly' } }).success);
 }
 
+// ── 0.62: all at once (staging none) ────────────────────────────────────────
+{
+  const cs = Array.from({ length: 30 }, (_, i) => cand(i + 1, { resultKey: i % 2 ? null : KEY, canaryReady: i % 3 !== 0 }));
+  const p = A.planAllAtOnce(cs);
+  check('all at once: 30 computers are two even rings of 15, no canary', p.ok && p.rings.length === 2 && p.rings[0].length === 15 && p.rings[1].length === 15, JSON.stringify(p.ok && p.rings.map((r) => r.length)));
+  check('all at once: computers without a result key or not "canary ready" are in, anywhere', p.ok && p.rings.flat().length === 30 && p.leftOut.length === 0);
+  check('all at once: stable order (oldest enrolment first) whatever order they arrive in', JSON.stringify(A.planAllAtOnce([...cs].reverse()).rings) === JSON.stringify(p.rings));
+  const doc = { ...docOf(p, cs), staging: 'none' };
+  check('all at once: the document it makes passes the signer\'s own validation', P.validatePolicyDoc(doc, new Date()).ok, JSON.stringify(P.validatePolicyDoc(doc, new Date())));
+  check('all at once: the same rings as a canary document are refused (ring 0 of 15, keyless gating computers)', !P.validatePolicyDoc({ ...doc, staging: undefined }, new Date()).ok);
+  const small = A.planAllAtOnce(cs.slice(0, 7));
+  check('all at once: up to 25 computers are one ring', small.ok && small.rings.length === 1 && small.rings[0].length === 7);
+  const full = A.planAllAtOnce(Array.from({ length: 130 }, (_, i) => cand(i + 1)));
+  check(`all at once: at most ${A.MAX_ALL_AT_ONCE_COMPUTERS} computers (five rings of 25); the rest are policy_full`,
+    full.ok && A.MAX_ALL_AT_ONCE_COMPUTERS === 125 && full.rings.length === 5 && full.rings.every((r) => r.length === 25) && full.leftOut.length === 5 && full.leftOut.every((l) => l.code === 'policy_full'));
+  check('all at once: no computers is no_computers', !A.planAllAtOnce([]).ok && A.planAllAtOnce([]).code === 'no_computers');
+  check('maxPolicyComputers: 101 with a canary, 125 all at once', A.maxPolicyComputers('canary') === 101 && A.maxPolicyComputers('none') === 125);
+  check('seriesStaging: absent (every series before 0.62) is canary', A.seriesStaging({}) === 'canary' && A.seriesStaging({ staging: 'none' }) === 'none' && A.seriesStaging({ staging: 'canary' }) === 'canary');
+  const base = { allow: { classifications: ['0fa1201d-4330-4fa8-8ae9-b877473b6441'] }, window: { days: ['sat'], start: '22:00', end: '04:00', timezone: 'UTC' }, reason: 'unit test' };
+  check('SeriesSettings: a stored series without staging still parses (and means canary)', A.SeriesSettings.safeParse(base).success && A.SeriesSettings.parse(base).staging === undefined);
+  check('SeriesSettings: an unknown staging is refused', !A.SeriesSettings.safeParse({ ...base, staging: 'later' }).success);
+  check('CreateSeriesDto: staging defaults to canary for an API caller that leaves it out', A.CreateSeriesDto.parse({ ...base, businessId: 'business01', scope: 'business', name: 'All' }).staging === 'canary');
+}
+
 if (failures.length) {
   console.error(`✗ ${failures.length} of ${passed + failures.length} failed:`);
   for (const f of failures) console.error(`  ✗ ${f}`);

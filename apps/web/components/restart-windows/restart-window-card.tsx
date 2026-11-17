@@ -97,9 +97,9 @@ function PolicySummary({ p, testid }: { p: PolicyView; testid: string }) {
 }
 
 /** The editor: a rule, a window, and the RustDesk exception (never ticked by default). */
-function WindowForm({ id, initial, tz, zones, allowOff, priority, onSave, onCancel, busy, ask }: {
+function WindowForm({ id, initial, tz, zones, allowOff, priority, onSave, onCancel, busy, ask, direct }: {
   id: string; initial: PolicyView | null; tz: string | null | undefined; zones?: string[]; allowOff: boolean; priority?: number | null;
-  onSave: (b: RestartWindowBody) => void; onCancel: () => void; busy: boolean; ask: boolean;
+  onSave: (b: RestartWindowBody) => void; onCancel: () => void; busy: boolean; ask: boolean; direct: boolean;
 }) {
   const [mode, setMode] = useState<'window' | 'off'>('window');
   const [rule, setRule] = useState<Rule>(initial?.rule ?? 'if_required');
@@ -155,13 +155,15 @@ function WindowForm({ id, initial, tz, zones, allowOff, priority, onSave, onCanc
         <Button size="sm" disabled={!ready || busy} onClick={save} data-testid={`${id}-save`}>{mode === 'window' && ask ? 'Save (confirm it is you)' : 'Save'}</Button>
         <Button size="sm" variant="outline" onClick={onCancel} disabled={busy}>Cancel</Button>
       </div>
-      {mode === 'window' && <p className="text-xs text-muted-foreground">Unless the business uses direct mode, a window is approved by two people with passkeys on the approval signer before it restarts anything. A change replaces the window in force only once it is approved.</p>}
+      {mode === 'window' && (direct
+        ? <p className="text-xs text-muted-foreground" data-testid={`${id}-direct-note`}>Direct mode is on for this business: the window is in force as soon as you save it.</p>
+        : <p className="text-xs text-muted-foreground" data-testid={`${id}-approval-note`}>Unless the business uses direct mode, a window is approved by two people with passkeys on the approval signer before it restarts anything. A change replaces the window in force only once it is approved.</p>)}
     </div>
   );
 }
 
-function SettingBlock({ s, label, editable, ask, tz, zones, onSave, onClear, busy, testid }: {
-  s: SettingView | null; label: string; editable: boolean; ask: boolean; tz?: string | null; zones?: string[];
+function SettingBlock({ s, label, editable, ask, direct, tz, zones, onSave, onClear, busy, testid }: {
+  s: SettingView | null; label: string; editable: boolean; ask: boolean; direct: boolean; tz?: string | null; zones?: string[];
   onSave: (b: RestartWindowBody) => void; onClear?: () => void; busy: boolean; testid: string;
 }) {
   const [editing, setEditing] = useState(false);
@@ -189,7 +191,7 @@ function SettingBlock({ s, label, editable, ask, tz, zones, onSave, onClear, bus
           {s && onClear && <Button size="sm" variant="outline" onClick={onClear} disabled={busy} data-testid={`${testid}-clear`}>Remove</Button>}
         </div>
       )}
-      {editing && <WindowForm id={`${testid}-f`} initial={s?.window ?? null} tz={tz} zones={zones} allowOff={allowOff} priority={s?.scope === 'group' || testid.includes('group') ? (s?.priority ?? null) : undefined} busy={busy} ask={ask}
+      {editing && <WindowForm id={`${testid}-f`} initial={s?.window ?? null} tz={tz} zones={zones} allowOff={allowOff} priority={s?.scope === 'group' || testid.includes('group') ? (s?.priority ?? null) : undefined} busy={busy} ask={ask} direct={direct}
         onCancel={() => setEditing(false)} onSave={(b) => { onSave(b); setEditing(false); }} />}
     </div>
   );
@@ -206,11 +208,18 @@ export function BusinessRestartWindowCard({ businessId }: { businessId: string }
     queryFn: () => restartWindowsApi.business(businessId).then((r) => r.data?.data),
     retry: false, refetchInterval: 30_000,
   });
-  const done = (what: string) => () => { qc.invalidateQueries({ queryKey: ['restart-windows'] }); toast({ title: 'Saved', description: what }); };
+  // 0.62: in direct mode a window is in force when saved, and the toast says so.
+  const direct = data?.approval?.mode === 'direct';
+  const done = (what: string, setsWindow = false) => (_r?: unknown, b?: RestartWindowBody | { b: RestartWindowBody } | string) => {
+    qc.invalidateQueries({ queryKey: ['restart-windows'] });
+    const body = b && typeof b === 'object' && 'b' in b ? b.b : b;
+    const active = setsWindow && direct && typeof body === 'object' && body?.mode === 'window';
+    toast({ title: active ? 'Saved — active' : 'Saved', description: active ? `${what} It is in force now (direct mode).` : what });
+  };
   const fail = (e: unknown) => toast({ title: 'Not saved', description: errMessage(e), variant: 'destructive' });
-  const setBiz = useMutation({ mutationFn: (b: RestartWindowBody) => restartWindowsApi.setBusiness(businessId, b), onSuccess: done('The business\'s restart window is set.'), onError: fail });
+  const setBiz = useMutation({ mutationFn: (b: RestartWindowBody) => restartWindowsApi.setBusiness(businessId, b), onSuccess: done('The business\'s restart window is set.', true), onError: fail });
   const clearBiz = useMutation({ mutationFn: () => restartWindowsApi.clearBusiness(businessId), onSuccess: done('The business\'s restart window is removed.'), onError: fail });
-  const setGrp = useMutation({ mutationFn: ({ g, b }: { g: string; b: RestartWindowBody }) => restartWindowsApi.setGroup(businessId, g, b), onSuccess: done('The group\'s restart setting is saved.'), onError: fail });
+  const setGrp = useMutation({ mutationFn: ({ g, b }: { g: string; b: RestartWindowBody }) => restartWindowsApi.setGroup(businessId, g, b), onSuccess: done('The group\'s restart setting is saved.', true), onError: fail });
   const clearGrp = useMutation({ mutationFn: (g: string) => restartWindowsApi.clearGroup(businessId, g), onSuccess: done('The group\'s restart setting is removed.'), onError: fail });
   const clearPc = useMutation({ mutationFn: (e: string) => restartWindowsApi.clearComputer(e), onSuccess: done('The computer\'s own restart setting is removed.'), onError: fail });
   if (isError || !data) return null;
@@ -229,10 +238,10 @@ export function BusinessRestartWindowCard({ businessId }: { businessId: string }
         {data.readiness.why && <p className="text-xs text-destructive" data-testid="restart-window-not-ready">{data.readiness.why}</p>}
         {data.contained && <p className="text-xs text-destructive">Containment pauses actions for this business: no restart is asked for until it is lifted.</p>}
         {!data.readiness.sweep.enabled && <p className="text-xs text-amber-700 dark:text-amber-400">This API has the restart-window sweep switched off (RESTART_WINDOW_SWEEP=off): no restart is asked for.</p>}
-        <SettingBlock s={data.business} label={`Business — ${data.businessName}`} editable={edit} ask={ask} tz={tz} zones={data.siteTimezones} busy={busy} testid="restart-window-business"
+        <SettingBlock s={data.business} label={`Business — ${data.businessName}`} editable={edit} ask={ask} direct={direct} tz={tz} zones={data.siteTimezones} busy={busy} testid="restart-window-business"
           onSave={(b) => setBiz.mutate(b)} onClear={() => clearBiz.mutate()} />
         {data.groups.map((g) => (
-          <SettingBlock key={g.id} s={g} label={`Device group — ${g.groupName ?? g.groupId}`} editable={edit} ask={ask} tz={tz} zones={data.siteTimezones} busy={busy} testid={`restart-window-group-${g.groupId}`}
+          <SettingBlock key={g.id} s={g} label={`Device group — ${g.groupName ?? g.groupId}`} editable={edit} ask={ask} direct={direct} tz={tz} zones={data.siteTimezones} busy={busy} testid={`restart-window-group-${g.groupId}`}
             onSave={(b) => setGrp.mutate({ g: g.groupId!, b })} onClear={() => clearGrp.mutate(g.groupId!)} />
         ))}
         {edit && data.availableGroups.length > 0 && (
@@ -244,7 +253,7 @@ export function BusinessRestartWindowCard({ businessId }: { businessId: string }
                 {data.availableGroups.map((g) => <option key={g.id} value={g.id}>{g.name}{g.kind === 'rule' ? ' (rule)' : ''}</option>)}
               </select>
             </div>
-            {addGroup && <SettingBlock key={addGroup} s={null} label={`Device group — ${data.availableGroups.find((g) => g.id === addGroup)?.name ?? ''}`} editable ask={ask} tz={tz} zones={data.siteTimezones} busy={busy} testid={`restart-window-group-new-${addGroup}`}
+            {addGroup && <SettingBlock key={addGroup} s={null} label={`Device group — ${data.availableGroups.find((g) => g.id === addGroup)?.name ?? ''}`} editable ask={ask} direct={direct} tz={tz} zones={data.siteTimezones} busy={busy} testid={`restart-window-group-new-${addGroup}`}
               onSave={(b) => { setGrp.mutate({ g: addGroup, b }); setAddGroup(''); }} />}
           </div>
         )}
@@ -288,9 +297,16 @@ export function ComputerRestartWindowCard({ endpointId }: { endpointId: string }
   const { toast } = useToast();
   const ask = useAsks('restart.window');
   const { data, isError } = useComputerRestartWindow(endpointId);
-  const done = (what: string) => () => { qc.invalidateQueries({ queryKey: ['restart-windows'] }); toast({ title: 'Saved', description: what }); };
+  // 0.62: in direct mode a window is in force when saved, and the toast says so.
+  const direct = data?.approval?.mode === 'direct';
+  const done = (what: string, setsWindow = false) => (_r?: unknown, b?: RestartWindowBody | { b: RestartWindowBody } | string) => {
+    qc.invalidateQueries({ queryKey: ['restart-windows'] });
+    const body = b && typeof b === 'object' && 'b' in b ? b.b : b;
+    const active = setsWindow && direct && typeof body === 'object' && body?.mode === 'window';
+    toast({ title: active ? 'Saved — active' : 'Saved', description: active ? `${what} It is in force now (direct mode).` : what });
+  };
   const fail = (e: unknown) => toast({ title: 'Not saved', description: errMessage(e), variant: 'destructive' });
-  const set = useMutation({ mutationFn: (b: RestartWindowBody) => restartWindowsApi.setComputer(endpointId, b), onSuccess: done('This computer\'s restart setting is saved.'), onError: fail });
+  const set = useMutation({ mutationFn: (b: RestartWindowBody) => restartWindowsApi.setComputer(endpointId, b), onSuccess: done('This computer\'s restart setting is saved.', true), onError: fail });
   const clear = useMutation({ mutationFn: () => restartWindowsApi.clearComputer(endpointId), onSuccess: done('This computer now inherits its restart window.'), onError: fail });
   if (isError || !data) return null;
   const eff = data.effective;
@@ -314,7 +330,7 @@ export function ComputerRestartWindowCard({ endpointId }: { endpointId: string }
           </p>
         ))}
         {data.readiness.why && <p className="text-xs text-destructive">{data.readiness.why}</p>}
-        <SettingBlock s={data.own} label="This computer's own setting" editable={data.may.edit && !data.readiness.why} ask={ask} tz={data.siteTimezone} busy={set.isPending || clear.isPending}
+        <SettingBlock s={data.own} label="This computer's own setting" editable={data.may.edit && !data.readiness.why} ask={ask} direct={direct} tz={data.siteTimezone} busy={set.isPending || clear.isPending}
           testid="endpoint-restart-window-own" onSave={(b) => set.mutate(b)} onClear={() => clear.mutate()} />
         {data.attempts.length > 0 && (
           <div className="space-y-1" data-testid="endpoint-restart-window-attempts">

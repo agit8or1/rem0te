@@ -497,6 +497,128 @@ const code = (r) => (r.ok ? 'ok' : r.code);
   check('a re-enrolled computer is another identity, so another pin', core.deviceIdentity({ ...CANARY, deviceSecretSha256: sha('re-enrolled') }) !== core.deviceIdentity(CANARY));
 }
 
+// ── 0.62: staging — all at once, and the canary kept for old documents ──────
+{
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const k = core.loadSigningKey(privateKey.export({ type: 'pkcs8', format: 'pem' }));
+  const business = { default: { customerSignoff: false }, businesses: {} };
+  const refused = (fn) => { try { fn(); return null; } catch (e) { return e.code ?? e.message; } };
+  // Computers with no result key (an agent older than 0.34): fine anywhere when nothing is gated.
+  const keyless = (c) => { const { resultKey, ...rest } = c; return rest; };
+  const A = keyless(pc('ALL_A')), B = keyless(pc('ALL_B')), Cc = keyless(pc('ALL_C'));
+  const dNone = doc({ staging: 'none', rings: [[A, B], [Cc]] });
+
+  check('stagingOf: absent is canary (every document before 0.62)', P.stagingOf(doc()) === 'canary' && P.stagingOf({}) === 'canary');
+  check('stagingOf: none and canary are themselves', P.stagingOf({ staging: 'none' }) === 'none' && P.stagingOf({ staging: 'canary' }) === 'canary');
+  for (const bad of ['None', 'all', '', null, 0, true, ['none'], { kind: 'none' }]) {
+    check(`stagingOf: ${JSON.stringify(bad)} is unknown (null), never read as either`, P.stagingOf({ staging: bad }) === null);
+  }
+  check('an old document without staging keeps its digest (no field is added to it)', P.policyDigest(doc({ policyId: 'a'.repeat(32), createdAt: iso(NOW), expiresAt: iso(NOW.getTime() + 86_400_000) })) === P.policyDigest(JSON.parse(JSON.stringify(doc({ policyId: 'a'.repeat(32), createdAt: iso(NOW), expiresAt: iso(NOW.getTime() + 86_400_000) })))) && !('staging' in doc()));
+
+  // Admission.
+  check('admitPolicy accepts all at once with two computers in ring 0 and no result keys', refused(() => core.admitPolicy(dNone, NOW)) === null, String(refused(() => core.admitPolicy(dNone, NOW))));
+  check('admitPolicy accepts a single ring of 25 all at once', refused(() => core.admitPolicy(doc({ staging: 'none', rings: [Array.from({ length: 25 }, (_, i) => keyless(pc(`BULK${i}`)))] }), NOW)) === null);
+  check('…but no ring of 26, even all at once (MAX_RING_TARGETS holds)', refused(() => core.admitPolicy(doc({ staging: 'none', rings: [Array.from({ length: 26 }, (_, i) => keyless(pc(`BIG${i}`)))] }), NOW)) === 'invalid_policy');
+  for (const bad of ['None', 'all', 'gated', '', null, 1]) {
+    check(`admitPolicy refuses staging ${JSON.stringify(bad)} (fail closed)`, ['invalid_policy', 'staging_unknown'].includes(refused(() => core.admitPolicy(doc({ staging: bad }), NOW))));
+  }
+  check('validatePolicyDoc refuses an unknown staging that got past the schema → staging_unknown', P.validatePolicyDoc({ ...doc(), staging: 'sometimes' }, NOW).reason === 'staging_unknown');
+  check('an old document (no staging) still needs a one-computer canary', refused(() => core.admitPolicy(doc({ rings: [[CANARY, R1A]] }), NOW)) === 'bad_rings');
+  check('…and an explicit canary document too', refused(() => core.admitPolicy(doc({ staging: 'canary', rings: [[CANARY, R1A]] }), NOW)) === 'bad_rings');
+  check('…and still needs a result key on every gating computer (§38)', refused(() => core.admitPolicy(doc({ rings: [[keyless(CANARY)], [R1A]] }), NOW)) === 'result_key_missing');
+  check('a computer in two rings is refused all at once too', refused(() => core.admitPolicy(doc({ staging: 'none', rings: [[A], [A, B]] }), NOW)) === 'bad_rings');
+
+  // Deciding plans: every ring of an all-at-once document is signed on its own, in any order, with no evidence.
+  const s = state(dNone);
+  const p1 = plan(dNone, { ring: 1, computers: [Cc] });
+  let r = evaluate(s, p1);
+  check('all at once: ring 1 is signed before ring 0, with no evidence (not gated)', r.ok, JSON.stringify(r));
+  r = evaluate(s, plan(dNone, { ring: 0, computers: [A, B] }));
+  check('all at once: ring 0 may name two computers', r.ok, JSON.stringify(r));
+  const signedAt = iso(NOW);
+  const r1entry = { jobId: p1.jobId, deploymentId: 'dep_acme_0001', ring: 1, signedAt, notBefore: signedAt, notAfter: iso(NOW.getTime() + 3 * 3600_000), endpointIds: [Cc.endpointId], updates: [key(CU)] };
+  r = evaluate(state(dNone, { ledger: [r1entry] }), plan(dNone, { ring: 0, computers: [A, B] }));
+  check('all at once: ring 0 after ring 1 was signed is not "out of order"', r.ok, JSON.stringify(r));
+  r = evaluate(state(dNone, { ledger: [r1entry] }), plan(dNone, { ring: 0, computers: [A, B], updates: [CU, { ...NET, className: 'Security Updates' }].slice(0, 1) }));
+  check('all at once: ring 0 needs no subset of ring 1\'s updates either', r.ok, JSON.stringify(r));
+  r = evaluate(state(dNone, { ledger: [r1entry] }), plan(dNone, { ring: 1, computers: [Cc] }));
+  check('all at once: the same ring again while its window is open → ring_already_signed', code(r) === 'ring_already_signed', code(r));
+  const closed = (n) => Array.from({ length: n }, () => ({ ...r1entry, jobId: hex(16), notAfter: iso(NOW.getTime() - 60_000) }));
+  r = evaluate(state(dNone, { ledger: closed(3) }), plan(dNone, { ring: 1, computers: [Cc] }));
+  check('all at once: a ring signed three times → ring_retry_limit', code(r) === 'ring_retry_limit', code(r));
+  r = evaluate(s, plan(dNone, { ring: 1, computers: [A] }));
+  check('all at once: a computer of another ring → computer_not_in_policy (rings still bind)', code(r) === 'computer_not_in_policy', code(r));
+  r = evaluate(s, plan(dNone, { ring: 0, computers: [OTHER] }));
+  check('all at once: a computer outside the policy → computer_not_in_policy', code(r) === 'computer_not_in_policy', code(r));
+  r = evaluate(s, p1, { evidence: { previousJobId: hex(16), jobStatus: 'COMPLETED', targets: [] } });
+  check('all at once: a plan carrying evidence → bad_evidence (nothing is gated, so nothing is relayed)', code(r) === 'bad_evidence', code(r));
+  r = evaluate(s, plan(dNone, { ring: 1, computers: [Cc], nb: new Date(NOW.getTime() + 6 * 3600_000), hours: 1 }));
+  check('all at once: still only inside the window → outside_window', code(r) === 'outside_window', code(r));
+  r = evaluate(s, plan(dNone, { ring: 1, computers: [Cc], updates: [NET] }));
+  check('all at once: still only the policy\'s classes → class_not_allowed', code(r) === 'class_not_allowed', code(r));
+  r = evaluate(s, plan(dNone, { ring: 1, computers: [Cc], reboot: 'if_required_in_window' }));
+  check('all at once: still never more restart than the policy allows → reboot_not_allowed', code(r) === 'reboot_not_allowed', code(r));
+  r = evaluate(state(dNone, { revokedAt: iso(NOW) }), p1);
+  check('all at once: a revoked policy still signs nothing', code(r) === 'policy_revoked', code(r));
+
+  // The old document (no staging field) behaves exactly as before: ring 1 waits for the canary.
+  const dOld = doc();
+  r = evaluate(state(dOld), plan(dOld, { ring: 1, computers: [R1A, R1B] }));
+  check('an old document with no staging still gates: ring 1 before the canary → ring_out_of_order', code(r) === 'ring_out_of_order', code(r));
+  r = evaluate(state(dOld), plan(dOld, { ring: 0, computers: [CANARY, R1A] }));
+  check('…and ring 0 is still the canary alone', code(r) === 'computer_not_in_policy', code(r));
+  const dCan = doc({ staging: 'canary' });
+  r = evaluate(state(dCan), plan(dCan, { ring: 1, computers: [R1A, R1B] }));
+  check('an explicit canary document gates the same way', code(r) === 'ring_out_of_order', code(r));
+
+  // Forged staging: the field is in the approved document's digest and the signer's signature.
+  check('staging is in the digest: none and canary are different documents', P.policyDigest(dNone) !== P.policyDigest({ ...dNone, staging: 'canary' }) && P.policyDigest(dOld) !== P.policyDigest({ ...dOld, staging: 'none' }));
+  const forged = { ...dOld, staging: 'none' };
+  r = evaluate({ ...state(dOld), doc: forged }, plan(forged, { ring: 1, computers: [R1A, R1B] }));
+  check('a canary document whose stored copy is edited to staging none → policy_digest_mismatch (not ungated)', code(r) === 'policy_digest_mismatch', code(r));
+  r = evaluate(state(dOld), plan(dOld, { ring: 1, computers: [R1A, R1B] }), { digest: P.policyDigest(forged) });
+  check('a portal naming the forged document\'s digest → policy_digest_mismatch', code(r) === 'policy_digest_mismatch', code(r));
+  r = evaluate({ ...state(forged), signatureValid: false }, plan(forged, { ring: 1, computers: [R1A, R1B] }));
+  check('a forged document re-hashed to match still fails the signer\'s signature → policy_signature_invalid', code(r) === 'policy_signature_invalid', code(r));
+  // On the signer's own record: approve a canary policy, then edit its file to staging none.
+  const { doc: admitted, digest } = core.admitPolicy(doc(), NOW);
+  const rec = { policyId: admitted.policyId, status: 'AWAITING_APPROVAL', doc: admitted, digest, decisions: [], signature: null, kid: null, revokedAt: null, revokedBy: null, revokeReason: null, ledger: [], refusals: [], createdAt: iso(NOW), updatedAt: iso(NOW) };
+  const m = (userId, name) => ({ userId, name, credentialId: hex(8), publicKey: hex(16), counter: 0, approve: ['*'], customer: [], addedAt: iso(NOW) });
+  core.recordPolicyDecision(rec, m('user_olivia01', 'Olivia'), 'approver', 'approve', NOW, false);
+  core.recordPolicyDecision(rec, m('user_quinn001', 'Quinn'), 'approver', 'approve', NOW, false);
+  core.signPolicy(rec, k, NOW);
+  const pub = createPublicKey(k.key);
+  check('the approved canary policy verifies', core.verifyPolicy(rec, pub));
+  const edited = { ...rec, doc: { ...rec.doc, staging: 'none' }, digest: P.policyDigest({ ...rec.doc, staging: 'none' }), ledger: [] };
+  check('its file edited to staging none no longer verifies', !core.verifyPolicy(edited, pub));
+  check('…and signs no ungated ring → policy_signature_invalid',
+    refused(() => core.signUnderPolicy(edited, { plan: plan(edited.doc, { ring: 1, computers: [R1A, R1B] }), policyDigest: edited.digest }, k, business, NOW)) === 'policy_signature_invalid');
+  const unknown = { ...rec, doc: { ...rec.doc, staging: 'later' }, ledger: [] };
+  check('a stored document with an unknown staging signs nothing',
+    ['policy_signature_invalid', 'policy_digest_mismatch', 'staging_unknown'].includes(refused(() => core.signUnderPolicy(unknown, { plan: plan(unknown.doc, { ring: 1, computers: [R1A, R1B] }), policyDigest: rec.digest }, k, business, NOW))));
+  // Even if signature and digest held, the evaluator itself refuses an unknown staging.
+  const weird = { ...dOld, staging: 'later' };
+  r = evaluate(state(weird), plan(weird, { ring: 1, computers: [R1A, R1B] }));
+  check('the evaluator refuses an unknown staging on its own → staging_unknown', code(r) === 'staging_unknown', code(r));
+
+  // An all-at-once policy, approved and signed end to end, signs ring 1 first with no evidence.
+  const { doc: aDoc, digest: aDig } = core.admitPolicy(dNone, NOW);
+  const arec = { policyId: aDoc.policyId, status: 'AWAITING_APPROVAL', doc: aDoc, digest: aDig, decisions: [], signature: null, kid: null, revokedAt: null, revokedBy: null, revokeReason: null, ledger: [], refusals: [], createdAt: iso(NOW), updatedAt: iso(NOW) };
+  core.recordPolicyDecision(arec, m('user_olivia01', 'Olivia'), 'approver', 'approve', NOW, false);
+  core.recordPolicyDecision(arec, m('user_quinn001', 'Quinn'), 'approver', 'approve', NOW, false);
+  core.signPolicy(arec, k, NOW);
+  const out1 = core.signUnderPolicy(arec, { plan: plan(aDoc, { ring: 1, computers: [Cc] }), policyDigest: aDig, evidence: null }, k, business, NOW);
+  const out0 = core.signUnderPolicy(arec, { plan: plan(aDoc, { ring: 0, computers: [A, B] }), policyDigest: aDig, evidence: null }, k, business, NOW);
+  check('the signer signs both rings of an all-at-once policy in the same window, in either order', out1.job.status === 'SIGNED' && out0.job.status === 'SIGNED' && arec.ledger.length === 2);
+
+  // The gate: under staging none ring 0 proves nothing for another ring, so its canary checks do not apply.
+  const done = { endpointId: A.endpointId, status: 'SUCCEEDED', statusReason: null, reconciled: false, reconcileNote: null, resultAt: new Date(NOW.getTime() - 3600_000), result: { outcome: 'succeeded', updates: [{ ...id(CU), state: 'installed' }] }, scan: null };
+  const g = (canary) => P.evaluateRingGate({ ring: 0, canary, jobStatus: 'COMPLETED', targets: [done], updates: [id(CU)], failureThreshold: 0, soakHours: 0 }, NOW);
+  check('evaluateRingGate: ring 0 of a canary deployment waits for the canary to prove the update took effect', !g(true).ok && g(true).reason.startsWith('canary_'), JSON.stringify(g(true)));
+  check('evaluateRingGate: absent means canary (callers before 0.62)', P.evaluateRingGate({ ring: 0, jobStatus: 'COMPLETED', targets: [done], updates: [id(CU)], failureThreshold: 0, soakHours: 0 }, NOW).reason === g(true).reason);
+  check('evaluateRingGate: ring 0 of an all-at-once deployment passes on its result alone', g(false).ok, JSON.stringify(g(false)));
+}
+
 // ── 0.42: what the portal offers as installable (the agent's Eligible copy) ──
 {
   const PO = require(join(dist, 'patching', 'posture.js'));

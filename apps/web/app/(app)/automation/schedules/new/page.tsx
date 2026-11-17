@@ -19,6 +19,8 @@ import {
 import { CAP, usePermissions } from '@/lib/auth';
 import { useAsks } from '@/lib/confirm-policy';
 import { useToast } from '@/hooks/use-toast';
+import { useApprovalMode } from '@/hooks/use-approval-mode';
+import { DIRECT_DEFAULT_REASON } from '@/lib/direct-mode';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
@@ -96,6 +98,9 @@ export default function NewSchedulePage() {
   const [maxRuns, setMaxRuns] = useState(1);
   const [days, setDays] = useState(30);
   const [filter, setFilter] = useState('');
+  // 0.62: in direct mode a schedule is active when saved; no approver reads a reason.
+  const direct = useApprovalMode({ businessId: business || undefined }) === 'direct';
+  const why = direct ? (reason.trim() || DIRECT_DEFAULT_REASON) : reason.trim();
 
   const { data: businesses = [] } = useQuery({
     queryKey: ['businesses', ''], enabled: isPlatformAdmin,
@@ -159,9 +164,9 @@ export default function NewSchedulePage() {
     const task = kind === 'script' ? (versionId ? { kind: 'script' as const, scriptVersionId: versionId, parameters: args, timeoutMinutes: timeout } : null) : (entryId ? { kind: 'software' as const, entryId, operation } : null);
     const targets = targetKind === 'computers' ? (ids.length ? { kind: 'computers' as const, endpointIds: ids } : null) : (groupId ? { kind: 'group' as const, groupId, maxTargets } : null);
     if (!task || !targets) return null;
-    return { businessId: business, name: name.trim(), reason: reason.trim(), task, targets, recurrence, offline, maxRunsPerOccurrence: maxRuns, expiresInDays: days, ...(q.supersedes ? { supersedes: q.supersedes } : {}) };
-  }, [business, recurrence, kind, versionId, args, timeout, entryId, operation, targetKind, ids, groupId, maxTargets, name, reason, offline, maxRuns, days, q.supersedes]);
-  const problem = !business ? 'Choose a business.' : name.trim().length < 3 ? 'Give it a name.' : reason.trim().length < 3 ? 'Say why (shown to the approvers).'
+    return { businessId: business, name: name.trim(), reason: why, task, targets, recurrence, offline, maxRunsPerOccurrence: maxRuns, expiresInDays: days, ...(q.supersedes ? { supersedes: q.supersedes } : {}) };
+  }, [business, recurrence, kind, versionId, args, timeout, entryId, operation, targetKind, ids, groupId, maxTargets, name, why, offline, maxRuns, days, q.supersedes]);
+  const problem = !business ? 'Choose a business.' : name.trim().length < 3 ? 'Give it a name.' : why.length < 3 ? 'Say why (shown to the approvers).'
     : kind === 'script' && !versionId ? 'Choose an approved script.' : kind === 'script' && readiness.data && !readiness.data.you.canRun ? 'This script is not on the approval signer\'s allowlist (or you cannot run it).'
     : kind === 'script' && argProblem ? argProblem : kind === 'software' && !entryId ? 'Choose a catalog package.'
     : targetKind === 'computers' && !ids.length ? 'Choose at least one computer.' : targetKind === 'group' && !groupId ? 'Choose a device group.'
@@ -181,7 +186,7 @@ export default function NewSchedulePage() {
   const shown = (eps.data ?? []).filter((e) => !filter.trim() || `${e.name} ${e.hostname ?? ''}`.toLowerCase().includes(filter.toLowerCase()));
   return (
     <div className="space-y-4 p-4 sm:p-6 max-w-4xl">
-      <PageHeader title={q.supersedes ? 'Revise a schedule' : 'New schedule'} description="What runs, where, when, and what happens to a computer that is offline. Two approvers approve it once on the approval signer." />
+      <PageHeader title={q.supersedes ? 'Revise a schedule' : 'New schedule'} description={direct ? 'What runs, where, when, and what happens to a computer that is offline. Direct mode is on for this business: it is active as soon as you save it.' : 'What runs, where, when, and what happens to a computer that is offline. Two approvers approve it once on the approval signer.'} />
       <p className="text-xs"><Link className="underline" href="/automation/schedules">All schedules</Link></p>
       {q.supersedes && prior.data && <p className="rounded-md border p-3 text-xs" data-testid="schedule-revision">This replaces <strong>{prior.data.name}</strong> once it is approved; until then the current one keeps running. A revision is approved again from the start.</p>}
       {prior.isError && <p className="text-xs text-destructive">Could not load the schedule this revises.</p>}
@@ -344,15 +349,19 @@ export default function NewSchedulePage() {
 
       <Card>
         <CardContent className="space-y-3 pt-4">
-          <div className="space-y-1">
-            <Label htmlFor="new-reason" className="text-xs">Why (shown to the approvers)</Label>
-            <Textarea id="new-reason" rows={2} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} data-testid="schedule-reason" />
-          </div>
+          {!direct && (
+            <div className="space-y-1">
+              <Label htmlFor="new-reason" className="text-xs">Why (shown to the approvers)</Label>
+              <Textarea id="new-reason" rows={2} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} data-testid="schedule-reason" />
+            </div>
+          )}
           {problem && <p className="text-xs text-muted-foreground" data-testid="schedule-problem">{problem}</p>}
           <Button disabled={!!problem || !body || create.isPending} onClick={() => create.mutate()} data-testid="schedule-create">
-            {create.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}Propose the schedule{askCreate ? ' (confirm it is you)' : ''}
+            {create.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}{direct ? 'Create policy' : 'Propose the schedule'}{askCreate ? ' (confirm it is you)' : ''}
           </Button>
-          <p className="text-xs text-muted-foreground">Nothing runs until it is approved on the approval signer. In direct mode, which only the signer&apos;s operator can turn on, it is active as soon as you create it.</p>
+          {direct
+            ? <p className="text-xs text-muted-foreground" data-testid="schedule-direct-note">Direct mode is on for this business (set by the approval signer&apos;s operator): the schedule is active as soon as you save it.</p>
+            : <p className="text-xs text-muted-foreground">Nothing runs until it is approved on the approval signer. In direct mode, which only the signer&apos;s operator can turn on, it is active as soon as you create it.</p>}
         </CardContent>
       </Card>
     </div>

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { MAX_RING_TARGETS, UpdateReboot } from '../actions/catalog';
-import { MAX_POLICY_DAYS, MAX_POLICY_RINGS, PolicyAllow, PolicyWindow, type PolicyComputer, PolicyRestart } from '../actions/patch-policy';
+import { MAX_POLICY_DAYS, MAX_POLICY_RINGS, PolicyAllow, PolicyWindow, STAGINGS, type PolicyComputer, PolicyRestart, type Staging } from '../actions/patch-policy';
 
 /**
  * Company-wide and assignable patch policies (0.50): the pure part.
@@ -26,6 +26,10 @@ export type OverrideMode = (typeof OVERRIDE_MODES)[number];
 
 /** A canary and four rings of 25. */
 export const MAX_POLICY_COMPUTERS = 1 + (MAX_POLICY_RINGS - 1) * MAX_RING_TARGETS;
+/** 0.62, all at once: five rings of 25, none of which waits for another. */
+export const MAX_ALL_AT_ONCE_COMPUTERS = MAX_POLICY_RINGS * MAX_RING_TARGETS;
+/** The most computers one policy of this staging names. */
+export const maxPolicyComputers = (staging: Staging) => (staging === 'none' ? MAX_ALL_AT_ONCE_COMPUTERS : MAX_POLICY_COMPUTERS);
 
 /** The floor on the bound: one minute (a test stack, NODE_ENV=test, may go to three seconds). */
 export function revisionFloorMinutes(): number { return process.env.NODE_ENV === 'test' ? 0.05 : 1; }
@@ -58,13 +62,19 @@ export const SeriesSettings = z.object({
   /** 0.54: the RustDesk-session exception for the series' restarts. Present only when ticked. */
   ignoreRemoteSession: z.literal(true).optional(),
   expiresInDays: z.number().int().min(1).max(MAX_POLICY_DAYS).default(30),
-  /** Optional: the canary to use while it is eligible. Otherwise the portal picks one. */
+  /** Optional: the canary to use while it is eligible. Otherwise the portal picks one. Canary staging only. */
   canaryEndpointId: Id.optional(),
   reason: z.string().trim().min(3).max(300),
+  /** 0.62: 'none' (all at once) or 'canary'. Absent in every series before 0.62, which therefore keep their canary. */
+  staging: z.enum(STAGINGS).optional(),
 }).strict();
 export type SeriesSettings = z.infer<typeof SeriesSettings>;
+/** 0.62: a series' staging; absent (every series before 0.62) is canary. */
+export const seriesStaging = (s: Pick<SeriesSettings, 'staging'>): Staging => (s.staging === 'none' ? 'none' : 'canary');
 
 export const CreateSeriesDto = SeriesSettings.extend({
+  /** 0.62: absent means canary, as before 0.62; the console sends it explicitly. */
+  staging: z.enum(STAGINGS).default('canary'),
   businessId: Id,
   scope: z.enum(SERIES_SCOPES),
   name: z.string().trim().min(3).max(100),
@@ -177,6 +187,32 @@ export function planRings(cands: Candidate[], opts: { preferredCanary?: string |
   }));
   const inPlan = new Set(rings.flat());
   return { ok: true, rings: [[canary.endpointId], ...rings], canary: { endpointId: canary.endpointId, hostname: canary.hostname, why }, leftOut, lastRingOnly: keyless.filter((id) => inPlan.has(id)) };
+}
+
+/**
+ * 0.62, all at once: no canary, so nothing is chosen and nothing needs a
+ * result key. The candidates, in stable order, in as few rings of at most
+ * MAX_RING_TARGETS as they fit, at most MAX_POLICY_RINGS of them; the rest
+ * are left out as policy_full.
+ */
+export function planAllAtOnce(cands: Candidate[]): { ok: true; rings: string[][]; leftOut: LeftOut[] } | { ok: false; code: string; message: string; leftOut: LeftOut[] } {
+  const all = stableOrder(cands);
+  if (!all.length) return { ok: false, code: 'no_computers', message: 'No computer of this business is eligible for this policy.', leftOut: [] };
+  const inPlan = all.slice(0, MAX_ALL_AT_ONCE_COMPUTERS);
+  const n = Math.ceil(inPlan.length / MAX_RING_TARGETS);
+  const rings: string[][] = [];
+  let at = 0;
+  for (let i = 0; i < n; i++) {
+    // As even as they can be: 26 computers are rings of 13 and 13, not 25 and 1.
+    const size = Math.floor(inPlan.length / n) + (i < inPlan.length % n ? 1 : 0);
+    rings.push(inPlan.slice(at, at + size).map((c) => c.endpointId));
+    at += size;
+  }
+  const leftOut: LeftOut[] = all.slice(MAX_ALL_AT_ONCE_COMPUTERS).map((c) => ({
+    endpointId: c.endpointId, hostname: c.hostname, code: 'policy_full' as const,
+    message: `the policy is full (${MAX_ALL_AT_ONCE_COMPUTERS} computers: ${MAX_POLICY_RINGS} groups of ${MAX_RING_TARGETS}, all at once). Give the rest their own policy.`,
+  }));
+  return { ok: true, rings, leftOut };
 }
 
 /** The identity of a ring list, as the signed document binds it. Two documents with the same fingerprint name the same computers in the same rings. */
