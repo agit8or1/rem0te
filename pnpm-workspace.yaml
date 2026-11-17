@@ -133,3 +133,12 @@ auditConfig:
     # drop-in either: 11 removed `makeRe`, the `AST` export and
     # `Minimatch#regexp`. Comes out when typescript-estree moves to 11.
     - GHSA-g3hv-75wg-m249
+    # picomatch <=4.0.7, ReDoS through single-branch repeated extglobs. The
+    # advisory's range was widened on 2026-11-17 to cover 4.0.7, the latest
+    # release, so no patched release exists. Every path is build, lint or CSS
+    # tooling with this repository's own patterns: @nestjs/cli and
+    # @nestjs/schematics (@angular-devkit/core), tailwindcss (chokidar ->
+    # anymatch) and typescript-eslint (tinyglobby -> fdir). Not in any
+    # production install (`pnpm why picomatch -r --prod` is empty). Added in
+    # 0.62.0; comes out when a patched picomatch is released.
+    - GHSA-fc5q-39xc-vjpf
