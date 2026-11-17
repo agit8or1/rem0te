@@ -88,7 +88,7 @@ export const patchingApi = {
   candidates: (businessId: string) => api.get('/patching/candidates', { params: { businessId } }),
   list: (businessId: string) => api.get('/patching/deployments', { params: { businessId } }),
   get: (id: string) => api.get(`/patching/deployments/${id}`),
-  create: (body: { businessId: string; name: string; updates: UpdateIdentity[]; rings: string[][]; soakHours: number; failureThreshold: number; windowHours: number; reboot?: 'never' | 'if_required_in_window' }) =>
+  create: (body: { businessId: string; name: string; updates: UpdateIdentity[]; rings: string[][]; soakHours: number; failureThreshold: number; windowHours: number; reboot?: 'never' | 'if_required_in_window'; staging?: PatchStaging }) =>
     api.post('/patching/deployments', body),
   requestRing: (id: string, ring: number, body: { reason: string; startsInMinutes?: number; exclude?: { endpointId: string; why: string }[]; schedule?: ScheduleInput }) =>
     api.post(`/patching/deployments/${id}/rings/${ring}/request`, body),
@@ -125,7 +125,11 @@ export interface PatchSeriesInput {
   soakHours: number; failureThreshold: number;
   window: PolicyWindowInput;
   reboot: 'never' | 'if_required_in_window'; expiresInDays: number; reason: string; canaryEndpointId?: string;
+  /** 0.62: 'none' (all at once) or 'canary' (Test on one computer first). The API reads absent as canary. */
+  staging?: PatchStaging;
 }
+/** 0.62: how a patch policy or deployment rolls out. */
+export type PatchStaging = 'none' | 'canary';
 
 // 0.34 software deployment (docs/software-deployment.md). The catalog is
 // allowlisted winget packages pinned to one version and installer SHA-256.
@@ -184,6 +188,8 @@ export interface PatchPolicyInput {
   soakHours: number; failureThreshold: number;
   window: PolicyWindowInput;
   reboot: 'never' | 'if_required_in_window'; expiresInDays: number; reason: string;
+  /** 0.62: 'none' (all at once) or 'canary' (Test on one computer first). The API reads absent as canary. */
+  staging?: PatchStaging;
 }
 
 // ─── Endpoints ───────────────────────────────────────────────────────────────

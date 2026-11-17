@@ -188,6 +188,32 @@ export function restartRuleOf(doc: { restart?: unknown }): RestartRule | null {
   return (RESTART_RULES as readonly unknown[]).includes(r.rule) ? r.rule as RestartRule : null;
 }
 
+/**
+ * 0.62, at the owner's request: how a policy's rings relate to each other.
+ * Signed with the rest of the document, and read only through `stagingOf`.
+ *
+ *   canary  ring 0 is one computer, and each later ring is signed only after
+ *           the ring before it is confirmed by the computers' own signed
+ *           results (the gate). What every document before 0.62 means: a
+ *           document without the field is a canary document.
+ *   none    "all at once": every ring is signed on its own, inside the
+ *           window, with no canary, no evidence, no order and no soak. Rings
+ *           exist only because a plan names at most MAX_RING_TARGETS
+ *           computers; none of them waits for another.
+ *
+ * Anything else is refused at admission (the schema and `staging_unknown`)
+ * and again when a plan is decided, so an unknown value is never read as
+ * either.
+ */
+export const STAGINGS = ['none', 'canary'] as const;
+export type Staging = (typeof STAGINGS)[number];
+
+/** The staging a document asks for, or null for a value this version does not know (fail closed). Absent is canary. */
+export function stagingOf(doc: { staging?: unknown }): Staging | null {
+  if (!('staging' in doc) || doc.staging === undefined) return 'canary';
+  return (STAGINGS as readonly unknown[]).includes(doc.staging) ? doc.staging as Staging : null;
+}
+
 export const PolicyAllow = z.object({
   /** Windows Update classification ids; a subset of what any plan may install. */
   classifications: z.array(z.string().refine((c) => !!CLASSIFICATIONS[c], 'not an installable classification')).min(1).max(6)
@@ -204,8 +230,14 @@ export const PolicyDoc = z.object({
   name: z.string().min(3).max(120),
   businessId: Id,
   businessName: z.string().max(120),
-  /** Ring 0 is the canary: exactly one computer. Later rings up to MAX_RING_TARGETS each. */
+  /**
+   * Under canary staging, ring 0 is the canary: exactly one computer. Every
+   * other ring (and, under staging none, every ring) holds up to
+   * MAX_RING_TARGETS computers.
+   */
   rings: z.array(z.array(PolicyComputer).min(1).max(MAX_RING_TARGETS)).min(1).max(MAX_POLICY_RINGS),
+  /** 0.62: 'none' (all at once) or 'canary'. Absent in every document before 0.62, which therefore mean canary and keep their bytes. */
+  staging: z.enum(STAGINGS).optional(),
   allow: PolicyAllow,
   soakHours: z.number().int().min(0).max(168),
   failureThreshold: z.number().int().min(0).max(MAX_RING_TARGETS),
@@ -246,7 +278,9 @@ export interface PolicyApproval { userId: string; name: string; role: 'approver'
 
 /** Rules a schema cannot say. Checked by the portal before it proposes, and by the signer before it accepts. */
 export function validatePolicyDoc(doc: PolicyDoc, now: Date): { ok: true } | { ok: false; reason: string; message: string } {
-  if (doc.rings[0].length !== 1) return { ok: false, reason: 'bad_rings', message: 'Ring 0 is the canary: exactly one computer.' };
+  const staging = stagingOf(doc);
+  if (!staging) return { ok: false, reason: 'staging_unknown', message: 'The staging is not one this version knows (none or canary).' };
+  if (staging === 'canary' && doc.rings[0].length !== 1) return { ok: false, reason: 'bad_rings', message: 'Ring 0 is the canary: exactly one computer.' };
   const all = doc.rings.flat();
   if (new Set(all.map((c) => c.endpointId)).size !== all.length || new Set(all.map((c) => c.rustdeskId)).size !== all.length) {
     return { ok: false, reason: 'bad_rings', message: 'A computer can be in one ring only.' };
@@ -264,8 +298,9 @@ export function validatePolicyDoc(doc: PolicyDoc, now: Date): { ok: true } | { o
   if (doc.restart && !nextOccurrence(now, doc.restart.window, new Date(exp))) return { ok: false, reason: 'restart_window_never_opens', message: 'The restart window never opens before the policy expires.' };
   if (doc.ignoreRemoteSession && doc.reboot !== 'if_required_in_window' && !doc.restart) return { ok: false, reason: 'override_without_restart', message: 'The RustDesk-session exception applies to a restart, and this policy never restarts.' };
   // v0.34, fail closed: a computer whose results open the next ring must be
-  // able to sign them. Only the last ring's results gate nothing.
-  const unsigned = doc.rings.slice(0, -1).flat().filter((c) => !c.resultKey);
+  // able to sign them. Only the last ring's results gate nothing — and, under
+  // staging none (0.62), no ring's results open anything.
+  const unsigned = staging === 'none' ? [] : doc.rings.slice(0, -1).flat().filter((c) => !c.resultKey);
   if (unsigned.length) {
     return { ok: false, reason: 'result_key_missing', message: `${unsigned.map((c) => c.hostname).slice(0, 3).join(', ')}${unsigned.length > 3 ? ` and ${unsigned.length - 3} more` : ''}: no result-signing key. Its results would open the next ring, and an agent older than 0.34 cannot sign them. Update its agent and let it scan, or put it in the last ring.` };
   }
@@ -526,6 +561,8 @@ export interface GateTarget {
 }
 export interface GateInput {
   ring: number;
+  /** 0.62: false under staging none, where ring 0 is not a canary and proves nothing for another ring. Absent means canary. */
+  canary?: boolean;
   jobStatus: string | null;
   targets: GateTarget[];
   updates: { updateId: string; revision: number }[];
@@ -550,7 +587,7 @@ export function evaluateRingGate(g: GateInput, now: Date): Gate {
   if (computers.length === 0) return { ok: false, reason: 'ring_not_run', detail: `No computer in ring ${ring} was reached.` };
   const failed = computers.filter((t) => t.status !== 'SUCCEEDED' || targetStates(g.updates, t, g.jobStatus!).some((s) => FAILED_STATES.includes(s.state)));
   if (failed.length > g.failureThreshold) return { ok: false, reason: 'too_many_failures', detail: `${failed.length} computer(s) in ring ${ring} failed; the threshold is ${g.failureThreshold}.` };
-  if (ring === 0) {
+  if (ring === 0 && g.canary !== false) {
     const states = targetStates(g.updates, computers[0], g.jobStatus);
     const pending = states.filter((s) => !CANARY_OK.includes(s.state));
     if (pending.length) return { ok: false, reason: 'canary_not_effective', detail: `The canary has not confirmed ${pending.length} update(s) took effect (${[...new Set(pending.map((s) => s.state.replace(/_/g, ' ')))].join(', ')}). Restart it if it needs one, and let it scan again.` };
@@ -736,6 +773,10 @@ function evaluateInstallPlan(s: PolicyState, r: PolicyPlanRequest, opts: { now: 
   if (nb.getTime() < now.getTime() - CLOCK_SKEW_MS) return no('outside_window', 'The plan starts in the past.');
   if (na.getTime() - nb.getTime() > MAX_WINDOW_HOURS * 3_600_000) return no('outside_window', 'A plan runs for at most 24 hours.');
 
+  // 0.62: the staging the signed document asks for. Unknown is refused, never read as either.
+  const staging = stagingOf(doc);
+  if (!staging) return no('staging_unknown', 'The policy\'s staging is not one this signer knows; nothing is signed under it.');
+
   // Which ring, and which computers.
   const dep = p.display?.deployment;
   if (!dep || dep.rings !== doc.rings.length || dep.ring < 0 || dep.ring >= doc.rings.length) return no('ring_out_of_order', 'The plan names a ring this policy does not have.');
@@ -747,10 +788,19 @@ function evaluateInstallPlan(s: PolicyState, r: PolicyPlanRequest, opts: { now: 
       return no('computer_not_in_policy', `${t.hostname} is not in ring ${ring} of this policy, or is not the computer that was approved (its enrolled identity differs).`);
     }
   }
-  if (ring === 0 && p.targets.length !== 1) return no('computer_not_in_policy', 'Ring 0 is the canary alone.');
+  if (staging === 'canary' && ring === 0 && p.targets.length !== 1) return no('computer_not_in_policy', 'Ring 0 is the canary alone.');
 
   // Ring order, from this signer's own ledger.
   const mine = s.ledger.filter((e) => e.kind !== 'restart' && e.deploymentId === dep.id);
+  if (staging === 'none') {
+    // 0.62, all at once: each ring is its own plan inside the window, gated
+    // on nothing. Still once at a time per ring, and at most three times.
+    if (r.evidence) return no('bad_evidence', 'A policy that installs all at once carries no evidence: no ring waits for another.');
+    const same = mine.filter((e) => e.ring === ring);
+    if (same.some((e) => Date.parse(e.notAfter) > now.getTime())) return no('ring_already_signed', `Ring ${ring} of this deployment is already signed and its window is still open.`);
+    if (same.length >= MAX_RING_ATTEMPTS) return no('ring_retry_limit', `Ring ${ring} has been signed ${same.length} times under this policy. Retry it as an ordinary deployment, with approvals.`);
+    return { ok: true };
+  }
   if (mine.some((e) => e.ring > ring)) return no('ring_out_of_order', `A later ring of this deployment is already signed; ring ${ring} is not signed again.`);
   const same = mine.filter((e) => e.ring === ring);
   if (same.some((e) => Date.parse(e.notAfter) > now.getTime())) return no('ring_already_signed', `Ring ${ring} of this deployment is already signed and its window is still open.`);

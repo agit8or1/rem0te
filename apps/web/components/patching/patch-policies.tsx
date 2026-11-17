@@ -18,16 +18,23 @@ import { WindowEditor, defaultWindowDraft, draftReady, windowFromDraft } from '@
 import { AlertTriangle, CheckCircle2, Loader2, Plus, ScrollText, XCircle } from 'lucide-react';
 import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
 import { PolicyRestartEditor, defaultPolicyRestart, policyRestartBody, policyRestartReady } from '@/components/patching/policy-restart';
+import { MAX_ALL_AT_ONCE, MAX_PER_PLAN, StagingChoice, chunkRings } from '@/components/patching/staging-choice';
+import { useApprovalMode } from '@/hooks/use-approval-mode';
+import { DIRECT_DEFAULT_REASON } from '@/lib/direct-mode';
 
 /**
  * Patch policies (0.32) and the production pre-flight.
  *
- * A policy is a bounded document — computers in fixed rings with a
- * one-computer canary, the classes and severities it installs, KBs it never
- * installs, a weekly or (0.53) monthly maintenance window, soak and failure threshold, never
- * restart, an expiry within 90 days — approved once by two people on the
- * approval signer. After that the signer signs each ring inside it without
- * further approval. Nothing here approves anything.
+ * A policy is a bounded document — the computers it patches, the classes
+ * and severities it installs, KBs it never installs, a weekly or (0.53)
+ * monthly maintenance window, its restart rules, an expiry within 90 days —
+ * approved once on the approval signer (by two people, or at once in direct
+ * mode). After that the signer signs each plan inside it without further
+ * approval. Nothing here approves anything.
+ *
+ * 0.62: by default every computer installs together in the window ("all at
+ * once"); "Test on one computer first" gives the canary and gated rings. In
+ * direct mode the form says Create policy and asks for no reason.
  */
 
 function apiMessage(e: unknown, fallback: string) {
@@ -67,7 +74,7 @@ export function PreflightCard() {
   );
 }
 
-interface PolicyRow { id: string; name: string; status: string; expiresAt: string; createdAt: string; computers: number; rings: number; window: PolicyWindowInput; nextWindow: { start: string; end: string } | null; schedule?: string; nextRestartWindow?: { start: string; end: string } | null; lastProposal: { at: string; ok: boolean; code: string; message: string } | null }
+interface PolicyRow { id: string; name: string; status: string; expiresAt: string; createdAt: string; computers: number; rings: number; staging?: 'none' | 'canary' | null; window: PolicyWindowInput; nextWindow: { start: string; end: string } | null; schedule?: string; nextRestartWindow?: { start: string; end: string } | null; lastProposal: { at: string; ok: boolean; code: string; message: string } | null }
 
 export function PoliciesCard({ businessId }: { businessId: string }) {
   const [creating, setCreating] = useState(false);
@@ -85,7 +92,7 @@ export function PoliciesCard({ businessId }: { businessId: string }) {
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
           <p className="text-xs text-muted-foreground">
-            Approved once on the approval signer: by two people on its roster, or at once in direct mode. Inside its maintenance window the signer then signs the canary, and each later ring after the one before it is confirmed — never anything outside the policy. Fixture-tested only: proven against a simulated Windows Update and synthetic passkeys.
+            Approved once on the approval signer: by two people on its roster, or at once in direct mode. Inside its maintenance window every computer in it installs together — or, with &ldquo;Test on one computer first&rdquo;, one computer first and then rings that each wait for the one before — never anything outside the policy. Fixture-tested only: proven against a simulated Windows Update and synthetic passkeys.
           </p>
           {isLoading ? <p className="text-muted-foreground">Loading…</p>
             : rows.length === 0 ? <p className="text-muted-foreground">No policies.</p>
@@ -94,7 +101,7 @@ export function PoliciesCard({ businessId }: { businessId: string }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <strong>{p.name}</strong>
                   <Badge variant={POLICY_STATUS[p.status] ?? 'outline'}>{p.status.toLowerCase().replace(/_/g, ' ')}</Badge>
-                  <span className="text-xs text-muted-foreground">{p.computers} computer{p.computers === 1 ? '' : 's'} in {p.rings} ring{p.rings === 1 ? '' : 's'} · {describeWindow(p.window)} · expires {formatDate(p.expiresAt)}</span>
+                  <span className="text-xs text-muted-foreground">{p.computers} computer{p.computers === 1 ? '' : 's'} {p.staging === 'none' ? 'all at once' : `in ${p.rings} ring${p.rings === 1 ? '' : 's'}, one computer first`} · {describeWindow(p.window)} · expires {formatDate(p.expiresAt)}</span>
                 </div>
                 {p.schedule && <p className="text-xs mt-1" data-testid="policy-schedule">{p.schedule}</p>}
                 {p.nextWindow && <p className="text-xs text-muted-foreground mt-1">Next window: {formatDate(p.nextWindow.start)} – {formatDate(p.nextWindow.end)}</p>}
@@ -118,6 +125,9 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
     queryFn: () => patchingApi.candidates(businessId).then((r) => r.data.data as Candidates),
   });
   const [name, setName] = useState('');
+  // 0.62: all at once unless "Test on one computer first" is ticked.
+  const [testFirst, setTestFirst] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
   const [ringOf, setRingOf] = useState<Record<string, number | ''>>({});
   const [classes, setClasses] = useState<Set<string>>(new Set(DEFAULT_POLICY_CLASSES));
   const [severities, setSeverities] = useState<Set<string>>(new Set());
@@ -130,35 +140,47 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
   const [reboot, setReboot] = useState<RebootRule>('never');
   const [restart, setRestart] = useState(defaultPolicyRestart);
   const askPropose = useAsks('patching.policy');
+  const direct = useApprovalMode({ businessId }) === 'direct';
 
-  const rings = useMemo(() => {
+  const stagedRings = useMemo(() => {
     const max = Math.max(-1, ...Object.values(ringOf).filter((r): r is number => r !== ''));
     const out: string[][] = Array.from({ length: max + 1 }, () => []);
     for (const [id, r] of Object.entries(ringOf)) if (r !== '') out[r].push(id);
     return out;
   }, [ringOf]);
-  const ringsOk = rings.length >= 1 && rings[0].length === 1 && rings.every((r) => r.length >= 1 && r.length <= 25);
+  // All at once: the ticked computers, in the list's order, as plans of up to 25 that wait for nothing.
+  const order = (c?.computers ?? []).map((x) => x.id);
+  const allRings = useMemo(() => chunkRings(order.filter((id) => picked.has(id))), [order.join(','), picked]); // eslint-disable-line react-hooks/exhaustive-deps
+  const rings = testFirst ? stagedRings : allRings;
+  const ringsOk = testFirst
+    ? rings.length >= 1 && rings[0].length === 1 && rings.every((r) => r.length >= 1 && r.length <= MAX_PER_PLAN)
+    : picked.size >= 1 && picked.size <= MAX_ALL_AT_ONCE;
   const kbs = excludeKbs.split(/[\s,]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
   const kbsOk = kbs.every((k) => /^KB[0-9]{4,10}$/.test(k));
 
   const create = useMutation({
     mutationFn: () => patchingApi.createPolicy({
-      businessId, name: name.trim(), rings, soakHours, failureThreshold, expiresInDays, reason: reason.trim(), reboot,
+      businessId, name: name.trim(), rings, staging: testFirst ? 'canary' : 'none',
+      // All at once: no soak, and one computer's failure does not hold the rest of the window back.
+      soakHours: testFirst ? soakHours : 0, failureThreshold: testFirst ? failureThreshold : MAX_PER_PLAN,
+      expiresInDays, reason: direct ? (reason.trim() || DIRECT_DEFAULT_REASON) : reason.trim(), reboot,
       allow: { classifications: [...classes], ...(severities.size ? { severities: [...severities] } : {}), ...(kbs.length ? { excludeKbs: [...new Set(kbs)] } : {}) },
       window: windowFromDraft(win), ...policyRestartBody(restart, reboot),
     }),
     onSuccess: (r) => {
       // 0.40: in direct mode the signer makes it active at once.
       const active = r.data.data.direct === true && r.data.data.status === 'ACTIVE';
-      toast(active ? { title: 'Policy active', description: 'Approved automatically (direct mode). Its rings are requested inside its window.' } : { title: 'Policy proposed', description: 'Two approvers now approve it on the approval signer.' });
-      onDone(); router.push(`/patching/policies/${r.data.data.id}`);
+      toast(active ? { title: 'Policy active', description: `It is active now (direct mode). ${testFirst ? 'Its test computer installs first' : 'Its computers install'} in its next window.` } : { title: 'Policy proposed', description: 'Two approvers now approve it on the approval signer.' });
+      // 0.62: in direct mode there is nothing to approve, so the list is where it is followed.
+      onDone();
+      if (!active) router.push(`/patching/policies/${r.data.data.id}`);
     },
-    onError: (e) => toast({ title: 'Not proposed', description: apiMessage(e, 'The policy was refused.'), variant: 'destructive' }),
+    onError: (e) => toast({ title: direct ? 'Not created' : 'Not proposed', description: apiMessage(e, 'The policy was refused.'), variant: 'destructive' }),
   });
 
   if (isLoading || !c) return <Card className="mb-4"><CardContent className="pt-6 text-sm text-muted-foreground">Loading the computers…</CardContent></Card>;
   const toggle = (set: Set<string>, v: string, on: boolean) => { const n = new Set(set); if (on) n.add(v); else n.delete(v); return n; };
-  const ok = name.trim().length >= 3 && ringsOk && classes.size > 0 && draftReady(win) && policyRestartReady(restart) && kbsOk && reason.trim().length >= 3;
+  const ok = name.trim().length >= 3 && ringsOk && classes.size > 0 && draftReady(win) && policyRestartReady(restart) && kbsOk && (direct || reason.trim().length >= 3);
 
   return (
     <Card className="mb-4">
@@ -169,20 +191,44 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
           <Input id="pol-name" maxLength={120} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Security updates, Saturday night" />
         </div>
 
-        <div className="space-y-1">
-          <p className="text-xs font-medium">Computers — ring 0 is one canary; each later ring up to 25. The policy names these exact computers; a re-enrolled computer drops out.</p>
-          {c.computers.map((x) => (
-            <div key={x.id} className="flex flex-wrap items-center gap-2 text-xs">
-              <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={ringOf[x.id] ?? ''} onChange={(e) => setRingOf((m) => ({ ...m, [x.id]: e.target.value === '' ? '' : Number(e.target.value) }))}>
-                <option value="">not in this policy</option>
-                {[0, 1, 2, 3, 4].map((r) => <option key={r} value={r}>{r === 0 ? 'ring 0 (canary)' : `ring ${r}`}</option>)}
-              </select>
-              <span>{x.hostname}</span>
-              {x.notReady && <span className="text-muted-foreground">— {x.notReady}</span>}
-              {x.managers.length > 0 && <span className="text-muted-foreground">— managed by {x.managers.join(', ')}; it will be left out of every ring</span>}
-            </div>
-          ))}
-          {!ringsOk && Object.keys(ringOf).length > 0 && <p className="text-xs text-destructive">Ring 0 must be exactly one computer, and no ring may be empty or larger than 25.</p>}
+        <div className="space-y-2">
+          <StagingChoice id="pol" value={testFirst} onChange={setTestFirst} />
+          {testFirst ? (
+            <>
+              <p className="text-xs font-medium">Computers — ring 0 is the one test computer; each later ring up to {MAX_PER_PLAN}. The policy names these exact computers; a re-enrolled computer drops out.</p>
+              {c.computers.map((x) => (
+                <div key={x.id} className="flex flex-wrap items-center gap-2 text-xs">
+                  <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={ringOf[x.id] ?? ''} onChange={(e) => setRingOf((m) => ({ ...m, [x.id]: e.target.value === '' ? '' : Number(e.target.value) }))}>
+                    <option value="">not in this policy</option>
+                    {[0, 1, 2, 3, 4].map((r) => <option key={r} value={r}>{r === 0 ? 'ring 0 (test computer)' : `ring ${r}`}</option>)}
+                  </select>
+                  <span>{x.hostname}</span>
+                  {x.notReady && <span className="text-muted-foreground">— {x.notReady}</span>}
+                  {x.managers.length > 0 && <span className="text-muted-foreground">— managed by {x.managers.join(', ')}; it will be left out of every ring</span>}
+                </div>
+              ))}
+              {!ringsOk && Object.keys(ringOf).length > 0 && <p className="text-xs text-destructive">Ring 0 must be exactly one computer, and no ring may be empty or larger than {MAX_PER_PLAN}.</p>}
+            </>
+          ) : (
+            <>
+              <p className="text-xs font-medium">Computers — tick the ones this policy patches. The policy names these exact computers; a re-enrolled computer drops out.</p>
+              {c.computers.length > 1 && (
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <input type="checkbox" data-testid="pol-pick-all" checked={picked.size === c.computers.length} onChange={(e) => setPicked(e.target.checked ? new Set(c.computers.map((x) => x.id)) : new Set())} />Select all
+                </label>
+              )}
+              {c.computers.map((x) => (
+                <label key={x.id} className="flex flex-wrap items-center gap-2 text-xs">
+                  <input type="checkbox" data-testid={`pol-pick-${x.id}`} checked={picked.has(x.id)} onChange={(e) => setPicked((s0) => { const n = new Set(s0); if (e.target.checked) n.add(x.id); else n.delete(x.id); return n; })} />
+                  <span>{x.hostname}</span>
+                  {x.notReady && <span className="text-muted-foreground">— {x.notReady}</span>}
+                  {x.managers.length > 0 && <span className="text-muted-foreground">— managed by {x.managers.join(', ')}; it will be left out</span>}
+                </label>
+              ))}
+              {picked.size > MAX_ALL_AT_ONCE && <p className="text-xs text-destructive">At most {MAX_ALL_AT_ONCE} computers in one policy. Give the rest their own policy.</p>}
+              {picked.size > MAX_PER_PLAN && picked.size <= MAX_ALL_AT_ONCE && <p className="text-xs text-muted-foreground">{picked.size} computers go out as {allRings.length} plans of up to {MAX_PER_PLAN}, all in the same window.</p>}
+            </>
+          )}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -191,7 +237,7 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
             {Object.entries(CLASS_NAMES).map(([id, n]) => (
               <label key={id} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={classes.has(id)} onChange={(e) => setClasses((s) => toggle(s, id, e.target.checked))} />{n}</label>
             ))}
-            {classes.has(DRIVERS_CLASS) && <p className="text-xs text-muted-foreground" data-testid="policy-drivers-note">Drivers install as Windows Update offers them, on every computer in each ring. A driver can be harder to undo than an update; the canary ring is where you find out. Needs the 0.42 agent.</p>}
+            {classes.has(DRIVERS_CLASS) && <p className="text-xs text-muted-foreground" data-testid="policy-drivers-note">Drivers install as Windows Update offers them, on every computer in each ring. A driver can be harder to undo than an update; {testFirst ? 'the test computer is where you find out' : 'tick "Test on one computer first" to find out on one computer before the rest'}. Needs the 0.42 agent.</p>}
           </div>
           <div className="space-y-1">
             <p className="text-xs font-medium">Severities (none ticked: any)</p>
@@ -209,8 +255,8 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
         <WindowEditor id="pol" value={win} onChange={setWin} expiresInDays={expiresInDays} />
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl">
-          <div className="space-y-1"><Label className="text-xs">Soak between rings (hours)</Label><Input type="number" min={0} max={168} value={soakHours} onChange={(e) => setSoakHours(Number(e.target.value))} /></div>
-          <div className="space-y-1"><Label className="text-xs">Failed computers allowed per ring</Label><Input type="number" min={0} max={25} value={failureThreshold} onChange={(e) => setFailureThreshold(Number(e.target.value))} /></div>
+          {testFirst && <div className="space-y-1"><Label className="text-xs">Soak between rings (hours)</Label><Input type="number" min={0} max={168} value={soakHours} onChange={(e) => setSoakHours(Number(e.target.value))} /></div>}
+          {testFirst && <div className="space-y-1"><Label className="text-xs">Failed computers allowed per ring</Label><Input type="number" min={0} max={25} value={failureThreshold} onChange={(e) => setFailureThreshold(Number(e.target.value))} /></div>}
           <div className="space-y-1"><Label className="text-xs">Expires after (days, at most 90)</Label><Input type="number" min={1} max={90} value={expiresInDays} onChange={(e) => setExpiresInDays(Number(e.target.value))} /></div>
         </div>
 
@@ -220,16 +266,22 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
 
         <PolicyRestartEditor id="pol" value={restart} onChange={setRestart} reboot={reboot} expiresInDays={expiresInDays} />
 
-        <div className="space-y-1 max-w-xl">
-          <Label htmlFor="pol-reason" className="text-xs">Reason (shown to the approvers)</Label>
-          <Input id="pol-reason" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
-        </div>
+        {!direct && (
+          <div className="space-y-1 max-w-xl">
+            <Label htmlFor="pol-reason" className="text-xs">Reason (shown to the approvers)</Label>
+            <Input id="pol-reason" data-testid="pol-reason" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
+          </div>
+        )}
 
-        <p className="text-xs text-muted-foreground flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />
-          The restart rules, the restart window and the RustDesk exception are part of what the approvers sign: a ring plan may never ask for more than it. {askPropose ? 'Proposing needs a fresh sign-in; approving' : 'Approving'} happens only on the approval signer.
-        </p>
+        {direct ? (
+          <p className="text-xs text-muted-foreground" data-testid="pol-direct-note">Direct mode is on for this business (set by the approval signer&apos;s operator): the policy is active as soon as you create it{askPropose ? ', after you confirm it is you' : ''}. Its plans never ask for more than it allows.</p>
+        ) : (
+          <p className="text-xs text-muted-foreground flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />
+            The restart rules, the restart window and the RustDesk exception are part of what the approvers sign: a ring plan may never ask for more than it. {askPropose ? 'Proposing needs a fresh sign-in; approving' : 'Approving'} happens only on the approval signer.
+          </p>
+        )}
         <div className="flex gap-2">
-          <Button size="sm" disabled={!ok || create.isPending} onClick={() => create.mutate()}>{create.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Propose for approval</Button>
+          <Button size="sm" data-testid="pol-submit" disabled={!ok || create.isPending} onClick={() => create.mutate()}>{create.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}{direct ? 'Create policy' : 'Propose for approval'}</Button>
           <Button size="sm" variant="ghost" onClick={onDone}>Cancel</Button>
         </div>
       </CardContent>

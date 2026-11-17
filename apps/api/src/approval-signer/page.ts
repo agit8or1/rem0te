@@ -4,7 +4,7 @@
  * fonts or images, a nonce CSP, and every value HTML-escaped.
  */
 import { IGNORE_REMOTE_SESSION_LABEL, REBOOT_UNPROVEN, SIGNED_IN_USER_NOTE, UPDATE_RESTART_WARNING_MINUTES, type Plan } from '../actions/catalog';
-import { CLASSIFICATIONS as CLASS_NAME, describePolicyWindow, nextOccurrences, restartInWords, type PolicyDoc } from '../actions/patch-policy';
+import { CLASSIFICATIONS as CLASS_NAME, describePolicyWindow, nextOccurrences, restartInWords, stagingOf, type PolicyDoc } from '../actions/patch-policy';
 import { resultKeyFingerprint } from '../actions/device-result';
 import { RESTART_WINDOW_DELAY_MINUTES, SKIP_GRACE_MINUTES, automationNextOccurrences, offlineInWords, recurrenceInWords, recurrenceKind, taskInWords, type AutomationDoc } from '../actions/automation-policy';
 
@@ -148,7 +148,7 @@ export function renderPolicyApprovalPage(v: PolicyView, nonce: string): string {
   const row = (k: string, val: string) => `<tr><th>${esc(k)}</th><td>${val}</td></tr>`;
   const fmt = (iso: string) => `${esc(new Date(iso).toUTCString())}`;
   const key = (c: PolicyDoc['rings'][number][number]) => {
-    if (!c.resultKey) return ' <span class="mut">— no result key (its results cannot open a later ring)</span>';
+    if (!c.resultKey) return stagingOf(d) === 'none' ? ' <span class="mut">— no result key</span>' : ' <span class="mut">— no result key (its results cannot open a later ring)</span>';
     const st = v.keyStatus?.[c.endpointId] ?? '';
     const note = st === 'changed' ? ' <strong>— NOT the key pinned for this computer: plans under this policy will be refused</strong>'
       : st === 'first_sight' ? ' <span class="mut">— first time this signer sees it: compare with <code>rem0te-agent.exe status</code> on the computer</span>'
@@ -156,7 +156,10 @@ export function renderPolicyApprovalPage(v: PolicyView, nonce: string): string {
     return ` <span class="mut">result key</span> <code>${esc(resultKeyFingerprint(c.resultKey))}</code>${note}`;
   };
   const pc = (c: PolicyDoc['rings'][number][number]) => `${esc(c.hostname)} <span class="mut">(RustDesk ID ${esc(c.rustdeskId)})</span>${key(c)}`;
-  const rings = d.rings.map((r, i) => `<li><strong>${i === 0 ? 'Ring 0 — canary' : `Ring ${i}`}</strong>: ${r.map(pc).join(', ')}</li>`).join('');
+  // 0.62: all at once (staging none) has no canary and no gate; anything this signer does not know is said so (and signs nothing).
+  const staging = stagingOf(d);
+  const allAtOnce = staging === 'none';
+  const rings = d.rings.map((r, i) => `<li><strong>${i === 0 && staging === 'canary' ? 'Ring 0 — canary' : `Ring ${i}`}</strong>: ${r.map(pc).join(', ')}</li>`).join('');
   // 0.53: a weekly window reads as it always did; a monthly one says which day of each month, and both list the next openings.
   const w = d.window;
   const when = 'days' in w
@@ -174,17 +177,21 @@ export function renderPolicyApprovalPage(v: PolicyView, nonce: string): string {
 <h1>Patch policy: ${esc(d.name)}</h1>
 <p>Approve this once, and the approval signer signs each ring of Windows updates for these computers by itself, inside the window below, until the policy expires or is revoked. It does not ask you again for each ring.</p>
 <div class="warn"><strong>Before you approve</strong><ul>
-<li>Your approval stands in for yours on every ring plan signed under this policy. The signer refuses any plan outside it: another computer, another class of update, a KB excluded here, outside the window, after expiry, a ring out of order, or a later ring before the canary has confirmed every update took effect.</li>
+${allAtOnce
+    ? '<li><strong>All at once:</strong> there is no canary. Every computer below installs in the same window, ring by ring only because one plan names at most 25 computers, and no ring waits for another\'s results. Your approval stands in for yours on every plan signed under this policy. The signer refuses any plan outside it: another computer, another class of update, a KB excluded here, outside the window, or after expiry.</li>'
+    : staging === 'canary'
+      ? '<li>Your approval stands in for yours on every ring plan signed under this policy. The signer refuses any plan outside it: another computer, another class of update, a KB excluded here, outside the window, after expiry, a ring out of order, or a later ring before the canary has confirmed every update took effect.</li>'
+      : '<li><strong>This policy names a staging this signer does not know. Nothing is signed under it; reject it.</strong></li>'}
 <li>Installing updates changes computers. An update can break a driver or an application, and some cannot be uninstalled.</li>
 ${d.reboot === 'if_required_in_window'
-    ? `<li>Computers restart. After installing, a computer Windows says needs a restart shows a fixed warning and restarts ${UPDATE_RESTART_WARNING_MINUTES} minutes later, closing programs still open without saving. It does not restart while a RustDesk session is open (or when it cannot tell), or after the window ends; then it stays "restart required" until someone restarts it, and the next ring waits for that. ${esc(REBOOT_UNPROVEN)}</li>`
-    : d.restart ? '' : '<li>Computers are never restarted. An update that needs a restart is reported as "restart required" until someone restarts it, and the next ring waits for that.</li>'}
+    ? `<li>Computers restart. After installing, a computer Windows says needs a restart shows a fixed warning and restarts ${UPDATE_RESTART_WARNING_MINUTES} minutes later, closing programs still open without saving. It does not restart while a RustDesk session is open (or when it cannot tell), or after the window ends; then it stays "restart required" until someone restarts it${allAtOnce ? '' : ', and the next ring waits for that'}. ${esc(REBOOT_UNPROVEN)}</li>`
+    : d.restart ? '' : `<li>Computers are never restarted. An update that needs a restart is reported as "restart required" until someone restarts it${allAtOnce ? '' : ', and the next ring waits for that'}.</li>`}
 ${d.restart
     ? `<li>Computers restart in the restart window (0.54): ${esc(restartInWords(d))}. The signer signs one restart plan per computer per window (two retries), only inside that window, each with the fixed ${UPDATE_RESTART_WARNING_MINUTES}-minute warning${d.restart.rule === 'if_required' ? ', and the computer itself restarts only if Windows still says a restart is required' : ' — a maintenance restart, whether or not one is required'}. ${esc(REBOOT_UNPROVEN)}</li>`
     : ''}
 <li>${esc(SIGNED_IN_USER_NOTE)}</li>
 ${d.ignoreRemoteSession ? `<li><strong>RustDesk-session exception:</strong> ${esc(IGNORE_REMOTE_SESSION_LABEL)}. This policy's restarts go ahead even while a technician is connected; the fixed warning still shows.</li>` : ''}
-<li>Each computer signs its own results with its result key, shown below. Approving binds that key to the computer: the signer opens a later ring only on results that key signed, so a portal cannot forge a canary success. A key shown as "first time" is trusted because you approve it here; to be sure it is the computer's, compare its fingerprint with <code>rem0te-agent.exe status</code> on that computer.</li>
+${allAtOnce ? '' : '<li>Each computer signs its own results with its result key, shown below. Approving binds that key to the computer: the signer opens a later ring only on results that key signed, so a portal cannot forge a canary success. A key shown as "first time" is trusted because you approve it here; to be sure it is the computer\'s, compare its fingerprint with <code>rem0te-agent.exe status</code> on that computer.</li>'}
 </ul></div>
 <table>
 ${row('Customer', esc(d.businessName))}
@@ -192,7 +199,9 @@ ${row('Computers', `<ul>${rings}</ul><span class="mut">Bound to each computer's 
 ${row('Installs', esc(d.allow.classifications.map((c) => CLASS_NAME[c] ?? c).join(', ')) + (d.allow.severities ? ` — severity ${esc(d.allow.severities.join(', '))} only` : '') + '<br><span class="mut">Only updates Windows Update itself offers each computer. Drivers and definition updates only if listed above. Never feature upgrades, feature or service packs, tools, optional updates, or anything needing a licence or (drivers excepted) someone at the keyboard.</span>')}
 ${row('Never installs', d.allow.excludeKbs ? esc(d.allow.excludeKbs.join(', ')) : '<span class="mut">no KBs excluded</span>')}
 ${row('Window', `${when} <strong>${esc(w.timezone)}</strong> local time${next}`)}
-${row('Between rings', `soak ${esc(d.soakHours)} h; at most ${esc(d.failureThreshold)} failed computer(s) per ring before the deployment pauses itself`)}
+${allAtOnce
+    ? row('Staging', '<strong>All at once</strong> — no canary, no soak; every ring installs in the same window')
+    : row('Between rings', `soak ${esc(d.soakHours)} h; at most ${esc(d.failureThreshold)} failed computer(s) per ring before the deployment pauses itself`)}
 ${row('Restarts', `${esc(restartInWords(d))}${d.reboot === 'if_required_in_window' || d.restart ? `, after a ${UPDATE_RESTART_WARNING_MINUTES}-minute warning${d.ignoreRemoteSession ? '' : ', never while a technician is connected through RustDesk'}` : ''}`)}
 ${row('Proposed by', `${esc(d.createdBy.name)} <span class="mut">(cannot approve it)</span>`)}
 ${row('Reason', esc(d.reason))}

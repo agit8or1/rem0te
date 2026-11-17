@@ -162,7 +162,9 @@ once). Watch it reach **effective**.
 Then:
 
 1. Open **Patching** → **Automatic patch policies** → **New policy**. You need a fresh sign-in.
-2. Choose the computers:
+2. Choose the computers. From 0.62 you just tick them (or **Select all**), and they all install together in the
+   window — at most 125, split into plans of 25 that wait for nothing. Tick **Test on one computer first** only if you
+   want the staged rollout:
    - **Ring 0** is the canary: one computer that is representative and that someone can restart.
    - Later rings can each hold up to 25 computers.
 3. Choose what it may install:
@@ -178,16 +180,17 @@ Then:
      none, the policy would be refused (`window_never_opens`). A monthly window needs the approval signer rebuilt
      from 0.53 (see [Staged patching → Monthly windows](staged-patching.md#monthly-windows-053)); until then it is
      refused at the signer (`invalid_policy`).
-   - the soak time between rings;
-   - the number of failed computers allowed per ring;
+   - with *Test on one computer first* only: the soak time between rings and the number of failed computers allowed
+     per ring;
    - the expiry, at most 90 days;
    - the restart rule: **Never restart** (the default) or **Restart if required, inside the window** (0.34);
    - from 0.54, a **restart window**: *Restart if required, in a restart window* or *Restart every computer in a
      restart window (maintenance restart)*, with its own weekly or monthly window, and optionally the RustDesk
      exception (never ticked by default). See
      [Staged patching → Restart windows](staged-patching.md#restart-windows-054).
-5. Propose it. Two approvers open the signer's approval page and approve it with their passkeys. In direct mode it
-   is active at once, labelled *Approved automatically (direct mode)*.
+5. Propose it. Two approvers open the signer's approval page and approve it with their passkeys. In direct mode the
+   button says **Create policy**, no reason is asked for, and it is active at once, labelled *Approved automatically
+   (direct mode)*. An all-at-once policy needs the approval signer from 0.62.
 
 ![Patching for one business: the pre-flight checks and the policies](screenshots/guide/patch-policies.png)
 
@@ -203,9 +206,10 @@ Then:
 
 From then on, inside each open window:
 
-- The sweep proposes a deployment of the canary's offered, policy-allowed updates. The signer signs the canary plan
-  without further approval.
-- Once a later scan confirms the canary **effective** and the soak has passed, the signer signs the next ring.
+- All at once: the sweep proposes a deployment of every ready computer's offered, policy-allowed updates, and the
+  signer signs every plan without further approval.
+- With *Test on one computer first*: the sweep proposes the canary's updates; once a later scan confirms the canary
+  **effective** and the soak has passed, the signer signs the next ring.
 
 It signs nothing outside the policy. The bounds are listed in
 [Staged patching → Patch policies](staged-patching.md#patch-policies).

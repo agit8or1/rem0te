@@ -284,7 +284,8 @@ portal's `dist`. Its behavioural proof is `apps/api/scripts/e2e-approved-action.
 `"if_required_in_window"`, + an optional narrowing `allow`), its update risk is
 always high, `wua.ps1` has no restart, `AcceptEula`, `Invoke-Expression` or download-and-run, the agent
 checks other update managers before installing, the patching API has no
-approve route, the canary gate requires *effective*, and updates cannot be
+approve route, the canary gate requires *effective* (for a canary rollout;
+0.62's all-at-once rollouts have no canary, §75), and updates cannot be
 requested one computer at a time (`ACTION_NOT_DIRECT`). §14's agent-catalog
 check now expects exactly the two actions. Its behavioural proof is
 `apps/api/scripts/e2e-staged-patching.mjs` (same `RELEASE_BIN` / `ACTION_SIM`;
@@ -422,7 +423,10 @@ company-wide revision puts keyless computers only in its last ring (§63). The a
 final result in one place (`final()`), with the verifier's prefixes; the
 result-status table (`RESULT_STATUS`) is shared by the portal and the signer.
 Behavioural proof: `e2e-patch-policies.mjs` (five forged canary successes
-refused); unit: `unit-patch-policy.mjs`, `unit-approval-signer.mjs`.
+refused); unit: `unit-patch-policy.mjs`, `unit-approval-signer.mjs`. From
+0.62 all of this holds for a canary policy only: an all-at-once policy (§75)
+has no ring that opens another, so it needs no result key and the signer
+refuses any evidence offered for it.
 
 §39 is `windows.script.run@1`. There is no run without an APPROVED library
 version and an ACTIVE entry on the approval signer's *own* allowlist. Only two
@@ -1011,6 +1015,10 @@ taken before `proposeRevision`, its only caller. The series runs only inside
 `PATCH_POLICY_SWEEP`, with no timer of its own. Take-over waits for ACTIVE and
 no open deployment, in one transaction. Revoking a revision retires its series.
 §38 still holds for revisions: a keyless computer goes only in the last ring.
+0.62 (§75), at the owner's request: a series made from the console installs
+all at once (`planAllAtOnce`: no canary, at most five rings of 25 that wait
+for nothing, keyless computers anywhere); a series stored without `staging`
+keeps its canary (`seriesStaging`).
 Behavioural proof: `e2e-patch-assignment.mjs` (ports 3741–3743, `RELEASE_BIN` /
 `ACTION_SIM`); unit: `unit-patch-assignment.mjs`.
 
@@ -1174,6 +1182,50 @@ Microsoft, ASUS and Acer have no lookup, each with its reason in
 proof: `e2e-warranty-vendors.mjs` (ports 3881–3883, a loopback stand-in for
 HP's token, job, status and results and Apple's assertion token and
 coverage, in `run-e2e.sh`). Unit: `unit-warranty-vendors.mjs`.
+
+§75 (0.62) is patch staging: all at once, or one computer first. **It
+reverses §15's and §38's "a canary first, then gated rings" at the owner's
+request** ("remove the goofy canary thing in update policy"), as §41, §62 and
+§67 were. Deployments, patch policies and company-wide policies all install
+all at once by default; *Test on one computer first* is an option, never
+ticked by default, and is the old behaviour.
+
+- **One closed list.** `STAGINGS = ['none', 'canary']` in
+  `actions/patch-policy.ts`, read only through `stagingOf`: absent is canary,
+  anything else is null and refused (`staging_unknown`) by `validatePolicyDoc`
+  first and by the evaluator.
+- **The signed document.** `PolicyDoc.staging` is an optional enum. The portal
+  writes it only for `'none'`, so a canary document is byte-for-byte 0.61's and
+  every pre-0.62 policy keeps its digest and gate. It asks for the signer's
+  `patchStaging: 1` capability first (`SIGNER_TOO_OLD`); an older signer's
+  strict schema refuses the field anyway. The field is inside the digest, so a
+  portal that edits it is `policy_digest_mismatch`.
+- **What all at once skips.** Only ring order, the gate and the result keys.
+  The evaluator reaches the staging branch after the standing, filter,
+  display, requester, window, restart-rule and computer checks; under
+  `'none'` it refuses any evidence (`bad_evidence`) and keeps
+  `ring_already_signed` and `ring_retry_limit`. The signed pause and the
+  ledger are unchanged, and the agent is unchanged.
+- **Bounds.** Rings of at most 25, at most five: 125 computers
+  (`MAX_ALL_AT_ONCE_COMPUTERS`, `planAllAtOnce`).
+- **Deployments.** `PatchDeployment.staging` (0083, CHECK `none`/`canary`,
+  default `canary`). `evaluateRingGate` skips its canary checks only when
+  told `canary: false`, which `PatchingService.gate` says only for a `'none'`
+  row. A single-computer install from the Patches tab stays canary.
+- **Defaults.** Every API create (`CreatePolicyDto`, `CreateDeploymentDto`,
+  `CreateSeriesDto`) defaults to `canary`, so a caller that leaves it out
+  keeps the gate; the console always sends it.
+- **Direct mode** (the same release): the policy, company-wide policy,
+  deployment, automation schedule and restart window forms say *Create
+  policy* / *Install* / *Save*, hide the approvers' reason and send
+  `DIRECT_DEFAULT_REASON` ("Created in Rem0te (direct mode)"). Signed mode's
+  wording and flow are unchanged, and the signer's checks are untouched.
+
+Deploy: reinstall the approval signer from 0.62 before anyone makes an
+all-at-once policy. Unit: `unit-patch-policy.mjs` (ungated rings, an old
+document still gated, unknown values refused, a forged field caught) and
+`unit-patch-assignment.mjs`. Behavioural: `e2e-patch-policies.mjs` and
+`e2e-staged-patching.mjs`.
 
 §70 (0.57) is device discovery and adoption. The unassigned pool is
 `common/unassigned.ts`: `tenantId` null OR `customerId` null

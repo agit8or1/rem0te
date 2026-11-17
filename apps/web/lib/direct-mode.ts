@@ -9,6 +9,13 @@ import { formatDate } from '@/lib/utils';
 export const DIRECT_REQUEST_NOTE =
   'Direct mode is on for this business (set by the approval signer’s operator): your request is signed at once, with no approval step, and runs when the computer next checks in.';
 
+/**
+ * 0.62: the reason sent when a form hides its "Reason (shown to the approvers)"
+ * field because the business is in direct mode and nobody approves. The API
+ * and the signer still validate a reason; this one satisfies them.
+ */
+export const DIRECT_DEFAULT_REASON = 'Created in Rem0te (direct mode)';
+
 export const DIRECT_TOAST = 'Approved automatically (direct mode). It runs when the computer next checks in.';
 
 /** "Approved automatically (direct mode) by Dana, 13 Nov 2026 20:01". */

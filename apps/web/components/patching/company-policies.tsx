@@ -18,21 +18,26 @@ import { PolicyRestartEditor, defaultPolicyRestart, policyRestartBody, policyRes
 import { EFFECTIVE_LABEL, type EffectivePolicy } from '@/components/patching/patch-policy-setting';
 import { Building2, Loader2, Plus } from 'lucide-react';
 import { describeOccurrence } from '@/lib/tasks';
+import { MAX_PER_PLAN, StagingChoice } from '@/components/patching/staging-choice';
+import { useApprovalMode } from '@/hooks/use-approval-mode';
+import { DIRECT_DEFAULT_REASON } from '@/lib/direct-mode';
 
 /**
  * Company-wide and assignable patch policies (0.50), and every computer's
  * Patch policy setting, for one business.
  *
- * The portal writes each revision's rings itself — a canary it picks, the
- * rest in rings of at most 25 — and proposes a revision when the computers
- * change or the running one nears its expiry. Each revision is an ordinary
- * signed policy, admitted on the approval signer like one made by hand.
+ * The portal writes each revision's computers itself and proposes a
+ * revision when the computers change or the running one nears its expiry.
+ * By default (0.62) they all install together in the window; with "Test on
+ * one computer first", a canary it picks and the rest in rings of at most 25
+ * that wait for it. Each revision is an ordinary signed policy, admitted on
+ * the approval signer like one made by hand.
  */
 
 interface LeftOut { endpointId: string; hostname: string; code: string; message: string }
 interface Series {
   id: string; scope: 'business' | 'assigned'; name: string; status: 'active' | 'retired'; createdAt: string; retireReason: string | null;
-  settings: { window: PolicyWindowInput; reboot: string; expiresInDays: number };
+  settings: { window: PolicyWindowInput; reboot: string; expiresInDays: number; staging?: 'none' | 'canary' };
   computersSetToUse: number;
   /** 0.52: when the running revision next installs (null when nothing runs, or it expires first). */
   nextWindow?: { start: string; end: string } | null;
@@ -89,7 +94,7 @@ export function CompanyPoliciesCard({ businessId }: { businessId: string }) {
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
           <p className="text-xs text-muted-foreground">
-            A company-wide policy covers every computer of the business whose Patch policy is Inherit: Windows, on the signed agent, not archived. The portal picks the canary (the computer that checks in most reliably, unless you chose one), puts the rest in rings of at most 25, and proposes a new revision when computers join or leave, or before it expires. Each revision is a signed, closed list, admitted on the approval signer exactly like a policy made by hand. An assignable policy covers only the computers set to use it — a separate policy for servers, say.
+            A company-wide policy covers every computer of the business whose Patch policy is Inherit: Windows, on the signed agent, not archived. They all install together in the window — or, with &ldquo;Test on one computer first&rdquo;, the portal picks a test computer (the one that checks in most reliably, unless you chose one) and puts the rest in rings of at most 25 that wait for it. It proposes a new revision when computers join or leave, or before it expires. Each revision is a signed, closed list, admitted on the approval signer exactly like a policy made by hand. An assignable policy covers only the computers set to use it — a separate policy for servers, say.
           </p>
           {isLoading || !data ? <p className="text-muted-foreground">Loading…</p> : data.series.length === 0 ? <p className="text-muted-foreground">None yet.</p> : data.series.map((s) => (
             <div key={s.id} className="rounded-md border p-3 space-y-2">
@@ -97,6 +102,7 @@ export function CompanyPoliciesCard({ businessId }: { businessId: string }) {
                 <strong>{s.name}</strong>
                 <Badge variant="outline">{s.scope === 'business' ? 'company-wide' : 'assignable'}</Badge>
                 <Badge variant={s.status === 'active' ? 'success' : 'outline'}>{s.status}</Badge>
+                <Badge variant="outline" data-testid="series-staging">{s.settings.staging === 'none' ? 'all at once' : 'one computer first'}</Badge>
                 <span className="text-xs text-muted-foreground">{s.schedule ?? `${describeWindow(s.settings.window)} · ${s.settings.reboot === 'never' ? 'never restarts' : 'restarts if required, in the window'}`} · revisions last {s.settings.expiresInDays} days{s.scope === 'assigned' ? ` · ${s.computersSetToUse} computer(s) set to use it` : ''}</span>
                 {s.nextRestartWindow && <span className="w-full text-xs" data-testid="series-next-restart">Next restart window: <strong>{describeOccurrence(s.nextRestartWindow, s.settings.window.timezone)}</strong></span>}
                 <span className="w-full text-xs" data-testid="series-next-window">{s.nextWindow ? <>Next install window: <strong>{describeOccurrence(s.nextWindow, s.settings.window.timezone)}</strong></> : <span className="text-muted-foreground">No install window coming up{s.status === 'active' ? ' — no revision is running, or it expires first' : ''}.</span>}</span>
@@ -109,7 +115,7 @@ export function CompanyPoliciesCard({ businessId }: { businessId: string }) {
                 <div className="text-xs space-y-1">
                   <p><span className="text-muted-foreground">Last check {formatDate(s.lastCheck.at)}:</span> {s.lastCheck.message}</p>
                   {s.lastCheck.promotion && <p><span className="text-muted-foreground">Take-over:</span> {s.lastCheck.promotion.message}</p>}
-                  {s.lastCheck.members > 0 && <p className="text-muted-foreground">Next revision would name {s.lastCheck.members} computer(s) in rings of {s.lastCheck.rings.join(', ')}{s.lastCheck.canary ? `; canary ${s.lastCheck.canary.hostname} (${s.lastCheck.canary.why})` : ''}{s.lastCheck.lastRingOnly.length ? `; in the last ring only, with no result key: ${s.lastCheck.lastRingOnly.join(', ')}` : ''}.</p>}
+                  {s.lastCheck.members > 0 && <p className="text-muted-foreground">Next revision would name {s.lastCheck.members} computer(s){s.settings.staging === 'none' ? `, all at once${s.lastCheck.rings.length > 1 ? ` (plans of ${s.lastCheck.rings.join(', ')})` : ''}` : ` in rings of ${s.lastCheck.rings.join(', ')}`}{s.lastCheck.canary ? `; test computer ${s.lastCheck.canary.hostname} (${s.lastCheck.canary.why})` : ''}{s.lastCheck.lastRingOnly.length ? `; in the last ring only, with no result key: ${s.lastCheck.lastRingOnly.join(', ')}` : ''}.</p>}
                   {s.lastCheck.leftOut.length > 0 && (
                     <details><summary className="cursor-pointer">Left out: {s.lastCheck.leftOut.length} computer(s)</summary>
                       <ul className="mt-1 space-y-0.5">{s.lastCheck.leftOut.map((x) => <li key={x.endpointId}><Link className="underline" href={`/endpoints/${x.endpointId}`}>{x.hostname}</Link> — {x.message}</li>)}</ul>
@@ -167,6 +173,9 @@ export function CompanyPoliciesCard({ businessId }: { businessId: string }) {
 function CreateSeries({ businessId, scope, computers, onDone }: { businessId: string; scope: 'business' | 'assigned'; computers: Listing['computers']; onDone: () => void }) {
   const { toast } = useToast();
   const [name, setName] = useState('');
+  // 0.62: all at once unless "Test on one computer first" is ticked.
+  const [testFirst, setTestFirst] = useState(false);
+  const direct = useApprovalMode({ businessId }) === 'direct';
   const [classes, setClasses] = useState<Set<string>>(new Set(DEFAULT_POLICY_CLASSES));
   const [win, setWin] = useState(defaultWindowDraft);
   const [soakHours, setSoakHours] = useState(24);
@@ -179,13 +188,24 @@ function CreateSeries({ businessId, scope, computers, onDone }: { businessId: st
   const toggle = (set: Set<string>, v: string, on: boolean) => { const n = new Set(set); if (on) n.add(v); else n.delete(v); return n; };
   const create = useMutation({
     mutationFn: () => patchingApi.createSeries({
-      businessId, scope, name: name.trim(), allow: { classifications: [...classes] }, soakHours, failureThreshold, expiresInDays, reboot, reason: reason.trim(),
-      window: windowFromDraft(win), ...policyRestartBody(restart, reboot), ...(canary ? { canaryEndpointId: canary } : {}),
+      businessId, scope, name: name.trim(), allow: { classifications: [...classes] }, staging: testFirst ? 'canary' : 'none',
+      // All at once: no soak, and one computer's failure does not hold the rest of the window back.
+      soakHours: testFirst ? soakHours : 0, failureThreshold: testFirst ? failureThreshold : MAX_PER_PLAN,
+      expiresInDays, reboot, reason: direct ? (reason.trim() || DIRECT_DEFAULT_REASON) : reason.trim(),
+      window: windowFromDraft(win), ...policyRestartBody(restart, reboot), ...(testFirst && canary ? { canaryEndpointId: canary } : {}),
     }),
-    onSuccess: () => { toast({ title: scope === 'business' ? 'Company-wide policy created' : 'Assignable policy created', description: scope === 'business' ? 'Revision 1 was proposed on the approval signer.' : 'Set computers to use it; its first revision follows.' }); onDone(); },
+    onSuccess: () => {
+      toast({
+        title: scope === 'business' ? 'Company-wide policy created' : 'Assignable policy created',
+        description: scope === 'business'
+          ? (direct ? 'It is active now (direct mode): its computers install in the next window.' : 'Revision 1 was proposed on the approval signer.')
+          : (direct ? 'Set computers to use it; it is active for them as soon as they are (direct mode).' : 'Set computers to use it; its first revision follows.'),
+      });
+      onDone();
+    },
     onError: (e) => toast({ title: 'Not created', description: apiMessage(e, 'Refused.'), variant: 'destructive' }),
   });
-  const ok = name.trim().length >= 3 && classes.size > 0 && draftReady(win) && policyRestartReady(restart) && reason.trim().length >= 3;
+  const ok = name.trim().length >= 3 && classes.size > 0 && draftReady(win) && policyRestartReady(restart) && (direct || reason.trim().length >= 3);
   return (
     <Card className="mb-4">
       <CardHeader className="pb-3"><CardTitle className="text-sm">{scope === 'business' ? 'New company-wide patch policy' : 'New assignable patch policy'}</CardTitle></CardHeader>
@@ -196,26 +216,27 @@ function CreateSeries({ businessId, scope, computers, onDone }: { businessId: st
           {Object.entries(CLASS_NAMES).map(([id, n]) => <label key={id} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={classes.has(id)} onChange={(e) => setClasses((s) => toggle(s, id, e.target.checked))} />{n}</label>)}
           {classes.has(DRIVERS_CLASS) && <p className="text-xs text-muted-foreground">Drivers install as Windows Update offers them, on every computer in each ring. Needs the 0.42 agent.</p>}
         </div>
+        <StagingChoice id="ser" value={testFirst} onChange={setTestFirst} />
         <WindowEditor id="ser" value={win} onChange={setWin} expiresInDays={expiresInDays} />
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl">
-          <div className="space-y-1"><Label className="text-xs">Soak between rings (hours)</Label><Input type="number" min={0} max={168} value={soakHours} onChange={(e) => setSoakHours(Number(e.target.value))} /></div>
-          <div className="space-y-1"><Label className="text-xs">Failed computers allowed per ring</Label><Input type="number" min={0} max={25} value={failureThreshold} onChange={(e) => setFailureThreshold(Number(e.target.value))} /></div>
+          {testFirst && <div className="space-y-1"><Label className="text-xs">Soak between rings (hours)</Label><Input type="number" min={0} max={168} value={soakHours} onChange={(e) => setSoakHours(Number(e.target.value))} /></div>}
+          {testFirst && <div className="space-y-1"><Label className="text-xs">Failed computers allowed per ring</Label><Input type="number" min={0} max={25} value={failureThreshold} onChange={(e) => setFailureThreshold(Number(e.target.value))} /></div>}
           <div className="space-y-1"><Label className="text-xs">Each revision lasts (days, at most 90)</Label><Input type="number" min={1} max={90} value={expiresInDays} onChange={(e) => setExpiresInDays(Number(e.target.value))} /></div>
         </div>
         <div className="max-w-xl"><RebootChoice id="ser-reboot" value={reboot} onChange={setReboot} scope="policy" /></div>
         <PolicyRestartEditor id="ser" value={restart} onChange={setRestart} reboot={reboot} expiresInDays={expiresInDays} />
-        <div className="max-w-md space-y-1">
-          <Label htmlFor="ser-canary" className="text-xs">Canary</Label>
+        {testFirst && <div className="max-w-md space-y-1">
+          <Label htmlFor="ser-canary" className="text-xs">Test computer</Label>
           <select id="ser-canary" className={`${selectClass} w-full h-9`} value={canary} onChange={(e) => setCanary(e.target.value)}>
             <option value="">Let the portal pick (checks in most reliably)</option>
             {computers.map((c) => <option key={c.id} value={c.id}>{c.hostname}</option>)}
           </select>
           <p className="text-xs text-muted-foreground">Used while it is eligible; otherwise the portal picks another and says why.</p>
-        </div>
-        <div className="space-y-1 max-w-xl"><Label htmlFor="ser-reason" className="text-xs">Reason (written into every revision the approvers see)</Label><Input id="ser-reason" maxLength={300} value={reason} onChange={(e) => setReason(e.target.value)} /></div>
-        <p className="text-xs text-muted-foreground">These settings stay fixed for the policy&apos;s life; to change them, retire it and create another. Creating needs a fresh sign-in.</p>
+        </div>}
+        {!direct && <div className="space-y-1 max-w-xl"><Label htmlFor="ser-reason" className="text-xs">Reason (written into every revision the approvers see)</Label><Input id="ser-reason" data-testid="ser-reason" maxLength={300} value={reason} onChange={(e) => setReason(e.target.value)} /></div>}
+        <p className="text-xs text-muted-foreground">These settings stay fixed for the policy&apos;s life; to change them, retire it and create another. Creating needs a fresh sign-in.{direct ? ' Direct mode is on for this business: each revision is active as soon as it is made.' : ''}</p>
         <div className="flex gap-2">
-          <Button size="sm" disabled={!ok || create.isPending} onClick={() => create.mutate()}>{create.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Create</Button>
+          <Button size="sm" data-testid="ser-submit" disabled={!ok || create.isPending} onClick={() => create.mutate()}>{create.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}{direct ? 'Create policy' : 'Create'}</Button>
           <Button size="sm" variant="ghost" onClick={onDone}>Cancel</Button>
         </div>
       </CardContent>

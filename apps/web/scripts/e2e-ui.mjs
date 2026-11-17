@@ -2075,9 +2075,77 @@ async function automationSchedules(page, f, vp, label) {
   await cleanCheck(page, `${label} schedule editor`);
 }
 
+/**
+ * 0.62: the patching forms in both approval modes. This stack has no approval
+ * signer, so the mode the console mirrors (GET /actions/catalog's `approval`)
+ * is answered here, once 'signed' and once 'direct'. Signed mode keeps
+ * 0.61's words: "Propose for approval" and a reason for the approvers. Direct
+ * mode says "Create policy", asks for no reason and says it is active at
+ * once. In both, "Test on one computer first" starts unticked and the
+ * computers are ticked, not put in rings. Nothing is submitted.
+ */
+async function patchingApprovalModes(page, f, vp, label) {
+  for (const mode of ['signed', 'direct']) {
+    const fake = async (route) => {
+      const res = await route.fetch();
+      const body = await res.json().catch(() => ({}));
+      await route.fulfill({ response: res, json: { ...body, data: { ...(body.data ?? {}), approval: mode } } });
+    };
+    await page.route('**/api/v1/actions/catalog**', fake);
+    try {
+      await go(page, '/patching');
+      await page.locator('main select').first().selectOption(f.A.id);
+      await settled(page);
+      // A patch policy.
+      await page.getByRole('button', { name: 'New policy' }).click();
+      await page.locator('[data-testid="pol-submit"]').waitFor({ timeout: 20_000 });
+      await page.waitForFunction((m) => (document.querySelector('[data-testid="pol-submit"]')?.textContent ?? '').includes(m === 'direct' ? 'Create policy' : 'Propose for approval'), mode, { timeout: 15_000 }).catch(() => {});
+      const btn = (await page.locator('[data-testid="pol-submit"]').innerText()).trim();
+      const reason = await page.locator('[data-testid="pol-reason"]').isVisible().catch(() => false);
+      const note = await page.locator('[data-testid="pol-direct-note"]').isVisible().catch(() => false);
+      const testFirst = page.locator('[data-testid="pol-test-first"]');
+      check(await testFirst.isVisible() && !(await testFirst.isChecked()), `${label} (${mode}): a new patch policy installs all at once — "Test on one computer first" starts unticked`);
+      if (mode === 'direct') {
+        check(btn === 'Create policy' && !reason && note && !/Propose for approval|approvers/i.test(await page.locator('[data-testid="pol-direct-note"]').innerText()),
+          `${label} (direct): the policy form says "Create policy", asks for no approvers' reason, and says it is active at once`, `button "${btn}", reason shown ${reason}, note ${note}`);
+      } else {
+        check(btn === 'Propose for approval' && reason && !note, `${label} (signed): the policy form keeps "Propose for approval" and the approvers' reason`, `button "${btn}", reason shown ${reason}, note ${note}`);
+      }
+      await testFirst.check();
+      const staged = await page.locator('[data-testid="pol-staging"]').innerText();
+      check(/One computer installs first/.test(staged) && /Soak between rings/.test(await page.locator('main').innerText()),
+        `${label} (${mode}): ticking "Test on one computer first" brings back the canary, the rings and the soak`, staged.slice(0, 200));
+      if (vp === 'phone') await noSideScroll(page, `${label} patch policy (${mode})`);
+      await shot(page, `${label}-patch-policy-${mode}`);
+      await page.getByRole('button', { name: 'Cancel' }).first().click();
+      // A company-wide policy, where this business has none yet.
+      const cw = page.getByRole('button', { name: 'Company-wide policy' });
+      if (await cw.isVisible().catch(() => false)) {
+        await cw.click();
+        await page.locator('[data-testid="ser-submit"]').waitFor({ timeout: 20_000 });
+        await page.waitForFunction((m) => (document.querySelector('[data-testid="ser-submit"]')?.textContent ?? '').includes(m === 'direct' ? 'Create policy' : 'Create'), mode, { timeout: 15_000 }).catch(() => {});
+        const sbtn = (await page.locator('[data-testid="ser-submit"]').innerText()).trim();
+        const sreason = await page.locator('[data-testid="ser-reason"]').isVisible().catch(() => false);
+        check(!(await page.locator('[data-testid="ser-test-first"]').isChecked()) && (mode === 'direct' ? sbtn === 'Create policy' && !sreason : sbtn === 'Create' && sreason),
+          `${label} (${mode}): the company-wide form starts all at once, and ${mode === 'direct' ? 'says "Create policy" with no reason' : 'keeps "Create" and the approvers\' reason'}`, `button "${sbtn}", reason shown ${sreason}`);
+        await page.getByRole('button', { name: 'Cancel' }).first().click();
+      }
+      // A one-off deployment.
+      await page.getByRole('button', { name: 'New deployment' }).click();
+      await page.locator('[data-testid="dep-create"]').waitFor({ timeout: 20_000 });
+      check(!(await page.locator('[data-testid="dep-test-first"]').isChecked()), `${label} (${mode}): a new deployment installs all at once — "Test on one computer first" starts unticked`);
+      await page.getByRole('button', { name: 'Cancel' }).first().click();
+      await cleanCheck(page, `${label} patching forms (${mode})`);
+    } finally {
+      await page.unroute('**/api/v1/actions/catalog**', fake);
+    }
+  }
+}
+
 async function coverage035(page, f, vp, label) {
   await adoptionScreens(page, f, vp, label);
   await patchWindowEditor(page, f, vp, label);
+  await patchingApprovalModes(page, f, vp, label);
   await automationSchedules(page, f, vp, label);
   await chatTab(page, f, vp, label);
   await scriptRunPanel(page, f, vp, label);

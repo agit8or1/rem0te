@@ -19,25 +19,31 @@ import { useAsks } from '@/lib/confirm-policy';
 import { PoliciesCard, PreflightCard } from '@/components/patching/patch-policies';
 import { CompanyPoliciesCard } from '@/components/patching/company-policies';
 import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
+import { MAX_ALL_AT_ONCE, MAX_PER_PLAN, StagingChoice, chunkRings } from '@/components/patching/staging-choice';
+import { useApprovalMode } from '@/hooks/use-approval-mode';
 import { AlertTriangle, Loader2, Plus, ShieldCheck } from 'lucide-react';
 
 /**
  * Staged Windows patching (v0.27): deployments for one business.
  *
  * A deployment names security/critical/rollup/ordinary updates, by Windows
- * Update's own identity, and the computers in each ring. Ring 0 is a single
- * canary. Each ring is requested as one signed plan and approved on the
- * approval signer by two people on the roster; the next ring cannot be
- * requested until the canary confirms the updates took effect, the failure
- * threshold holds and the soak time has passed. Nothing on this page can
- * approve anything or restart a computer.
+ * Update's own identity, and the computers it installs them on.
+ *
+ * 0.62, at the owner's request: by default every computer installs together
+ * ("all at once", sent as plans of up to 25 that wait for nothing). "Test on
+ * one computer first" gives the canary staging: ring 0 is one computer, and
+ * each later ring is requested only after the one before it confirms the
+ * updates took effect, the failure threshold holds and the soak has passed.
+ * Each plan is approved on the approval signer by two people on the roster,
+ * or signed at once in direct mode. Nothing on this page can approve
+ * anything or restart a computer.
  */
 
 interface Candidates {
   computers: { id: string; hostname: string; deviceClass: string; isOnline: boolean; notReady: string | null; scannedAt: string | null; managers: string[]; rebootPending: boolean | null; offered: number | null }[];
   updates: (UpdateIdentity & { kb: string | null; title: string; className: string | null; severity: string | null; offeredOn: number; installable: boolean; notInstallableBecause: string | null })[];
 }
-interface DeploymentRow { id: string; name: string; origin: 'DEPLOYMENT' | 'MANUAL' | 'POLICY'; policyId: string | null; status: string; pausedReason: string | null; rings: number[]; updates: number; lastRing: number | null; lastRingStatus: string | null; createdAt: string }
+interface DeploymentRow { id: string; name: string; origin: 'DEPLOYMENT' | 'MANUAL' | 'POLICY'; policyId: string | null; status: string; staging?: 'none' | 'canary'; pausedReason: string | null; rings: number[]; updates: number; lastRing: number | null; lastRingStatus: string | null; createdAt: string }
 
 const selectClass = 'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm';
 const key = (u: UpdateIdentity) => `${u.updateId}@${u.revision}`;
@@ -57,6 +63,7 @@ export default function PatchingPage() {
   const businessId = picked || technician?.businessId || own || '';
   const [creating, setCreating] = useState(false);
   const askDirect = useAsks('actions.direct');
+  const direct = useApprovalMode({ businessId }) === 'direct';
 
   const { data: rows = [], isLoading, refetch } = useQuery({
     queryKey: ['patch-deployments', businessId],
@@ -66,7 +73,9 @@ export default function PatchingPage() {
 
   return (
     <div className="p-4 md:p-6">
-      <PageHeader title="Patching" description={`Windows updates, a canary first, then rings. Each ring is approved on the approval signer: by two people on its roster, or at once ${askDirect ? 'after you confirm it is you' : 'when it is requested'} in direct mode.`}>
+      <PageHeader title="Patching" description={direct
+        ? `Windows updates for the computers you choose, all installing together in the window — or one test computer first, if you tick that. Direct mode is on: what you create runs ${askDirect ? 'once you confirm it is you' : 'as soon as you create it'}, with no approval step.`
+        : `Windows updates for the computers you choose, all installing together in the window — or one test computer first, if you tick that. Each plan is approved on the approval signer: by two people on its roster, or at once ${askDirect ? 'after you confirm it is you' : 'when it is requested'} in direct mode.`}>
         {businessId && !creating && <Button size="sm" onClick={() => setCreating(true)}><Plus className="h-4 w-4 mr-1" />New deployment</Button>}
       </PageHeader>
 
@@ -100,9 +109,9 @@ export default function PatchingPage() {
                   <strong>{d.name}</strong>
                   <Badge variant={DEPLOYMENT_STATUS[d.status] ?? 'outline'}>{d.status.toLowerCase()}</Badge>
                   {d.origin !== 'DEPLOYMENT' && <Badge variant="outline">{d.origin === 'POLICY' ? 'from a policy' : 'one computer'}</Badge>}
-                  <span className="text-xs text-muted-foreground">{d.updates} update{d.updates === 1 ? '' : 's'} · rings of {d.rings.join(', ')} · {formatDate(d.createdAt)}</span>
+                  <span className="text-xs text-muted-foreground">{d.updates} update{d.updates === 1 ? '' : 's'} · {d.staging === 'none' ? `${d.rings.reduce((a, b) => a + b, 0)} computer(s), all at once` : `rings of ${d.rings.join(', ')}`} · {formatDate(d.createdAt)}</span>
                 </div>
-                {d.lastRing !== null && <p className="text-xs text-muted-foreground mt-1">{d.lastRing === 0 ? 'Canary' : `Ring ${d.lastRing}`}: {d.lastRingStatus?.toLowerCase().replace(/_/g, ' ')}</p>}
+                {d.lastRing !== null && <p className="text-xs text-muted-foreground mt-1">{d.lastRing === 0 && d.staging !== 'none' ? 'Canary' : `Ring ${d.lastRing}`}: {d.lastRingStatus?.toLowerCase().replace(/_/g, ' ')}</p>}
                 {d.pausedReason && d.status === 'PAUSED' && <p className="text-xs mt-1">Paused: {d.pausedReason}</p>}
               </Link>
             ))}
@@ -114,6 +123,7 @@ export default function PatchingPage() {
 
 function CreateDeployment({ businessId, onDone }: { businessId: string; onDone: () => void }) {
   const { toast } = useToast();
+  const direct = useApprovalMode({ businessId }) === 'direct';
   const router = useRouter();
   const { data: c, isLoading } = useQuery({
     queryKey: ['patch-candidates', businessId],
@@ -121,26 +131,39 @@ function CreateDeployment({ businessId, onDone }: { businessId: string; onDone: 
   });
   const [name, setName] = useState('');
   const [updates, setUpdates] = useState<Set<string>>(new Set());
+  // 0.62: all at once unless "Test on one computer first" is ticked.
+  const [testFirst, setTestFirst] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
   const [ringOf, setRingOf] = useState<Record<string, number | ''>>({});
   const [soakHours, setSoakHours] = useState(24);
   const [failureThreshold, setFailureThreshold] = useState(0);
   const [windowHours, setWindowHours] = useState(8);
   const [reboot, setReboot] = useState<RebootRule>('never');
 
-  const rings = useMemo(() => {
+  const stagedRings = useMemo(() => {
     const max = Math.max(-1, ...Object.values(ringOf).filter((r): r is number => r !== ''));
     const out: string[][] = Array.from({ length: max + 1 }, () => []);
     for (const [id, r] of Object.entries(ringOf)) if (r !== '') out[r].push(id);
     return out;
   }, [ringOf]);
-  const ringsOk = rings.length >= 1 && rings[0].length === 1 && rings.every((r) => r.length >= 1 && r.length <= 25);
+  const order = (c?.computers ?? []).map((x) => x.id);
+  const allRings = useMemo(() => chunkRings(order.filter((id) => picked.has(id))), [order.join(','), picked]); // eslint-disable-line react-hooks/exhaustive-deps
+  const rings = testFirst ? stagedRings : allRings;
+  const ringsOk = testFirst
+    ? rings.length >= 1 && rings[0].length === 1 && rings.every((r) => r.length >= 1 && r.length <= MAX_PER_PLAN)
+    : picked.size >= 1 && picked.size <= MAX_ALL_AT_ONCE;
 
   const create = useMutation({
     mutationFn: () => patchingApi.create({
-      businessId, name: name.trim(), soakHours, failureThreshold, windowHours, rings, reboot,
+      businessId, name: name.trim(), windowHours, rings, reboot, staging: testFirst ? 'canary' : 'none',
+      // All at once: no soak, and one computer's failure does not pause the others.
+      soakHours: testFirst ? soakHours : 0, failureThreshold: testFirst ? failureThreshold : MAX_PER_PLAN,
       updates: (c?.updates ?? []).filter((u) => updates.has(key(u))).map((u) => ({ updateId: u.updateId, revision: u.revision })),
     }),
-    onSuccess: (r) => { toast({ title: 'Deployment created', description: 'Request the canary when you are ready.' }); onDone(); router.push(`/patching/${r.data.data.id}`); },
+    onSuccess: (r) => {
+      toast({ title: 'Deployment created', description: testFirst ? `${direct ? 'Install on' : 'Request'} the test computer when you are ready.` : `${direct ? 'Press Install' : 'Request it'} when you are ready: every computer installs together.` });
+      onDone(); router.push(`/patching/${r.data.data.id}`);
+    },
     onError: (e) => toast({ title: 'Not created', description: apiMessage(e, 'The deployment was refused.'), variant: 'destructive' }),
   });
 
@@ -172,14 +195,24 @@ function CreateDeployment({ businessId, onDone }: { businessId: string; onDone: 
           ))}
         </div>
 
-        <div className="space-y-1">
-          <p className="text-xs font-medium">Rings — ring 0 is one canary computer; each later ring up to 25</p>
+        <div className="space-y-2">
+          <StagingChoice id="dep" value={testFirst} onChange={setTestFirst} what="deployment" />
+          <p className="text-xs font-medium">{testFirst ? `Computers — ring 0 is the one test computer; each later ring up to ${MAX_PER_PLAN}` : 'Computers — tick the ones to install on'}</p>
+          {!testFirst && ready.length > 1 && (
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <input type="checkbox" data-testid="dep-pick-all" checked={picked.size === ready.length} onChange={(e) => setPicked(e.target.checked ? new Set(ready.map((x) => x.id)) : new Set())} />Select all
+            </label>
+          )}
           {ready.map((x) => (
             <div key={x.id} className="flex flex-wrap items-center gap-2 text-xs">
-              <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={ringOf[x.id] ?? ''} onChange={(e) => setRingOf((m) => ({ ...m, [x.id]: e.target.value === '' ? '' : Number(e.target.value) }))}>
-                <option value="">not in this deployment</option>
-                {[0, 1, 2, 3, 4].map((r) => <option key={r} value={r}>{r === 0 ? 'ring 0 (canary)' : `ring ${r}`}</option>)}
-              </select>
+              {testFirst ? (
+                <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={ringOf[x.id] ?? ''} onChange={(e) => setRingOf((m) => ({ ...m, [x.id]: e.target.value === '' ? '' : Number(e.target.value) }))}>
+                  <option value="">not in this deployment</option>
+                  {[0, 1, 2, 3, 4].map((r) => <option key={r} value={r}>{r === 0 ? 'ring 0 (test computer)' : `ring ${r}`}</option>)}
+                </select>
+              ) : (
+                <input type="checkbox" aria-label={`Install on ${x.hostname}`} data-testid={`dep-pick-${x.id}`} checked={picked.has(x.id)} onChange={(e) => setPicked((s0) => { const n = new Set(s0); if (e.target.checked) n.add(x.id); else n.delete(x.id); return n; })} />
+              )}
               <span>{x.hostname}</span>
               <span className="text-muted-foreground">{x.deviceClass.toLowerCase()} · {x.offered ?? 0} offered{x.rebootPending ? ' · restart pending' : ''}{x.isOnline ? '' : ' · offline'}</span>
             </div>
@@ -192,13 +225,15 @@ function CreateDeployment({ businessId, onDone }: { businessId: string; onDone: 
               </ul>
             </details>
           )}
-          {!ringsOk && Object.keys(ringOf).length > 0 && <p className="text-xs text-destructive">Ring 0 must be exactly one computer, and no ring may be empty or larger than 25.</p>}
+          {testFirst && !ringsOk && Object.keys(ringOf).length > 0 && <p className="text-xs text-destructive">Ring 0 must be exactly one computer, and no ring may be empty or larger than {MAX_PER_PLAN}.</p>}
+          {!testFirst && picked.size > MAX_ALL_AT_ONCE && <p className="text-xs text-destructive">At most {MAX_ALL_AT_ONCE} computers in one deployment.</p>}
+          {!testFirst && picked.size > MAX_PER_PLAN && picked.size <= MAX_ALL_AT_ONCE && <p className="text-xs text-muted-foreground">{picked.size} computers go out as {allRings.length} plans of up to {MAX_PER_PLAN}, all at the same time.</p>}
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl">
-          <div className="space-y-1"><Label className="text-xs">Soak between rings (hours)</Label><Input type="number" min={0} max={168} value={soakHours} onChange={(e) => setSoakHours(Number(e.target.value))} /></div>
-          <div className="space-y-1"><Label className="text-xs">Failed computers allowed per ring</Label><Input type="number" min={0} max={25} value={failureThreshold} onChange={(e) => setFailureThreshold(Number(e.target.value))} /></div>
-          <div className="space-y-1"><Label className="text-xs">Window each ring may run in (hours)</Label><Input type="number" min={1} max={24} value={windowHours} onChange={(e) => setWindowHours(Number(e.target.value))} /></div>
+          {testFirst && <div className="space-y-1"><Label className="text-xs">Soak between rings (hours)</Label><Input type="number" min={0} max={168} value={soakHours} onChange={(e) => setSoakHours(Number(e.target.value))} /></div>}
+          {testFirst && <div className="space-y-1"><Label className="text-xs">Failed computers allowed per ring</Label><Input type="number" min={0} max={25} value={failureThreshold} onChange={(e) => setFailureThreshold(Number(e.target.value))} /></div>}
+          <div className="space-y-1"><Label className="text-xs">{testFirst ? 'Window each ring may run in (hours)' : 'Window it may run in (hours)'}</Label><Input type="number" min={1} max={24} value={windowHours} onChange={(e) => setWindowHours(Number(e.target.value))} /></div>
         </div>
 
         <div className="max-w-xl">
@@ -206,10 +241,10 @@ function CreateDeployment({ businessId, onDone }: { businessId: string; onDone: 
         </div>
 
         <p className="text-xs text-muted-foreground flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />
-          Every ring plan carries the restart rule above, and the approvers see it. Feature upgrades, optional updates and anything needing a licence are refused, by the portal and again by each computer; so is anything needing someone at the keyboard, except drivers. Drivers and definition updates need a 0.42 agent.
+          Every plan carries the restart rule above{direct ? '' : ', and the approvers see it'}. Feature upgrades, optional updates and anything needing a licence are refused, by the portal and again by each computer; so is anything needing someone at the keyboard, except drivers. Drivers and definition updates need a 0.42 agent.
         </p>
         <div className="flex gap-2">
-          <Button size="sm" disabled={name.trim().length < 3 || updates.size === 0 || !ringsOk || create.isPending} onClick={() => create.mutate()}>
+          <Button size="sm" data-testid="dep-create" disabled={name.trim().length < 3 || updates.size === 0 || !ringsOk || create.isPending} onClick={() => create.mutate()}>
             {create.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Create
           </Button>
           <Button size="sm" variant="ghost" onClick={onDone}>Cancel</Button>

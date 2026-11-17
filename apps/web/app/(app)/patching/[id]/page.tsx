@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
-import { DIRECT_TOAST, oldAgentUpdateRefusal } from '@/lib/direct-mode';
+import { DIRECT_DEFAULT_REASON, DIRECT_TOAST, oldAgentUpdateRefusal } from '@/lib/direct-mode';
 import { useAsks } from '@/lib/confirm-policy';
 import { useApprovalMode } from '@/hooks/use-approval-mode';
 import { ArrowLeft, ExternalLink, Loader2, ShieldCheck } from 'lucide-react';
@@ -27,6 +27,10 @@ import { DEPLOYMENT_STATUS } from '@/lib/patching';
  * One staged deployment (v0.27): its rings, where every update stands on
  * every computer, and the next step. Requesting a ring creates a signed plan
  * awaiting approval on the approval signer; it is approved there, never here.
+ *
+ * 0.62: a deployment that installs all at once (staging none) is requested
+ * with one press — every ring not yet running, each its own plan. In direct
+ * mode that press is "Install": signed at once, with no reason asked for.
  *
  * "Effective" means a scan taken after the install no longer offers the
  * update, Windows' own history records the install, and no restart is
@@ -47,9 +51,11 @@ interface Ring {
 }
 interface Deployment {
   id: string; name: string; businessId: string; origin: 'DEPLOYMENT' | 'MANUAL' | 'POLICY'; policyId: string | null; status: string; pausedReason: string | null;
+  /** 0.62: 'none' (all at once) or 'canary'. Absent (an older API) is canary. */
+  staging?: 'none' | 'canary';
   soakHours: number; failureThreshold: number; windowHours: number; reboot: string; createdAt: string;
   updates: { updateId: string; revision: number; kb: string | null; title: string; className: string | null; severity: string | null }[];
-  next: { ring: number | null; canRequest: boolean; why: string };
+  next: { ring: number | null; canRequest: boolean; why: string; requestable?: number[] };
   /** 0.52: for the schedule picker. */
   timeZones?: { viewer: string | null }; maxScheduleDays?: number;
   rings: Ring[];
@@ -92,18 +98,29 @@ export default function DeploymentPage() {
   // 0.52: now, or a wall-clock time in a named zone (the plan's notBefore).
   const [when, setWhen] = useState<ScheduleValue>(() => defaultSchedule({}));
 
+  const allAtOnce = d?.staging === 'none';
+  // The rings this press requests: under all at once every one not yet running, else the next.
+  const toRequest = (): number[] => (allAtOnce ? (d?.next.requestable ?? []) : d?.next.ring !== null && d?.next.ring !== undefined ? [d.next.ring] : []);
   const request = useMutation({
-    mutationFn: () => patchingApi.requestRing(id, d!.next.ring!, {
-      reason: reason.trim(), ...scheduleBody(when),
-      exclude: Object.entries(exclude).filter(([, why]) => why.trim()).map(([endpointId, why]) => ({ endpointId, why: why.trim() })),
-    }),
-    onSuccess: (r) => {
+    mutationFn: async () => {
+      const left = Object.entries(exclude).filter(([, why]) => why.trim()).map(([endpointId, why]) => ({ endpointId, why: why.trim() }));
+      const out: { job?: { direct?: boolean; approvalUrl?: string } }[] = [];
+      for (const ring of toRequest()) {
+        const members = d!.rings[ring]?.computers.map((c) => c.endpointId) ?? [];
+        const mine = left.filter((x) => members.includes(x.endpointId));
+        if (members.length && mine.length === members.length) continue; // every computer of this ring left out
+        const r = await patchingApi.requestRing(id, ring, { reason: direct ? (reason.trim() || DIRECT_DEFAULT_REASON) : reason.trim(), ...scheduleBody(when), exclude: mine });
+        out.push(r.data.data);
+      }
+      return out;
+    },
+    onSuccess: (rs) => {
       setReason(''); setExclude({}); setWhen((w) => ({ ...w, mode: 'now' })); refresh();
       qc.invalidateQueries({ queryKey: ['tasks'] });
       // 0.40, direct mode: signed at the request; there is no approval page to open.
-      if (r.data.data.job?.direct) { toast({ title: 'Approved automatically', description: DIRECT_TOAST }); return; }
-      const url = r.data.data.job?.approvalUrl;
-      toast({ title: 'Requested', description: 'Nothing installs until two approvers authorize this ring on the approval page.' });
+      if (rs.length && rs.every((r) => r.job?.direct)) { toast({ title: allAtOnce ? 'Installing' : 'Approved automatically', description: DIRECT_TOAST }); return; }
+      toast({ title: 'Requested', description: rs.length > 1 ? `Nothing installs until two approvers authorize each of these ${rs.length} plans on the approval page.` : 'Nothing installs until two approvers authorize this ring on the approval page.' });
+      const url = rs[0]?.job?.approvalUrl;
       if (url) window.open(url, '_blank', 'noopener,noreferrer');
     },
     onError: (e) => toast({ title: 'Not requested', description: apiMessage(e, 'The request was refused.'), variant: 'destructive' }),
@@ -120,11 +137,18 @@ export default function DeploymentPage() {
 
   if (isLoading || !d) return <p className="p-4 md:p-6 text-sm text-muted-foreground">Loading…</p>;
   const nextRing = d.next.ring !== null ? d.rings[d.next.ring] : null;
+  const ringsNow = toRequest().map((i) => d.rings[i]).filter(Boolean);
+  const computersNow = ringsNow.reduce((n, r) => n + r.computers.length, 0);
+  const label = allAtOnce
+    ? (ringsNow.length === d.rings.length ? 'on every computer' : `on the rest (${computersNow} computer${computersNow === 1 ? '' : 's'})`)
+    : nextRing?.canary ? 'canary' : `ring ${nextRing?.ring}`;
 
   return (
     <div className="space-y-4 p-4 md:p-6">
       <Link href="/patching" className="text-xs text-muted-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3 w-3" />Patching</Link>
-      <PageHeader title={d.name} description={`Created ${formatDate(d.createdAt)} · soak ${d.soakHours} h · ${d.failureThreshold} failure${d.failureThreshold === 1 ? '' : 's'} allowed per ring · ${d.windowHours} h window · ${rebootSummary(d.reboot).toLowerCase()}`}>
+      <PageHeader title={d.name} description={allAtOnce
+        ? `Created ${formatDate(d.createdAt)} · all at once · ${d.windowHours} h window · ${rebootSummary(d.reboot).toLowerCase()}`
+        : `Created ${formatDate(d.createdAt)} · one computer first · soak ${d.soakHours} h · ${d.failureThreshold} failure${d.failureThreshold === 1 ? '' : 's'} allowed per ring · ${d.windowHours} h window · ${rebootSummary(d.reboot).toLowerCase()}`}>
         <div className="flex gap-2 items-center">
           <Badge variant={DEPLOYMENT_STATUS[d.status] ?? 'outline'}>{d.status.toLowerCase()}</Badge>
           {d.status === 'ACTIVE' && <Button size="sm" variant="outline" onClick={() => ask('pause')}>Pause</Button>}
@@ -143,16 +167,19 @@ export default function DeploymentPage() {
               This deployment belongs to <Link className="underline" href={`/patching/policies/${d.policyId}`}>a patch policy</Link>: its rings are requested by the policy inside its maintenance window and signed by the approval signer only if they fall inside it. Pause or cancel it here, or revoke the policy.
             </p>
           )}
-          {d.origin === 'MANUAL' && <p className="text-xs text-muted-foreground">Requested from one computer&apos;s Patches tab: a single canary ring{direct ? ', signed at once in direct mode' : ', approved like any other'}.</p>}
-          {d.next.canRequest && nextRing && d.origin !== 'POLICY' && (
+          {d.origin === 'MANUAL' && <p className="text-xs text-muted-foreground">Requested from one computer&apos;s Patches tab: a single ring{direct ? ', signed at once in direct mode' : ', approved like any other'}.</p>}
+          {d.next.canRequest && ringsNow.length > 0 && d.origin !== 'POLICY' && (
             <>
-              <p className="text-xs text-muted-foreground">
-                Requests {nextRing.canary ? 'the canary' : `ring ${nextRing.ring}`} ({nextRing.computers.length} computer{nextRing.computers.length === 1 ? '' : 's'}) as one signed plan. {direct ? `Direct mode is on: it is signed as soon as you ${askDirect ? 'confirm it is you' : 'request it'}.` : 'Two people on the approval roster must approve it with a passkey; you cannot approve your own request.'} Restart rule: {rebootSummary(d.reboot).toLowerCase()}.
+              <p className="text-xs text-muted-foreground" data-testid="ring-request-note">
+                {allAtOnce
+                  ? `Installs on ${computersNow} computer${computersNow === 1 ? '' : 's'} together${ringsNow.length > 1 ? `, as ${ringsNow.length} plans of up to 25` : ''}; none waits for another. `
+                  : `Requests ${nextRing!.canary ? 'the canary' : `ring ${nextRing!.ring}`} (${nextRing!.computers.length} computer${nextRing!.computers.length === 1 ? '' : 's'}) as one signed plan. `}
+                {direct ? `Direct mode is on: it is signed as soon as you ${askDirect ? 'confirm it is you' : 'press Install'}.` : `Two people on the approval roster must approve ${ringsNow.length > 1 ? 'each plan' : 'it'} with a passkey; you cannot approve your own request.`} Restart rule: {rebootSummary(d.reboot).toLowerCase()}.
               </p>
-              {!nextRing.canary && (
+              {!(nextRing?.canary && !allAtOnce) && (
                 <div className="space-y-1">
                   <p className="text-xs font-medium">Leave out (optional — say why)</p>
-                  {nextRing.computers.map((c) => (
+                  {ringsNow.flatMap((r) => r.computers).map((c) => (
                     <div key={c.endpointId} className="flex items-center gap-2 text-xs">
                       <span className="w-40 truncate">{c.hostname ?? c.endpointId}</span>
                       <Input className="h-8 text-xs" maxLength={200} placeholder="included" value={exclude[c.endpointId] ?? ''} onChange={(e) => setExclude((m) => ({ ...m, [c.endpointId]: e.target.value }))} />
@@ -160,15 +187,18 @@ export default function DeploymentPage() {
                   ))}
                 </div>
               )}
-              <div className="space-y-1">
-                <Label htmlFor="ring-reason" className="text-xs">{direct ? 'Why (recorded in the audit log)' : 'Why (shown to the approvers)'}</Label>
-                <Textarea id="ring-reason" rows={2} maxLength={400} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Patch Tuesday; canary confirmed" />
-              </div>
+              {!direct && (
+                <div className="space-y-1">
+                  <Label htmlFor="ring-reason" className="text-xs">Why (shown to the approvers)</Label>
+                  <Textarea id="ring-reason" data-testid="ring-reason" rows={2} maxLength={400} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={allAtOnce ? 'e.g. Patch Tuesday' : 'e.g. Patch Tuesday; canary confirmed'} />
+                </div>
+              )}
               <div className="max-w-xl">
                 <ScheduleChoice id="ring-when" value={when} onChange={setWhen} zones={d.timeZones ?? {}} maxDays={d.maxScheduleDays} nowLabel="Start now" />
               </div>
-              <Button size="sm" disabled={reason.trim().length < 3 || request.isPending} onClick={() => request.mutate()}>
-                {request.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}{when.mode === 'schedule' ? 'Schedule' : 'Request'} {nextRing.canary ? 'canary' : `ring ${nextRing.ring}`}
+              <Button size="sm" data-testid="ring-request" disabled={(!direct && reason.trim().length < 3) || request.isPending} onClick={() => request.mutate()}>
+                {request.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
+                {direct ? `${when.mode === 'schedule' ? 'Schedule install' : 'Install'} ${label}` : `${when.mode === 'schedule' ? 'Schedule' : 'Request'} ${label}`}
               </Button>
             </>
           )}

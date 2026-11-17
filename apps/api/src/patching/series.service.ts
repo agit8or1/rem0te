@@ -15,7 +15,7 @@ import { selfSignedScanKey } from '../actions/device-result';
 import { PatchingService } from './patching.service';
 import { PatchPolicyService } from './policies.service';
 import {
-  CreateSeriesDto, MAX_POLICY_COMPUTERS, OverrideDto, SeriesSettings, membershipFingerprint, planRings, revisionDecision, revisionMinutes, revisionReason, settleMinutes,
+  CreateSeriesDto, OverrideDto, SeriesSettings, maxPolicyComputers, membershipFingerprint, planAllAtOnce, planRings, revisionDecision, revisionMinutes, revisionReason, seriesStaging, settleMinutes,
   type Candidate, type LeftOut, type RevisionDecision, type SeriesScope,
 } from './assignment';
 
@@ -126,7 +126,10 @@ export class PatchSeriesService implements OnModuleInit {
         resultKey, canaryReady: !this.actions.readiness(ep, key), reliability: reliability.get(e.id) ?? 0,
       });
     }
-    const plan = planRings(cands, { preferredCanary: settings.canaryEndpointId ?? null, previousCanary });
+    // 0.62: all at once has no canary to choose and no result key to need.
+    const plan = seriesStaging(settings) === 'none'
+      ? (() => { const p = planAllAtOnce(cands); return p.ok ? { ...p, canary: null, lastRingOnly: [] as string[] } : p; })()
+      : planRings(cands, { preferredCanary: settings.canaryEndpointId ?? null, previousCanary });
     if (!plan.ok) return { ok: false, code: plan.code, message: plan.message, rings: [], fingerprint: null, canary: null, leftOut: [...leftOut, ...plan.leftOut], lastRingOnly: [], identity };
     const byId = new Map(cands.map((c) => [c.endpointId, c]));
     const fingerprint = membershipFingerprint(plan.rings.map((r) => r.map((id) => { const c = byId.get(id)!; return { endpointId: id, rustdeskId: c.rustdeskId, deviceSecretSha256: c.deviceSecretSha256, resultKey: c.resultKey ?? undefined }; })));
@@ -236,7 +239,7 @@ export class PatchSeriesService implements OnModuleInit {
     const removed = [...before].filter((id) => !after.has(id)).map((id) => (current?.document as unknown as PolicyDoc).rings.flat().find((c) => c.endpointId === id)?.hostname ?? id);
     try {
       const out = await this.policies.admit(actor, {
-        businessId: s.customerId, name: s.name, rings: d.rings, allow: settings.allow, soakHours: settings.soakHours, failureThreshold: settings.failureThreshold,
+        businessId: s.customerId, name: s.name, rings: d.rings, staging: seriesStaging(settings), allow: settings.allow, soakHours: settings.soakHours, failureThreshold: settings.failureThreshold,
         window: settings.window, reboot: settings.reboot, expiresInDays: settings.expiresInDays,
         ...(settings.restart ? { restart: settings.restart } : {}), ...(settings.ignoreRemoteSession ? { ignoreRemoteSession: true as const } : {}),
         reason: revisionReason(s.name, s.scope as SeriesScope, revision, decision.trigger, current ? added : [], removed),
@@ -357,7 +360,7 @@ export class PatchSeriesService implements OnModuleInit {
       try {
         await this.prisma.patchPolicySeries.update({ where: { id: s.id }, data: { lastRevision: 1 } });
         const out = await this.policies.admit(actor, {
-          businessId, name, rings: d.rings, allow: settings.allow, soakHours: settings.soakHours, failureThreshold: settings.failureThreshold,
+          businessId, name, rings: d.rings, staging: seriesStaging(settings), allow: settings.allow, soakHours: settings.soakHours, failureThreshold: settings.failureThreshold,
           window: settings.window, reboot: settings.reboot, expiresInDays: settings.expiresInDays,
         ...(settings.restart ? { restart: settings.restart } : {}), ...(settings.ignoreRemoteSession ? { ignoreRemoteSession: true as const } : {}),
           reason: revisionReason(name, scope, 1, 'initial', [], []),
@@ -377,7 +380,7 @@ export class PatchSeriesService implements OnModuleInit {
     }
     await this.audit.log({
       tenantId: biz.tenantId, customerId: businessId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_POLICY_SERIES_CREATED', resource: 'patch_policy_series', resourceId: s.id,
-      meta: { scope, name, window: settings.window, reboot: settings.reboot, restart: settings.restart ?? null, ...(settings.ignoreRemoteSession ? { ignoreRemoteSession: true } : {}), expiresInDays: settings.expiresInDays, canaryEndpointId: settings.canaryEndpointId ?? null, reason: settings.reason },
+      meta: { scope, name, window: settings.window, reboot: settings.reboot, restart: settings.restart ?? null, ...(settings.ignoreRemoteSession ? { ignoreRemoteSession: true } : {}), expiresInDays: settings.expiresInDays, staging: seriesStaging(settings), canaryEndpointId: settings.canaryEndpointId ?? null, reason: settings.reason },
     });
     return this.one(actor, s.id);
   }
@@ -417,7 +420,7 @@ export class PatchSeriesService implements OnModuleInit {
         // 0.54: the install and restart schedule in plain words, and the next restart window.
         schedule: scheduleOf(s), nextRestartWindow: nextRestartWindowOf(s, revs.find((r) => r.id === s.currentPolicyId) ?? null),
         revisions: revs.map((r) => ({ id: r.id, revision: r.revision, status: r.status, expiresAt: r.expiresAt, createdAt: r.createdAt, supersededAt: r.supersededAt, approvalUrl: r.approvalUrl, running: r.id === s.currentPolicyId, computers: (r.document as unknown as PolicyDoc).rings.flat().length })),
-        bounds: { revisionMinutes: revisionMinutes(), settleMinutes: settleMinutes(), maxComputers: MAX_POLICY_COMPUTERS },
+        bounds: { revisionMinutes: revisionMinutes(), settleMinutes: settleMinutes(), maxComputers: maxPolicyComputers(seriesStaging(s.settings as unknown as SeriesSettings)) },
         mayManage: this.mayManage(actor, s.customerId) || s.createdById === actor.userId,
       });
     }

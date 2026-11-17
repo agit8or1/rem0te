@@ -11,7 +11,7 @@ import { AccessPolicyService } from '../security-controls/access-policy.service'
 import { ActionsService } from '../actions/actions.service';
 import { SignerClient } from '../actions/signer.client';
 import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, UPDATE_ID_RE, UPDATE_INSTALL, UpdateReboot, planDirect, type UpdateRebootRule } from '../actions/catalog';
-import { evaluateRingGate, targetStates, toEvidenceTarget, validTimezone, type Gate, type GateTarget, type RingEvidence } from '../actions/patch-policy';
+import { STAGINGS, evaluateRingGate, targetStates, toEvidenceTarget, validTimezone, type Gate, type GateTarget, type RingEvidence, type Staging } from '../actions/patch-policy';
 import { ContainmentService } from '../containment/containment.service';
 import { MAX_SCHEDULE_DAYS, Schedule, scheduledStart } from '../common/schedule';
 import { REBOOT_SCHEDULE, catalogEntry } from '../actions/catalog';
@@ -21,6 +21,13 @@ import { patchSummaryFor, type PatchSummary } from './summary-db';
 
 /**
  * Staged Windows patching (v0.27).
+ *
+ * 0.62, at the owner's request: a deployment is "all at once" (staging
+ * none) unless "Test on one computer first" is ticked. All at once, every
+ * ring may be requested together, ring 0 may hold up to 25 computers, and no
+ * ring waits for another: rings exist only because one plan names at most
+ * 25 computers. What follows is the canary staging, which is what every
+ * deployment before 0.62 is, and what an API caller gets without `staging`.
  *
  * A deployment is a fixed set of Windows updates and a fixed list of rings.
  * Ring 0 is the canary: one computer. Each ring is requested separately and
@@ -53,6 +60,8 @@ export const CreateDeploymentDto = z.object({
   windowHours: z.number().int().min(1).max(24).default(8),
   /** 0.34: never (the default), or restart if required inside each ring plan's window. */
   reboot: UpdateReboot.default('never'),
+  /** 0.62: 'none' (all at once) or 'canary'. Absent means canary, as before 0.62; the console sends it explicitly. */
+  staging: z.enum(STAGINGS).default('canary'),
 }).strict();
 
 export const RequestRingDto = z.object({
@@ -93,6 +102,9 @@ export type { Gate };
 export interface PolicyOrigin { policyId: string; windowKey: string; createdById: string }
 /** What a ring request under a policy adds: the policy, the exact window, and the filter the agent applies. */
 export interface UnderPolicy { policyId: string; name: string; digest: string; allow: Record<string, string[]>; window: { notBefore: Date; notAfter: Date }; /** 0.54: the policy's RustDesk-session exception, carried into its in-window restart. */ ignoreRemoteSession?: true }
+
+/** 0.62: a deployment's staging. Anything the column should never hold (it has a CHECK) reads as canary, the gated one. */
+export const stagingOfDeployment = (d: Pick<PatchDeployment, 'staging'>): Staging => (d.staging === 'none' ? 'none' : 'canary');
 
 /** A deployment's restart rule. Anything the column should never hold (it has a CHECK) reads as never. */
 export const rebootOf = (d: Pick<PatchDeployment, 'reboot'>): UpdateRebootRule => (UpdateReboot.safeParse(d.reboot).success ? d.reboot as UpdateRebootRule : 'never');
@@ -306,7 +318,7 @@ export class PatchingService {
   async build(actor: ActorContext, dto: z.infer<typeof CreateDeploymentDto>, origin: 'DEPLOYMENT' | 'MANUAL' | 'POLICY', policy: PolicyOrigin | null): Promise<PatchDeployment> {
     const all = dto.rings.flat();
     if (new Set(all).size !== all.length) this.bad('BAD_RINGS', 'A computer can be in one ring only.');
-    if (dto.rings[0].length !== 1) this.bad('BAD_RINGS', 'Ring 0 is the canary: exactly one computer.');
+    if (dto.staging === 'canary' && dto.rings[0].length !== 1) this.bad('BAD_RINGS', 'Ring 0 is the canary: exactly one computer.');
     if (new Set(dto.updates.map(idKey)).size !== dto.updates.length) this.bad('INVALID_REQUEST', 'An update is listed twice.');
 
     // A policy's deployment holds every computer the policy names, so ring
@@ -314,7 +326,11 @@ export class PatchingService {
     // ring's computers are checked when that ring is requested, and any not
     // ready then are left out of its plan with the reason (requestRing's
     // exclude). Scope and business are checked for all of them, always.
-    const checkNow = (id: string) => origin !== 'POLICY' || id === dto.rings[0][0];
+    // 0.62: a policy deployment that installs all at once has no canary; each
+    // computer is checked when its ring is requested, and its updates may be
+    // offered on any of them.
+    const checkNow = (id: string) => origin !== 'POLICY' || (dto.staging === 'canary' && id === dto.rings[0][0]);
+    const offeredOn = (id: string) => checkNow(id) || (origin === 'POLICY' && dto.staging === 'none');
     for (const id of all) {
       await this.acl.assertEndpointInScope(actor, id);
       const ep = await this.actions.endpointFor(id);
@@ -339,7 +355,7 @@ export class PatchingService {
     for (const want of dto.updates) {
       let found: DeploymentUpdate | null = null;
       for (const [eid, p] of postures) {
-        if (!checkNow(eid)) continue;
+        if (!offeredOn(eid)) continue;
         const u = p.updates.find((x) => idKey(x) === idKey(want));
         if (!u) continue;
         const e = eligibility(u);
@@ -357,11 +373,11 @@ export class PatchingService {
       data: {
         tenantId: first.tenantId, customerId: dto.businessId, name: dto.name, updates: updates as unknown as Prisma.InputJsonValue,
         rings: dto.rings.map((r) => ({ endpointIds: r })) as unknown as Prisma.InputJsonValue,
-        soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, windowHours: dto.windowHours, reboot: dto.reboot, createdById: actor.userId,
+        soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, windowHours: dto.windowHours, reboot: dto.reboot, staging: dto.staging, createdById: actor.userId,
         origin, policyId: policy?.policyId ?? null, windowKey: policy?.windowKey ?? null,
       },
     });
-    await this.audit.log({ tenantId: first.tenantId ?? undefined, customerId: dto.businessId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_DEPLOYMENT_CREATED', resource: 'patch_deployment', resourceId: d.id, meta: { name: dto.name, origin, policyId: policy?.policyId ?? null, windowKey: policy?.windowKey ?? null, updates: updates.map((u) => u.kb ?? u.updateId), rings: dto.rings.map((r) => r.length), soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, reboot: dto.reboot } });
+    await this.audit.log({ tenantId: first.tenantId ?? undefined, customerId: dto.businessId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_DEPLOYMENT_CREATED', resource: 'patch_deployment', resourceId: d.id, meta: { name: dto.name, origin, policyId: policy?.policyId ?? null, windowKey: policy?.windowKey ?? null, updates: updates.map((u) => u.kb ?? u.updateId), rings: dto.rings.map((r) => r.length), staging: dto.staging, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, reboot: dto.reboot } });
     return d;
   }
 
@@ -435,7 +451,8 @@ export class PatchingService {
     const host = (ep.hostname ?? ep.name).slice(0, 64);
     const d = await this.build(actor, {
       businessId: ep.customerId!, name: `Install on ${host}`.slice(0, 120), updates: dto.updates, rings: [[endpointId]],
-      soakHours: 0, failureThreshold: 0, windowHours: dto.windowHours, reboot: dto.reboot,
+      // One computer, one ring: it completes only once the updates are confirmed effective, as before 0.62.
+      soakHours: 0, failureThreshold: 0, windowHours: dto.windowHours, reboot: dto.reboot, staging: 'canary',
     }, 'MANUAL', null);
     const out = await this.requestRing(actor, d.id, 0, { reason: dto.reason, startsInMinutes: dto.startsInMinutes, ...(dto.schedule ? { schedule: dto.schedule } : {}) }, undefined, freshMethod);
     await this.audit.log({ tenantId: d.tenantId ?? undefined, customerId: d.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_INSTALL_REQUESTED', resource: 'endpoint', resourceId: endpointId, meta: { deploymentId: d.id, jobId: out.job.id, updates: dto.updates.length, reboot: dto.reboot, scheduledFor: dto.schedule ? out.job.window.notBefore : null } });
@@ -461,7 +478,7 @@ export class PatchingService {
       try { await this.scoped(actor, d.id); } catch { continue; }
       const rings = d.rings as unknown as Ring[];
       const jobs = await this.prisma.actionJob.findMany({ where: { deploymentId: d.id }, select: { ring: true, status: true }, orderBy: { createdAt: 'desc' } });
-      out.push({ id: d.id, name: d.name, origin: d.origin, policyId: d.policyId, status: d.status, pausedReason: d.pausedReason, rings: rings.map((r) => r.endpointIds.length), updates: (d.updates as unknown as DeploymentUpdate[]).length, lastRing: jobs[0]?.ring ?? null, lastRingStatus: jobs[0]?.status ?? null, createdAt: d.createdAt });
+      out.push({ id: d.id, name: d.name, origin: d.origin, policyId: d.policyId, status: d.status, staging: stagingOfDeployment(d), pausedReason: d.pausedReason, rings: rings.map((r) => r.endpointIds.length), updates: (d.updates as unknown as DeploymentUpdate[]).length, lastRing: jobs[0]?.ring ?? null, lastRingStatus: jobs[0]?.status ?? null, createdAt: d.createdAt });
     }
     return out;
   }
@@ -495,7 +512,7 @@ export class PatchingService {
    */
   gate(d: PatchDeployment, ring: number, j: Job | undefined, postures: Map<string, Posture>, now = new Date()): Gate {
     return evaluateRingGate({
-      ring, jobStatus: j?.status ?? null, targets: (j?.targets ?? []).map((t) => this.gateTarget(t, postures.get(t.endpointId) ?? null)),
+      ring, canary: stagingOfDeployment(d) === 'canary', jobStatus: j?.status ?? null, targets: (j?.targets ?? []).map((t) => this.gateTarget(t, postures.get(t.endpointId) ?? null)),
       updates: d.updates as unknown as DeploymentUpdate[], failureThreshold: d.failureThreshold, soakHours: d.soakHours,
     }, now);
   }
@@ -524,7 +541,8 @@ export class PatchingService {
       if (tripped >= 0) {
         d = await this.prisma.patchDeployment.update({ where: { id }, data: { status: 'PAUSED', pausedReason: gates[tripped].detail } });
         await this.audit.log({ tenantId: d.tenantId ?? undefined, customerId: d.customerId, action: 'PATCH_DEPLOYMENT_UPDATED', resource: 'patch_deployment', resourceId: id, meta: { status: 'PAUSED', reason: gates[tripped].detail } });
-      } else if (gates[rings.length - 1].ok || gates[rings.length - 1].reason === 'soaking') {
+      } else if (stagingOfDeployment(d) === 'none' ? gates.every((g) => g.ok || g.reason === 'soaking') : (gates[rings.length - 1].ok || gates[rings.length - 1].reason === 'soaking')) {
+        // 0.62: all at once, every ring has to have run; nothing waits on another.
         // Soak time only holds back the next ring; after the last, nothing waits on it.
         d = await this.prisma.patchDeployment.update({ where: { id }, data: { status: 'COMPLETED' } });
         await this.audit.log({ tenantId: d.tenantId ?? undefined, customerId: d.customerId, action: 'PATCH_DEPLOYMENT_UPDATED', resource: 'patch_deployment', resourceId: id, meta: { status: 'COMPLETED' } });
@@ -532,7 +550,7 @@ export class PatchingService {
     }
     const next = this.nextRing(d, jobs, gates);
     return {
-      id: d.id, name: d.name, businessId: d.customerId, origin: d.origin, policyId: d.policyId, windowKey: d.windowKey, status: d.status, pausedReason: d.pausedReason,
+      id: d.id, name: d.name, businessId: d.customerId, origin: d.origin, policyId: d.policyId, windowKey: d.windowKey, status: d.status, pausedReason: d.pausedReason, staging: stagingOfDeployment(d),
       soakHours: d.soakHours, failureThreshold: d.failureThreshold, windowHours: d.windowHours, reboot: rebootOf(d), createdById: d.createdById, createdAt: d.createdAt,
       updates: d.updates,
       // 0.52: a ring can be scheduled in the viewer's own zone (profile), or the browser's.
@@ -542,7 +560,7 @@ export class PatchingService {
       rings: rings.map((r, i) => {
         const j = jobs.get(i);
         return {
-          ring: i, canary: i === 0, gate: gates[i],
+          ring: i, canary: i === 0 && stagingOfDeployment(d) === 'canary', gate: gates[i],
           job: j ? { id: j.id, status: j.status, statusReason: j.statusReason, approvalUrl: j.approvalUrl, outcome: j.outcome, window: { notBefore: j.notBefore, notAfter: j.notAfter }, digest: j.digest, direct: planDirect(j.plan), createdAt: j.createdAt } : null,
           computers: r.endpointIds.map((e) => {
             const t = j?.targets.find((x) => x.endpointId === e);
@@ -561,9 +579,26 @@ export class PatchingService {
     };
   }
 
-  private nextRing(d: PatchDeployment, jobs: Map<number, Job>, gates: Gate[]): { ring: number | null; canRequest: boolean; why: string } {
+  private nextRing(d: PatchDeployment, jobs: Map<number, Job>, gates: Gate[]): { ring: number | null; canRequest: boolean; why: string; requestable: number[] } {
     const n = (d.rings as unknown as Ring[]).length;
-    if (d.status !== 'ACTIVE') return { ring: null, canRequest: false, why: `The deployment is ${d.status.toLowerCase()}${d.pausedReason ? `: ${d.pausedReason}` : ''}.` };
+    if (d.status !== 'ACTIVE') return { ring: null, canRequest: false, why: `The deployment is ${d.status.toLowerCase()}${d.pausedReason ? `: ${d.pausedReason}` : ''}.`, requestable: [] };
+    if (stagingOfDeployment(d) === 'none') {
+      // 0.62, all at once: every ring not yet running may be requested now,
+      // together. A ring over its failure threshold is retried as a new plan.
+      const requestable: number[] = [];
+      for (let i = 0; i < n; i++) {
+        const j = jobs.get(i);
+        if (!j || ['REJECTED', 'CANCELED', 'EXPIRED'].includes(j.status) || gates[i].reason === 'too_many_failures') requestable.push(i);
+      }
+      if (!requestable.length) return { ring: null, canRequest: false, why: gates.every((g) => g.ok || g.reason === 'soaking') ? 'Every ring has run.' : 'Every ring is requested; waiting for the computers.', requestable };
+      const started = requestable.length < n;
+      return { ring: requestable[0], canRequest: true, why: started ? `Install on the rest (ring${requestable.length === 1 ? '' : 's'} ${requestable.join(', ')}).` : 'Install on every computer at once.', requestable };
+    }
+    const one = (x: { ring: number | null; canRequest: boolean; why: string }) => ({ ...x, requestable: x.canRequest && x.ring !== null ? [x.ring] : [] });
+    return one(this.canaryNextRing(d, jobs, gates, n));
+  }
+
+  private canaryNextRing(d: PatchDeployment, jobs: Map<number, Job>, gates: Gate[], n: number): { ring: number | null; canRequest: boolean; why: string } {
     for (let i = 0; i < n; i++) {
       const j = jobs.get(i);
       if (!j || ['REJECTED', 'CANCELED', 'EXPIRED'].includes(j.status)) {
@@ -601,20 +636,21 @@ export class PatchingService {
     // or not at all. A person cannot request one beside it.
     if (!under && d.origin === 'POLICY') throw new ConflictException({ code: 'POLICY_DEPLOYMENT', message: 'This deployment belongs to a patch policy; its rings are requested by the policy. Pause or cancel it here, or revoke the policy.' });
     const detail = await this.detail(actor, id);
-    if (detail.next.ring !== ring || !detail.next.canRequest) {
+    if (!detail.next.requestable.includes(ring)) {
       throw new ConflictException({ code: 'RING_GATE', message: detail.next.ring === ring ? detail.next.why : `Ring ${ring} cannot be requested now. ${detail.next.why}` });
     }
     const members = (d.rings as unknown as Ring[])[ring].endpointIds;
     const excluded = new Map(dto.exclude.map((x) => [x.endpointId, x.why]));
     for (const e of excluded.keys()) if (!members.includes(e)) this.bad('INVALID_REQUEST', 'Only computers of this ring can be left out.');
-    if (ring === 0 && excluded.size) this.bad('INVALID_REQUEST', 'The canary cannot be left out; create a new deployment with another canary.');
+    const canary = stagingOfDeployment(d) === 'canary';
+    if (canary && ring === 0 && excluded.size) this.bad('INVALID_REQUEST', 'The canary cannot be left out; create a new deployment with another canary.');
     const endpointIds = members.filter((e) => !excluded.has(e));
     if (!endpointIds.length) this.bad('INVALID_REQUEST', 'Every computer of this ring is left out.');
     const updates = d.updates as unknown as DeploymentUpdate[];
     const job = await this.actions.createPlan(actor, {
       action: UPDATE_INSTALL, endpointIds,
       params: { updates: updates.map((u) => ({ updateId: u.updateId, revision: u.revision })), reboot: rebootOf(d), ...(under ? { allow: under.allow } : {}), ...(under?.ignoreRemoteSession && rebootOf(d) === 'if_required_in_window' ? { ignoreRemoteSession: true as const } : {}) },
-      reason: `${d.name} — ${ring === 0 ? 'canary' : `ring ${ring}`}: ${dto.reason}`.slice(0, 500),
+      reason: `${d.name} — ${canary && ring === 0 ? 'canary' : `ring ${ring}`}: ${dto.reason}`.slice(0, 500),
       startsInMinutes: dto.startsInMinutes, windowHours: d.windowHours,
       display: {
         updates, deployment: { id: d.id, name: d.name.slice(0, 120), ring, rings: (d.rings as unknown as Ring[]).length },
@@ -623,7 +659,7 @@ export class PatchingService {
       deployment: { id: d.id, ring },
       // 0.52: a scheduled ring. The plan's signed window opens at the scheduled time.
       ...(!under && dto.schedule ? { window: scheduledWindow(dto.schedule, d.windowHours) } : {}),
-      ...(under ? { window: under.window, underPolicy: { policyId: under.policyId, digest: under.digest, evidence: ring === 0 ? null : await this.ringEvidence(d, ring - 1) } } : {}),
+      ...(under ? { window: under.window, underPolicy: { policyId: under.policyId, digest: under.digest, evidence: ring === 0 || !canary ? null : await this.ringEvidence(d, ring - 1) } } : {}),
       freshMethod,
     });
     await this.audit.log({ tenantId: d.tenantId ?? undefined, customerId: d.customerId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_RING_REQUESTED', resource: 'patch_deployment', resourceId: d.id, meta: { ring, jobId: job.id, computers: endpointIds.length, excluded: Object.fromEntries(excluded), underPolicy: under?.policyId ?? null, scheduledFor: dto.schedule ? job.notBefore.toISOString() : null } });

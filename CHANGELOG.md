@@ -5,6 +5,162 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.62.0] — 2026-11-17 · *Together*
+
+**Patching installs on every computer you tick, together. Testing on one computer first is an option, off by
+default. In direct mode the forms stop talking about approval.**
+
+Two requests from the owner, in one release:
+
+- *"remove the goofy canary thing in update policy. way too difficult to setup update policies"*. Asked how, the
+  owner chose **all at once, optional**: by default you tick computers and they all install together in the
+  window, and *Test on one computer first* (off by default) gives the 0.27 canary-then-gated-rings behaviour.
+  The change covers patch policies, company-wide policies and one-off deployments.
+- *"remove propose for approval. Just submit and its done"*. Production's approval signer is in direct mode (its
+  `default` policy is `{"approval":"direct"}`), but every patching form still said *Propose for approval*, asked for a
+  *Reason (shown to the approvers)*, and warned about approvers who do not exist.
+
+Until now every rollout needed a canary computer in ring 0. It had to be effective (installed, restarted, and
+rescanned) before ring 1 could be requested, and every gating computer needed an agent result key (§38). Building a
+policy meant placing computers in ring dropdowns. A policy for three workstations still waited a whole window on one
+of them before the other two installed.
+
+### All at once (staging `none`)
+
+- **The forms.** New deployment, New policy and Company-wide policy share one *Test on one computer first* checkbox
+  (`components/patching/staging-choice.tsx`), unticked by default. Unticked, you tick computers (or **Select all**)
+  and the soak and failures-per-ring fields disappear. The console sends `soakHours: 0` and
+  `failureThreshold: 25`, so one failed computer does not pause the rest. Ticked, the form is 0.61's: ring 0 the
+  canary, later rings of up to 25, soak and threshold.
+- **More than 25 computers.** A signed plan still names at most 25 computers (`MAX_RING_TARGETS`, the agent's and the
+  signer's bound, unchanged). All at once splits the ticked computers evenly into plans of at most 25, at most five
+  plans (`MAX_POLICY_RINGS`), so **at most 125 computers** (`MAX_ALL_AT_ONCE_COMPUTERS`). These "rings" wait for
+  nothing: a deployment's **Install on every computer** requests every one in one press, and a policy's sweep
+  proposes every one in the same window. A plan that was rejected, cancelled or expired, or had too many failures,
+  can be requested again on its own (`next.requestable`).
+- **Company-wide policies** made from the console are all at once (`planAllAtOnce` in `patching/assignment.ts`):
+  every *Inherit* computer, in a stable order, with no canary. Keyless computers (no result key) may go in any plan,
+  because no result opens anything. A series stored before 0.62 has no `staging` in its settings and keeps its canary
+  (`seriesStaging`).
+- **One-off installs from a computer's Patches tab** stay canary, so they still complete only once the update is
+  effective.
+
+### The signed document
+
+The policy document gains one field, `staging`, with values `"none"` or `"canary"`. One closed list (`STAGINGS`) is
+read only through `stagingOf`. A missing field means canary. Any other value is `null` and refused.
+
+- **The portal writes it only for `"none"`.** A canary document is byte-for-byte 0.61's, so every policy approved
+  before 0.62 keeps its digest, its signature and its gate.
+- **The signer checks it twice.** `validatePolicyDoc` refuses an unknown value first (`staging_unknown`), and so does
+  `evaluatePolicyPlan`.
+- **What all at once skips.** Ring order, the canary, the gate and the result keys. Nothing else moves. The plan
+  still passes the policy's standing (revoked, expired), the filter, the display, the requester, the window, the
+  restart rule, the computers bound by identity, the signed pause and the ledger. Evidence offered for a `"none"`
+  plan is refused (`bad_evidence`). One open plan per ring (`ring_already_signed`) and the retry limit
+  (`ring_retry_limit`) still hold.
+- **A forged field is caught.** The field is inside the policy digest and the approvers' signature. A portal, or
+  anyone with write access to the signer's store, that flips a canary document to `"none"` gets
+  `policy_digest_mismatch` or `policy_signature_invalid`.
+- **An older signer refuses a `"none"` document outright**, because its schema is strict. The portal therefore asks
+  the signer's capabilities for `patchStaging: 1` before it proposes one, and says `SIGNER_TOO_OLD` otherwise.
+- **The approval page** shows *All at once* with a warning in place of *Between rings*, and drops the canary label
+  and the result-key bullet for such a policy. An unknown value shows a "reject it" warning.
+- **The agent is unchanged.** An all-at-once plan is an ordinary `windows.updates.install` plan.
+
+Every API create (`CreatePolicyDto`, `CreateDeploymentDto`, `CreateSeriesDto`) defaults `staging` to `canary`, so an
+API caller or an older script that does not say keeps the gate. The console always sends it.
+
+### Deployments: migration 0083
+
+`PatchDeployment.staging` is `TEXT NOT NULL DEFAULT 'canary'`, CHECKed to `none` or `canary`. Every existing
+deployment is canary. `evaluateRingGate` skips its canary checks (`canary_not_effective`, `canary_proved_nothing`)
+only when it is told `canary: false`. `PatchingService.gate` says so only for a `none` row
+(`stagingOfDeployment`). A `none` deployment completes when every plan has passed or is soaking.
+
+### Direct mode: Create, Install, Save
+
+When the business is in direct mode (the console mirrors the signer's answer from `GET /actions/catalog`; it decides
+nothing):
+
+- **Patch policy** and **company-wide policy**: the button says **Create policy**. The *Reason (shown to the
+  approvers)* field is hidden, and a note says the policy is active as soon as it is created. The toast says
+  *Policy active*, and the form does not open an approval page.
+- **One-off deployment**: requesting rings is one **Install on every computer** (or *Install on the rest*, or *Install
+  canary* when testing first), with no reason asked for. The toast says *Installing*.
+- **Automation schedule** (`schedule-create`) and **restart window**: *Create policy* and *Save*, with no approvers'
+  reason. The toast says *Saved — active*.
+- Where a reason is required, the form sends `DIRECT_DEFAULT_REASON`, *Created in Rem0te (direct mode)*. The API's
+  and the signer's validation of a reason are unchanged.
+
+**Signed mode is unchanged:** *Propose for approval*, the approvers' reason, and the approval page all work as in
+0.61. The signer is not touched by this half of the release.
+
+### Invariants
+
+**§15 and §38 reverse "a canary first, then gated rings" at the owner's request**, as §41, §62 and §67 were reversed.
+Their checks now hold for every canary rollout, which covers everything made before 0.62. §38's result-key check
+accepts the staging-conditional line, and additionally asserts that an unknown staging is refused first. §63 records
+that a console series is all at once.
+
+**New §75** checks:
+
+- the closed `STAGINGS` and the fail-closed `stagingOf`;
+- the optional enum in the strict `PolicyDoc`;
+- admission refusing an unknown staging before anything else;
+- the evaluator reaching the staging branch only after the filter, display, requester, window and computer checks,
+  refusing evidence there, and keeping both per-ring limits;
+- the gate's `canary: false` coming only from a `none` row, and 0083's CHECK;
+- the portal writing the field only for `none`, after `patchStaging`;
+- every create defaulting to canary;
+- the unit tests that prove it.
+
+### Tests
+
+- `unit-patch-policy.mjs` (233 checks, up from 0.61) proves:
+  - all-at-once rings signed in any order with no evidence;
+  - evidence refused;
+  - `ring_already_signed` and `ring_retry_limit`;
+  - the window, classes, restart rule and computers still enforced;
+  - **an old document with no staging still gates** (`ring_out_of_order`, a canary of one, result keys);
+  - **unknown values refused** at admission and at signing;
+  - **a forged field caught** (`policy_digest_mismatch`, `policy_signature_invalid`, and a signer record edited
+    after approval).
+- `unit-patch-assignment.mjs` covers `planAllAtOnce` (evenness, stable order, keyless computers, the 125 cap),
+  `seriesStaging` and an old series' settings.
+- `e2e-patch-policies.mjs` (141 checks, two new sections) runs the real signer and sweep:
+  - **an all-at-once policy**: two computers in ring 0, a keyless computer admitted, the approval page saying *All
+    at once*;
+  - after two approvals, the sweep has **both rings signed before any computer installs anything**. Evidence for
+    such a plan is `bad_evidence`, a second plan for an open ring is `ring_already_signed`, and an unnamed computer
+    is still refused;
+  - all three computers install, and the deployment completes;
+  - **a one-off deployment all at once**: ring 1 requested before ring 0, a running ring not requestable twice,
+    and completion with no canary confirmed effective;
+  - **an API caller that omits `staging`** still gets a canary (`BAD_RINGS` for two in ring 0), and an unknown
+    value is refused by the portal and by the signer (`invalid_policy`);
+  - **a canary policy's document still has no `staging` key.**
+  `e2e-staged-patching.mjs` (100) and `e2e-patch-assignment.mjs` (72) pass unchanged.
+- The browser suite (`e2e-ui.mjs`, `patchingApprovalModes`) answers the approval mode once *signed* and once *direct*
+  and checks:
+  - the policy, company-wide and deployment forms all start with *Test on one computer first* unticked;
+  - signed mode keeps *Propose for approval* and the approvers' reason;
+  - direct mode says *Create policy*, with no reason and the active note.
+
+### Deploying 0.62
+
+1. **Reinstall the approval signer from 0.62 first** (`apps/api/scripts/build-approval-signer.mjs`, then the usual
+   install). Until then, creating an all-at-once policy or company-wide policy is refused with `SIGNER_TOO_OLD`.
+   Existing canary policies keep working on either signer. One-off deployments need no signer change.
+2. **Apply migration 0083** and regenerate the Prisma client at the target (`prisma migrate deploy`, rsync
+   `prisma/`, `prisma generate`, as in CLAUDE.md). Without it, the API throws `Unknown field staging` on every
+   deployment read.
+3. Build and rsync the API and web as usual. No production dependency changed.
+
+**None of it has run on real Windows**, and no plan shape changed for the agent.
+
+---
+
 ## [0.61.0] — 2026-11-16 · *Guarantee*
 
 **HP and Apple warranty lookups, and every empty warranty now says why.**

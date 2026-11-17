@@ -567,7 +567,7 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
         const people = new Set(store.roster().members.filter((x) => !x.disabled && x.approve.length).map((x) => x.userId));
         const pol = store.policy();
         const directBusinesses = Object.keys(pol.businesses).filter((b) => policyFor(pol, b).approval === 'direct').length;
-        return send(res, 200, { patchPolicies: 1, scripts: 1, revocations: 1, direct: 1, automations: 1, restartWindows: 1, kid: k.kid, roster: { approvers: people.size }, approval: { default: policyFor({ default: pol.default, businesses: {} }, '-').approval, directBusinesses } });
+        return send(res, 200, { patchPolicies: 1, patchStaging: 1, scripts: 1, revocations: 1, direct: 1, automations: 1, restartWindows: 1, kid: k.kid, roster: { approvers: people.size }, approval: { default: policyFor({ default: pol.default, businesses: {} }, '-').approval, directBusinesses } });
       }
       const pol = policyRoute(url.pathname);
       if (pol) return await internalPolicy(req, res, pol);

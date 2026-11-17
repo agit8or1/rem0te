@@ -495,6 +495,13 @@ check(
 //     Update identities, installs only what Windows Update itself offers as
 //     eligible, never restarts or accepts a licence, and can never be
 //     approved or promoted past its canary by the portal alone.
+//
+//     0.62 reverses "every rollout has a canary" at the owner's request
+//     ("remove the goofy canary thing in update policy"), as §41, §62 and
+//     §67 were reversed: a deployment or policy may install all at once
+//     (staging none, §75), with no canary and no gate. The canary rule below
+//     holds for every canary rollout — which is every document and deployment
+//     made before 0.62, and any API caller that does not say otherwise.
 {
   const upd = read('tools/windows-installer/internal/action/updates.go');
   // 0.32 adds an optional "allow" filter (a patch policy's classes, severities
@@ -1940,10 +1947,12 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /if \(canary\) return \{ ok: false, code: 'result_signature_missing'/.test(vg) && /if \(t\.status === 'SUCCEEDED'\) return \{ ok: false, code: 'result_signature_missing'/.test(vg)
       && /status: RESULT_STATUS\[st\.outcome\]/.test(vg) && /resultAt: new Date\(at\)/.test(vg),
     'verifiedGateTargets must open each signature under c.resultKey, bind job, plan, identity and time, and refuse an unsigned canary or "succeeded"');
+  // 0.62 (§75): only a canary document's results open a ring; an all-at-once document opens none, so needs no key.
   check('a policy whose results would open a ring must name a result key for each such computer (fail closed)',
-    /const unsigned = doc\.rings\.slice\(0, -1\)\.flat\(\)\.filter\(\(c\) => !c\.resultKey\);/.test(pp) && /reason: 'result_key_missing'/.test(pp)
-      && /code: 'RESULT_KEY_MISSING'/.test(read('apps/api/src/patching/policies.service.ts')),
-    'validatePolicyDoc (signer and portal) and PatchPolicyService.create must refuse it');
+    /const unsigned = staging === 'none' \? \[\] : doc\.rings\.slice\(0, -1\)\.flat\(\)\.filter\(\(c\) => !c\.resultKey\);/.test(pp) && /reason: 'result_key_missing'/.test(pp)
+      && /const staging = stagingOf\(doc\);\s*if \(!staging\) return \{ ok: false, reason: 'staging_unknown'/.test(pp)
+      && /if \(canary && !resultKey && dto\.rings\.length > 1 && i < dto\.rings\.length - 1\) \{\s*throw new ConflictException\(\{ code: 'RESULT_KEY_MISSING'/.test(read('apps/api/src/patching/policies.service.ts')),
+    'validatePolicyDoc (signer and portal) and PatchPolicyService.admit must refuse it under canary staging (and an unknown staging before anything)');
   const toEv = pp.slice(pp.indexOf('export function toEvidenceTarget('), pp.indexOf('export function fromEvidenceTarget('));
   check('the portal relays device signatures as received',
     /const signedResult = \(t\.result as \{ signed\?: unknown \} \| null\)\?\.signed \?\? null;/.test(toEv) && /const signedScan = \(s as \{ signed\?: unknown \} \| null\)\?\.signed \?\? null;/.test(toEv) && /signedResult, signedScan,/.test(toEv),
@@ -4601,6 +4610,11 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //     setting is written by one service method, needs computers:edit and a
 //     fresh sign-in, and is audited before and after. Re-proposal is bounded:
 //     never mid-ring, settled first, one claim per business per N minutes.
+//
+//     0.62 (§75), at the owner's request: a series made from the console
+//     installs all at once (no canary, every computer in at most five rings of
+//     25 that wait for nothing; planAllAtOnce). A series stored before 0.62
+//     has no staging and keeps its canary (seriesStaging).
 {
   const pp = read('apps/api/src/actions/patch-policy.ts');
   const pol = read('apps/api/src/patching/policies.service.ts');
@@ -5795,6 +5809,93 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('warranty vendors: the suites run',
     /unit-warranty-vendors\.mjs/.test(read('.github/workflows/ci.yml')) && / warranty-vendors[ ;]/.test(read('scripts/run-e2e.sh')),
     'unit-warranty-vendors.mjs in CI; e2e-warranty-vendors.mjs in run-e2e.sh');
+}
+
+// ── §75 (0.62): the staging field — all at once, or one computer first ─────
+//     0.62 reverses §15's and §38's "a canary first, then gated rings" at the
+//     owner's request ("remove the goofy canary thing in update policy. way
+//     too difficult to setup update policies"), as §41, §62 and §67 were. The
+//     reversal is narrow and signed:
+//       - one closed list, STAGINGS = ['none', 'canary'], read only through
+//         stagingOf: absent is canary (every document before 0.62 keeps its
+//         bytes, digest and gate), anything else is null and refused;
+//       - PolicyDoc carries it as an optional enum; the portal writes it only
+//         for all at once, so a canary document is byte-for-byte 0.61's, and
+//         it asks for the signer's patchStaging capability first;
+//       - validatePolicyDoc refuses an unknown staging before anything else,
+//         and keeps the one-computer canary and the result keys for canary;
+//       - evaluatePolicyPlan refuses an unknown staging (staging_unknown)
+//         after the standing, filter, window, requester and computer checks;
+//         all at once skips only ring order, evidence and the gate (evidence
+//         is refused), and keeps ring_already_signed and ring_retry_limit;
+//       - the gate's canary checks apply unless the caller says canary: false,
+//         which the portal says only for a deployment whose CHECKed column is
+//         'none' (0083);
+//       - every API create (policy, deployment, series) defaults to canary,
+//         so a caller that leaves it out keeps the gate; a stored series
+//         without it is canary.
+{
+  console.log('\n§75 patch staging');
+  const pp = read('apps/api/src/actions/patch-policy.ts');
+  const pol = read('apps/api/src/patching/policies.service.ts');
+  const psvc = read('apps/api/src/patching/patching.service.ts');
+  const asg = read('apps/api/src/patching/assignment.ts');
+  const srv = read('apps/api/src/approval-signer/server.ts');
+  const mig = read('apps/api/prisma/migrations/0083_patch_staging/migration.sql');
+  check('staging: one closed list, read through stagingOf; absent is canary, anything else is null',
+    /export const STAGINGS = \['none', 'canary'\] as const;/.test(pp)
+      && /export function stagingOf\(doc: \{ staging\?: unknown \}\): Staging \| null \{\s*if \(!\('staging' in doc\) \|\| doc\.staging === undefined\) return 'canary';\s*return \(STAGINGS as readonly unknown\[\]\)\.includes\(doc\.staging\) \? doc\.staging as Staging : null;\s*\}/.test(pp),
+    'actions/patch-policy.ts STAGINGS / stagingOf');
+  const docBlock = (pp.match(/export const PolicyDoc = z\.object\(\{([\s\S]*?)\}\)\.strict\(\);/) ?? [])[1] ?? '';
+  check('staging: the signed document carries it as an optional closed enum (strict schema: an older signer refuses it)',
+    /\n  staging: z\.enum\(STAGINGS\)\.optional\(\),/.test(docBlock),
+    'PolicyDoc.staging');
+  const vd = pp.slice(pp.indexOf('export function validatePolicyDoc('), pp.indexOf('export function allowParams('));
+  check('staging: admission refuses an unknown staging first, and keeps the one-computer canary for canary',
+    vd.indexOf("reason: 'staging_unknown'") > 0 && vd.indexOf("reason: 'staging_unknown'") < vd.indexOf("reason: 'bad_rings'")
+      && /if \(staging === 'canary' && doc\.rings\[0\]\.length !== 1\) return \{ ok: false, reason: 'bad_rings'/.test(vd),
+    'validatePolicyDoc');
+  const ev = pp.slice(pp.indexOf('function evaluateInstallPlan('), pp.indexOf('export function evaluatePolicyRestartPlan('));
+  const at = (x) => ev.indexOf(x);
+  const noneAt = at("if (staging === 'none') {");
+  check('staging: the signer refuses an unknown staging, and all at once comes only after every other check on the plan',
+    at("if (!staging) return no('staging_unknown'") > 0
+      && [at("no('filter_mismatch'"), at("no('bad_display', 'The plan must name this policy.')"), at("no('requester_mismatch'"), at("no('outside_window'"), at("no('computer_not_in_policy'")].every((i) => i > 0 && i < noneAt)
+      && at("if (!staging) return no('staging_unknown'") < noneAt,
+    'evaluateInstallPlan: filter, display, requester, window and computers before the staging branch');
+  const none = ev.slice(noneAt, ev.indexOf('return { ok: true };', noneAt) + 20);
+  check('staging: all at once refuses evidence and keeps the per-ring limits; canary keeps ring order and the gate',
+    /if \(r\.evidence\) return no\('bad_evidence'/.test(none) && /no\('ring_already_signed'/.test(none) && /no\('ring_retry_limit'/.test(none)
+      && !/verifiedGateTargets|evaluateRingGate/.test(none)
+      && /if \(staging === 'canary' && ring === 0 && p\.targets\.length !== 1\) return no\('computer_not_in_policy'/.test(ev)
+      && /if \(!prev\) return no\('ring_out_of_order'/.test(ev) && /const verified = verifiedGateTargets\(/.test(ev),
+    'evaluateInstallPlan');
+  check('staging: the gate\'s canary checks apply unless the caller says canary: false, which the portal says only for a "none" deployment',
+    /if \(ring === 0 && g\.canary !== false\) \{/.test(pp)
+      && /ring, canary: stagingOfDeployment\(d\) === 'canary', jobStatus:/.test(psvc)
+      && /export const stagingOfDeployment = \(d: Pick<PatchDeployment, 'staging'>\): Staging => \(d\.staging === 'none' \? 'none' : 'canary'\);/.test(psvc)
+      && /ADD COLUMN "staging" TEXT NOT NULL DEFAULT 'canary';/.test(mig) && /CHECK \("staging" IN \('none', 'canary'\)\)/.test(mig),
+    'evaluateRingGate; PatchingService.gate; migration 0083');
+  check('staging: the portal writes the field only for all at once, after the signer says it knows it',
+    /\.\.\.\(canary \? \{\} : \{ staging: 'none' as const \}\),/.test(pol)
+      && /if \(!canary && caps\.body\.patchStaging !== 1\) throw new ConflictException\(\{ code: 'SIGNER_TOO_OLD'/.test(pol)
+      && /send\(res, 200, \{ patchPolicies: 1, patchStaging: 1,/.test(srv),
+    'PatchPolicyService.admit; approval-signer capabilities');
+  check('staging: every API create defaults to canary; a stored series without it is canary',
+    /staging: z\.enum\(STAGINGS\)\.default\('canary'\),/.test(pol) && /staging: z\.enum\(STAGINGS\)\.default\('canary'\),/.test(psvc)
+      && /staging: z\.enum\(STAGINGS\)\.default\('canary'\),/.test(asg) && /staging: z\.enum\(STAGINGS\)\.optional\(\),/.test(asg)
+      && /export const seriesStaging = \(s: Pick<SeriesSettings, 'staging'>\): Staging => \(s\.staging === 'none' \? 'none' : 'canary'\);/.test(asg),
+    'CreatePolicyDto, CreateDeploymentDto, CreateSeriesDto, SeriesSettings');
+  check('staging: the suites prove it (an ungated policy, an old document still gated, an unknown value refused, a forged field caught)',
+    /all at once: ring 1 is signed before ring 0, with no evidence \(not gated\)/.test(read('apps/api/scripts/unit-patch-policy.mjs'))
+      && /an old document with no staging still gates/.test(read('apps/api/scripts/unit-patch-policy.mjs'))
+      && /admitPolicy refuses staging/.test(read('apps/api/scripts/unit-patch-policy.mjs'))
+      && /edited to staging none → policy_digest_mismatch/.test(read('apps/api/scripts/unit-patch-policy.mjs'))
+      && /unit-patch-policy\.mjs/.test(read('.github/workflows/ci.yml'))
+      && /section\('0\.62: all at once — no canary, every ring signed in the same window, nothing waits'\)/.test(read('apps/api/scripts/e2e-patch-policies.mjs'))
+      && /'the signer refuses any gate evidence for an all-at-once plan \(bad_evidence\)'/.test(read('apps/api/scripts/e2e-patch-policies.mjs'))
+      && / patch-policies /.test(read('scripts/run-e2e.sh')),
+    'unit-patch-policy.mjs in CI; e2e-patch-policies.mjs (its 0.62 sections) in run-e2e.sh');
 }
 
 // ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──
