@@ -568,6 +568,7 @@ check('canceling a signed plan does not unsign it (the portal stops delivery ins
   writeFileSync(victim, kept, { mode: 0o600 });
   r = await j(`${INTERNAL}/internal/v1/capabilities`);
   check('capabilities say the signer publishes revocations', r.body?.revocations === 1, JSON.stringify(r.body));
+  check('capabilities say the signer signs policies that never expire (0.63)', r.body?.neverExpires === 1, JSON.stringify(r.body));
 
   // The CLI, on the signer's host: entries archived before 0.36 are revoked here.
   const cliR = (args) => spawnSync(process.execPath, [join(dist, 'approval-signer', 'main.js'), ...args], { encoding: 'utf8', env: { ...process.env, APPROVAL_SIGNER_DIR: dir } });
@@ -681,6 +682,23 @@ check('keygen refuses to overwrite a signing key', out.status !== 0 && /refusing
   const swapped = mkDoc([[{ ...CANARY, resultKey: dev.forger.key }], [R1]]);
   r = await propose(swapped);
   check('a later policy naming another key for a pinned computer is refused at proposal → device_key_changed', r.status === 409 && r.body?.error === 'device_key_changed' && /device-key forget/.test(r.body.message), JSON.stringify(r.body));
+
+  // 0.63 (§76): over HTTP, a policy that never expires is admitted and shown as such; an unknown value is not.
+  {
+    const nk = { a: deviceKey(), b: deviceKey() };
+    const NA = computer('neverone', '210000011', nk.a), NB = computer('nevertwo', '210000012', nk.b);
+    const dn = mkDoc([[NA], [NB]]); delete dn.expiresAt; dn.expiry = 'never';
+    r = await propose(dn);
+    check('the signer admits a policy with expiry "never" over HTTP', r.status === 201 && r.body?.digest === P.policyDigest(dn), JSON.stringify(r.body));
+    const pn = await (await fetch(`${PUBLIC}/approve/policy/${dn.policyId}`)).text();
+    check('…and its approval page says it never expires', /<th>Expires<\/th><td><strong>Never<\/strong>/.test(pn) || /Expires[\s\S]{0,40}<strong>Never<\/strong>/.test(pn));
+    const dbad = mkDoc([[NA], [NB]]); delete dbad.expiresAt; dbad.expiry = 'forever';
+    r = await propose(dbad);
+    check('the signer refuses expiry "forever" over HTTP (invalid_policy)', r.status === 409 && r.body?.error === 'invalid_policy', JSON.stringify(r.body));
+    const dboth = { ...mkDoc([[NA], [NB]]), expiry: 'never' };
+    r = await propose(dboth);
+    check('the signer refuses a date and "never" together (expiry_conflict)', r.status === 409 && r.body?.error === 'expiry_conflict', JSON.stringify(r.body));
+  }
 
   // The canary under the approved policy; the ledger records the plan's hash.
   const dep = `dep_${randomBytes(4).toString('hex')}`;

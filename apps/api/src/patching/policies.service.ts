@@ -15,7 +15,7 @@ import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { PUBLISH_COMMAND } from '../update-trust/agent-migration';
 import { MAX_RING_TARGETS, MAX_UPDATES_PER_PLAN, REBOOT_SCHEDULE, UPDATE_INSTALL, UpdateReboot } from '../actions/catalog';
 import {
-  MAX_POLICY_DAYS, MAX_POLICY_RINGS, MAX_RESTART_ATTEMPTS, STAGINGS, stagingOf, MAX_RESTART_PLAN_HOURS, POLICY_RESTART_DELAY_MINUTES, POLICY_SCHEMA, PolicyAllow, PolicyDoc, PolicyRestart, PolicyWindow,
+  EXPIRY_NEVER, MAX_POLICY_DAYS, MAX_POLICY_RINGS, expiryMsOf, MAX_RESTART_ATTEMPTS, STAGINGS, stagingOf, MAX_RESTART_PLAN_HOURS, POLICY_RESTART_DELAY_MINUTES, POLICY_SCHEMA, PolicyAllow, PolicyDoc, PolicyRestart, PolicyWindow,
   allowParams, describePolicyWindow, localTime, nextOccurrence, nextOccurrences, occurrenceAt, policyAllowsUpdate, policyDigest, restartInWords, restartRuleOf, scheduleInWords, validatePolicyDoc, windowKind,
   type RestartRule,
 } from '../actions/patch-policy';
@@ -74,7 +74,12 @@ export const CreatePolicyDto = z.object({
   restart: PolicyRestart.optional(),
   /** 0.54: the RustDesk-session exception for this policy's restarts. Present only when ticked. */
   ignoreRemoteSession: z.literal(true).optional(),
-  expiresInDays: z.number().int().min(1).max(MAX_POLICY_DAYS).default(30),
+  /**
+   * 0.63, the owner's request ("Policies shouldnt expire"): absent (what the
+   * console sends) signs `expiry: "never"`, and the policy stands until it is
+   * revoked. An API caller may still ask for an expiry of 1 to 90 days.
+   */
+  expiresInDays: z.number().int().min(1).max(MAX_POLICY_DAYS).optional(),
   reason: z.string().trim().min(3).max(500),
 }).strict();
 
@@ -213,8 +218,8 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     if (!['AWAITING_APPROVAL', 'ACTIVE'].includes(r.status)) return r;
     const s = await this.signer.policyStatus(r.id).catch(() => null);
     if (!s || s.status !== 200) {
-      // An expiry needs no signer to be true.
-      if (r.expiresAt <= now) return this.setStatus(r, 'EXPIRED', { reason: 'expired' });
+      // An expiry needs no signer to be true. (0.63: null is a signed "never".)
+      if (r.expiresAt && r.expiresAt <= now) return this.setStatus(r, 'EXPIRED', { reason: 'expired' });
       return r;
     }
     if (s.body.digest !== r.digest) {
@@ -265,7 +270,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     const occ = occurrenceAt(now, doc.window);
     if (!occ) return;
     const windowKey = occ.start.toISOString();
-    const notAfter = new Date(Math.min(occ.end.getTime(), now.getTime() + 24 * 3_600_000, Date.parse(doc.expiresAt)));
+    const notAfter = new Date(Math.min(occ.end.getTime(), now.getTime() + 24 * 3_600_000, expiryMsOf(doc) ?? 0));
     if (notAfter.getTime() - now.getTime() < MIN_WINDOW_MS) return;
     const rec = (ok: boolean, code: string, message: string, extra: Partial<LastProposal> = {}, audit = true) => this.record(r, { windowKey, ok, code, message, ...extra }, audit, now);
 
@@ -406,7 +411,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     const windowKey = occ.start.toISOString();
     // The computer may pick the plan up as late as notAfter, and restarts the
     // warning after that: the restart itself must fall inside the window.
-    const notAfter = new Date(Math.min(occ.end.getTime() - POLICY_RESTART_DELAY_MINUTES * 60_000, now.getTime() + Math.min(RESTART_PLAN_MS, MAX_RESTART_PLAN_HOURS * 3_600_000), Date.parse(doc.expiresAt)));
+    const notAfter = new Date(Math.min(occ.end.getTime() - POLICY_RESTART_DELAY_MINUTES * 60_000, now.getTime() + Math.min(RESTART_PLAN_MS, MAX_RESTART_PLAN_HOURS * 3_600_000), expiryMsOf(doc) ?? 0));
     if (notAfter.getTime() - now.getTime() < MIN_RESTART_PLAN_MS) return;
     if (await this.containment.blocking('actions', r.customerId)) return;
     const actor = await this.actors.contextFor(doc.createdBy.userId, r.tenantId ?? '', r.customerId);
@@ -500,7 +505,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     const job = latest?.jobId ? await this.prisma.actionJob.findUnique({ where: { id: latest.jobId }, select: { id: true, status: true, notBefore: true, notAfter: true, targets: { where: { endpointId }, select: { status: true, result: true, resultAt: true } } } }) : null;
     const t = job?.targets[0];
     const scheduledFor = (t?.result as { observed?: { scheduledFor?: string } } | null)?.observed?.scheduledFor ?? null;
-    const next = d.restart && rule ? nextOccurrence(now, d.restart.window, r.expiresAt) : null;
+    const next = d.restart && rule ? nextOccurrence(now, d.restart.window, r.expiresAt ?? undefined) : null;
     const tz = d.restart?.window.timezone ?? d.window.timezone;
     const at = (x: Date | string) => `${new Date(x).toLocaleString('en-GB', { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })} ${tz}`;
     let text: string;
@@ -577,6 +582,9 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     // 0.62: an older signer refuses a document carrying staging (its schema is strict); say why first.
     const canary = dto.staging === 'canary';
     if (!canary && caps.body.patchStaging !== 1) throw new ConflictException({ code: 'SIGNER_TOO_OLD', message: 'The approval signer cannot sign a policy that installs all at once. Install the 0.62 signer, or tick "Test on one computer first".' });
+    // 0.63: likewise a policy that never expires (its strict schema refuses `expiry`).
+    const never = dto.expiresInDays === undefined;
+    if (never && caps.body.neverExpires !== 1) throw new ConflictException({ code: 'SIGNER_TOO_OLD', message: 'The approval signer cannot sign a policy that never expires. Install the 0.63 approval signer.' });
 
     const all = dto.rings.flat();
     if (new Set(all).size !== all.length) this.bad('BAD_RINGS', 'A computer can be in one ring only.');
@@ -621,7 +629,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
       rings.push(out);
     }
     const user = await this.prisma.user.findUnique({ where: { id: actor.userId }, select: { firstName: true, lastName: true, email: true } });
-    const expiresAt = new Date(now.getTime() + dto.expiresInDays * 86_400_000);
+    const expiresAt = never ? null : new Date(now.getTime() + dto.expiresInDays! * 86_400_000);
     const doc: PolicyDoc = {
       schema: POLICY_SCHEMA, policyId: randomBytes(16).toString('hex'), name: dto.name, businessId: dto.businessId, businessName,
       rings,
@@ -631,7 +639,8 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
       // 0.54: only when chosen, so a document without them is byte-for-byte what 0.53 made.
       ...(dto.restart ? { restart: dto.restart } : {}),
       ...(dto.ignoreRemoteSession ? { ignoreRemoteSession: true as const } : {}),
-      createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
+      // 0.63: a signed "never" unless an API caller asked for an expiry; exactly one of the two.
+      createdAt: now.toISOString(), ...(expiresAt ? { expiresAt: expiresAt.toISOString() } : { expiry: EXPIRY_NEVER }),
       createdBy: { userId: actor.userId, name: ([user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.email || actor.userId).slice(0, 120) },
       reason: dto.reason,
     };
@@ -659,7 +668,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     await this.goLive(row);
     await this.audit.log({
       tenantId: tenantId ?? undefined, customerId: dto.businessId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_POLICY_CREATED', resource: 'patch_policy', resourceId: row.id,
-      meta: { name: dto.name, digest, approval: sub.body.direct === true ? 'direct' : 'signed', ...(series ? { seriesId: series.seriesId, revision: series.revision, supersedes: series.supersedesId } : {}), rings: rings.map((x) => x.length), staging: dto.staging, allow: allowParams(dto.allow), window: dto.window, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, reboot: dto.reboot, restart: dto.restart ?? null, ...(dto.ignoreRemoteSession ? { ignoreRemoteSession: true } : {}), expiresAt: doc.expiresAt, reason: dto.reason },
+      meta: { name: dto.name, digest, approval: sub.body.direct === true ? 'direct' : 'signed', ...(series ? { seriesId: series.seriesId, revision: series.revision, supersedes: series.supersedesId } : {}), rings: rings.map((x) => x.length), staging: dto.staging, allow: allowParams(dto.allow), window: dto.window, soakHours: dto.soakHours, failureThreshold: dto.failureThreshold, reboot: dto.reboot, restart: dto.restart ?? null, ...(dto.ignoreRemoteSession ? { ignoreRemoteSession: true } : {}), expiresAt: doc.expiresAt ?? null, expiry: doc.expiry ?? null, reason: dto.reason },
     });
     return this.detail(actor, row.id, now);
   }
@@ -738,10 +747,10 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
         id: r.id, name: r.name, status: r.status, expiresAt: r.expiresAt, createdAt: r.createdAt,
         seriesId: r.seriesId, revision: r.revision, supersededAt: r.supersededAt,
         computers: doc.rings.flat().length, rings: doc.rings.length, staging: stagingOf(doc), window: doc.window,
-        nextWindow: r.status === 'ACTIVE' ? nextOccurrence(now, doc.window, r.expiresAt) : null,
+        nextWindow: r.status === 'ACTIVE' ? nextOccurrence(now, doc.window, r.expiresAt ?? undefined) : null,
         // 0.54: the install and restart schedule in plain words, and when restarts next run.
         schedule: scheduleInWords(doc), reboot: doc.reboot, restart: doc.restart ?? null, ignoreRemoteSession: doc.ignoreRemoteSession === true,
-        nextRestartWindow: r.status === 'ACTIVE' && doc.restart ? nextOccurrence(now, doc.restart.window, r.expiresAt) : null,
+        nextRestartWindow: r.status === 'ACTIVE' && doc.restart ? nextOccurrence(now, doc.restart.window, r.expiresAt ?? undefined) : null,
         lastProposal: r.lastProposal,
       });
     }
@@ -763,15 +772,15 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
       // v0.34: compare these with `rem0te-agent.exe status` on each computer.
       resultKeys: Object.fromEntries(doc.rings.flat().map((c) => [c.endpointId, c.resultKey ? resultKeyFingerprint(c.resultKey) : null])),
       currentWindow: r.status === 'ACTIVE' ? occurrenceAt(now, doc.window) : null,
-      nextWindow: r.status === 'ACTIVE' ? nextOccurrence(now, doc.window, r.expiresAt) : null,
+      nextWindow: r.status === 'ACTIVE' ? nextOccurrence(now, doc.window, r.expiresAt ?? undefined) : null,
       // 0.53: the window in words and its next three openings before expiry, from the signer's own functions.
       windowDescription: describePolicyWindow(doc.window),
-      upcomingWindows: r.status === 'ACTIVE' ? nextOccurrences(now, doc.window, 3, r.expiresAt) : [],
+      upcomingWindows: r.status === 'ACTIVE' ? nextOccurrences(now, doc.window, 3, r.expiresAt ?? undefined) : [],
       // 0.54: the restart schedule, from the same functions the signer runs, and the restarts it proposed.
       schedule: scheduleInWords(doc as PolicyDoc), restartWords: restartInWords(doc as PolicyDoc),
       restartWindowDescription: doc.restart ? describePolicyWindow(doc.restart.window) : null,
       currentRestartWindow: r.status === 'ACTIVE' && doc.restart ? occurrenceAt(now, doc.restart.window) : null,
-      upcomingRestartWindows: r.status === 'ACTIVE' && doc.restart ? nextOccurrences(now, doc.restart.window, 3, r.expiresAt) : [],
+      upcomingRestartWindows: r.status === 'ACTIVE' && doc.restart ? nextOccurrences(now, doc.restart.window, 3, r.expiresAt ?? undefined) : [],
       restarts: await this.restartRows(r.id),
       lastProposal: r.lastProposal,
       // 0.40: activated in direct mode, with no approvals (the signer's word).

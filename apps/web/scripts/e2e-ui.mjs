@@ -1953,7 +1953,7 @@ async function patchWindowEditor(page, f, vp, label) {
   await page.locator('[data-testid="pol-weekday"]').selectOption('tue');
   await page.locator('[data-testid="pol-offset"]').fill('2');
   const tz = await page.locator('#pol-tz').inputValue();
-  const want = pp.nextOccurrences(new Date(), { kind: 'monthly', week: 'second', weekday: 'tue', offsetDays: 2, start: '22:00', end: '04:00', timezone: tz }, 3, new Date(Date.now() + 30 * 86_400_000));
+  const want = pp.nextOccurrences(new Date(), { kind: 'monthly', week: 'second', weekday: 'tue', offsetDays: 2, start: '22:00', end: '04:00', timezone: tz }, 3); // 0.63: the policy never expires, so the preview has no bound
   await page.waitForFunction((n) => document.querySelectorAll('[data-testid="pol-occurrence"]').length === n && /2 days after the second Tuesday/.test(document.querySelector('[data-testid="pol-preview"]')?.textContent ?? ''), want.length, { timeout: 15_000 }).catch(() => {});
   const preview = await page.locator('[data-testid="pol-preview"]').innerText();
   const day = (d) => new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short' }).format(d);
@@ -2068,6 +2068,8 @@ async function automationSchedules(page, f, vp, label) {
   await page.waitForFunction(() => /Every 6 hours at :00/.test(document.querySelector('[data-testid="schedule-preview"]')?.textContent ?? ''), null, { timeout: 15_000 }).catch(() => {});
   const prev = await page.locator('[data-testid="schedule-preview"]').innerText().catch(() => '');
   check(/Every 6 hours at :00/.test(prev) && (prev.match(/–/g) ?? []).length >= 3, `${label}: the editor previews an hourly schedule's next runs from the server`, prev.slice(0, 300));
+  check(/does not expire/.test(await page.locator('[data-testid="schedule-no-expiry"]').innerText().catch(() => '')) && !/Expires after/.test(await page.locator('main').innerText()),
+    `${label}: 0.63: the schedule editor asks for no expiry and says the schedule does not expire`);
   check(await page.locator('[data-testid="schedule-create"]').isDisabled() && /Give it a name|Choose/.test(await page.locator('[data-testid="schedule-problem"]').innerText().catch(() => '')),
     `${label}: Propose stays disabled, and says what is missing`);
   if (vp === 'phone') await noSideScroll(page, `${label} schedule editor`);

@@ -336,7 +336,9 @@ async function all() {
   const now = new Date();
   const hhmm = (t) => `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`;
   const window = { days: ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'], start: hhmm(new Date(now.getTime() - 3600_000)), end: hhmm(new Date(now.getTime() + 3 * 3600_000)), timezone: 'UTC' };
-  const body = { businessId: acme.id, name: 'Acme security, nightly', rings: [[canary.id], [r1a.id, r1b.id]], allow: { classifications: [SEC], severities: ['Critical', 'Important'] }, soakHours: 0, failureThreshold: 0, window, expiresInDays: 30, reason: 'Security updates without a ticket per night' };
+  const body = { businessId: acme.id, name: 'Acme security, nightly', rings: [[canary.id], [r1a.id, r1b.id]], allow: { classifications: [SEC], severities: ['Critical', 'Important'] }, soakHours: 0, failureThreshold: 0, window, reason: 'Security updates without a ticket per night' };
+  // 0.63: a document as an API caller with an expiry (or a pre-0.63 policy) would carry one: the date, and no "never".
+  const expiring = (d) => { const { expiry, ...rest } = d; return rest; };
   let pol;
   {
     let r = await req('POST', '/patching/policies', { s: S.owen, business: acme.id, body });
@@ -364,6 +366,16 @@ async function all() {
     check(r.status === 201 && pol?.status === 'AWAITING_APPROVAL' && /\/approve\/policy\/[0-9a-f]{32}$/.test(pol.approvalUrl), 'the policy is proposed and awaits approval on the signer', msg(r));
     const page = await (await fetch(pol.approvalUrl)).text();
     check(page.includes('PP-CANARY') && page.includes('PP-R1-B') && page.includes('Security Updates') && page.includes('UTC'), 'the signer\'s approval page shows its computers, classes and window', page.slice(0, 200));
+    // 0.63 (§76): the console sends no expiry, so the document signs "never" and the portal's mirror is null.
+    const row = await prisma.patchPolicy.findUnique({ where: { id: pol.id } });
+    check(pol.document.expiry === 'never' && !('expiresAt' in pol.document) && row?.expiresAt === null && pol.expiresAt === null, '0.63: a policy proposed with no expiry signs expiry "never"; the portal\'s expiresAt is null', JSON.stringify({ expiry: pol.document.expiry, expiresAt: row?.expiresAt }));
+    check(/<strong>Never<\/strong>/.test(page) && !/then approved again/.test(page), '…and its approval page says it never expires', page.match(/Expires.{0,200}/s)?.[0] ?? '');
+    let x = await sj(`${INTERNAL}/internal/v1/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy: { ...pol.document, policyId: hex(16), expiry: 'forever' } }) });
+    check(x.status === 409 && x.body?.error === 'invalid_policy', '0.63: the signer refuses expiry "forever" (invalid_policy)', JSON.stringify(x.body));
+    x = await sj(`${INTERNAL}/internal/v1/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy: { ...pol.document, policyId: hex(16), expiresAt: new Date(Date.now() + 86_400_000).toISOString() } }) });
+    check(x.status === 409 && x.body?.error === 'expiry_conflict', '0.63: …and a date beside "never" (expiry_conflict)', JSON.stringify(x.body));
+    x = await sj(`${INTERNAL}/internal/v1/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy: { ...expiring(pol.document), policyId: hex(16) } }) });
+    check(x.status === 409 && x.body?.error === 'expiry_missing', '0.63: …and a document that says neither (expiry_missing)', JSON.stringify(x.body));
     // 0.34: the key the policy binds is the one the computer itself reports (rem0te-agent.exe status).
     const own = resultKeyOf(canary);
     check(pol.document.rings[0][0].resultKey === own.publicKey && pol.document.rings[1].every((c) => !!c.resultKey), 'the policy binds each computer to the result key its own signed scans name', JSON.stringify(pol.document.rings[0][0]));
@@ -529,7 +541,7 @@ async function all() {
     check(dflt.document.reboot === 'never', 'a policy proposed without a rule says never (the default)', JSON.stringify(dflt.document.reboot));
     // Straight to the signer (the portal never sees it), approved, then plans under it.
     const t0 = new Date();
-    const doc = { ...pol.document, policyId: hex(16), name: 'Restarts allowed', reboot: 'if_required_in_window', createdAt: t0.toISOString(), expiresAt: new Date(t0.getTime() + 86_400_000).toISOString() };
+    const doc = { ...expiring(pol.document), policyId: hex(16), name: 'Restarts allowed', reboot: 'if_required_in_window', createdAt: t0.toISOString(), expiresAt: new Date(t0.getTime() + 86_400_000).toISOString() };
     const sub = await sj(`${INTERNAL}/internal/v1/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy: doc }) });
     check(sub.status === 201, 'the signer accepts it', JSON.stringify(sub.body));
     await approvePolicy(doc.policyId, pk.olivia); const a = await approvePolicy(doc.policyId, pk.quinn);
@@ -570,7 +582,7 @@ async function all() {
 
     // Straight to the signer, as the portal would send it.
     const t0 = new Date();
-    const doc = { ...pol.document, policyId: hex(16), name: 'Monthly, two days after', window: monthly, createdAt: t0.toISOString(), expiresAt: new Date(t0.getTime() + 30 * 86_400_000).toISOString() };
+    const doc = { ...expiring(pol.document), policyId: hex(16), name: 'Monthly, two days after', window: monthly, createdAt: t0.toISOString(), expiresAt: new Date(t0.getTime() + 30 * 86_400_000).toISOString() };
     let sub = await sj(`${INTERNAL}/internal/v1/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy: { ...doc, policyId: hex(16), window: { ...monthly, kind: 'quarterly' } } }) });
     check(sub.status >= 400 && sub.status < 500 && sub.body?.error === 'invalid_policy', 'the signer refuses an unknown window kind (invalid_policy)', JSON.stringify(sub.body));
     // A window whose first opening is ten days out, on a policy that expires in two.
@@ -700,7 +712,7 @@ async function all() {
   {
     const t0 = new Date();
     const doc = {
-      ...pol.document, policyId: hex(16), name: 'Short-lived', createdAt: t0.toISOString(), expiresAt: new Date(t0.getTime() + 15_000).toISOString(),
+      ...expiring(pol.document), policyId: hex(16), name: 'Short-lived', createdAt: t0.toISOString(), expiresAt: new Date(t0.getTime() + 15_000).toISOString(),
     };
     const s = await sj(`${INTERNAL}/internal/v1/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy: doc }) });
     check(s.status === 201, 'the signer accepts a policy that expires in 15 s', JSON.stringify(s.body));
@@ -716,7 +728,7 @@ async function all() {
     const r = await req('POST', '/containment/pauses', { s: S.owen, business: acme.id, body: { scope: 'business', businessId: acme.id, reason: 'suspected phish' } });
     check(r.status === 201, 'Acme\'s owner pauses Acme', msg(r));
     const t0 = new Date();
-    const doc = { ...pol.document, policyId: hex(16), name: 'During a pause', createdAt: t0.toISOString(), expiresAt: new Date(t0.getTime() + 86_400_000).toISOString() };
+    const doc = { ...expiring(pol.document), policyId: hex(16), name: 'During a pause', createdAt: t0.toISOString(), expiresAt: new Date(t0.getTime() + 86_400_000).toISOString() };
     const s = await sj(`${INTERNAL}/internal/v1/policies`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ policy: doc }) });
     check(s.status === 409 && s.body?.error === 'paused', 'the signer accepts no new policy for a paused business', JSON.stringify(s.body));
     const p = await underPolicy(pol.id, { plan: craft(canaryJob.plan), policyDigest: pol.digest, evidence: null });

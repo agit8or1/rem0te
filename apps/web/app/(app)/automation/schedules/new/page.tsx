@@ -30,7 +30,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { WindowEditor, defaultWindowDraft, draftReady, windowFromDraft, type WindowDraft } from '@/components/patching/window-editor';
 import {
-  HourlyEditor, MAX_DAYS, MAX_RUNS_PER_OCCURRENCE, MAX_TARGETS, OfflineChoice, RecurrencePreview, apiMessage, defaultHourly, hourlyRecurrence, selectClass,
+  HourlyEditor, MAX_RUNS_PER_OCCURRENCE, MAX_TARGETS, OfflineChoice, RecurrencePreview, apiMessage, defaultHourly, hourlyRecurrence, selectClass,
   type HourlyDraft,
 } from '@/components/automation/schedule-ui';
 
@@ -96,7 +96,6 @@ export default function NewSchedulePage() {
   const [win, setWin] = useState<WindowDraft>(() => ({ ...defaultWindowDraft(), days: new Set(['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']), start: '02:00', end: '04:00' }));
   const [offline, setOffline] = useState<AutomationOfflineInput>({ mode: 'run_when_online' });
   const [maxRuns, setMaxRuns] = useState(1);
-  const [days, setDays] = useState(30);
   const [filter, setFilter] = useState('');
   // 0.62: in direct mode a schedule is active when saved; no approver reads a reason.
   const direct = useApprovalMode({ businessId: business || undefined }) === 'direct';
@@ -164,8 +163,8 @@ export default function NewSchedulePage() {
     const task = kind === 'script' ? (versionId ? { kind: 'script' as const, scriptVersionId: versionId, parameters: args, timeoutMinutes: timeout } : null) : (entryId ? { kind: 'software' as const, entryId, operation } : null);
     const targets = targetKind === 'computers' ? (ids.length ? { kind: 'computers' as const, endpointIds: ids } : null) : (groupId ? { kind: 'group' as const, groupId, maxTargets } : null);
     if (!task || !targets) return null;
-    return { businessId: business, name: name.trim(), reason: why, task, targets, recurrence, offline, maxRunsPerOccurrence: maxRuns, expiresInDays: days, ...(q.supersedes ? { supersedes: q.supersedes } : {}) };
-  }, [business, recurrence, kind, versionId, args, timeout, entryId, operation, targetKind, ids, groupId, maxTargets, name, why, offline, maxRuns, days, q.supersedes]);
+    return { businessId: business, name: name.trim(), reason: why, task, targets, recurrence, offline, maxRunsPerOccurrence: maxRuns, ...(q.supersedes ? { supersedes: q.supersedes } : {}) };
+  }, [business, recurrence, kind, versionId, args, timeout, entryId, operation, targetKind, ids, groupId, maxTargets, name, why, offline, maxRuns, q.supersedes]);
   const problem = !business ? 'Choose a business.' : name.trim().length < 3 ? 'Give it a name.' : why.length < 3 ? 'Say why (shown to the approvers).'
     : kind === 'script' && !versionId ? 'Choose an approved script.' : kind === 'script' && readiness.data && !readiness.data.you.canRun ? 'This script is not on the approval signer\'s allowlist (or you cannot run it).'
     : kind === 'script' && argProblem ? argProblem : kind === 'software' && !entryId ? 'Choose a catalog package.'
@@ -328,8 +327,8 @@ export default function NewSchedulePage() {
             <label className="flex items-center gap-1.5"><input type="radio" name="rec-kind" checked={recKind === 'hourly'} onChange={() => setRecKind('hourly')} data-testid="rec-hourly" />Every few hours</label>
           </div>
           {recKind === 'hourly'
-            ? <><HourlyEditor value={hourly} onChange={setHourly} /><RecurrencePreview recurrence={recurrence} expiresInDays={days} /></>
-            : <><WindowEditor id="sched-window" value={win} onChange={setWin} expiresInDays={days} title="Run window" /><p className="text-xs text-muted-foreground">Tick every day for a daily schedule.</p><RecurrencePreview recurrence={recurrence} expiresInDays={days} /></>}
+            ? <><HourlyEditor value={hourly} onChange={setHourly} /><RecurrencePreview recurrence={recurrence} /></>
+            : <><WindowEditor id="sched-window" value={win} onChange={setWin} title="Run window" /><p className="text-xs text-muted-foreground">Tick every day for a daily schedule.</p><RecurrencePreview recurrence={recurrence} /></>}
           <OfflineChoice value={offline} onChange={setOffline} />
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1">
@@ -339,10 +338,7 @@ export default function NewSchedulePage() {
               </select>
               <p className="text-xs text-muted-foreground">More than one only helps when a plan closes before the window does (skip if offline, or a short expiry): a later plan names only computers the earlier ones did not. Runs never overlap.</p>
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="new-days" className="text-xs">Expires after (days, 1–{MAX_DAYS})</Label>
-              <Input id="new-days" type="number" min={1} max={MAX_DAYS} value={days} onChange={(e) => setDays(Math.max(1, Math.min(MAX_DAYS, Number(e.target.value) || 1)))} />
-            </div>
+            <p className="text-xs text-muted-foreground self-end" data-testid="schedule-no-expiry">The schedule does not expire: it runs until you pause or revoke it.</p>
           </div>
         </CardContent>
       </Card>

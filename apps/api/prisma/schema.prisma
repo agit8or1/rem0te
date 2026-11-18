@@ -3005,7 +3005,9 @@ model PatchPolicy {
   approvalUrl     String
   /// [{ name, role, at }] as the signer reports them.
   approvals       Json?
-  expiresAt       DateTime
+  /// The document's expiry. Null (0.63, 0084) exactly when the document carries
+  /// the signed `expiry: "never"`: the policy stands until it is revoked.
+  expiresAt       DateTime?
   createdById     String
   revokedAt       DateTime?
   revokedById     String?
@@ -4411,7 +4413,9 @@ model AutomationPolicy {
   approvals       Json?
   /// Activated at admission because the business was in direct mode (the signer's word).
   direct          Boolean                @default(false)
-  expiresAt       DateTime
+  /// The document's expiry. Null (0.63, 0084) exactly when the document carries
+  /// the signed `expiry: "never"`: the policy stands until it is revoked or paused.
+  expiresAt       DateTime?
   createdById     String
   /// Paused in the portal: the sweep proposes nothing until resumed. Audited.
   pausedAt        DateTime?

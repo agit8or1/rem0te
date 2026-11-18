@@ -22,7 +22,7 @@ import { StatusBadge, apiMessage, selectClass, when, type Occurrence } from '@/c
 
 interface Row {
   id: string; name: string; businessId: string; businessName: string; status: string; paused: boolean; taskKind: 'script' | 'software'; task: string;
-  targets: string; schedule: string; offline: string; nextRun: Occurrence | null; lastRun: string | null; succeeded: number; failed: number; expiresAt: string;
+  targets: string; schedule: string; offline: string; nextRun: Occurrence | null; lastRun: string | null; succeeded: number; failed: number; expiresAt: string | null;
   lastProposal: { ok: boolean; code: string; message: string; at: string } | null;
 }
 interface ListData {

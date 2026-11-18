@@ -220,5 +220,24 @@ function planFor(d, digest, { targets = [target(PC)], notBefore = new Date(), no
   check('a maintenance restart with the exception says both plainly', /Every computer restarts once in each window/.test(hx) && /their session is dropped/.test(hx) && /cannot see the group/.test(hx) && !/Approve with passkey/.test(hx));
 }
 
+// ── 0.63 (§76): a restart window that never expires ─────────────────────────
+{
+  const never = (over = {}) => { const d = doc({ expiry: 'never', ...over }); delete d.expiresAt; return d; };
+  const dn = never();
+  check('a restart window with expiry "never" is admitted', A.validateAutomationDoc(dn, new Date()).ok === true, JSON.stringify(A.validateAutomationDoc(dn, new Date())));
+  check('…its first window is still at least 30 minutes (restart_window_too_short)', A.validateAutomationDoc(never({ recurrence: { ...NIGHTLY, end: '02:20' } }), new Date()).reason === 'restart_window_too_short');
+  const view = { policyId: dn.policyId, status: 'AWAITING_APPROVAL', digest: A.automationDigest(dn), doc: dn, decisions: [], signedPlans: 0, revokedAt: null, revokeReason: null, scriptContent: null };
+  const html = page.renderAutomationApprovalPage(view, 'n0nce');
+  check('the approval page says it never expires, and offers no Renew', /<strong>Never<\/strong>/.test(html) && !/the portal offers Renew/.test(html) && /until it is revoked\. It does not ask you again/.test(html));
+  check('…and lists its next openings with no "before it expires"', /Next runs: /.test(html) && !/Next runs before it expires/.test(html));
+  const old = doc();
+  const ho = page.renderAutomationApprovalPage({ ...view, doc: old, digest: A.automationDigest(old) }, 'n0nce');
+  check('an old window\'s page still shows its date and Renew', /the portal offers Renew/.test(ho) && /Next runs before it expires/.test(ho) && /until it is revoked or expires/.test(ho));
+  const bad = { ...dn, expiry: 'forever' };
+  const hb = page.renderAutomationApprovalPage({ ...view, doc: bad, digest: A.automationDigest(bad) }, 'n0nce');
+  check('a document with an unknown expiry is called unreadable on the page', /Unreadable: nothing is signed under this document/.test(hb));
+  check('restart params do not depend on the expiry', canonicalJson(A.restartParamsFor(dn.task)) === canonicalJson(A.restartParamsFor(old.task)));
+}
+
 if (failures.length) { console.error(`unit-restart-window-settings: ${passed} passed, ${failures.length} failed`); for (const f of failures) console.error(`  ✗ ${f}`); process.exit(1); }
 console.log(`unit-restart-window-settings: ${passed} passed`);

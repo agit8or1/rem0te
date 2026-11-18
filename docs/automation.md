@@ -22,11 +22,13 @@ PowerShell 7 and a simulated winget on Linux). **None of it has run on a real Wi
 | When | **Every N hours** (1, 2, 3, 4, 6, 8 or 12), at a minute past, open for 15 minutes up to the gap between runs, counted from local midnight in a time zone. Or a **daily, weekly or monthly window**, the same shapes as a patch policy's maintenance window. For daily, tick every day. |
 | If offline | *Run it when it comes online* while the window is open. Or *skip it*: only computers online at the start are named, and the plan expires after 15 minutes. Or *run it for up to N hours* (1–24) from the start of the window, even after the window closes. |
 | Plans per window | 1 to 3. Runs never overlap: a new plan is not signed while an earlier plan of the schedule is still open. A later plan in the same window names only computers no earlier plan named. More than one only helps when a plan closes before the window does. |
-| Expires | 1 to 90 days. |
+| Expires | Never (0.63): a schedule runs until it is paused or revoked. One made before 0.63 keeps its expiry of at most 90 days; a revision of it never expires. |
 
 The offline rule is not a portal setting. It becomes each run's **signed expiry** (`notAfter`), and the signer
 refuses a plan that lasts longer than the rule allows. A computer that checks in late has the plan refused by its
-own agent. No plan is ever valid for more than 24 hours or past the schedule's expiry.
+own agent. No plan is ever valid for more than 24 hours or, for a schedule made before 0.63, past its expiry.
+A schedule's document carries either its `expiresAt` or a signed `expiry: "never"`, never both; see
+[Staged patching → Policies that never expire](staged-patching.md#policies-that-never-expire-063).
 
 ## How it runs
 
@@ -128,7 +130,7 @@ before schedules can be made. Until then the portal says *the approval signer is
 | `SIGNER_TOO_OLD` | portal | The signer answering is older than 0.58. |
 | `script_not_allowlisted`, `script_revoked`, `software_revoked` | signer | Refused at admission and at every run. |
 | `requester_cannot_approve`, `contributor_cannot_approve` | signer | The author, or a script's contributor, tried to approve. |
-| `policy_not_active`, `policy_revoked`, `policy_expired`, `policy_not_approved` | signer | Nothing is signed. |
+| `policy_not_active`, `policy_revoked`, `policy_expired`, `policy_not_approved`, `expiry_unknown` | signer | Nothing is signed. |
 | `computer_not_in_policy`, `too_many_targets` | signer | A computer not named (or re-enrolled since), another business's, or over a group's cap. |
 | `outside_schedule`, `offline_rule_mismatch` | signer | The plan starts outside the window, or lasts longer than the offline rule. |
 | `previous_run_open`, `occurrence_run_limit`, `already_ran_this_occurrence` | signer | No overlap, the per-window limit, one plan per computer per window. |

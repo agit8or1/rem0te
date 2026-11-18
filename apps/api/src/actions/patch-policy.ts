@@ -15,8 +15,11 @@ import { RESULT_STATUS, ResultKey, openDeviceStatement } from './device-result';
  * business, the exact computers of each ring (bound to their enrolled
  * identity, not a hostname), the update classifications and severities it
  * may install, KBs it never installs, the soak time and failure threshold,
- * a weekly or (0.53) monthly maintenance window in a named timezone, the reboot rule, and an
- * expiry at most 90 days out. After that the approval signer — not the portal
+ * a weekly or (0.53) monthly maintenance window in a named timezone, and the
+ * reboot rule. Until 0.63 every document also carried an expiry at most 90
+ * days out; from 0.63 (the owner's request, "Policies shouldnt expire") a
+ * document may instead carry a signed `expiry: "never"` and stands until it
+ * is revoked (see `expiryMsOf`). After that the approval signer — not the portal
  * — signs each ring plan, but only if `evaluatePolicyPlan` finds it inside
  * that document. The portal proposes; the signer decides from the policy it
  * holds, its own ledger of what it already signed, and its own clock.
@@ -51,7 +54,17 @@ export const POLICY_SCHEMA = 'rem0te-patch-policy/1';
 /** Domain separation for a policy's digest and for the signer's signature over an approved policy. */
 export const POLICY_DIGEST_PREFIX = 'rem0te-patch-policy-v1\n';
 export const POLICY_SIGNING_PREFIX = 'rem0te-patch-policy-approved-v1\n';
+/** The furthest a document that carries an expiry may set it (0.32). A document with `expiry: "never"` (0.63) has none. */
 export const MAX_POLICY_DAYS = 90;
+/**
+ * 0.63, at the owner's request ("Policies shouldnt expire"): the one value of
+ * a document's signed `expiry` field. A document carries exactly one of
+ * `expiresAt` (every document before 0.63, and one made through the API with
+ * an expiry) or `expiry: "never"`, which stands until the policy is revoked,
+ * paused or replaced. Anything else — neither, both, another value — is
+ * refused at admission and treated as already expired by every decision.
+ */
+export const EXPIRY_NEVER = 'never' as const;
 export const MAX_POLICY_RINGS = 5;
 /** How long a proposed policy waits for its approvals before it lapses. */
 export const POLICY_PROPOSAL_DAYS = 7;
@@ -259,11 +272,63 @@ export const PolicyDoc = z.object({
    */
   ignoreRemoteSession: z.literal(true).optional(),
   createdAt: Iso,
-  expiresAt: Iso,
+  /** When the policy stops. Present in every document before 0.63, which keep their bytes, digest and expiry. Absent exactly when `expiry` is "never". */
+  expiresAt: Iso.optional(),
+  /** 0.63: "never" — the policy stands until revoked. Present only without expiresAt (`expiryMsOf`); signed, so a portal that adds or drops it breaks the digest. */
+  expiry: z.literal(EXPIRY_NEVER).optional(),
   createdBy: z.object({ userId: Id, name: z.string().max(120) }).strict(),
   reason: z.string().min(3).max(500),
 }).strict();
 export type PolicyDoc = z.infer<typeof PolicyDoc>;
+
+/** The two fields that say how long a document stands (patch and automation documents alike). */
+export type ExpiryFields = { expiresAt?: unknown; expiry?: unknown };
+const present = (o: object, k: string) => k in o && (o as Record<string, unknown>)[k] !== undefined;
+
+/**
+ * 0.63: when a document stops, in ms since the epoch — Infinity for a signed
+ * `expiry: "never"` — or null for a document that says neither, both, or
+ * something this version does not know. Null is fail closed: every caller
+ * treats it as already expired, never as "never".
+ */
+export function expiryMsOf(doc: ExpiryFields): number | null {
+  const never = present(doc, 'expiry'), at = present(doc, 'expiresAt');
+  if (never) return doc.expiry === EXPIRY_NEVER && !at ? Infinity : null;
+  if (!at || typeof doc.expiresAt !== 'string') return null;
+  const t = Date.parse(doc.expiresAt);
+  return Number.isFinite(t) ? t : null;
+}
+
+/** The `until` the occurrence functions take: none for "never", the expiry otherwise, and the epoch (nothing opens) for an invalid document. */
+export function expiryUntil(doc: ExpiryFields): Date | undefined {
+  const ms = expiryMsOf(doc);
+  return ms === Infinity ? undefined : new Date(ms ?? 0);
+}
+
+/**
+ * 0.63: the expiry rules a schema cannot say, shared by both documents'
+ * validators (portal before it proposes, signer before it admits). A "never"
+ * document has no expiry to check; one with an expiry keeps 0.32's rules.
+ */
+export function expiryProblem(doc: ExpiryFields & { createdAt: string }, now: Date, maxDays: number, noun: string): { reason: string; message: string } | null {
+  const never = present(doc, 'expiry'), at = present(doc, 'expiresAt');
+  if (never && doc.expiry !== EXPIRY_NEVER) return { reason: 'expiry_unknown', message: `The ${noun}'s expiry is not one this version knows (only "never").` };
+  if (never && at) return { reason: 'expiry_conflict', message: `The ${noun} carries both an expiry date and "never".` };
+  if (never) return null;
+  if (!at) return { reason: 'expiry_missing', message: `The ${noun} says neither when it expires nor that it never does.` };
+  const exp = expiryMsOf(doc), created = Date.parse(doc.createdAt);
+  if (exp === null) return { reason: 'expiry_unknown', message: `The ${noun}'s expiry is not a date.` };
+  if (!(exp > now.getTime())) return { reason: 'policy_expired', message: 'The expiry is in the past.' };
+  const most = maxDays * 86_400_000 + CLOCK_SKEW_MS;
+  if (exp - now.getTime() > most || exp - created > most) return { reason: 'expiry_too_far', message: `A ${noun} that expires does so at most ${maxDays} days after it is proposed. Leave the expiry out and it never expires.` };
+  return null;
+}
+
+/** 0.63: the expiry in words, for the pages: "never (until revoked)" or the date. */
+export function expiryInWords(doc: ExpiryFields): string {
+  const ms = expiryMsOf(doc);
+  return ms === Infinity ? 'never (until revoked)' : ms === null ? 'unreadable (treated as expired)' : new Date(ms).toISOString();
+}
 
 export function policyDigest(doc: PolicyDoc): string {
   return createHash('sha256').update(POLICY_DIGEST_PREFIX).update(canonicalJson(doc)).digest('hex');
@@ -285,17 +350,15 @@ export function validatePolicyDoc(doc: PolicyDoc, now: Date): { ok: true } | { o
   if (new Set(all.map((c) => c.endpointId)).size !== all.length || new Set(all.map((c) => c.rustdeskId)).size !== all.length) {
     return { ok: false, reason: 'bad_rings', message: 'A computer can be in one ring only.' };
   }
-  const exp = Date.parse(doc.expiresAt), created = Date.parse(doc.createdAt);
-  if (!(exp > now.getTime())) return { ok: false, reason: 'policy_expired', message: 'The expiry is in the past.' };
-  const most = MAX_POLICY_DAYS * 86_400_000 + CLOCK_SKEW_MS;
-  if (exp - now.getTime() > most || exp - created > most) {
-    return { ok: false, reason: 'expiry_too_far', message: `A policy expires at most ${MAX_POLICY_DAYS} days after it is proposed; then it is approved again.` };
-  }
+  // 0.63: an expiry date (0.32's rules), or a signed "never"; anything else is refused.
+  const ex = expiryProblem(doc, now, MAX_POLICY_DAYS, 'policy');
+  if (ex) return { ok: false, ...ex };
+  const until = expiryUntil(doc), created = Date.parse(doc.createdAt);
   if (created > now.getTime() + CLOCK_SKEW_MS) return { ok: false, reason: 'bad_created', message: 'The policy is dated in the future.' };
-  if (!nextOccurrence(now, doc.window, new Date(exp))) return { ok: false, reason: 'window_never_opens', message: 'The maintenance window never opens before the policy expires.' };
+  if (!nextOccurrence(now, doc.window, until)) return { ok: false, reason: 'window_never_opens', message: 'The maintenance window never opens before the policy expires.' };
   // 0.54: a restart window must open before expiry too, and the RustDesk-session exception needs a restart to apply to.
   if (doc.restart !== undefined && !restartRuleOf(doc)) return { ok: false, reason: 'restart_rule_unknown', message: 'The restart rule is not one this version knows.' };
-  if (doc.restart && !nextOccurrence(now, doc.restart.window, new Date(exp))) return { ok: false, reason: 'restart_window_never_opens', message: 'The restart window never opens before the policy expires.' };
+  if (doc.restart && !nextOccurrence(now, doc.restart.window, until)) return { ok: false, reason: 'restart_window_never_opens', message: 'The restart window never opens before the policy expires.' };
   if (doc.ignoreRemoteSession && doc.reboot !== 'if_required_in_window' && !doc.restart) return { ok: false, reason: 'override_without_restart', message: 'The RustDesk-session exception applies to a restart, and this policy never restarts.' };
   // v0.34, fail closed: a computer whose results open the next ring must be
   // able to sign them. Only the last ring's results gate nothing — and, under
@@ -745,11 +808,14 @@ function policyStanding(s: PolicyState, r: PolicyPlanRequest, opts: { now: Date;
   if (!s.signatureValid) return no('policy_signature_invalid', 'The stored policy does not verify against this signer\'s key.');
   if (policyDigest(doc) !== s.digest || r.policyDigest !== s.digest) return no('policy_digest_mismatch', 'The policy digest does not match the approved policy.');
   // Expiry is checked before status: an expired policy's status is EXPIRED, and the code should say why.
-  if (now.getTime() >= Date.parse(doc.expiresAt)) return no('policy_expired', 'This policy has expired. Approve a new one.');
+  // 0.63: a signed "never" never expires; a document saying neither, both or anything else is refused, never read as "never".
+  const exp = expiryMsOf(doc);
+  if (exp === null) return no('expiry_unknown', 'The policy\'s expiry is not one this signer knows; nothing is signed under it.');
+  if (now.getTime() >= exp) return no('policy_expired', 'This policy has expired. Approve a new one.');
   if (s.status !== 'ACTIVE') return no('policy_not_active', `This policy is ${s.status.toLowerCase().replace(/_/g, ' ')}.`);
   if (!policyQuorum(doc, s.approvals, false, opts.direct === true)) return no('policy_not_approved', 'This policy does not carry two approvals from people other than its author (a policy activated in direct mode stops counting when the business leaves direct mode).');
   if (!policyQuorum(doc, s.approvals, opts.customerSignoff, opts.direct === true)) return no('policy_mismatch', 'This business now requires customer sign-off, which this policy was not approved with. Approve a new policy.');
-  if (Date.parse(p.window.notAfter) > Date.parse(doc.expiresAt)) return no('policy_expired', 'The plan would run past the policy\'s expiry.');
+  if (Date.parse(p.window.notAfter) > exp) return no('policy_expired', 'The plan would run past the policy\'s expiry.');
   return null;
 }
 

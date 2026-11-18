@@ -31,7 +31,8 @@ type Rule = 'if_required' | 'always';
 type PolicyView = {
   id: string; status: string; paused: boolean; direct: boolean; approvalUrl: string | null; approvals: number;
   rule: Rule; ignoreRemoteSession: boolean; window: PolicyWindowInput | null; description: string; does: string;
-  expiresAt: string; expiresSoon: boolean; nextWindow: { start: string; end: string } | null; upcoming: { start: string; end: string }[];
+  /** 0.63: null for a window that never expires (every one set from 0.63). */
+  expiresAt: string | null; expiresSoon: boolean; nextWindow: { start: string; end: string } | null; upcoming: { start: string; end: string }[];
   setBy: string; setAt: string; reason: string; lastNote: { at: string; code: string; message: string } | null;
 };
 type SettingView = {
@@ -90,7 +91,7 @@ function PolicySummary({ p, testid }: { p: PolicyView; testid: string }) {
           {p.approvalUrl && <> <a className="underline" href={p.approvalUrl} target="_blank" rel="noopener noreferrer">Open the approval page</a>.</>}
         </p>
       )}
-      <p className="text-muted-foreground">Set by {p.setBy} · expires {new Date(p.expiresAt).toLocaleDateString()}{p.expiresSoon ? ' — renew soon (Change → Save sets it again for another 90 days)' : ''}.</p>
+      <p className="text-muted-foreground">Set by {p.setBy}{p.expiresAt ? ` · set before 0.63, so it expires ${new Date(p.expiresAt).toLocaleDateString()}; Change → Save sets it again without an expiry` : ''}.</p>
       {p.lastNote && <p className="text-amber-700 dark:text-amber-400">{p.lastNote.message}</p>}
     </div>
   );
@@ -129,7 +130,7 @@ function WindowForm({ id, initial, tz, zones, allowOff, priority, onSave, onCanc
               <option value="always">{RULE_LABEL.always}</option>
             </select>
           </div>
-          <WindowEditor id={id} value={draft} onChange={setDraft} expiresInDays={90} title="Restart window" />
+          <WindowEditor id={id} value={draft} onChange={setDraft} title="Restart window" />
           {zones && zones.length > 0 && (
             <p className="text-xs text-muted-foreground">Site time zones: {zones.map((z) => <button key={z} type="button" className="underline mr-2" onClick={() => setDraft({ ...draft, timezone: z })}>{z}</button>)}</p>
           )}

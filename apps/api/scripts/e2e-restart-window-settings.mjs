@@ -364,6 +364,8 @@ async function all() {
     r = await req('PUT', `/restart-windows/businesses/${delta.id}`, { s: S.dora, body: { mode: 'window', rule: 'if_required', window: OPEN() } });
     deltaPol = r.data?.business?.window;
     check(r.status === 200 && deltaPol?.status === 'ACTIVE' && deltaPol.direct === true && r.data.business.inForce === true, 'Delta\'s window is ACTIVE at once (direct mode)', msg(r));
+    const dRow = deltaPol ? await prisma.automationPolicy.findUnique({ where: { id: deltaPol.id } }) : null;
+    check(deltaPol?.expiresAt === null && deltaPol.expiresSoon === false && dRow?.expiresAt === null && dRow.document.expiry === 'never', '0.63: it never expires (signed expiry "never", no date), and a null expiry is in force, not expired', JSON.stringify({ expiresAt: deltaPol?.expiresAt, soon: deltaPol?.expiresSoon, expiry: dRow?.document?.expiry }));
     r = await req('PUT', `/restart-windows/businesses/${delta.id}/groups/${servers.id}`, { s: S.dora, body: { mode: 'window', rule: 'if_required', window: CLOSED() } });
     groupPol = r.data?.groups?.[0]?.window;
     check(r.status === 200 && groupPol?.status === 'ACTIVE' && r.data.groups[0].priority === 1, 'a group window (closed for hours), priority 1', msg(r));

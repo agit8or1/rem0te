@@ -176,13 +176,13 @@ Then:
    - the maintenance window: **Weekly** (the days of the week) or, from 0.53, **Monthly** — the nth or last weekday
      of each month plus 0–14 days (Patch Tuesday is *the second Tuesday*; *+ 2* is the Thursday after), or a day of
      the month from 1 to 28 — then its local start and end, and its IANA time zone (for example `America/Chicago`).
-     The window follows daylight-saving time. The form shows the next three openings before the expiry; if there are
+     The window follows daylight-saving time. The form shows the next three openings; if there are
      none, the policy would be refused (`window_never_opens`). A monthly window needs the approval signer rebuilt
      from 0.53 (see [Staged patching → Monthly windows](staged-patching.md#monthly-windows-053)); until then it is
      refused at the signer (`invalid_policy`).
    - with *Test on one computer first* only: the soak time between rings and the number of failed computers allowed
      per ring;
-   - the expiry, at most 90 days;
+   - there is no expiry (0.63): the policy stands until it is revoked. A policy made before 0.63 keeps its expiry;
    - the restart rule: **Never restart** (the default) or **Restart if required, inside the window** (0.34);
    - from 0.54, a **restart window**: *Restart if required, in a restart window* or *Restart every computer in a
      restart window (maintenance restart)*, with its own weekly or monthly window, and optionally the RustDesk
@@ -217,15 +217,16 @@ It signs nothing outside the policy. The bounds are listed in
 ### Or: one policy for the whole business (0.50)
 
 Instead of naming rings by hand, open **Patching** → **Company-wide patch policy** → **Company-wide policy** (fresh
-sign-in). Choose the classes, window (weekly or, from 0.53, monthly), soak, failure threshold, restart rule, how long each revision lasts (at most 90
-days) and, optionally, the canary. The portal names the computers: every Windows computer of the business on the
+sign-in). Choose the classes, window (weekly or, from 0.53, monthly), soak, failure threshold, restart rule and, optionally, the canary
+(revisions don't expire from 0.63). The portal names the computers: every Windows computer of the business on the
 signed agent whose **Patch policy** is *Inherit*. The canary is the one you chose, or the one that checks in most
 reliably, and the rest go in rings of at most 25. Computers it can't include are listed with the reason.
 
 Each set of computers is an ordinary signed policy, a *revision*, approved like any other (at once in direct mode).
 When computers join or leave, the portal proposes the next revision: after the change has held
 `PATCH_POLICY_SETTLE_MINUTES`, at most once per `PATCH_POLICY_REVISION_MINUTES` per business, and never while a
-deployment is running. It renews the policy the same way before it expires. In signed mode the previous revision keeps
+deployment is running. Revisions made from 0.63 never expire; a revision made before 0.63 is renewed once more
+before it expires, into one that does not. In signed mode the previous revision keeps
 running until two approvers approve the new one.
 
 **Assignable policy** is the same thing, but it covers only the computers set to use it, for example servers with a

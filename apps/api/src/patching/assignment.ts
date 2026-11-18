@@ -43,9 +43,13 @@ export function settleMinutes(): number {
   const n = Number(process.env.PATCH_POLICY_SETTLE_MINUTES);
   return Number.isFinite(n) && n >= 0 ? Math.min(n, 24 * 60) : 10;
 }
-/** Renew this long before expiry: seven days, or a third of a short policy's life. */
-export function renewLeadMs(expiresInDays: number): number {
-  return Math.min(7 * 86_400_000, Math.floor((expiresInDays * 86_400_000) / 3));
+/**
+ * Renew this long before expiry: seven days, or a third of a short policy's
+ * life. 0.63: only a revision made before 0.63 (or by an API caller) expires;
+ * a series with no `expiresInDays` is read as the 90-day cap.
+ */
+export function renewLeadMs(expiresInDays: number | undefined): number {
+  return Math.min(7 * 86_400_000, Math.floor(((expiresInDays ?? MAX_POLICY_DAYS) * 86_400_000) / 3));
 }
 
 const Id = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/);
@@ -61,7 +65,14 @@ export const SeriesSettings = z.object({
   restart: PolicyRestart.optional(),
   /** 0.54: the RustDesk-session exception for the series' restarts. Present only when ticked. */
   ignoreRemoteSession: z.literal(true).optional(),
-  expiresInDays: z.number().int().min(1).max(MAX_POLICY_DAYS).default(30),
+  /**
+   * Before 0.63: the life of each revision, 1 to 90 days, renewed by revision
+   * before it ran out. 0.63 (the owner's request, "Policies shouldnt expire"):
+   * a new series has none, `CreateSeriesDto` refuses it, and every revision
+   * proposed from 0.63 never expires — an older series' running revision is
+   * renewed once more, into one that does not.
+   */
+  expiresInDays: z.number().int().min(1).max(MAX_POLICY_DAYS).optional(),
   /** Optional: the canary to use while it is eligible. Otherwise the portal picks one. Canary staging only. */
   canaryEndpointId: Id.optional(),
   reason: z.string().trim().min(3).max(300),
@@ -72,7 +83,7 @@ export type SeriesSettings = z.infer<typeof SeriesSettings>;
 /** 0.62: a series' staging; absent (every series before 0.62) is canary. */
 export const seriesStaging = (s: Pick<SeriesSettings, 'staging'>): Staging => (s.staging === 'none' ? 'none' : 'canary');
 
-export const CreateSeriesDto = SeriesSettings.extend({
+export const CreateSeriesDto = SeriesSettings.omit({ expiresInDays: true }).extend({
   /** 0.62: absent means canary, as before 0.62; the console sends it explicitly. */
   staging: z.enum(STAGINGS).default('canary'),
   businessId: Id,
@@ -228,7 +239,8 @@ export interface RevisionInput {
   /** The rings the portal would write now, or null if it can write none. */
   desired: { fingerprint: string } | null;
   /** The revision the sweep runs. */
-  current: { fingerprint: string; expiresAt: Date; status: string } | null;
+  /** 0.63: expiresAt is null for a revision whose document never expires. */
+  current: { fingerprint: string; expiresAt: Date | null; status: string } | null;
   /** The newest revision not yet running: awaiting approval, or active and waiting to take over. */
   pending: { fingerprint: string; status: string; revision: number } | null;
   /** The fingerprint of the newest revision the approvers rejected, if any. */
@@ -238,7 +250,8 @@ export interface RevisionInput {
   lastClaimAt: Date | null;
   /** The running revision has a deployment that is active or paused. */
   midRing: boolean;
-  expiresInDays: number;
+  /** The series' setting before 0.63 (absent from 0.63): how early an expiring revision is renewed. */
+  expiresInDays?: number;
 }
 export type RevisionDecision =
   | { act: 'none'; code: 'up_to_date' | 'awaiting_approval' | 'waiting_to_take_over'; message: string }
@@ -255,7 +268,7 @@ export type RevisionDecision =
  */
 export function revisionDecision(i: RevisionInput, minutes = revisionMinutes(), settle = settleMinutes()): RevisionDecision {
   const now = i.now.getTime();
-  const live = i.current && i.current.status === 'ACTIVE' && i.current.expiresAt.getTime() > now ? i.current : null;
+  const live = i.current && i.current.status === 'ACTIVE' && (i.current.expiresAt === null || i.current.expiresAt.getTime() > now) ? i.current : null;
   if (!i.desired) {
     if (!live) return { act: 'hold', code: 'no_computers', message: 'No computer is eligible, so there is nothing to propose.' };
     if (i.midRing) return { act: 'hold', code: 'mid_ring', message: 'No computer is eligible any more; the running revision is withdrawn once its deployment finishes.' };
@@ -270,7 +283,8 @@ export function revisionDecision(i: RevisionInput, minutes = revisionMinutes(), 
   let trigger: 'membership' | 'renewal' | 'restart';
   if (!live) trigger = 'restart';
   else if (live.fingerprint !== want) trigger = 'membership';
-  else if (live.expiresAt.getTime() - now <= renewLeadMs(i.expiresInDays)) trigger = 'renewal';
+  // 0.63: only a revision that expires is renewed; the renewal itself never expires, so it is the last.
+  else if (live.expiresAt !== null && live.expiresAt.getTime() - now <= renewLeadMs(i.expiresInDays)) trigger = 'renewal';
   else if (i.pending) return { act: 'drop_pending', code: 'pending_stale', message: `Revision ${i.pending.revision} no longer matches the computers (the running revision already does); it is withdrawn before anyone approves it.` };
   else return { act: 'none', code: 'up_to_date', message: 'The running revision names exactly these computers.' };
 

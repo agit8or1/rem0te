@@ -4,9 +4,21 @@
  * fonts or images, a nonce CSP, and every value HTML-escaped.
  */
 import { IGNORE_REMOTE_SESSION_LABEL, REBOOT_UNPROVEN, SIGNED_IN_USER_NOTE, UPDATE_RESTART_WARNING_MINUTES, type Plan } from '../actions/catalog';
-import { CLASSIFICATIONS as CLASS_NAME, describePolicyWindow, nextOccurrences, restartInWords, stagingOf, type PolicyDoc } from '../actions/patch-policy';
+import { CLASSIFICATIONS as CLASS_NAME, describePolicyWindow, expiryMsOf, expiryUntil, nextOccurrences, restartInWords, stagingOf, type PolicyDoc } from '../actions/patch-policy';
 import { resultKeyFingerprint } from '../actions/device-result';
 import { RESTART_WINDOW_DELAY_MINUTES, SKIP_GRACE_MINUTES, automationNextOccurrences, offlineInWords, recurrenceInWords, recurrenceKind, taskInWords, type AutomationDoc } from '../actions/automation-policy';
+
+/**
+ * 0.63: the Expires row. A signed "never" says so plainly; a date reads as it
+ * did; anything else is said to sign nothing (the evaluator refuses it).
+ */
+function expiresRow(d: { expiresAt?: string; expiry?: string }, then: string): string {
+  const ms = expiryMsOf(d);
+  if (ms === Infinity) return '<strong>Never</strong> <span class="mut">(it stands until it is revoked or replaced; revoke it in the portal or on this signer to stop it)</span>';
+  if (ms === null) return '<strong>Unreadable: nothing is signed under this document. Reject it.</strong>';
+  return `${new Date(ms).toUTCString().replace(/[<>&"]/g, '')} <span class="mut">(${then})</span>`;
+}
+const beforeExpiry = (d: { expiresAt?: string; expiry?: string }) => (expiryMsOf(d) === Infinity ? '' : ' before it expires');
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 
@@ -166,16 +178,16 @@ export function renderPolicyApprovalPage(v: PolicyView, nonce: string): string {
     ? `${esc(w.days.map((x) => x[0].toUpperCase() + x.slice(1)).join(', '))}, ${esc(w.start)}–${esc(w.end)}`
     : `<strong>monthly</strong>: ${esc(describePolicyWindow(w).replace(` ${w.timezone}`, ''))}`;
   const local = (t: Date) => new Intl.DateTimeFormat('en-GB', { timeZone: w.timezone, weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(t);
-  const openings = nextOccurrences(new Date(), w, 3, new Date(d.expiresAt));
+  const openings = nextOccurrences(new Date(), w, 3, expiryUntil(d));
   const next = openings.length
-    ? `<br><span class="mut">Next openings before it expires: ${openings.map((o) => esc(`${local(o.start)} → ${local(o.end)}`)).join('; ')}</span>`
+    ? `<br><span class="mut">Next openings${beforeExpiry(d)}: ${openings.map((o) => esc(`${local(o.start)} → ${local(o.end)}`)).join('; ')}</span>`
     : '<br><strong>It never opens before the policy expires.</strong>';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Approve patch policy: ${esc(d.name)}</title>
 <style nonce="${nonce}">${STYLE}</style></head><body>
 <p class="mut">Rem0te approval — this page is served by the approval signer, not the portal.</p>
 <h1>Patch policy: ${esc(d.name)}</h1>
-<p>Approve this once, and the approval signer signs each ring of Windows updates for these computers by itself, inside the window below, until the policy expires or is revoked. It does not ask you again for each ring.</p>
+<p>Approve this once, and the approval signer signs each ring of Windows updates for these computers by itself, inside the window below, until the policy is revoked${beforeExpiry(d) ? ' or expires' : ''}. It does not ask you again for each ring.</p>
 <div class="warn"><strong>Before you approve</strong><ul>
 ${allAtOnce
     ? '<li><strong>All at once:</strong> there is no canary. Every computer below installs in the same window, ring by ring only because one plan names at most 25 computers, and no ring waits for another\'s results. Your approval stands in for yours on every plan signed under this policy. The signer refuses any plan outside it: another computer, another class of update, a KB excluded here, outside the window, or after expiry.</li>'
@@ -205,7 +217,7 @@ ${allAtOnce
 ${row('Restarts', `${esc(restartInWords(d))}${d.reboot === 'if_required_in_window' || d.restart ? `, after a ${UPDATE_RESTART_WARNING_MINUTES}-minute warning${d.ignoreRemoteSession ? '' : ', never while a technician is connected through RustDesk'}` : ''}`)}
 ${row('Proposed by', `${esc(d.createdBy.name)} <span class="mut">(cannot approve it)</span>`)}
 ${row('Reason', esc(d.reason))}
-${row('Expires', `${fmt(d.expiresAt)} <span class="mut">(then approved again)</span>`)}
+${row('Expires', expiresRow(d, 'then approved again'))}
 ${row('Needs', '2 approvers, other than the person who proposed it, plus customer sign-off where this business requires it')}
 ${row('Policy digest', `<code>${esc(v.digest)}</code>`)}
 ${row('Status', `<strong id="status">${esc(v.status.replace(/_/g, ' ').toLowerCase())}</strong>${v.revokedAt ? ` — revoked ${fmt(v.revokedAt)}: ${esc(v.revokeReason ?? '')}` : ''}`)}
@@ -297,9 +309,9 @@ export function renderAutomationApprovalPage(v: AutomationView, nonce: string): 
   const fmt = (iso: string) => `${esc(new Date(iso).toUTCString())}`;
   const tz = (d.recurrence as { timezone: string }).timezone;
   const local = (t: Date) => new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(t);
-  const openings = recurrenceKind(d.recurrence) ? automationNextOccurrences(new Date(), d.recurrence, 3, new Date(d.expiresAt)) : [];
+  const openings = recurrenceKind(d.recurrence) ? automationNextOccurrences(new Date(), d.recurrence, 3, expiryUntil(d)) : [];
   const next = openings.length
-    ? `<br><span class="mut">Next runs before it expires: ${openings.map((o) => esc(`${local(o.start)} → ${local(o.end)}`)).join('; ')}</span>`
+    ? `<br><span class="mut">Next runs${beforeExpiry(d)}: ${openings.map((o) => esc(`${local(o.start)} → ${local(o.end)}`)).join('; ')}</span>`
     : '<br><strong>It never runs before the policy expires.</strong>';
   const t = d.task;
   // 0.60: a restart window has its own page wording.
@@ -318,7 +330,7 @@ export function renderAutomationApprovalPage(v: AutomationView, nonce: string): 
 <style nonce="${nonce}">${STYLE}</style></head><body>
 <p class="mut">Rem0te approval — this page is served by the approval signer, not the portal.</p>
 <h1>Automation: ${esc(d.name)}</h1>
-<p>Approve this once, and the approval signer signs a plan for each run below by itself, on the schedule below, until the policy expires or is revoked. It does not ask you again for each run.</p>
+<p>Approve this once, and the approval signer signs a plan for each run below by itself, on the schedule below, until the policy is revoked${beforeExpiry(d) ? ' or expires' : ''}. It does not ask you again for each run.</p>
 <div class="warn"><strong>Before you approve</strong><ul>
 <li>Your approval stands in for yours on every plan signed under this policy. The signer refuses any plan outside it: another script, version, argument or package, another computer, outside the schedule, after expiry, a run while the previous one is still open, or more than ${esc(d.maxRunsPerOccurrence)} plan(s) in one run.</li>
 <li>${t.kind === 'script' ? 'A script runs as SYSTEM and can change anything on the computer.' : 'Installing or removing software changes computers, and can break an application that depends on it.'} It does this every time the schedule opens, with nobody watching.</li>
@@ -334,7 +346,7 @@ ${row('Per run', `at most ${esc(d.maxRunsPerOccurrence)} plan(s) — ${d.maxRuns
 ${row('Proposed by', `${esc(d.createdBy.name)} <span class="mut">(cannot approve it${t.kind === 'script' ? ', nor can anyone who wrote the script' : ''})</span>`)}
 ${row('Reason', esc(d.reason))}
 ${d.supersedes ? row('Replaces', `<code>${esc(d.supersedes)}</code> <span class="mut">(a new revision is approved again; nothing is widened in place)</span>`) : ''}
-${row('Expires', `${fmt(d.expiresAt)} <span class="mut">(then approved again)</span>`)}
+${row('Expires', expiresRow(d, 'then approved again'))}
 ${row('Needs', '2 approvers, other than the person who proposed it, plus customer sign-off where this business requires it')}
 ${row('Policy digest', `<code>${esc(v.digest)}</code>`)}
 ${row('Status', `<strong id="status">${esc(v.status.replace(/_/g, ' ').toLowerCase())}</strong>${v.revokedAt ? ` — revoked ${fmt(v.revokedAt)}: ${esc(v.revokeReason ?? '')}` : ''}`)}
@@ -371,7 +383,7 @@ function renderRestartWindowPage(v: AutomationView, nonce: string, next: string)
 <style nonce="${nonce}">${STYLE}</style></head><body>
 <p class="mut">Rem0te approval — this page is served by the approval signer, not the portal.</p>
 <h1>Restart window: ${esc(d.name)}</h1>
-<p>Approve this once, and the approval signer signs a restart plan for each computer below by itself, inside the window below, until it expires or is revoked. It does not ask you again for each restart.</p>
+<p>Approve this once, and the approval signer signs a restart plan for each computer below by itself, inside the window below, until it is revoked${beforeExpiry(d) ? ' or expires' : ''}. It does not ask you again for each restart.</p>
 <div class="warn"><strong>Before you approve</strong><ul>
 <li>Computers restart with nobody watching. Each one shows a fixed warning and restarts ${esc(RESTART_WINDOW_DELAY_MINUTES)} minutes later, closing programs still open without saving. ${esc(SIGNED_IN_USER_NOTE)}</li>
 <li>${t.rule === 'if_required' ? 'Only a computer Windows says needs a restart is planned, and the computer checks again itself when the plan arrives: if no restart is pending it does nothing.' : '<strong>Every computer restarts once in each window, whether or not Windows asks for it</strong> (a maintenance restart).'}</li>
@@ -388,7 +400,7 @@ ${row('Tries', `at most ${esc(d.maxRunsPerOccurrence)} restart plan(s) per compu
 ${row('Set by', `${esc(d.createdBy.name)} <span class="mut">(cannot approve it)</span>`)}
 ${row('Reason', esc(d.reason))}
 ${d.supersedes ? row('Replaces', `<code>${esc(d.supersedes)}</code> <span class="mut">(a change is approved again; nothing is widened in place)</span>`) : ''}
-${row('Expires', `${fmt(d.expiresAt)} <span class="mut">(then approved again: the portal offers Renew)</span>`)}
+${row('Expires', expiresRow(d, 'then approved again: the portal offers Renew'))}
 ${row('Needs', '2 approvers, other than the person who set it, plus customer sign-off where this business requires it')}
 ${row('Policy digest', `<code>${esc(v.digest)}</code>`)}
 ${row('Status', `<strong id="status">${esc(v.status.replace(/_/g, ' ').toLowerCase())}</strong>${v.revokedAt ? ` — revoked ${fmt(v.revokedAt)}: ${esc(v.revokeReason ?? '')}` : ''}`)}

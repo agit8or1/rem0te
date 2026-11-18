@@ -115,7 +115,7 @@ export const patchingApi = {
   createSeries: (body: PatchSeriesInput) => api.post('/patching/series', body),
   retireSeries: (id: string, reason: string) => api.post(`/patching/series/${id}/retire`, { reason }),
   // 0.53: a window's description and next openings, computed by the functions the approval signer runs.
-  windowPreview: (window: PolicyWindowInput, expiresInDays?: number) => api.post('/patching/window-preview', { window, ...(expiresInDays ? { expiresInDays } : {}) }),
+  windowPreview: (window: PolicyWindowInput) => api.post('/patching/window-preview', { window }),
 };
 
 export type PatchPolicySettingInput = { mode: 'inherit' } | { mode: 'exclude' } | { mode: 'policy'; seriesId: string };
@@ -124,7 +124,8 @@ export interface PatchSeriesInput {
   allow: { classifications: string[]; severities?: string[]; excludeKbs?: string[] };
   soakHours: number; failureThreshold: number;
   window: PolicyWindowInput;
-  reboot: 'never' | 'if_required_in_window'; expiresInDays: number; reason: string; canaryEndpointId?: string;
+  /** 0.63: no expiry: every revision stands until a newer one replaces it or the policy is retired. */
+  reboot: 'never' | 'if_required_in_window'; reason: string; canaryEndpointId?: string;
   /** 0.62: 'none' (all at once) or 'canary' (Test on one computer first). The API reads absent as canary. */
   staging?: PatchStaging;
 }
@@ -187,7 +188,8 @@ export interface PatchPolicyInput {
   allow: { classifications: string[]; severities?: string[]; excludeKbs?: string[] };
   soakHours: number; failureThreshold: number;
   window: PolicyWindowInput;
-  reboot: 'never' | 'if_required_in_window'; expiresInDays: number; reason: string;
+  /** 0.63: the console sends no expiry, so the policy never expires (the API still takes an optional expiresInDays). */
+  reboot: 'never' | 'if_required_in_window'; reason: string;
   /** 0.62: 'none' (all at once) or 'canary' (Test on one computer first). The API reads absent as canary. */
   staging?: PatchStaging;
 }
@@ -1188,13 +1190,13 @@ export interface AutomationCreateInput {
   businessId: string; name: string; reason: string;
   task: { kind: 'script'; scriptVersionId: string; parameters: Record<string, ScriptArgument>; timeoutMinutes: number } | { kind: 'software'; entryId: string; operation: 'install' | 'uninstall' };
   targets: { kind: 'computers'; endpointIds: string[] } | { kind: 'group'; groupId: string; maxTargets: number };
-  recurrence: AutomationRecurrenceInput; offline: AutomationOfflineInput; maxRunsPerOccurrence: number; expiresInDays: number; supersedes?: string;
+  recurrence: AutomationRecurrenceInput; offline: AutomationOfflineInput; maxRunsPerOccurrence: number; supersedes?: string;
 }
 export const automationApi = {
   list: (businessId?: string | null) => api.get('/automation/schedules', bq(businessId)),
   get: (id: string) => api.get(`/automation/schedules/${id}`),
   create: (body: AutomationCreateInput) => api.post('/automation/schedules', body),
-  preview: (body: { recurrence: AutomationRecurrenceInput; expiresInDays?: number }) => api.post('/automation/schedules/preview', body),
+  preview: (body: { recurrence: AutomationRecurrenceInput }) => api.post('/automation/schedules/preview', body),
   pause: (id: string, reason: string) => api.post(`/automation/schedules/${id}/pause`, { reason }),
   resume: (id: string) => api.post(`/automation/schedules/${id}/resume`),
   revoke: (id: string, reason: string) => api.post(`/automation/schedules/${id}/revoke`, { reason }),
@@ -1207,7 +1209,7 @@ export const automationApi = {
 // prompts and retries). "No automatic restarts" and removing a business's
 // window never do. A window is approved on the approval signer, never here.
 export type RestartWindowBody =
-  | { mode: 'window'; rule: 'if_required' | 'always'; window: PolicyWindowInput; ignoreRemoteSession?: true; priority?: number; expiresInDays?: number; reason?: string }
+  | { mode: 'window'; rule: 'if_required' | 'always'; window: PolicyWindowInput; ignoreRemoteSession?: true; priority?: number; reason?: string }
   | { mode: 'off'; priority?: number; reason?: string };
 export const restartWindowsApi = {
   business: (businessId: string) => api.get(`/restart-windows/businesses/${encodeURIComponent(businessId)}`),

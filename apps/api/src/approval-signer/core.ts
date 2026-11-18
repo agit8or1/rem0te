@@ -31,7 +31,7 @@ import {
   APPROVALS_REQUIRED, DIRECT, ENVELOPE_SCHEMA, PLAN_SIGNING_PREFIX, Plan, REBOOT_SCHEDULE, planDigest, validatePlanAction, type Envelope,
 } from '../actions/catalog';
 import {
-  POLICY_PROPOSAL_DAYS, PolicyDoc, RingEvidence as RingEvidenceSchema, evaluatePolicyPlan, occurrenceAt, policyDigest, policyQuorum, policySigningBytes, validatePolicyDoc,
+  POLICY_PROPOSAL_DAYS, PolicyDoc, RingEvidence as RingEvidenceSchema, expiryMsOf, evaluatePolicyPlan, occurrenceAt, policyDigest, policyQuorum, policySigningBytes, validatePolicyDoc,
   type LedgerEntry, type PolicyApproval, type PolicyComputer, type PolicyDecision, type PolicyPlanRequest, type PolicyStatus,
 } from '../actions/patch-policy';
 import { resultKeyFingerprint } from '../actions/device-result';
@@ -291,7 +291,8 @@ export const approvalsOf = (r: Pick<PolicyRecord, 'decisions'>): PolicyApproval[
 export function effectivePolicyStatus(r: PolicyRecord, now: Date): PolicyStatus {
   if (r.revokedAt) return 'REVOKED';
   if (r.status === 'REJECTED') return 'REJECTED';
-  if (now.getTime() >= Date.parse(r.doc.expiresAt)) return 'EXPIRED';
+  // 0.63: Infinity for a signed "never"; an unreadable expiry (null) is EXPIRED, never "never".
+  { const exp = expiryMsOf(r.doc); if (exp === null || now.getTime() >= exp) return 'EXPIRED'; }
   if (r.status === 'AWAITING_APPROVAL' && now.getTime() >= Date.parse(r.createdAt) + POLICY_PROPOSAL_DAYS * 86_400_000) return 'EXPIRED';
   return r.status;
 }
@@ -447,7 +448,8 @@ export const automationApprovalsOf = (r: Pick<AutomationRecord, 'decisions'>): A
 export function effectiveAutomationStatus(r: AutomationRecord, now: Date): AutomationStatus {
   if (r.revokedAt) return 'REVOKED';
   if (r.status === 'REJECTED') return 'REJECTED';
-  if (now.getTime() >= Date.parse(r.doc.expiresAt)) return 'EXPIRED';
+  // 0.63: Infinity for a signed "never"; an unreadable expiry (null) is EXPIRED, never "never".
+  { const exp = expiryMsOf(r.doc); if (exp === null || now.getTime() >= exp) return 'EXPIRED'; }
   if (r.status === 'AWAITING_APPROVAL' && now.getTime() >= Date.parse(r.createdAt) + AUTOMATION_PROPOSAL_DAYS * 86_400_000) return 'EXPIRED';
   return r.status;
 }

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { canonicalJson } from '../integration/crypto';
 import { APPROVALS_REQUIRED, MAX_RING_TARGETS, MAX_WINDOW_HOURS, REBOOT_SCHEDULE, SoftwareDisplay, SoftwareParams, type Plan } from './catalog';
 import { SCRIPT_RUN_ACTION, ScriptBlock, ScriptRunParams, argumentsProblem, canonical, definitionSha256 } from './script-run';
-import { MAX_POLICY_DAYS, MAX_RESTART_PLAN_HOURS, POLICY_PROPOSAL_DAYS, POLICY_RESTART_DELAY_MINUTES, PolicyWindow, RESTART_RULES, describePolicyWindow, localTime, nextOccurrence, occurrenceAt, validTimezone, windowKind, zonedToUtc } from './patch-policy';
+import { EXPIRY_NEVER, MAX_POLICY_DAYS, MAX_RESTART_PLAN_HOURS, POLICY_PROPOSAL_DAYS, POLICY_RESTART_DELAY_MINUTES, PolicyWindow, RESTART_RULES, describePolicyWindow, expiryMsOf, expiryProblem, expiryUntil, localTime, nextOccurrence, occurrenceAt, validTimezone, windowKind, zonedToUtc } from './patch-policy';
 
 /**
  * Automation policies (0.58): a library script or a catalog software package,
@@ -30,7 +30,10 @@ import { MAX_POLICY_DAYS, MAX_RESTART_PLAN_HOURS, POLICY_PROPOSAL_DAYS, POLICY_R
  *   offline     what happens to a computer that is not online when the
  *               occurrence opens, carried into each plan as its signed
  *               notAfter;
- *   limits      plans per occurrence, and an expiry at most 90 days out.
+ *   limits      plans per occurrence, and (before 0.63, or when one is
+ *               asked for through the API) an expiry at most 90 days out;
+ *               from 0.63 a document may carry a signed `expiry: "never"`
+ *               instead and stands until it is revoked or paused.
  *
  * 0.60 adds a third task, `restart` (the simple restart window): a
  * windows.reboot.schedule@1 of one computer at a time, inside a daily,
@@ -318,17 +321,20 @@ export function offlineInWords(o: AutomationOffline): string {
 /**
  * The latest notAfter a plan starting at `notBefore` in occurrence `occ` may
  * carry under this document. The portal uses exactly this; the signer refuses
- * anything later (offline_rule_mismatch). Never past expiry, never longer than
+ * anything later (offline_rule_mismatch). Never past expiry (if it has one), never longer than
  * any plan's 24 hours. Null for an unknown offline rule (fail closed).
  */
-export function latestNotAfter(doc: Pick<AutomationDoc, 'offline' | 'expiresAt'>, occ: Occ, notBefore: Date): Date | null {
+export function latestNotAfter(doc: Pick<AutomationDoc, 'offline' | 'expiresAt' | 'expiry'>, occ: Occ, notBefore: Date): Date | null {
   const o = doc.offline as { mode?: unknown; hours?: unknown };
   let end: number;
   if (o.mode === 'run_when_online') end = occ.end.getTime();
   else if (o.mode === 'skip_if_offline') end = Math.min(occ.end.getTime(), notBefore.getTime() + SKIP_GRACE_MINUTES * 60_000);
   else if (o.mode === 'expire_after' && Number.isInteger(o.hours) && (o.hours as number) >= 1 && (o.hours as number) <= MAX_EXPIRE_HOURS) end = occ.start.getTime() + (o.hours as number) * 3_600_000;
   else return null;
-  return new Date(Math.min(end, notBefore.getTime() + MAX_WINDOW_HOURS * 3_600_000, Date.parse(doc.expiresAt)));
+  // 0.63: Infinity for a signed "never"; an unreadable expiry signs nothing.
+  const exp = expiryMsOf(doc);
+  if (exp === null) return null;
+  return new Date(Math.min(end, notBefore.getTime() + MAX_WINDOW_HOURS * 3_600_000, exp));
 }
 
 // ── The document ────────────────────────────────────────────────────────────
@@ -348,7 +354,10 @@ export const AutomationDoc = z.object({
   /** A revision names the policy it replaces. Widening is always a new document, approved again; never an edit. */
   supersedes: Hex32.optional(),
   createdAt: Iso,
-  expiresAt: Iso,
+  /** When the policy stops. Present in every document before 0.63, which keep their bytes and expiry. Absent exactly when `expiry` is "never". */
+  expiresAt: Iso.optional(),
+  /** 0.63: "never" — stands until revoked or paused. The same field and rules as a patch policy's (`expiryMsOf`). */
+  expiry: z.literal(EXPIRY_NEVER).optional(),
   createdBy: z.object({ userId: Id, name: z.string().max(120) }).strict(),
   reason: z.string().min(3).max(500),
 }).strict();
@@ -370,13 +379,13 @@ const bad = (reason: string, message: string): Problem => ({ ok: false, reason, 
 
 /** Rules a schema cannot say. Checked by the portal before it proposes, and by the signer before it admits. */
 export function validateAutomationDoc(doc: AutomationDoc, now: Date): Problem {
-  const exp = Date.parse(doc.expiresAt), created = Date.parse(doc.createdAt);
-  if (!(exp > now.getTime())) return bad('policy_expired', 'The expiry is in the past.');
-  const most = MAX_AUTOMATION_DAYS * 86_400_000 + CLOCK_SKEW_MS;
-  if (exp - now.getTime() > most || exp - created > most) return bad('expiry_too_far', `An automation policy expires at most ${MAX_AUTOMATION_DAYS} days after it is proposed; then it is approved again.`);
+  // 0.63: an expiry date (0.58's rules), or a signed "never"; anything else is refused.
+  const ex = expiryProblem(doc, now, MAX_AUTOMATION_DAYS, 'automation policy');
+  if (ex) return bad(ex.reason, ex.message);
+  const until = expiryUntil(doc), created = Date.parse(doc.createdAt);
   if (created > now.getTime() + CLOCK_SKEW_MS) return bad('bad_created', 'The policy is dated in the future.');
   if (!recurrenceKind(doc.recurrence)) return bad('schedule_unknown', 'The schedule is not one this version knows.');
-  if (!automationNextOccurrence(now, doc.recurrence, new Date(exp))) return bad('never_runs', 'The schedule never opens before the policy expires.');
+  if (!automationNextOccurrence(now, doc.recurrence, until)) return bad('never_runs', 'The schedule never opens before the policy expires.');
   const o = doc.offline as { mode?: unknown };
   if (!(OFFLINE_MODES as readonly unknown[]).includes(o.mode)) return bad('offline_rule_unknown', 'The offline rule is not one this version knows.');
   const t = doc.task;
@@ -401,7 +410,7 @@ export function validateAutomationDoc(doc: AutomationDoc, now: Date): Problem {
   if (doc.targets.kind === 'group') return bad('restart_target_kind', 'A restart window names computers, a business, or every member of a group (group_members).');
   if (recurrenceKind(doc.recurrence) === 'hourly') return bad('restart_schedule_kind', 'A restart window is daily, weekly or monthly, never hourly.');
   if (doc.offline.mode !== 'run_when_online') return bad('restart_offline_rule', 'A restart window\'s plans are bounded by the window and the warning; its offline rule is run_when_online.');
-  const first = automationNextOccurrence(now, doc.recurrence, new Date(exp));
+  const first = automationNextOccurrence(now, doc.recurrence, until);
   if (first && first.end.getTime() - first.start.getTime() < MIN_RESTART_WINDOW_MINUTES * 60_000) {
     return bad('restart_window_too_short', `A restart window is at least ${MIN_RESTART_WINDOW_MINUTES} minutes long: the computer picks the plan up and then warns for ${RESTART_WINDOW_DELAY_MINUTES} minutes, and the restart must fall inside the window.`);
   }
@@ -459,12 +468,15 @@ export function evaluateAutomationPlan(s: AutomationState, r: AutomationPlanRequ
   // The policy itself.
   if (s.revokedAt || s.status === 'REVOKED') return no('policy_revoked', 'This automation policy was revoked; nothing more is signed under it.');
   if (automationDigest(doc) !== s.digest || r.policyDigest !== s.digest) return no('policy_digest_mismatch', 'The policy digest does not match the approved policy.');
-  if (now.getTime() >= Date.parse(doc.expiresAt)) return no('policy_expired', 'This automation policy has expired. Approve a new one.');
+  // 0.63: a signed "never" never expires; neither, both or anything else is refused, never read as "never".
+  const exp = expiryMsOf(doc);
+  if (exp === null) return no('expiry_unknown', 'The policy\'s expiry is not one this signer knows; nothing is signed under it.');
+  if (now.getTime() >= exp) return no('policy_expired', 'This automation policy has expired. Approve a new one.');
   if (s.status !== 'ACTIVE') return no('policy_not_active', `This automation policy is ${s.status.toLowerCase().replace(/_/g, ' ')}.`);
   if (!s.signatureValid) return no('policy_signature_invalid', 'The stored policy does not verify against this signer\'s key.');
   if (!automationQuorum(doc, s.approvals, false, opts.direct === true)) return no('policy_not_approved', 'This policy does not carry two approvals from people other than its author (a policy activated in direct mode stops counting when the business leaves direct mode).');
   if (!automationQuorum(doc, s.approvals, opts.customerSignoff, opts.direct === true)) return no('policy_mismatch', 'This business now requires customer sign-off, which this policy was not approved with. Approve a new policy.');
-  if (Date.parse(p.window.notAfter) > Date.parse(doc.expiresAt)) return no('policy_expired', 'The plan would run past the policy\'s expiry.');
+  if (Date.parse(p.window.notAfter) > exp) return no('policy_expired', 'The plan would run past the policy\'s expiry.');
   // 0.60: a restart window is decided by its own rules, after the same standing checks.
   if (doc.task.kind === 'restart') return evaluateAutomationRestart(s, r, now);
 

@@ -22,7 +22,7 @@ import {
   taskAction, taskInWords, targetsInWords, validateAutomationDoc, type AutomationTask, type RestartTask,
 } from '../actions/automation-policy';
 import { REBOOT_SCHEDULE } from '../actions/catalog';
-import type { PolicyWindow } from '../actions/patch-policy';
+import { EXPIRY_NEVER, expiryMsOf, type PolicyWindow } from '../actions/patch-policy';
 
 /**
  * Automation schedules (0.58, docs/automation.md).
@@ -66,7 +66,12 @@ export const CreateAutomationDto = z.object({
   recurrence: AutomationRecurrence,
   offline: AutomationOffline,
   maxRunsPerOccurrence: z.number().int().min(1).max(MAX_RUNS_PER_OCCURRENCE).default(1),
-  expiresInDays: z.number().int().min(1).max(MAX_AUTOMATION_DAYS).default(30),
+  /**
+   * 0.63, the owner's request ("Policies shouldnt expire"): absent (what the
+   * console sends) signs `expiry: "never"`; the schedule stands until it is
+   * revoked or paused. An API caller may still ask for 1 to 90 days.
+   */
+  expiresInDays: z.number().int().min(1).max(MAX_AUTOMATION_DAYS).optional(),
   reason: z.string().trim().min(3).max(500),
   /** A revision: the policy this one replaces once it is ACTIVE. Widening is always a revision, approved again. */
   supersedes: z.string().regex(PolicyIdRe).optional(),
@@ -158,7 +163,8 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     if (!['AWAITING_APPROVAL', 'ACTIVE'].includes(r.status)) return r;
     const s = await this.signer.automationStatus(r.id).catch(() => null);
     if (!s || s.status !== 200) {
-      if (r.expiresAt <= now) return this.setStatus(r, 'EXPIRED', { reason: 'expired' });
+      // 0.63: null is a signed "never".
+      if (r.expiresAt && r.expiresAt <= now) return this.setStatus(r, 'EXPIRED', { reason: 'expired' });
       return r;
     }
     if (s.body.digest !== r.digest) {
@@ -229,7 +235,8 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     // 0.60: a restart window is proposed one computer at a time by RestartWindowsService, never here.
     if (doc.task.kind === 'restart' || doc.targets.kind === 'business' || doc.targets.kind === 'group_members') return;
     const occ = automationOccurrenceAt(now, doc.recurrence);
-    if (!occ || now >= new Date(doc.expiresAt)) return;
+    // 0.63: Infinity for a signed "never"; an unreadable expiry (null) proposes nothing.
+    if (!occ || now.getTime() >= (expiryMsOf(doc) ?? 0)) return;
     const key = occ.start.toISOString();
     const notAfter = latestNotAfter(doc, occ, now);
     if (!notAfter || notAfter.getTime() - now.getTime() < MIN_LEFT_MS) return;
@@ -380,8 +387,9 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     const caps = configured ? await this.signer.capabilities().catch(() => null) : null;
     const supports = caps?.status === 200 && (caps.body as { automations?: number }).automations === 1;
     const restarts = caps?.status === 200 && (caps.body as { restartWindows?: number }).restartWindows === 1;
+    const never = caps?.status === 200 && (caps.body as { neverExpires?: number }).neverExpires === 1;
     return {
-      signerConfigured: configured, signerSupportsAutomation: supports, signerSupportsRestartWindows: restarts,
+      signerConfigured: configured, signerSupportsAutomation: supports, signerSupportsRestartWindows: restarts, signerSupportsNeverExpiry: never,
       sweep: { enabled: AutomationService.sweepEnabled(), everySeconds: AutomationService.sweepSeconds() },
       why: !configured ? 'Automation schedules need the approval signer (APPROVAL_SIGNER_INTERNAL_URL).' : !supports ? 'The approval signer answering is older than 0.58 and does not support automation policies. Install the 0.58 signer.' : null,
     };
@@ -471,7 +479,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
    */
   async createRestart(actor: ActorContext, input: {
     businessId: string; name: string; task: RestartTask; targets: AutomationDoc['targets']; recurrence: PolicyWindow;
-    maxRunsPerOccurrence: number; expiresInDays: number; reason: string; supersedes?: string | null;
+    maxRunsPerOccurrence: number; expiresInDays?: number; reason: string; supersedes?: string | null;
   }, freshMethod: string | null, now = new Date()): Promise<AutomationPolicy> {
     const ready = await this.readiness();
     if (!ready.signerConfigured) throw new ServiceUnavailableException({ code: 'APPROVAL_SIGNER_NOT_CONFIGURED', message: 'Restart windows need the approval signer (APPROVAL_SIGNER_INTERNAL_URL): every restart is a signed plan.' });
@@ -498,17 +506,20 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
   /** The document, its checks, the signer, and the one row: shared by create() and createRestart(). */
   private async submit(actor: ActorContext, dto: {
     businessId: string; businessName: string; tenantId: string | null; name: string; recurrence: AutomationDoc['recurrence']; offline: AutomationDoc['offline'];
-    maxRunsPerOccurrence: number; expiresInDays: number; reason: string;
+    maxRunsPerOccurrence: number; expiresInDays?: number; reason: string;
   }, task: AutomationDoc['task'], targets: AutomationDoc['targets'], supersedes: AutomationPolicy | null, now: Date): Promise<AutomationPolicy> {
     const biz = { name: dto.businessName, tenantId: dto.tenantId };
     const action = this.actionOf(task);
     const user = await this.prisma.user.findUnique({ where: { id: actor.userId }, select: { firstName: true, lastName: true, email: true } });
-    const expiresAt = new Date(now.getTime() + dto.expiresInDays * 86_400_000);
+    // 0.63: a signed "never" unless an API caller asked for an expiry. An older signer's strict schema refuses it; say why first.
+    const never = dto.expiresInDays === undefined;
+    if (never && !(await this.readiness()).signerSupportsNeverExpiry) throw new ConflictException({ code: 'SIGNER_TOO_OLD', message: 'The approval signer cannot sign a schedule that never expires. Install the 0.63 approval signer.' });
+    const expiresAt = never ? null : new Date(now.getTime() + dto.expiresInDays! * 86_400_000);
     const doc: AutomationDoc = {
       schema: AUTOMATION_SCHEMA, policyId: randomBytes(16).toString('hex'), name: dto.name, businessId: dto.businessId, businessName: biz.name.slice(0, 120),
       task, targets, recurrence: dto.recurrence, offline: dto.offline, maxRunsPerOccurrence: dto.maxRunsPerOccurrence,
       ...(supersedes ? { supersedes: supersedes.id } : {}),
-      createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
+      createdAt: now.toISOString(), ...(expiresAt ? { expiresAt: expiresAt.toISOString() } : { expiry: EXPIRY_NEVER }),
       createdBy: { userId: actor.userId, name: ([user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.email || actor.userId).slice(0, 120) },
       reason: dto.reason,
     };
@@ -539,7 +550,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         targets: targets.kind === 'computers' ? { kind: 'computers', endpointIds: targets.computers.map((c) => c.endpointId) }
           : targets.kind === 'group' ? { kind: 'group', groupId: targets.groupId, maxTargets: targets.maxTargets }
             : targets.kind === 'group_members' ? { kind: 'group_members', groupId: targets.groupId } : { kind: targets.kind },
-        recurrence: dto.recurrence, offline: dto.offline, maxRunsPerOccurrence: dto.maxRunsPerOccurrence, expiresAt: doc.expiresAt, supersedes: supersedes?.id ?? null, reason: dto.reason,
+        recurrence: dto.recurrence, offline: dto.offline, maxRunsPerOccurrence: dto.maxRunsPerOccurrence, expiresAt: doc.expiresAt ?? null, expiry: doc.expiry ?? null, supersedes: supersedes?.id ?? null, reason: dto.reason,
       },
     });
     if (activeNow && row.supersedesId) await this.supersede(row, now);
@@ -592,7 +603,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         id: r.id, name: r.name, businessId: r.customerId, businessName: doc.businessName, status: r.status, paused: !!r.pausedAt, taskKind: r.taskKind, task: taskInWords(doc.task),
         targets: doc.targets.kind === 'computers' ? `${doc.targets.computers.length} computer(s)` : targetsInWords(doc.targets, doc.businessName),
         schedule: recurrenceInWords(doc.recurrence), offline: offlineInWords(doc.offline),
-        nextRun: r.status === 'ACTIVE' && !r.pausedAt ? automationNextOccurrence(now, doc.recurrence, r.expiresAt) : null,
+        nextRun: r.status === 'ACTIVE' && !r.pausedAt ? automationNextOccurrence(now, doc.recurrence, r.expiresAt ?? undefined) : null,
         lastRun: counts.lastRun, succeeded: counts.succeeded, failed: counts.failed,
         expiresAt: r.expiresAt, createdAt: r.createdAt, supersedesId: r.supersedesId, supersededAt: r.supersededAt, lastProposal: r.lastProposal,
       });
@@ -647,8 +658,8 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       supersededBy: (await this.prisma.automationPolicy.findFirst({ where: { supersedesId: r.id }, select: { id: true, name: true, status: true } })) ?? null,
       document: doc, task: taskInWords(doc.task), schedule: recurrenceInWords(doc.recurrence), offline: offlineInWords(doc.offline),
       currentRun: live ? automationOccurrenceAt(now, doc.recurrence) : null,
-      nextRun: live ? automationNextOccurrence(now, doc.recurrence, r.expiresAt) : null,
-      upcoming: live ? automationNextOccurrences(now, doc.recurrence, 5, r.expiresAt) : [],
+      nextRun: live ? automationNextOccurrence(now, doc.recurrence, r.expiresAt ?? undefined) : null,
+      upcoming: live ? automationNextOccurrences(now, doc.recurrence, 5, r.expiresAt ?? undefined) : [],
       lastRun: counts.lastRun, succeeded: counts.succeeded, failed: counts.failed,
       occurrences, lastProposal: r.lastProposal,
       signer: signer?.status === 200 ? { reachable: true, status: signer.body.status ?? null, signedPlans: signer.body.signedPlans ?? 0, refusals: signer.body.refusals ?? [] } : { reachable: false, status: null, signedPlans: null, refusals: [] },

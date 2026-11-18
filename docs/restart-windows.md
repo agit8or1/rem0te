@@ -47,8 +47,11 @@ restart window; the card says so.
 | Time zone | One IANA zone. The editor offers the business's site time zones first |
 | RustDesk exception | *Restart even if a technician is connected through RustDesk (their session is dropped)*. **Never ticked by default** |
 
-A window lasts up to 90 days, like every approved policy. The card says when it expires and warns two weeks
-before; **Change → Save** sets it again (which is approved again).
+From 0.63 a window **does not expire**: it stands until it is changed, removed, paused or revoked. Its signed
+document carries `expiry: "never"` instead of a date, and the approval page says *Expires: Never*. A window set before
+0.63 keeps the expiry it was approved with (at most 90 days) and stops then; the card says so, and **Change → Save**
+sets it again without one (which is approved again). See
+[Staged patching → Policies that never expire](staged-patching.md#policies-that-never-expire-063).
 
 ## How a restart happens
 

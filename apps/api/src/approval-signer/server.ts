@@ -225,7 +225,7 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       store.savePatchPolicy(cur);
       // v0.34: approving the policy is what makes its result keys trusted; pin them.
       if (status === 'ACTIVE') for (const p of newPins(cur, pins, now())) store.pinDeviceKey(p);
-      if (status === 'ACTIVE') console.log(`[approval-signer] policy ${cur.policyId} approved; plans inside it are now signed without further approval until ${cur.doc.expiresAt}`);
+      if (status === 'ACTIVE') console.log(`[approval-signer] policy ${cur.policyId} approved; plans inside it are now signed without further approval until ${cur.doc.expiresAt ?? 'it is revoked (it never expires)'}`);
       return { cur, member };
     });
     return send(res, 200, { ...policyView(out.cur, now()), you: { name: out.member.name, credential: credentialSha256(out.member).slice(0, 16), roles: policyRolesFor(out.member, out.cur.doc) } });
@@ -356,7 +356,7 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
       const status = recordAutomationDecision(cur, member, c.role as Role, c.decision, now(), policyFor(store.policy(), cur.doc.businessId).customerSignoff);
       if (status === 'ACTIVE') signAutomation(cur, k, now());
       store.saveAutomation(cur);
-      if (status === 'ACTIVE') console.log(`[approval-signer] automation policy ${cur.policyId} approved; its occurrences are now signed without further approval until ${cur.doc.expiresAt}`);
+      if (status === 'ACTIVE') console.log(`[approval-signer] automation policy ${cur.policyId} approved; its occurrences are now signed without further approval until ${cur.doc.expiresAt ?? 'it is revoked (it never expires)'}`);
       return { cur, member };
     });
     return send(res, 200, { ...automationView(out.cur, now()), you: { name: out.member.name, credential: credentialSha256(out.member).slice(0, 16), roles: automationRolesFor(out.member, out.cur.doc) } });
@@ -567,7 +567,7 @@ export function startSigner(cfg: SignerConfig): { internal: Server; pub: Server;
         const people = new Set(store.roster().members.filter((x) => !x.disabled && x.approve.length).map((x) => x.userId));
         const pol = store.policy();
         const directBusinesses = Object.keys(pol.businesses).filter((b) => policyFor(pol, b).approval === 'direct').length;
-        return send(res, 200, { patchPolicies: 1, patchStaging: 1, scripts: 1, revocations: 1, direct: 1, automations: 1, restartWindows: 1, kid: k.kid, roster: { approvers: people.size }, approval: { default: policyFor({ default: pol.default, businesses: {} }, '-').approval, directBusinesses } });
+        return send(res, 200, { patchPolicies: 1, patchStaging: 1, scripts: 1, revocations: 1, direct: 1, automations: 1, restartWindows: 1, neverExpires: 1, kid: k.kid, roster: { approvers: people.size }, approval: { default: policyFor({ default: pol.default, businesses: {} }, '-').approval, directBusinesses } });
       }
       const pol = policyRoute(url.pathname);
       if (pol) return await internalPolicy(req, res, pol);
