@@ -355,6 +355,10 @@ installing from that page do:
   The agent verifies the installer, RustDesk and the tray against signed metadata and claims the computer with the
   token. The script never calls `exit`, so the window stays open with its output.
 - **The download link** (`windows.exe?token=…`), which has served the signed agent binary itself since 0.24.
+- **The .msi** (`windows.msi[?token=…]`, 0.65), which carries the published `windows/rem0te-agent.exe` unchanged in
+  its Binary table and runs `rem0te-agent.exe install --token [TOKEN] --portal <portal>` as SYSTEM on a first install.
+  It exists only with a signed agent (`503 MSI_NEEDS_SIGNED_AGENT` otherwise) and has never been run on real Windows;
+  see [deployment.md](deployment.md#windows-installer-package-msi-065).
 
 Without a token the route is unchanged, because an existing standard agent's reinstall carries none. Moving those
 computers is the migration's job, canary first. An unknown, expired or claimed token gets the standard installer

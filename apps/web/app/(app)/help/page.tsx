@@ -164,7 +164,11 @@ const SECTIONS: Section[] = [
             administrator prompt), with the same link to copy and send; on Linux and macOS the install script as a file,
             run with <code>sudo bash</code>. <strong className="text-foreground">Command</strong>: the one-line command to
             paste. Either way it works once, expires in 24 hours, and is shown only once; downloading does not use it up.
-            There is no .msi or .pkg: for Group Policy or Intune, use a deployment key (below).
+            On Windows there is also <strong className="text-foreground">Download .msi</strong>, a Windows Installer
+            package with the token in it, and the silent line <code>msiexec /i rem0te.msi TOKEN=… /qn</code> to copy. It
+            installs the same signed agent as SYSTEM, needs this server to publish the signed agent, and uninstalling it
+            leaves the agent in place. It has never been run on real Windows. There is no .pkg. For Group Policy or
+            Intune, use a deployment key (below) as the TOKEN.
           </li>
           <li>Keep the page open. It checks every few seconds and says the device enrolled only when it has.</li>
           <li>It then shows the first health the server has received: online, the agent and its version, and whether the first inventory has arrived. Anything not yet received says so.</li>
@@ -180,7 +184,8 @@ const SECTIONS: Section[] = [
           <Link href="/admin/deploy" className="underline text-foreground">Devices → Deploy agents</Link>{' '}
           makes a deployment key: one key for many computers, for a business, with a use limit and an expiry of at
           most 90 days, shown once. The page gives ready-to-paste instructions for Group Policy, Intune, an existing
-          RMM, Linux and macOS, with the key filled in by your browser. By default each computer then waits under{' '}
+          RMM, the Windows Installer package (.msi, with the key as TOKEN), Linux and macOS, with the key filled in by
+          your browser. By default each computer then waits under{' '}
           <Link href="/admin/unassigned" className="underline text-foreground">Devices → Unassigned</Link>, where you
           can inspect it and assign it (one or many) to a business, site and groups. Until it is assigned, nobody in a
           business can see it and nothing can connect to it or act on it. Assignment rules (deployment key, domain,

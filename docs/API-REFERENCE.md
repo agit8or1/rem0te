@@ -3,7 +3,7 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **592** of them across
+integration, under `/api/integration/v1`). There are **593** of them across
 **89** controllers.
 
 For request and response shapes, worked examples and error codes, see
@@ -666,6 +666,7 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/public/install/rem0te-tray.exe` | public | — |
 | `GET` | `/api/v1/public/install/win/:token` | public | — |
 | `GET` | `/api/v1/public/install/windows-params.json` | public | — |
+| `GET` | `/api/v1/public/install/windows.msi` | public, throttled | — |
 | `GET` | `/api/v1/public/rustdesk-config` | public | — |
 
 ## Public API (API-key authenticated)

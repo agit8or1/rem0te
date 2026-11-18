@@ -2495,7 +2495,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /!\/\^\[0-9a-f\]\{64\}\$\/\.test\(agentSha256\)/.test(sis) && /!\/\^\[A-Fa-f0-9\]\{16,128\}\$\/\.test\(claimToken\)/.test(sis) && /!validPortalHost\(portalHost\)/.test(sis)
       && sis.indexOf('Get-FileHash') < sis.indexOf('& $e install') && /Remove-Item -LiteralPath \$e -Force/.test(sis) && !/^\s*exit\b/m.test(sis.slice(sis.indexOf('return `')))
       && /if \(validatedToken && !jobNonce\) \{\s*const agentT = this\.updateTrust\.agentTarget\(\);/.test(pubc)
-      && /if \(tokenRecord && !tokenRecord\.claimedAt && tokenRecord\.expiresAt >= new Date\(\)\) \{\s*validatedToken = enrollToken;/.test(pubc)
+      // 0.65: the lookup moved into usableToken, shared with windows.msi.
+      && /if \(tokenRecord\) return !tokenRecord\.claimedAt && tokenRecord\.expiresAt >= new Date\(\);/.test(pubc)
+      && /const validatedToken = enrollToken && \(await this\.usableToken\(enrollToken\)\) \? enrollToken : undefined;/.test(pubc)
       && /res\.send\(buildSignedInstallScript\(portalHost, agentT\.sha256, validatedToken\)\)/.test(pubc),
     'buildSignedInstallScript validates host, digest and token, hashes before install, never exits; served only when the token is validated (unclaimed, unexpired) and not for a rollout nonce');
   const sfn = msvc.slice(msvc.indexOf('async scriptForNonce('));
@@ -6032,6 +6034,83 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && read('apps/api/scripts/unit-approval-signer.mjs').includes('capabilities say the signer signs policies that never expire')
       && ['unit-patch-policy', 'unit-automation-schedule', 'unit-patch-assignment', 'unit-approval-signer', 'unit-restart-window-settings'].every((u) => read('.github/workflows/ci.yml').includes(`${u}.mjs`)),
     'unit-patch-policy, unit-automation-schedule, unit-patch-assignment, unit-approval-signer in CI');
+}
+
+// ── §77 (0.65): the Windows Installer package — a spawn on a public route ───
+//     GET /public/install/windows.msi builds an .msi per request with wixl and
+//     msibuild (apps/api/src/public/windows-msi.ts). It is public, so:
+//       - two fixed absolute binaries, one execFile site, an argument array,
+//         shell: false, a time limit, an output cap and a minimal environment;
+//         the runner is called only with those two constants;
+//       - the token is checked against the installers' hex charset first —
+//         in the route before any lookup, and again as the first check of the
+//         builder and in the query that stamps it — and nothing refused spawns;
+//       - every build is in its own mkdtemp directory (0700), removed in a
+//         finally; there is no cache and no other file written; the builder's
+//         error (whose command line may hold the token) is replaced, and
+//         nothing in the module or the route logs;
+//       - the route reads the token and never consumes it (no write), and
+//         packages only the signed agent target;
+//       - the package runs the agent's own `install --token … --portal …`,
+//         deferred as SYSTEM, on first install only, with TOKEN hidden;
+//       - CI installs msitools and runs the unit suite, which fails (not
+//         skips) under CI when wixl is missing.
+{
+  console.log('\n§77 the Windows Installer package');
+  const msi = read('apps/api/src/public/windows-msi.ts');
+  const pc = read('apps/api/src/public/public.controller.ts');
+  const goMain = read('tools/windows-installer/main.go');
+  const goAgent = read('tools/windows-installer/internal/agent/agent.go');
+  const ci = read('.github/workflows/ci.yml');
+  const unit = read('apps/api/scripts/unit-windows-msi.mjs');
+  check('msi: two fixed absolute binaries, one execFile with an argument array, no shell, bounded time and output, a minimal environment',
+    /export const WIXL_BIN = '\/usr\/bin\/wixl';/.test(msi) && /export const MSIBUILD_BIN = '\/usr\/bin\/msibuild';/.test(msi)
+      && (msi.match(/\bexecFile\(/g) ?? []).length === 1 && /execFile\(bin, args, \{\s*cwd, shell: false, windowsHide: true, timeout: MSI_BUILD_TIMEOUT_MS, killSignal: 'SIGKILL', maxBuffer: 64 \* 1024,\s*env: \{ PATH: '\/usr\/bin:\/bin', LANG: 'C\.UTF-8', HOME: cwd, TMPDIR: cwd \},/.test(msi)
+      && !/\b(spawn|spawnSync|execSync|execFileSync|exec)\(/.test(msi.replace(/\bexecFile\(/g, ''))
+      && /export type MsiRunner = \(bin: typeof WIXL_BIN \| typeof MSIBUILD_BIN, args: string\[\], cwd: string\) => Promise<void>;/.test(msi)
+      && (msi.match(/await run\(/g) ?? []).length === 2 && /await run\(WIXL_BIN, \[/.test(msi) && /await run\(MSIBUILD_BIN, args, dir\);/.test(msi),
+    'windows-msi.ts runFixed / buildWindowsMsi');
+  const build = msi.slice(msi.indexOf('export async function buildWindowsMsi('));
+  const checkFn = msi.slice(msi.indexOf('export function checkMsiInput('), msi.indexOf('export function msiQueries('));
+  const queries = msi.slice(msi.indexOf('export function msiQueries('), msi.indexOf('let building = 0;'));
+  check('msi: the token is checked first, with the installers\' charset, and again where it is stamped; refusals spawn nothing',
+    /export const MSI_TOKEN_RE = \/\^\[A-Fa-f0-9\]\{16,128\}\$\/;/.test(msi) && goAgent.includes('tokenRE   = regexp.MustCompile(`^[A-Fa-f0-9]{16,128}$`)')
+      && /^\{\s*const \{ version \} = checkMsiInput\(input\);\s*const queries = msiQueries\(input\.token\);/.test(build.slice(build.indexOf('): Promise<Buffer> ') + 19))
+      && checkFn.indexOf('MSI_TOKEN_RE.test(input.token)') > 0 && checkFn.indexOf('MSI_TOKEN_RE.test(input.token)') < checkFn.indexOf('validPortalHost(')
+      && /if \(!MSI_TOKEN_RE\.test\(token\)\) throw new MsiError\('MSI_TOKEN_INVALID'/.test(queries)
+      && build.indexOf('checkMsiInput(input)') < build.indexOf('msiToolsAvailable(') && build.indexOf('msiToolsAvailable(') < build.indexOf('await run('),
+    'checkMsiInput, msiQueries, then the tools, then the spawn');
+  check('msi: a private temporary directory per build, removed in a finally; no cache; the builder\'s error replaced; nothing logs',
+    /dir = await fs\.promises\.mkdtemp\(path\.join\(os\.tmpdir\(\), 'rem0te-msi-'\)\);\s*await fs\.promises\.chmod\(dir, 0o700\);/.test(build)
+      && /\} finally \{\s*building--;\s*if \(dir\) await fs\.promises\.rm\(dir, \{ recursive: true, force: true \}\)/.test(build)
+      && (msi.match(/writeFile\(/g) ?? []).length === 1 && /await fs\.promises\.writeFile\(wxs, MSI_WXS, \{ mode: 0o600 \}\);/.test(msi)
+      && !/new Map|cache/i.test(msi.replace(/There is no cache/g, '').replace(/no cache/g, ''))
+      && /\(err\) => \(err \? reject\(new Error\('builder exited unsuccessfully'\)\) : resolve\(\)\)/.test(msi)
+      && /\} catch \{\s*throw new MsiError\('MSI_BUILD_FAILED', 'The \.msi could not be built\.'\);\s*\}/.test(build)
+      && !/console\.|Logger|\.log\(|\.warn\(|\.error\(/.test(msi),
+    'windows-msi.ts buildWindowsMsi');
+  const route = pc.slice(pc.indexOf("@Get('install/windows.msi')"), pc.indexOf("@Get('install/:platform')"));
+  check('msi: the route comes before install/:platform, checks the token\'s charset before any lookup, reads it without consuming it, and packages only the signed agent',
+    route.length > 0 && /@Public\(\)\s*@RateLimit\(20\)/.test(route)
+      && route.indexOf('MSI_TOKEN_RE.test(token)') > 0 && route.indexOf('MSI_TOKEN_RE.test(token)') < route.indexOf('this.usableToken(token)')
+      && route.indexOf('this.usableToken(token)') < route.indexOf('this.updateTrust.agentTarget()') && route.indexOf('this.updateTrust.agentTarget()') < route.indexOf('buildWindowsMsi(')
+      && /buildWindowsMsi\(\{ agentPath: agentT\.path, portalHost, version: this\.agentVersion\(\), token \}\)/.test(route)
+      && !/\.(create|update|upsert|delete|deleteMany|updateMany)\(|logger|console\./.test(route)
+      && /res\.setHeader\('Content-Type', MSI_CONTENT_TYPE\);/.test(route) && /export const MSI_CONTENT_TYPE = 'application\/x-msi';/.test(msi)
+      && /res\.setHeader\('Cache-Control', 'no-store'\);/.test(route),
+    'public.controller.ts windowsMsi');
+  check('msi: the package runs the agent\'s own install, deferred as SYSTEM, on first install only, TOKEN hidden and secure, from a constant source',
+    /export const MSI_ACTION_TYPE = 3074;/.test(msi) && /export const MSI_ACTION_TARGET = 'install --token \[TOKEN\] --portal \[Rem0tePortal\]';/.test(msi)
+      && /export const MSI_ACTION_CONDITION = 'NOT Installed AND NOT REMOVE';/.test(msi)
+      && /<Property Id="MsiHiddenProperties" Value="TOKEN"\/>/.test(msi) && /export const MSI_SECURE_PROPERTIES = 'TOKEN;/.test(msi)
+      && (msi.slice(msi.indexOf('export const MSI_WXS'), msi.indexOf('export interface MsiInput')).match(/\$\{/g) ?? []).length === 1
+      && /Installed OR \(TOKEN AND NOT \(TOKEN &gt;&lt; " "\) AND NOT \(TOKEN &gt;&lt; Rem0teTab\) AND NOT \(TOKEN &gt;&lt; Rem0teQuote\)\)/.test(msi)
+      && /token := fs\.String\("token", "", "claim token \(install\)"\)/.test(goMain) && /portal := fs\.String\("portal", "", "portal host\[:port\]"\)/.test(goMain),
+    'MSI_ACTION_*, MSI_WXS; main.go subcommand flags');
+  check('msi: CI installs msitools and runs the unit suite, which fails under CI without wixl',
+    /sudo apt-get install -y wixl msitools/.test(ci) && /node apps\/api\/scripts\/unit-windows-msi\.mjs/.test(ci)
+      && unit.includes("process.env.CI === 'true' || process.env.REQUIRE_MSI_TOOLS === '1'") && /check\(false, 'msitools is installed/.test(unit),
+    'ci.yml; unit-windows-msi.mjs');
 }
 
 // ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──

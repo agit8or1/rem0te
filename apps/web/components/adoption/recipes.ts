@@ -7,7 +7,8 @@
  * Every recipe runs one of the existing installers with the key as its token:
  * the Windows script (which installs the signed agent when this server
  * publishes one), linux.sh or macos.sh. They are the Add device installers;
- * nothing is installer-specific to deployment keys.
+ * nothing is installer-specific to deployment keys. The .msi (0.65) runs the
+ * signed agent's own `install --token`, the same thing the .exe does.
  */
 export interface Recipe {
   id: string;
@@ -52,7 +53,18 @@ export function deploymentRecipes(origin: string, key: string): Recipe[] {
         { text: 'Uninstall command: leave a no-op (remove the agent from the console). Install behaviour: System. Detection rule: custom script —', code: `if (Get-ScheduledTask -TaskName 'Rem0teHeartbeat' -ErrorAction SilentlyContinue) { 'Installed' }` },
         { text: 'Assign to a device group.' },
       ],
-      note: 'Intune keeps the script content; anyone who can read the policy can read the key. Same advice: a use limit, an expiry, and revoke it afterwards. Rem0te does not build an .msi yet (0.64): the Win32 app above gives Intune the detection rule and retries an .msi would, and Group Policy uses the startup script.',
+      note: 'Intune keeps the script content; anyone who can read the policy can read the key. Same advice: a use limit, an expiry, and revoke it afterwards. For an .msi (a line-of-business app), see the Windows Installer (.msi) tab.',
+    },
+    {
+      id: 'msi', label: 'Windows Installer (.msi)',
+      intro: 'One .msi (0.65) that installs the signed agent silently, as SYSTEM, and takes the key as TOKEN. The plain download carries no key, so it can sit on a share or in Intune; the key is given on the command line. It has not yet been run on real Windows: try it on one computer first.',
+      steps: [
+        { text: 'Download the package (no key inside):', code: `${origin}/api/v1/public/install/windows.msi` },
+        { text: 'Install silently (as an administrator, or from your RMM as SYSTEM):', code: `msiexec /i rem0te.msi TOKEN=${key} /qn /l*v "%ProgramData%\\Rem0te-msi.log"` },
+        { text: 'Intune: Apps → Windows → Add → Line-of-business app → upload rem0te.msi, and put this in Command-line arguments:', code: `TOKEN=${key}` },
+        { text: 'Group Policy Software Installation cannot pass TOKEN on a command line. Either use the startup script on the Group Policy tab, or download a package with the key already in it and assign that (the key then lives in the share, like the script):', code: `${origin}/api/v1/public/install/windows.msi?token=${key}` },
+      ],
+      note: 'Uninstalling the .msi removes only its own entry in Programs and Features, never the agent: remove a computer from the console. The .msi needs this server to publish the signed agent. TOKEN is hidden from the installer log; a package with the key built in is kept in Windows\'s installer cache on each computer, so revoke the key when the rollout is done.',
     },
     {
       id: 'rmm', label: 'Existing RMM',

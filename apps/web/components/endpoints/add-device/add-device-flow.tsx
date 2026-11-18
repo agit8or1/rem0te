@@ -39,7 +39,13 @@ import { useAsks } from '@/lib/confirm-policy';
  * copy, now also a real download button). Linux and macOS download the same
  * script the command pipes into bash, from the same path-token URL, so no new
  * route carries the token and the token rules are unchanged: made once,
- * single use, 24 hours. There is no .msi or .pkg (see docs/setup.md).
+ * single use, 24 hours. There is no .pkg (see docs/setup.md).
+ *
+ * 0.65: Windows also offers a Download .msi button (GET
+ * /public/install/windows.msi?token=…, the same token rules: read, never
+ * consumed) and the silent msiexec line for Group Policy or Intune. The .msi
+ * is fetched rather than linked, so a server that cannot build one (no
+ * signed agent, no msitools) says so here instead of downloading an error.
  *
  * Making the link needs a fresh re-authentication (0.33). The server answers
  * STEP_UP_REQUIRED; the api-client interceptor opens the step-up dialog and
@@ -118,6 +124,51 @@ function StepCard({ n, title, done, active, description, children, testId }: {
       </CardHeader>
       {(active || done) && children && <CardContent className="space-y-4">{children}</CardContent>}
     </Card>
+  );
+}
+
+/** Why the server would not build the .msi, in words, by its error code. */
+const MSI_REFUSED: Record<string, string> = {
+  MSI_NEEDS_SIGNED_AGENT: 'This server does not publish the signed agent yet, and the .msi installs only the signed agent. Use the .exe, or the command.',
+  MSI_BUILDER_UNAVAILABLE: 'This server cannot build an .msi: the msitools package (wixl, msibuild) is not installed on it. Use the .exe, or the command.',
+  MSI_BUSY: 'Other .msi downloads are being built. Try again in a moment.',
+  ENROLLMENT_TOKEN_UNUSABLE: 'This link has been used, has expired or was revoked. Make a new one.',
+};
+
+/**
+ * Download .msi (0.65). Fetched, then saved from memory, so a refusal is shown
+ * here rather than saved as a file. Nothing is kept: the object URL is revoked
+ * once the browser has it.
+ */
+function MsiDownload({ url }: { url: string }) {
+  const [state, setState] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
+  async function download() {
+    setState({ busy: true, error: null });
+    try {
+      const res = await fetch(url, { credentials: 'omit', cache: 'no-store' });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { code?: string; message?: string } | null;
+        setState({ busy: false, error: (body?.code && MSI_REFUSED[body.code]) ?? body?.message ?? `The .msi could not be downloaded (HTTP ${res.status}).` });
+        return;
+      }
+      const href = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = href; a.download = 'rem0te.msi'; a.rel = 'noreferrer';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 10_000);
+      setState({ busy: false, error: null });
+    } catch {
+      setState({ busy: false, error: 'The .msi could not be downloaded. Check the connection and try again.' });
+    }
+  }
+  return (
+    <>
+      <Button variant="outline" onClick={() => void download()} disabled={state.busy} data-testid="download-msi">
+        {state.busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+        {state.busy ? 'Building the .msi…' : 'Download .msi'}
+      </Button>
+      {state.error && <p className="basis-full text-sm text-destructive" role="alert" data-testid="msi-error">{state.error}</p>}
+    </>
   );
 }
 
@@ -291,6 +342,10 @@ export function AddDeviceFlow() {
       // command fetches, from the same path-token URL; the server already
       // sends it as an attachment.
       download: os === 'windows' ? `${base}/api/v1/public/install/windows.exe?token=${encodeURIComponent(rawToken)}` : url,
+      // 0.65: the .msi with this link's token in it, and the silent line that
+      // passes the token itself (for the generic package, or as written).
+      msi: `${base}/api/v1/public/install/windows.msi?token=${encodeURIComponent(rawToken)}`,
+      msiexec: `msiexec /i rem0te.msi TOKEN=${rawToken} /qn`,
     };
   }, [rawToken, os]);
 
@@ -446,7 +501,8 @@ export function AddDeviceFlow() {
                       {os === 'windows' ? 'Download .exe' : `Download ${OS[os].label} installer (.sh)`}
                     </a>
                   </Button>
-                  <span className="text-xs text-muted-foreground">{OS[os].file}</span>
+                  {os === 'windows' && <MsiDownload url={commands.msi} />}
+                  <span className="text-xs text-muted-foreground">{os === 'windows' ? `${OS[os].file} · rem0te.msi` : OS[os].file}</span>
                 </div>
                 <p className="text-sm">{OS[os].runFile}</p>
                 {os === 'windows' && (
@@ -456,11 +512,19 @@ export function AddDeviceFlow() {
                   </div>
                 )}
                 {os === 'windows' && (
-                  <p className="text-xs text-muted-foreground" data-testid="msi-note">
-                    Need an .msi for Group Policy or Intune? There is no .msi package yet. For many computers at once use a
-                    deployment key, which runs this same installer from Group Policy, Intune or another RMM
-                    {isPlatformAdmin ? <>: <Link href="/admin/deploy" className="underline">Deploy agents</Link>.</> : ' (a Platform Admin makes one under Devices → Deploy agents).'}
-                  </p>
+                  <div className="space-y-1" data-testid="msi-note">
+                    <p className="text-xs text-muted-foreground">
+                      The .msi installs the same signed agent, silently, as SYSTEM. Run it on this computer with:
+                    </p>
+                    <CopyLine text={commands.msiexec} label="msiexec" />
+                    <p className="text-xs text-muted-foreground">
+                      The downloaded .msi already carries this link&rsquo;s token; the line above passes it too. Uninstalling
+                      the .msi removes only its own entry in Programs and Features, never the agent: remove a computer from
+                      the console. <strong>The .msi has not yet been run on real Windows.</strong> For many computers at once
+                      use a deployment key as the TOKEN, from Group Policy, Intune or another RMM
+                      {isPlatformAdmin ? <>: <Link href="/admin/deploy" className="underline">Deploy agents</Link>.</> : ' (a Platform Admin makes one under Devices → Deploy agents).'}
+                    </p>
+                  </div>
                 )}
               </TabsContent>
               <TabsContent value="command" className="mt-0 space-y-2">

@@ -930,7 +930,37 @@ async function addDevice(page, f, vp, label) {
   check(await dl.isVisible() && /Download \.exe/.test(await dl.innerText()) && /\/api\/v1\/public\/install\/windows\.exe\?token=[0-9a-f]{64}$/.test(href ?? '') && await dl.getAttribute('download') === 'install-reboot-remote.exe',
     `${label}: Windows opens on a "Download .exe" button for the link just made`, href ?? 'no button');
   check(await cmd.locator('[data-testid="copy-link"]').innerText().catch(() => '') === href, `${label}: the same link is there to copy and send`);
-  check(await cmd.locator('[data-testid="msi-note"]').isVisible() && /no \.msi package yet/.test(await cmd.locator('[data-testid="msi-note"]').innerText()), `${label}: it says there is no .msi, and points to deployment keys`);
+  // 0.65: Download .msi beside it, the silent msiexec line with this link's
+  // token, and the honest note. The button fetches; a server that cannot
+  // build one says so in the page instead of saving an error as a file.
+  const token = (href ?? '').split('token=')[1] ?? '\0';
+  const note = await cmd.locator('[data-testid="msi-note"]').innerText().catch(() => '');
+  check(await cmd.locator('[data-testid="download-msi"]').isVisible() && /Download \.msi/.test(await cmd.locator('[data-testid="download-msi"]').innerText()),
+    `${label}: a "Download .msi" button sits next to Download .exe`);
+  check(await cmd.locator('[data-testid="copy-msiexec"]').innerText().catch(() => '') === `msiexec /i rem0te.msi TOKEN=${token} /qn`,
+    `${label}: the silent install line is msiexec /i rem0te.msi TOKEN=<this link's token> /qn, ready to copy`);
+  check(/has not yet been run on real Windows/.test(note) && /never the agent/.test(note) && /deployment key/.test(note),
+    `${label}: the note says the .msi has not run on real Windows, that uninstalling it leaves the agent, and points to deployment keys`, note);
+  if (vp === 'desktop' && signedRelease(false)) {
+    await cmd.locator('[data-testid="download-msi"]').click();
+    await cmd.locator('[data-testid="msi-error"]').waitFor({ timeout: 15_000 }).catch(() => {});
+    check(/does not publish the signed agent yet/.test(await cmd.locator('[data-testid="msi-error"]').innerText().catch(() => '')),
+      `${label}: with no signed agent published, the page says the .msi needs it (no file saved)`);
+    signedRelease(true);
+    const haveTools = existsSync('/usr/bin/wixl') && existsSync('/usr/bin/msibuild');
+    if (haveTools) {
+      const [dlEvent] = await Promise.all([page.waitForEvent('download', { timeout: 30_000 }).catch(() => null), cmd.locator('[data-testid="download-msi"]').click()]);
+      check(dlEvent?.suggestedFilename() === 'rem0te.msi' && !(await cmd.locator('[data-testid="msi-error"]').isVisible()),
+        `${label}: with a signed agent published, Download .msi saves rem0te.msi`, dlEvent?.suggestedFilename() ?? 'no download');
+      if (dlEvent) await dlEvent.delete().catch(() => {});
+    } else {
+      await cmd.locator('[data-testid="download-msi"]').click();
+      await page.waitForFunction(() => /msitools/.test(document.querySelector('[data-testid="msi-error"]')?.textContent ?? ''), null, { timeout: 15_000 }).catch(() => {});
+      check(!process.env.CI && /msitools/.test(await cmd.locator('[data-testid="msi-error"]').innerText().catch(() => '')),
+        `${label}: without msitools on the server the page says so (under CI msitools must be installed)`);
+    }
+    signedRelease(false);
+  }
   const dlBox = await dl.boundingBox();
   if (vp === 'phone') check(dlBox && dlBox.x >= 0 && dlBox.x + dlBox.width <= 375.5, `${label}: the download button fits the screen`, JSON.stringify(dlBox));
   await cmd.locator('[data-testid="tab-command"]').click();
@@ -939,7 +969,7 @@ async function addDevice(page, f, vp, label) {
     `${label}: the Command tab shows the PowerShell command, for the same token`, cmdText);
   if (vp === 'phone') await noSideScroll(page, `${label} install command`);
   await shot(page, `${label}-add-device`);
-  await cleanCheck(page, `${label} Add device`, stepUp403);
+  await cleanCheck(page, `${label} Add device`, (p) => stepUp403(p) || (p.kind === 'http' && p.status === 503 && ['MSI_NEEDS_SIGNED_AGENT', 'MSI_BUILDER_UNAVAILABLE'].includes(p.code)));
 }
 
 async function reports(page, label, vp) {
@@ -2090,6 +2120,12 @@ async function adoptionScreens(page, f, vp, label) {
     check(/^[0-9a-f]{96}$/.test(shown) && row2?.keyHash === sha256(shown) && row2?.mode === 'review', `${label}: the key is shown once, stored only as its hash, review by default`, shown.slice(0, 12));
     const gpo = await page.locator('pre').first().innerText().catch(() => '');
     check(gpo.includes(`/api/v1/public/install/win/${shown}`) && /Rem0teHeartbeat/.test(gpo), `${label}: the Group Policy script has the key filled in by the browser`);
+    // 0.65: the .msi tab — the plain package carries no key; the key goes in TOKEN.
+    await page.getByRole('tab', { name: 'Windows Installer (.msi)' }).click();
+    const msiCode = (await page.locator('[role="tabpanel"] pre').allInnerTexts().catch(() => [])).join('\n');
+    check(msiCode.includes(`msiexec /i rem0te.msi TOKEN=${shown} /qn`) && /\/api\/v1\/public\/install\/windows\.msi\n/.test(`${msiCode}\n`) && /has not yet been run on real Windows/.test(await page.locator('[role="tabpanel"]').innerText().catch(() => '')),
+      `${label}: the Windows Installer tab gives the key-free .msi URL and msiexec … TOKEN=<key> /qn, and says it has not run on real Windows`, msiCode.slice(0, 300));
+    await page.getByRole('tab', { name: 'Group Policy' }).click();
     await shot(page, `${label}-deploy-agents`);
     await once.getByRole('button', { name: 'I have stored it' }).click();
     await page.getByPlaceholder(/Paste a deployment key/).fill('');

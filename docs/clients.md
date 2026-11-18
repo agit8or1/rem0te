@@ -139,8 +139,12 @@ only from the code or the key, never from the computer. See
 
 Add device offers the installer two ways (0.64): **Download installer** (a
 one-click `.exe` on Windows, the install script as a file on Linux and macOS)
-and **Command** (the one-line command). There is no `.msi` or `.pkg`; see
-[setup.md](setup.md#enrolling-a-device). It then shows the computer arriving and
+and **Command** (the one-line command). From 0.65 Windows also has
+**Download .msi**, a Windows Installer package that runs the signed agent's
+own install silently (`msiexec /i rem0te.msi TOKEN=… /qn`); it has never been
+run on real Windows, and uninstalling it leaves the agent in place. There is no
+`.pkg`; see [setup.md](setup.md#enrolling-a-device) and
+[deployment.md](deployment.md#windows-installer-package-msi-065). It then shows the computer arriving and
 its first health (online, agent, inventory) as the server receives it; see
 [technician-guide.md](technician-guide.md) §5.
 

@@ -5,6 +5,106 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.65.0] — 2026-11-18 · *Parcel*
+
+**A Windows Installer package: Add device has *Download .msi* next to *Download .exe*, and the silent
+`msiexec /i rem0te.msi TOKEN=… /qn` line for Group Policy, Intune and other RMMs. It has never been run on real
+Windows.**
+
+The owner asked in 0.64 whether Add device had "the msi or exe, etc"; 0.64 added the `.exe` button and said there was
+no `.msi` because the host had no Windows Installer toolchain. `wixl` and `msitools` 0.103 are now installed on the
+host, and the owner said "yes, add the msi".
+
+### What the .msi is, and how the token gets in
+
+`GET /api/v1/public/install/windows.msi[?token=…]` (`apps/api/src/public/windows-msi.ts`).
+
+- **It runs exactly what the `.exe` runs.** The downloaded `.exe` is the signed agent with the portal address and
+  token patched into a slot; double-clicked, its bootstrap reads them and calls `install`. The `.msi` carries the
+  same signed agent, byte for byte the published `windows/rem0te-agent.exe` (no slot patched), in its Binary table,
+  and one deferred custom action (type 3074: from the Binary table, as SYSTEM, return checked) that runs
+  `rem0te-agent.exe install --token [TOKEN] --portal [Rem0tePortal]`. The agent then does everything it does for the
+  `.exe`: it verifies the installer, RustDesk and the tray against signed metadata, checks the token is hex, and the
+  claim decides where the computer lands. The portal is the address the `.exe`'s slot would name (the configured
+  public address, else the request host outside production; the lookup is now one helper, `installerApiBase`,
+  shared by both routes). The agent did not change.
+- **The token, two ways.** The Add device button downloads a package with the link's token stamped into its
+  Property table. Without `?token=` the package is generic and takes `TOKEN=` on the msiexec command line, which is
+  how a deployment key (§70, 96 hex) is meant to be used: one key-free file on a share or in Intune.
+- **Only with a signed agent.** Only the signed agent takes a token on its command line; the legacy bootstrap reads
+  one only from its patched slot. A server that publishes no signed agent answers `503 MSI_NEEDS_SIGNED_AGENT`.
+- **Built per download, with no cache.** Each request runs `/usr/bin/wixl` (a constant WiX source, every value a
+  `-D` argument) and then `/usr/bin/msibuild` (the custom action, its sequence, `SecureCustomProperties` and, when
+  stamping, one `INSERT` of the token), in a fresh `mkdtemp` directory (0700) that is removed in a `finally` before
+  the response is sent. No token is ever in a cached or shared file. A build takes well under a second; at most two
+  run at once (`MSI_BUSY`), the route is `@RateLimit(20)`, each spawn is bounded to 60 s and 64 KB of output.
+  Without the binaries the route answers `503 MSI_BUILDER_UNAVAILABLE`, and Add device says so in words.
+- **The same token rules as the `.exe`.** Read, never consumed: the claim token stays unclaimed and a deployment key's
+  `useCount` stays where it was until the computer checks in. One difference, deliberately: the `.exe` silently
+  drops a token that is not usable and serves a token-less installer; the `.msi` refuses it
+  (`400 ENROLLMENT_TOKEN_UNUSABLE`), because a package missing the token it was asked for would only fail later, at
+  msiexec. A token outside the installers' hex charset is `400 MSI_TOKEN_INVALID`, before any lookup or spawn.
+- **Inside the package.** Per-machine (`ALLUSERS=1`, x64), `TOKEN` in `MsiHiddenProperties` (kept out of the
+  installer log) and `SecureCustomProperties`. A launch condition refuses a missing `TOKEN`, or one holding a space,
+  tab or quote, on install (never on uninstall), with a message naming `TOKEN=`; so the token is always exactly one
+  argument, and the portal, last on the command line, always wins a repeated flag. `Content-Type:
+  application/x-msi`, `Content-Disposition: attachment; filename="rem0te.msi"`, `no-store`.
+
+### Uninstall: the .msi never removes the agent
+
+Uninstalling it from *Programs and Features* removes only its own registration and the one registry value it writes
+(`HKLM\SOFTWARE\Rem0te\Installer\MsiVersion`); it installs no files (`msiextract` finds none). The custom action runs
+only on a first install (`NOT Installed AND NOT REMOVE`), never on repair or uninstall, and *Modify* and *Repair* are
+hidden. Chosen over an MSI that owns the agent's files because the agent updates itself from signed releases, which
+a Windows Installer repair or uninstall would roll back or delete underneath it, and because a computer leaves
+Rem0te through the console (offboarding), which revokes it server-side; deleting files would leave a computer the
+console still lists. A newer package replaces an older one's registration (MajorUpgrade, same version included).
+
+### Add device, Deploy agents and the docs
+
+- **Add device → Download installer (Windows):** *Download .msi* beside *Download .exe*. It is fetched and saved
+  from memory rather than linked, so a refusal is a sentence on the page (no signed agent, no msitools, busy, link
+  used) instead of a JSON file named `rem0te.msi`. Below it, the silent line with the token, to copy as is, and a note
+  that the `.msi` has not been run on real Windows and that uninstalling it leaves the agent.
+- **Deploy agents:** a *Windows Installer (.msi)* tab — the key-free package URL, `msiexec … TOKEN=<key> /qn`, the
+  Intune line-of-business argument, and why Group Policy Software Installation needs a package with the key built
+  in (and so leaves it in each computer's installer cache).
+- `docs/deployment.md` (a new section), `setup.md`, `clients.md`, `technician-guide.md`, `update-signing.md`,
+  `troubleshooting.md` (each error code, the 1603 cases) and the in-app `/help` now describe it.
+  `docs/API-REFERENCE.md` regenerated (593 routes).
+
+### Tests and invariants
+
+- **§77** (`check-security-invariants.mjs`): two fixed absolute binaries, one `execFile` with an argument array,
+  `shell: false`, time and output bounds and a minimal environment; the runner called only with those two constants;
+  the token checked first (route before any lookup, builder before anything, and again in the stamping query, the
+  same regex as the agent's); the private temporary directory removed in a `finally`; no cache and no other file
+  written; the builder's error, whose command line may hold the token, replaced; no logging in the module or route;
+  the route reads and never writes, and packages only the signed agent target; the custom action's type, target and
+  condition; CI installing msitools and running the suite. 0.39's install-script check now reads the token lookup in
+  `usableToken`, where it moved.
+- `apps/api/scripts/unit-windows-msi.mjs` (50 checks): every refusal spawns nothing (counted through the runner
+  hook); exactly two spawns with the expected arguments, the token in exactly one; no temporary directory left after
+  a success or a failure; a failure's error carries no token; `MSI_BUSY`; then real packages read back with `msiinfo`
+  and `msiextract` — tables, `TOKEN` absent from the generic package and exact in stamped ones (claim token and
+  deployment key), the custom action and its sequence inside the install script, the launch condition, the agent
+  bytes identical, no files, one registry marker, fresh product and package codes per build. Without msitools it
+  skips with a message, except under CI, where it fails.
+- `e2e-add-device.mjs` (0.65 section) runs its API with a stand-in signed repository: no signed agent →
+  `MSI_NEEDS_SIGNED_AGENT`; bad tokens → `MSI_TOKEN_INVALID`; unknown and expired tokens →
+  `ENROLLMENT_TOKEN_UNUSABLE`; then real downloads read with `msiinfo` (stamped claim token, generic, a deployment
+  key), the build directories gone, and the token unclaimed and the key unused afterwards.
+- `e2e-ui.mjs`: the button, the msiexec line with the link's token, the note, the in-page refusal with no signed
+  agent, and a real `rem0te.msi` download with one; the Deploy agents tab.
+- CI: the `check` job installs `wixl msitools` and runs the unit suite; the `e2e` job installs them before
+  `run-e2e.sh`, so `e2e-add-device` and the browser suite build real packages.
+
+**Deploy:** API and web, and `sudo apt-get install wixl msitools` on any host that lacks them (this one has them).
+No migration, no new production dependency (the manifest is unchanged), no approval signer or agent publish. The
+`.msi` exists only where a signed agent is published.
+
+---
+
 ## [0.64.0] — 2026-11-18 · *Welcome*
 
 **"Confirm it is you" asks only at sign-in by default; Add device has real download buttons; and *Add device* is a

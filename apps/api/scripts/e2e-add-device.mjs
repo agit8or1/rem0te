@@ -28,7 +28,13 @@
  *     STEP_UP_REQUIRED and writes nothing, and a scope refusal comes first;
  *   - (0.64) the downloads step 3 offers — the Linux and macOS scripts from
  *     the command's own path-token URL and the Windows .exe — are
- *     attachments carrying the token, and fetching them consumes nothing.
+ *     attachments carrying the token, and fetching them consumes nothing;
+ *   - (0.65) the .msi: refused with no signed agent published, a malformed
+ *     token refused before anything is looked up or built, an unusable one
+ *     refused rather than dropped; with a stand-in signed repository (and
+ *     msitools) real packages read back with msiinfo — the link's token or a
+ *     deployment key stamped, none in the generic one — with no build
+ *     directory left behind, and nothing consumed.
  *
  * Self-starting: it runs its own API from dist/ on ADDDEVICE_API_PORT (3861)
  * against DATABASE_URL, which must name a scratch/test database. Fixtures are
@@ -39,9 +45,10 @@
 import { PrismaClient } from '@prisma/client';
 import { confirmEverythingAsks } from './lib/confirm-asks.mjs';
 import argon2 from 'argon2';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -70,8 +77,30 @@ const section = (t) => console.log(`\n\x1b[1m${t}\x1b[0m`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ip = () => `10.${(Math.random() * 250) | 0}.${(Math.random() * 250) | 0}.${1 + ((Math.random() * 250) | 0)}`;
 
+// 0.65: a stand-in signed update repository with an agent target, for the
+// .msi (which packages only the signed agent). The API reads the repository
+// from disk on every request and nothing here verifies its signatures, so
+// plain JSON is enough. Its timestamp is kept aside (`.off`) except around
+// the .msi section, so every other check runs as before, with no signed agent.
+const REPO = mkdtempSync(path.join(tmpdir(), 'rem0te-adddevice-repo-'));
+const FAKE_AGENT = Buffer.concat([Buffer.from('MZ e2e-add-device stand-in for the signed agent '), randomBytes(4096), Buffer.from('REM0TE_INST_URL:'), Buffer.alloc(240)]);
+{
+  const sha = createHash('sha256').update(FAKE_AGENT).digest('hex');
+  mkdirSync(path.join(REPO, 'metadata'), { recursive: true }); mkdirSync(path.join(REPO, 'targets', 'windows'), { recursive: true });
+  const meta = (f, signed) => writeFileSync(path.join(REPO, 'metadata', f), JSON.stringify({ signed }));
+  meta('root.json', { version: 1 });
+  meta('timestamp.json.off', { version: 1, meta: { 'snapshot.json': { version: 1 } } });
+  meta('1.snapshot.json', { version: 1, meta: { 'targets.json': { version: 1 } } });
+  meta('1.targets.json', { version: 1, targets: { 'windows/rem0te-agent.exe': { length: FAKE_AGENT.length, hashes: { sha256: sha } } } });
+  writeFileSync(path.join(REPO, 'targets', 'windows', `${sha}.rem0te-agent.exe`), FAKE_AGENT);
+}
+const TS = path.join(REPO, 'metadata', 'timestamp.json');
+const signedAgent = (on) => { if (on && existsSync(`${TS}.off`)) renameSync(`${TS}.off`, TS); if (!on && existsSync(TS)) renameSync(TS, `${TS}.off`); };
+const HAVE_MSI_TOOLS = ['/usr/bin/wixl', '/usr/bin/msibuild', '/usr/bin/msiinfo'].every((p) => existsSync(p));
+const MSI_TOOLS_REQUIRED = process.env.CI === 'true' || process.env.REQUIRE_MSI_TOOLS === '1';
+
 const apiEnv = {
-  ...process.env, NODE_ENV: 'test', PORT: String(PORT), DATABASE_URL: DB,
+  ...process.env, NODE_ENV: 'test', PORT: String(PORT), DATABASE_URL: DB, UPDATE_REPO_DIR: REPO,
   JWT_SECRET: randomBytes(32).toString('hex'), LAUNCHER_TOKEN_SECRET: randomBytes(32).toString('hex'),
   ENCRYPTION_KEY: process.env.ENCRYPTION_KEY ?? randomBytes(32).toString('hex'), TRUSTED_PROXIES: 'loopback',
   HBBS_PRESENCE_HOST: '127.0.0.2', MONITOR_SWEEP: 'off', AUDIT_SEALER: 'off', VERSION_FILE,
@@ -232,6 +261,67 @@ async function all() {
     check(row.claimedAt === null && row.expiresAt > new Date(), 'downloading every installer consumed nothing: the token is still unclaimed and unexpired');
   }
 
+  // ── 0.65: the .msi ──────────────────────────────────────────────────────
+  section('0.65: the .msi — the token rules of the .exe, refused before anything is built, and it consumes nothing');
+  {
+    const get = async (p) => { const res = await fetch(`${API}${p}`, { headers: { 'x-forwarded-for': ip() } }); const buf = Buffer.from(await res.arrayBuffer()); let j = null; try { j = JSON.parse(buf.toString('utf8')); } catch { /* binary */ } return { status: res.status, cd: res.headers.get('content-disposition') ?? '', ct: res.headers.get('content-type') ?? '', cc: res.headers.get('cache-control') ?? '', buf, code: j?.code }; };
+    const msiDirs = () => readdirSync(tmpdir()).filter((n) => n.startsWith('rem0te-msi-')).length;
+    const dirsBefore = msiDirs();
+    // A deployment key (§70), written directly: 96 hex, only its hash stored.
+    const key = randomBytes(48).toString('hex');
+    const keyRow = await prisma.deploymentKey.create({ data: {
+      tenantId: A.tenantId, customerId: A.id, name: `${TAG} msi`, keyHash: createHash('sha256').update(key).digest('hex'), keyHint: key.slice(-4),
+      maxUses: 5, expiresAt: new Date(Date.now() + 86_400_000), createdById: admin.id,
+    } });
+    const tExpForMsi = (await mint(S.ownerA, { businessId: A.id, accessMode: 'COMPANY_WIDE', description: 'Add device: msi expired' })).data;
+    await prisma.deviceClaimToken.update({ where: { id: tExpForMsi.id }, data: { expiresAt: new Date(Date.now() - 60_000) } });
+
+    signedAgent(false);
+    let d = await get(`/public/install/windows.msi?token=${t1.token}`);
+    check(d.status === 503 && d.code === 'MSI_NEEDS_SIGNED_AGENT' && /no-store/.test(d.cc), 'no signed agent published: 503 MSI_NEEDS_SIGNED_AGENT (only the signed agent takes a token on its command line)', `${d.status} ${d.code}`);
+    signedAgent(true);
+    for (const [label, bad] of [['a quote', `${t1.token.slice(0, 20)}%22`], ['a space', `${t1.token.slice(0, 20)}%20--portal%20evil.example`], ['15 hex', t1.token.slice(0, 15)], ['non-hex', 'z'.repeat(64)]]) {
+      d = await get(`/public/install/windows.msi?token=${bad}`);
+      check(d.status === 400 && d.code === 'MSI_TOKEN_INVALID', `a token with ${label}: 400 MSI_TOKEN_INVALID, before any lookup or build`, `${d.status} ${d.code}`);
+    }
+    d = await get(`/public/install/windows.msi?token=${randomBytes(32).toString('hex')}`);
+    check(d.status === 400 && d.code === 'ENROLLMENT_TOKEN_UNUSABLE', 'a well-formed token that is no token: 400 ENROLLMENT_TOKEN_UNUSABLE (not a package silently missing it)', `${d.status} ${d.code}`);
+    d = await get(`/public/install/windows.msi?token=${tExpForMsi.token}`);
+    check(d.status === 400 && d.code === 'ENROLLMENT_TOKEN_UNUSABLE', 'an expired token: 400 ENROLLMENT_TOKEN_UNUSABLE', `${d.status} ${d.code}`);
+    check(msiDirs() === dirsBefore, 'nothing refused above made a build directory');
+
+    const stamped = await get(`/public/install/windows.msi?token=${t1.token}`);
+    const generic = await get('/public/install/windows.msi');
+    const keyed = await get(`/public/install/windows.msi?token=${key}`);
+    if (!HAVE_MSI_TOOLS) {
+      check(!MSI_TOOLS_REQUIRED && stamped.status === 503 && stamped.code === 'MSI_BUILDER_UNAVAILABLE',
+        'without msitools: 503 MSI_BUILDER_UNAVAILABLE, a clear code rather than a 500 (and under CI msitools must be installed)', `${stamped.status} ${stamped.code}`);
+      console.log('  \x1b[33m–\x1b[0m the package checks were skipped: wixl / msibuild / msiinfo are not installed (apt-get install -y wixl msitools).');
+    } else {
+      check(stamped.status === 200 && stamped.ct.startsWith('application/x-msi') && stamped.cd === 'attachment; filename="rem0te.msi"' && /no-store/.test(stamped.cc),
+        'the Download .msi URL: 200, application/x-msi, an attachment named rem0te.msi, not cached', `${stamped.status} ${stamped.ct} ${stamped.cd}`);
+      const work = mkdtempSync(path.join(tmpdir(), 'e2e-adddevice-msi-'));
+      const prop = (buf, name) => { const f = path.join(work, `${name}.msi`); writeFileSync(f, buf); return Object.fromEntries(execFileSync('/usr/bin/msiinfo', ['export', f, 'Property'], { encoding: 'utf8' }).split(/\r?\n/).slice(3).filter(Boolean).map((l) => l.split('\t'))); };
+      const ca = (buf) => { const f = path.join(work, 'ca.msi'); writeFileSync(f, buf); return execFileSync('/usr/bin/msiinfo', ['export', f, 'CustomAction'], { encoding: 'utf8' }); };
+      const ps = prop(stamped.buf, 'stamped'), pg = prop(generic.buf, 'generic'), pk = prop(keyed.buf, 'keyed');
+      check(ps.TOKEN === t1.token, 'msiinfo: the stamped package\'s Property table carries exactly this link\'s token', ps.TOKEN);
+      check(generic.status === 200 && !('TOKEN' in pg), 'without a token: the generic package, with no TOKEN (msiexec /i rem0te.msi TOKEN=… /qn)');
+      check(keyed.status === 200 && pk.TOKEN === key, 'a 96-hex deployment key is stamped exactly as a claim token is', `${keyed.status} ${keyed.code}`);
+      check(ps.Rem0tePortal === `127.0.0.1:${PORT}` && pg.Rem0tePortal === ps.Rem0tePortal, 'the portal is the address the .exe\'s slot would name (here the request host, no public address being configured)', ps.Rem0tePortal);
+      check(/Rem0teInstall\t3074\tRem0teAgent\tinstall --token \[TOKEN\] --portal \[Rem0tePortal\]/.test(ca(stamped.buf)), 'its one custom action runs the signed agent: install --token [TOKEN] --portal [Rem0tePortal]');
+      writeFileSync(path.join(work, 'x.msi'), stamped.buf);
+      check(Buffer.compare(execFileSync('/usr/bin/msiinfo', ['extract', path.join(work, 'x.msi'), 'Binary.Rem0teAgent']), FAKE_AGENT) === 0, 'the agent inside is the published target, byte for byte');
+      rmSync(work, { recursive: true, force: true });
+      check(msiDirs() === dirsBefore, 'the API removed every build directory it made');
+    }
+    const rowAfter = await prisma.deviceClaimToken.findUnique({ where: { id: t1.id } });
+    const keyAfter = await prisma.deploymentKey.findUnique({ where: { id: keyRow.id } });
+    check(rowAfter.claimedAt === null && rowAfter.expiresAt > new Date() && keyAfter.useCount === 0 && keyAfter.lastUsedAt === null,
+      'downloading the .msi consumed nothing: the token is unclaimed, the deployment key has used none', JSON.stringify({ claimedAt: rowAfter.claimedAt, useCount: keyAfter.useCount }));
+    signedAgent(false);
+    await prisma.deploymentKey.delete({ where: { id: keyRow.id } });
+  }
+
   // ── Status: waiting, scoped, nothing secret ───────────────────────────────
   section('Status while waiting: scoped to the business, and nothing secret in it');
   r = await status(S.ownerA, t1.id);
@@ -364,8 +454,10 @@ async function all() {
 
 async function cleanup() {
   await stopApi();
+  rmSync(REPO, { recursive: true, force: true });
   try {
     const ids = created.businesses;
+    await prisma.deploymentKey.deleteMany({ where: { customerId: { in: ids } } });
     const eps = await prisma.endpoint.findMany({ where: { customerId: { in: ids } }, select: { id: true } });
     const epIds = eps.map((e) => e.id);
     await prisma.deviceClaimToken.deleteMany({ where: { OR: [{ customerId: { in: ids } }, { endpointId: { in: epIds } }] } });

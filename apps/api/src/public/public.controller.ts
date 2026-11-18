@@ -36,6 +36,8 @@ import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { AgentMigrationService } from '../update-trust/agent-migration.service';
 import { buildMigrationScript, buildSignedInstallScript, validPortalHost } from '../update-trust/agent-migration';
 import { keyState } from '../adoption/deployment-key';
+import { RateLimit } from '../common/throttling';
+import { buildWindowsMsi, MSI_CONTENT_TYPE, MSI_FILENAME, MSI_TOKEN_RE, MsiError } from './windows-msi';
 
 const INSTALLER_MAGIC = Buffer.from('REM0TE_INST_URL:');
 const INSTALLER_SLOT_SIZE = 256;
@@ -262,6 +264,65 @@ export class PublicController {
     res.send(bytes);
   }
 
+  /**
+   * GET /public/install/windows.msi[?token=…] (0.65) — the Windows Installer
+   * package (./windows-msi.ts). Before install/:platform, which would match it.
+   *
+   * The same token rules as windows.exe: a usable claim token or deployment
+   * key, read and never consumed (the computer's claim consumes it). Unlike
+   * the .exe, a token that is not usable is refused rather than dropped: a
+   * package missing the token it was asked for would only fail at msiexec.
+   * Without a token it is the generic package, which needs TOKEN= at install.
+   * The order: the token's charset (before anything else), then the token,
+   * then the signed agent, then the address; only then is anything spawned.
+   */
+  @Get('install/windows.msi')
+  @Public()
+  @RateLimit(20)
+  async windowsMsi(@Query('token') token: string | undefined, @Req() req: Request, @Res() res: Response) {
+    const refuse = (status: number, code: string, message: string) => {
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(status).json({ success: false, code, message });
+    };
+    if (token !== undefined && (typeof token !== 'string' || !MSI_TOKEN_RE.test(token))) {
+      refuse(400, 'MSI_TOKEN_INVALID', 'The enrolment token is not a valid hex value.');
+      return;
+    }
+    if (token !== undefined && !(await this.usableToken(token))) {
+      refuse(400, 'ENROLLMENT_TOKEN_UNUSABLE', 'This enrolment link has been used, has expired or was revoked. Make a new one.');
+      return;
+    }
+    // Only the signed agent takes a token on its command line (`install
+    // --token`); the legacy bootstrap reads one only from its patched slot.
+    const agentT = this.updateTrust.agentTarget();
+    if (!agentT) {
+      refuse(503, 'MSI_NEEDS_SIGNED_AGENT', 'The .msi installs the signed agent, and this server does not publish one yet. Use the .exe.');
+      return;
+    }
+    const apiUrl = this.installerApiBase(req);
+    let portalHost: string | null;
+    try { portalHost = apiUrl ? new URL(apiUrl).host : null; } catch { portalHost = null; }
+    if (!portalHost) {
+      refuse(400, 'MSI_BAD_INPUT', 'Invalid host');
+      return;
+    }
+    try {
+      const msi = await buildWindowsMsi({ agentPath: agentT.path, portalHost, version: this.agentVersion(), token });
+      res.setHeader('Content-Type', MSI_CONTENT_TYPE);
+      res.setHeader('Content-Disposition', `attachment; filename="${MSI_FILENAME}"`);
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.send(msi);
+    } catch (e) {
+      if (e instanceof MsiError) {
+        const status = e.code === 'MSI_TOKEN_INVALID' || e.code === 'MSI_BAD_INPUT' ? 400 : 503;
+        refuse(status, e.code, e.message);
+        return;
+      }
+      refuse(503, 'MSI_BUILD_FAILED', 'The .msi could not be built.');
+    }
+  }
+
   @Get('install/:platform')
   @Public()
   async getInstallScript(
@@ -291,21 +352,7 @@ export class PublicController {
     }
 
     // Validate enrollment token if provided — look up by SHA-256 hash
-    let validatedToken: string | undefined;
-    if (enrollToken) {
-      const tokenHash = createHash('sha256').update(enrollToken).digest('hex');
-      const tokenRecord = await this.prisma.deviceClaimToken.findUnique({ where: { token: tokenHash } });
-      if (tokenRecord && !tokenRecord.claimedAt && tokenRecord.expiresAt >= new Date()) {
-        validatedToken = enrollToken;
-      } else if (!tokenRecord) {
-        // 0.57: a usable deployment key installs exactly as a claim token
-        // does; the claim decides where the computer lands.
-        const key = await this.prisma.deploymentKey.findUnique({
-          where: { keyHash: tokenHash }, select: { revokedAt: true, expiresAt: true, useCount: true, maxUses: true },
-        });
-        if (key && keyState(key) === 'usable') validatedToken = enrollToken;
-      }
-    }
+    const validatedToken = enrollToken && (await this.usableToken(enrollToken)) ? enrollToken : undefined;
 
     let script: string;
     let contentType: string;
@@ -376,27 +423,10 @@ export class PublicController {
       // spoofable request headers. Falling back to headers only if neither is set. The URL is embedded inside the
       // installer and controls where the customer's machine fetches the PowerShell
       // script from, so header trust is a supply-chain risk.
-      const configuredBase = this.urls.apiConfigured() ?? undefined;
-      // https only outside development: this URL is baked into an installer that
-      // pipes whatever it fetches into an elevated PowerShell, so plaintext here
-      // is a root shell for anyone on the path. The installer binary refuses a
-      // non-https slot as well.
-      const schemeOk = process.env.NODE_ENV === 'production'
-        ? /^https:\/\/[a-zA-Z0-9.:_-]+/
-        : /^https?:\/\/[a-zA-Z0-9.:_-]+/;
-      let apiUrl: string;
-      if (configuredBase && schemeOk.test(configuredBase)) {
-        apiUrl = configuredBase;
-      } else {
-        const proto = process.env.NODE_ENV === 'production'
-          ? 'https'
-          : ((req.headers['x-forwarded-proto'] as string | undefined) ?? 'https');
-        const reqHost = (req.headers['x-forwarded-host'] as string | undefined) ?? req.headers.host ?? 'localhost';
-        if (!HOSTNAME_RE.test(String(reqHost).replace(/:.*$/, ''))) {
-          res.status(400).json({ success: false, message: 'Invalid host' });
-          return;
-        }
-        apiUrl = `${proto}://${reqHost}`;
+      const apiUrl = this.installerApiBase(req);
+      if (!apiUrl) {
+        res.status(400).json({ success: false, message: 'Invalid host' });
+        return;
       }
       const tokenSuffix = validatedToken ? `?token=${encodeURIComponent(validatedToken)}` : '';
       const psUrl = `${apiUrl}/api/v1/public/install/windows.ps1${tokenSuffix}`;
@@ -411,6 +441,46 @@ export class PublicController {
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Cache-Control', 'no-store');
     res.send(script);
+  }
+
+  /**
+   * Whether a token may install: an unclaimed, unexpired claim token, or (0.57)
+   * a usable deployment key, which installs exactly as a claim token does (the
+   * claim decides where the computer lands). Looked up by SHA-256; reads only.
+   */
+  private async usableToken(token: string): Promise<boolean> {
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const tokenRecord = await this.prisma.deviceClaimToken.findUnique({ where: { token: tokenHash } });
+    if (tokenRecord) return !tokenRecord.claimedAt && tokenRecord.expiresAt >= new Date();
+    const key = await this.prisma.deploymentKey.findUnique({
+      where: { keyHash: tokenHash }, select: { revokedAt: true, expiresAt: true, useCount: true, maxUses: true },
+    });
+    return !!key && keyState(key) === 'usable';
+  }
+
+  /**
+   * The API base a downloaded Windows installer names (the .exe's slot, the
+   * .msi's portal). The configured public address (setting, then
+   * PUBLIC_API_URL) over spoofable request headers, falling back to headers
+   * only if neither is set: it decides where the customer's machine fetches
+   * its installer from, so header trust is a supply-chain risk. https only
+   * outside development: on the legacy path this URL is piped into an
+   * elevated PowerShell, so plaintext would be a root shell for anyone on the
+   * path; the installers refuse a non-https address as well. Null for a
+   * request host outside the hostname charset.
+   */
+  private installerApiBase(req: Request): string | null {
+    const configuredBase = this.urls.apiConfigured() ?? undefined;
+    const schemeOk = process.env.NODE_ENV === 'production'
+      ? /^https:\/\/[a-zA-Z0-9.:_-]+/
+      : /^https?:\/\/[a-zA-Z0-9.:_-]+/;
+    if (configuredBase && schemeOk.test(configuredBase)) return configuredBase;
+    const proto = process.env.NODE_ENV === 'production'
+      ? 'https'
+      : ((req.headers['x-forwarded-proto'] as string | undefined) ?? 'https');
+    const reqHost = (req.headers['x-forwarded-host'] as string | undefined) ?? req.headers.host ?? 'localhost';
+    if (!HOSTNAME_RE.test(String(reqHost).replace(/:.*$/, ''))) return null;
+    return `${proto}://${reqHost}`;
   }
 
   // ── Script templates ──────────────────────────────────────────────────────

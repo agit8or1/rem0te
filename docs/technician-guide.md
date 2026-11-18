@@ -533,7 +533,11 @@ page; or the *Add device* tab) walks through it in six steps on one page:
    the machine; on Linux and macOS the install script as a file, run with
    `sudo bash install-rustdesk.sh` (or `install-rustdesk-macos.sh`). *Command*
    is the one-line command (PowerShell as Administrator, or a root shell).
-   There is no .msi or .pkg; for many computers at once see
+   Windows also has **Download .msi** (0.65) and the silent line
+   `msiexec /i rem0te.msi TOKEN=… /qn` to copy; the .msi needs the server to
+   publish the signed agent, says so when it cannot be built, leaves the agent
+   in place when it is uninstalled, and has never been run on real Windows.
+   There is no .pkg; for many computers at once see
    [deployment.md](deployment.md). Every choice carries the same single-use
    enrolment token that expires in 24 hours; downloading does not use it up,
    the computer's first check-in does. It is shown **once**: reload the page and

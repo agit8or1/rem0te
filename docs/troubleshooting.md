@@ -499,6 +499,29 @@ identical agent is not replaced, and a host that is replaced starts its
 successor itself. On an older agent, the icon comes back with the next
 heartbeat (within 3 minutes), or when the person signs in again.
 
+## Download .msi says it cannot be built, or msiexec fails (0.65)
+
+The `.msi` is built by the server when it is downloaded. Add device shows the
+reason in words; the route answers with a code:
+
+| Code | Meaning | What to do |
+|---|---|---|
+| `MSI_NEEDS_SIGNED_AGENT` (503) | The server publishes no signed agent, and only the signed agent takes a token on its command line. | Use the `.exe` or the command, or publish the signed agent ([update-signing.md](update-signing.md)). |
+| `MSI_BUILDER_UNAVAILABLE` (503) | `/usr/bin/wixl` or `/usr/bin/msibuild` is missing on the server. | `sudo apt-get install wixl msitools` on the portal host. No restart is needed. |
+| `MSI_BUSY` (503) | Two packages are already being built. | Try again in a moment. |
+| `ENROLLMENT_TOKEN_UNUSABLE` (400) | The link was used, expired or was revoked (or the key is used up, expired or revoked). | Make a new link or key. |
+| `MSI_TOKEN_INVALID` (400) | The token in the URL is not 16–128 hexadecimal characters. | Copy the link again. |
+
+On the computer, `msiexec /i rem0te.msi TOKEN=<token> /qn /l*v "%ProgramData%\Rem0te-msi.log"`
+writes a log (`TOKEN` is hidden in it). Exit code 1603 with *"Rem0te: pass
+TOKEN=…"* in the log is the launch condition: the package has no token, or the
+token has a space or a quote. Any other 1603 is the agent's install failing;
+its own log is `%ProgramData%\Rem0te\Logs\agent.log`, as for the `.exe`. The `.msi` has never
+been run on real Windows, so please report what you see.
+
+Uninstalling the `.msi` from *Programs and Features* removes only its entry;
+the agent keeps running. To remove a computer, offboard it from the console.
+
 ## Services
 
 ```bash
