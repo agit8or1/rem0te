@@ -29,6 +29,7 @@
  * or a schedule over days of real time.
  */
 import { PrismaClient } from '@prisma/client';
+import { confirmEverythingAsks } from './lib/confirm-asks.mjs';
 import argon2 from 'argon2';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -60,6 +61,9 @@ if ([PORT, SIGNER_PUBLIC, SIGNER_INTERNAL].some((p) => [3000, 3001, 443, 3201, 3
 const API = `http://127.0.0.1:${PORT}/api/v1`;
 const ORIGIN = `http://127.0.0.1:${SIGNER_PUBLIC}`;
 const prisma = new PrismaClient();
+// 0.64: every confirmation defaults to off. This suite proves step-ups, so it
+// asks for them all before its API reads the policy.
+await confirmEverythingAsks(prisma);
 const sfx = randomBytes(3).toString('hex');
 const PW = 'automation-e2e-password-123';
 const ACTIONS = ['windows.service.start@1', 'windows.update.install@1', 'windows.service.restart@1', 'windows.reboot.schedule@1', 'windows.reboot.cancel@1', 'windows.logs.collect@1', 'windows.script.run@1', 'windows.software.install@1', 'windows.software.uninstall@1', 'windows.software.remove@1', 'windows.service.control@1', 'windows.process.stop@1'];

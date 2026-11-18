@@ -18,6 +18,7 @@
  * SIMULATED, exactly as e2e-presets does; no shipped agent reports it.
  */
 import { PrismaClient } from '@prisma/client';
+import { confirmEverythingAsks } from './lib/confirm-asks.mjs';
 import argon2 from 'argon2';
 import { spawn } from 'node:child_process';
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
@@ -35,6 +36,9 @@ if (!/scratch|test/.test(dbName)) {
 const PORT = Number(process.env.FEATURES_API_PORT ?? 3151);
 const API = `http://127.0.0.1:${PORT}/api/v1`;
 const prisma = new PrismaClient();
+// 0.64: every confirmation defaults to off. This suite proves step-ups, so it
+// asks for them all before its API reads the policy.
+await confirmEverythingAsks(prisma);
 const sfx = randomBytes(3).toString('hex');
 const PW = 'features-e2e-password-123';
 

@@ -5,6 +5,120 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.64.0] — 2026-11-18 · *Welcome*
+
+**"Confirm it is you" asks only at sign-in by default; Add device has real download buttons; and *Add device* is a
+link in the menu.**
+
+The owner: *"2fa is still enabled on all features, turn off by default, just on login. When adding a new device, is
+there no option for the msi or exe, etc? also add a menu link to add a device"*.
+
+### Confirm it is you: off by default (§62, reversed at the owner's request)
+
+Since 0.49 every function on *Settings → Confirm it is you* defaulted to **Ask**, so a fresh install asked for a
+password, code or passkey again before about forty everyday changes, on top of the sign-in's own MFA. The owner had
+turned every one off in production by hand (audited) and asked for the default to match. This reverses 0.49's "every
+key defaults to ask", as §41, §62 itself (0.49), §67, §75 and §76 were.
+
+- **The catalog.** Every entry in `confirm-catalog.ts` now has `default: 'off'`.
+- **How a key resolves** (`review.ts`). A key with no `ConfirmPolicy` row takes its catalog default, through
+  `DEFAULTS`, built from the catalog (never a literal). Before 0.64 only an `off` row skipped, and a missing row
+  asked. `setConfirmPolicy` now keeps `ask` rows too, so a saved *Ask* overrides the default.
+- **What still fails closed, unchanged:** the policy not yet read from the database (everything asks); an unknown key;
+  the always-ask set (`passkey.manage`, `fresh.auth.passkey`, `confirm.relax`, plus your own password and
+  authenticator); a phishing-resistant check; and a row whose value is anything but exactly `off`.
+- **Upgrading.** Saved rows are kept. An installation that never saved a choice on that page stops asking for those
+  functions after this upgrade; press *Ask for all* (or set *Ask* per function) to have them back. Production already
+  had every function set to *Don't ask*, so nothing changes there.
+- **The settings card** says that the default is to confirm only at sign-in, and counts how many functions ask rather
+  than how many do not. The read-error text no longer claims "everything asks" in the browser: it is the server that
+  asks until it has read the policy.
+
+**Tests.** A fresh database no longer proves the step-ups on its own, so every suite that proves one now says it
+wants them:
+
+- `apps/api/scripts/lib/confirm-asks.mjs` writes an `ask` row for every catalog key (read from the built catalog, so
+  a new key is covered without editing it). It refuses a database whose name lacks `scratch` or `test`.
+- The 36 self-starting and scratch-API suites that check `STEP_UP_REQUIRED`, and `e2e-ui.mjs`, call it right after
+  making their Prisma client, before their API starts.
+- `run-e2e.sh` runs it once after the seed, before any API starts, for the scratch-API suites.
+- `e2e-confirm-policy.mjs` now starts from no rows and proves the new default: every function off, a stale API key
+  creation goes ahead, adding a passkey still asks, and reading writes nothing. It then sets *Ask for all* (no fresh
+  confirmation needed) and proves every earlier rule on `ask` rows. After a restart, a deleted row falls back to off.
+- `unit-confirm-policy.mjs` covers no rows (all off, always-ask and unknown keys still ask), an `ask` row overriding
+  the default, and a deleted row falling back.
+- `e2e-public-address.mjs` checks for the explicit `ask` row instead of "no off row".
+
+### Add device: download buttons
+
+Step 3 (*Run the installer*) is now two tabs.
+
+- **Download installer** (the default tab).
+  - Windows: a **Download .exe** button for the one-click installer, plus the same link to copy and send. Until now
+    the link was only offered as text to copy.
+  - Linux and macOS: the install script as a file (`install-rustdesk.sh`, `install-rustdesk-macos.sh`), run with
+    `sudo bash`.
+- **Command**: the one-line command, as before.
+
+**The token rules are unchanged, and no route was added.**
+
+- The .exe button is the existing `GET /public/install/windows.exe?token=…`, the same URL 0.32 showed for copying.
+  It patches the token into the installer's URL slot.
+- The Linux and macOS buttons fetch the command's own path-token URL (`/public/install/linux/<token>`,
+  `/mac/<token>`), which already answered `Content-Disposition: attachment`.
+- Each button is a plain same-origin download. The token is still minted once, shown once, single use and valid for
+  24 hours, and a download does not consume it (`e2e-add-device.mjs` checks this).
+
+**There is no .msi (and no .pkg).** An MSI needs a Windows Installer toolchain. On this host that would be `wixl`
+from the `msitools` package (available from apt, not installed, and per the instructions not installed for this
+release), or WiX on a Windows computer. The repository has neither, and a hand-written MSI writer could not be
+checked against Windows here. What an MSI is usually wanted for is mass deployment, which is deployment keys (0.57):
+
+- Group Policy runs the startup script.
+- Intune's Win32 app gives the detection rule and retries.
+
+Add device says this, and links Platform Admins to *Deploy agents*. The Intune recipe there says it too, and so do
+`docs/setup.md` and `docs/deployment.md`. An MSI built later must wrap this same signed installer, with the key passed
+as a property, and change none of §56, §57 or §70.
+
+### A menu link to add a device
+
+Devices is a hub, so its pages render only as tabs, and *Add device* could not be reached from the menu. A section
+may now name a `shortcut` (`nav-model.ts`), one of its own items that the sidebar also draws as an indented link
+under the section's row. Devices names *Add device*.
+
+- It is the same leaf object as the tab, with the same `show` (`computers:add`), so the menu and the tabs cannot
+  disagree.
+- On its page it is the highlighted row, not Devices.
+- The phone drawer shows it too, since the drawer is the same sidebar.
+- The Devices page already had a primary *Add device* button, and keeps it.
+
+### Docs and help
+
+- `docs/sign-in.md`: the new default, what still always asks, and what upgrading does.
+- `docs/setup.md`, `docs/technician-guide.md` §5 and `docs/clients.md`: the two tabs and why there is no .msi.
+- `docs/deployment.md`: there is no .msi, and the confirmation is now opt-in.
+- The in-app `/help`: the same, for both.
+
+### Invariants
+
+§62 now requires:
+
+- every catalog default to be `off`;
+- `confirmRequired` to fall back to `DEFAULTS`, built from the catalog;
+- `setConfirmPolicy` to keep a row as `off` only when it is exactly `off`;
+- the test helper to refuse a non-scratch database, to run in `run-e2e.sh` after the seed and before the suites, and
+  to be imported by nothing under `apps/api/src` (the seed writes no `ConfirmPolicy` row).
+
+§68's catalog check now expects `monitoring.autoticket` to default to `off`.
+
+### Deploy
+
+API and web, as usual. There is no migration, no new dependency, and no signer or agent change. Production already
+has every function set to *Don't ask* (rows), so its behaviour does not change.
+
+---
+
 ## [0.63.0] — 2026-11-17 · *Evergreen*
 
 **Approved policies no longer expire. A patch policy, a company-wide policy, an automation schedule or a restart

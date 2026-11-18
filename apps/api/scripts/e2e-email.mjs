@@ -34,6 +34,7 @@
  * second one on 3492 for the two-process check and the SMTP sink on 3493.
  */
 import { PrismaClient } from '@prisma/client';
+import { confirmEverythingAsks } from './lib/confirm-asks.mjs';
 import argon2 from 'argon2';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -52,6 +53,9 @@ const SINK_PORT = Number(process.env.EMAIL_SINK_PORT ?? PORT + 2);
 for (const p of [PORT, PORT2, SINK_PORT]) if ([3000, 3001, 4000, 4001, 443, 25, 465, 587].includes(p)) { console.error(`Refusing port ${p}.`); process.exit(2); }
 const API = `http://127.0.0.1:${PORT}/api/v1`;
 const prisma = new PrismaClient();
+// 0.64: every confirmation defaults to off. This suite proves step-ups, so it
+// asks for them all before its API reads the policy.
+await confirmEverythingAsks(prisma);
 const sfx = randomBytes(3).toString('hex');
 const PW = 'email-e2e-password-123';
 const RELAY_USER = `relay-${sfx}`;

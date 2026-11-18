@@ -15,6 +15,9 @@ import { useToast } from '@/hooks/use-toast';
  * change; read-only for everyone else. Turning any confirmation off asks
  * once (the API's always-ask `confirm.relax`); turning one back on never
  * does. The list and the always-ask note come from the API.
+ *
+ * 0.64: every function defaults to Don't ask (the owner's "just on login"),
+ * so the page says so, and says which functions differ from their default.
  */
 function apiError(e: unknown) {
   const m = (e as { response?: { data?: { message?: unknown } } })?.response?.data?.message;
@@ -41,7 +44,7 @@ export function ConfirmPolicyCard() {
   });
 
   if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (isError || !data) return <p className="text-sm text-muted-foreground">The confirmation settings could not be loaded. Everything asks until they can be.</p>;
+  if (isError || !data) return <p className="text-sm text-muted-foreground">The confirmation settings could not be loaded. The server asks for everything until it has read them.</p>;
 
   const disabled = !data.canChange || save.isPending;
   const setAll = (fns: ConfirmFunction[], v: ConfirmValue) => {
@@ -56,14 +59,20 @@ export function ConfirmPolicyCard() {
         <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><ShieldCheck className="h-4 w-4 text-primary" />Confirm it is you</CardTitle></CardHeader>
         <CardContent className="space-y-3 text-sm">
           <p className="text-muted-foreground">
-            Some changes ask you to confirm it is you again (your password, an authenticator code or a passkey) even though
-            you are signed in; a confirmation then lasts 10 minutes for that sign-in. Choose which functions ask.
-            <strong className="text-foreground"> Don&apos;t ask</strong> means signing in (with its MFA) is enough. Signing in is
-            always required, permissions are checked as before, and every change is still recorded in the audit log.
+            By default you confirm it is you only when you sign in (with its MFA). Any function below can also ask you to
+            confirm it is you again (your password, an authenticator code or a passkey) while you are signed in; a
+            confirmation then lasts 10 minutes for that sign-in. Choose <strong className="text-foreground">Ask</strong> for
+            the functions that should. <strong className="text-foreground">Don&apos;t ask</strong>, the default, means signing in
+            is enough. Signing in is always required, permissions are checked as before, and every change is still recorded
+            in the audit log.
           </p>
-          <p className="text-muted-foreground">
+          <p className="text-muted-foreground" data-testid="confirm-summary">
             Turning a confirmation off asks you to confirm it is you once. Turning one back on never does.{' '}
-            {offCount === 0 ? 'Everything asks.' : `${offCount} of ${data.catalog.length} functions do not ask.`}
+            {offCount === data.catalog.length
+              ? 'Nothing asks after sign-in (the default).'
+              : offCount === 0
+                ? 'Every function asks.'
+                : `${data.catalog.length - offCount} of ${data.catalog.length} functions ask.`}
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="outline" disabled={disabled || offCount === data.catalog.length} onClick={() => setAll(data.catalog, 'off')}>Don&apos;t ask for any</Button>

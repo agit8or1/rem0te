@@ -78,7 +78,7 @@ The relying party is the web app's address: `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGI
 
 ## Step-up
 
-Some actions need you to confirm it is you, even with a valid session: re-enter your password, a TOTP code, or use a passkey. The confirmation lasts 10 minutes and applies only to the sign-in it was made in.
+Some actions can need you to confirm it is you, even with a valid session: re-enter your password, a TOTP code, or use a passkey. The confirmation lasts 10 minutes and applies only to the sign-in it was made in. Which actions do is a setting ([below](#which-functions-ask-049)). **From 0.64 none of the configurable ones does by default**: you confirm it is you when you sign in, and only the short *Always asks* list asks again. Where this documentation says a function "asks you to confirm it is you", read it as "when that function is set to *Ask*".
 
 **With an authenticator enrolled, the password alone is not accepted (0.30.1).** Use the authenticator code or a passkey; the API answers `401 TOTP_REQUIRED` to a password, and the dialog offers only the code. Otherwise a stolen session plus a known password would be enough.
 
@@ -88,7 +88,7 @@ Some actions need you to confirm it is you, even with a valid session: re-enter 
 
 ### Which functions ask (0.49)
 
-**Settings → Confirm it is you** (Platform Admin) lists every function that asks, in groups, each with **Ask** or
+**Settings → Confirm it is you** (Platform Admin) lists every function that can ask, in groups, each with **Ask** or
 **Don't ask**, and *Don't ask for any* / *Ask for all* per group and overall. *Don't ask* means signing in, with its
 MFA, is enough for that function. Signing in is always required, permissions are checked first as before, and every
 change made with the function is still in the audit log. Everyone else sees the page read-only.
@@ -99,7 +99,7 @@ change made with the function is still in the audit log. Everyone else sees the 
 2. **Don't ask for any / Ask for all** — for every function at once. The line above says how many don't ask.
 3. **A group** — *Patching & updates* here, with its own *Don't ask for any* / *Ask for all*.
 4. **One function** — *A computer's patch policy*, set to *Don't ask*.
-5. **Install links** — still *Ask*: turning other functions off never turns this one off.
+5. **Install links** — still *Ask*: turning other functions off never turns this one off. (From 0.64 every function starts at *Don't ask*; this one was set to *Ask*.)
 
 Further down, *Always asks* lists the confirmations that are not settings (below).
 
@@ -127,9 +127,15 @@ to set an always-ask key (`400 CONFIRM_ALWAYS_ASKS`) or a key it does not know (
 
 **Every change is audited** as `CONFIRM_POLICY_CHANGED`, with the changed keys before and after. The API reads the
 policy at start and every 30 seconds, and applies a change at once. Until it has read the policy — and for any key it
-does not recognise — everything asks.
+does not recognise — everything asks; that does not change with 0.64's defaults.
 
-**A new installation asks for everything.** An installation upgraded from 0.47 or 0.48 keeps what it had: where
+**From 0.64 a new installation asks only at sign-in.** Every function on the page defaults to *Don't ask*: signing in,
+with its MFA, is enough, and only the *Always asks* list below still asks after that. A function with no saved choice
+takes its default, so an installation that never changed this page also stops asking for those functions when it is
+upgraded to 0.64; a choice that was saved (a function set to *Ask*, or to *Don't ask*) is kept. To have confirmations
+again, press *Ask for all*, or set *Ask* on the functions you want. Before 0.64 every function defaulted to *Ask*.
+
+An installation upgraded from 0.47 or 0.48 kept what it had in 0.49: where
 *Confirm before everyday changes* was **Off**, its seven functions (`actions.direct`, `scripts.direct`,
 `software.catalog`, `agent.migrate`, `agent.autoupdate.computer`, `agent.autoupdate.business`, `patching.policy`) start
 as *Don't ask*, and everything else asks. Migration 0071 did that, and dropped the old setting and
@@ -145,6 +151,8 @@ Making an install link (`enrollment.create`) and creating an API key (`apikey.cr
 could not be switched off from 0.33 and 0.34 until 0.49. They are on the page now, each as its own function, and
 turning other functions off never turns them off. What the paragraphs below describe holds while they ask: with
 either set to *Don't ask*, a stolen or unattended session can make an install link or a key with no further proof.
+From 0.64 both start at *Don't ask*, like every function on the page; set them to *Ask* to have the protection
+below.
 
 | Action (in the `403`) | When |
 |---|---|

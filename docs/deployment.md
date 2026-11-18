@@ -48,8 +48,9 @@ Then choose what happens when a computer uses it:
   the key can add a computer to that business until the key expires, is used up
   or is revoked — choose this only for a rollout you control end to end.
 
-Creating a key asks you to confirm it is you (*Settings → Confirm it is you*,
-**Deployment keys**). The key is shown **once**: copy it then. The
+Creating a key asks you to confirm it is you when *Settings → Confirm it is you*
+has **Deployment keys** set to *Ask* (from 0.64 every function there starts at
+*Don't ask*). The key is shown **once**: copy it then. The
 server keeps only its SHA-256 and the last four characters (shown as `…ab12`
 so you can tell keys apart), and it appears in no list, audit entry or log.
 
@@ -87,6 +88,14 @@ reading never contains one.
 Every method runs the same installer as **Add device**. On Windows that
 installs the signed agent when this server publishes one, and the standard
 agent otherwise.
+
+**There is no .msi package (0.64).** Rem0te does not build one: an MSI needs a
+Windows Installer toolchain (`wixl` from the `msitools` package, or WiX on a
+Windows computer), which the portal host does not have. The routes below cover
+what an MSI is usually wanted for: Group Policy runs the startup script, and
+Intune's Win32 app gives the detection rule and retries. An MSI built later
+would have to wrap this same signed installer, with the key passed in, and
+change none of the token rules.
 
 ### Group Policy (Active Directory)
 

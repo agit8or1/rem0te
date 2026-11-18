@@ -105,6 +105,12 @@ npx prisma migrate deploy > "$OUT/migrate.log" 2>&1 || { cat "$OUT/migrate.log";
 RUSTDESK_RELAY_HOST="${RUSTDESK_RELAY_HOST:-relay.scratch.example.com}" \
 RUSTDESK_PUBLIC_KEY="${RUSTDESK_PUBLIC_KEY:-$(openssl rand -base64 32)}" \
   npx prisma db seed > "$OUT/seed.log" 2>&1 || { cat "$OUT/seed.log"; exit 1; }
+# 0.64: every "confirm it is you" function defaults to off, so a fresh
+# database asks only at sign-in. The suites prove the step-ups, so the
+# database asks for every function before any API starts (an `ask` row per
+# catalog key). Suites that start their own API also write these rows
+# themselves; the scratch-API suites below rely on this line.
+node scripts/lib/confirm-asks.mjs > "$OUT/confirm-asks.log" 2>&1 || { cat "$OUT/confirm-asks.log"; exit 1; }
 
 failed=(); skipped=()
 summary() { grep -aE '[0-9]+ passed|ALL PASSED|PROOF PASSED|All security regression checks passed|[0-9]+ FAILED' "$1" | tail -1 | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-120; }

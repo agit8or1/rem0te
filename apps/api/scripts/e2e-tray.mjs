@@ -52,6 +52,7 @@
  * is tested by `go test ./internal/tray ./cmd/rem0te-tray`.
  */
 import { PrismaClient } from '@prisma/client';
+import { confirmEverythingAsks } from './lib/confirm-asks.mjs';
 import argon2 from 'argon2';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -72,6 +73,9 @@ const API = `http://127.0.0.1:${PORT}/api/v1`;
 const HOOK_PORT = Number(process.env.TRAY_PSA_HOOK_PORT ?? 3633);
 if (HOOK_PORT < 3633 || HOOK_PORT > 3639) { console.error(`Refusing webhook port ${HOOK_PORT}: 3633–3639 only.`); process.exit(2); }
 const prisma = new PrismaClient();
+// 0.64: every confirmation defaults to off. This suite proves step-ups, so it
+// asks for them all before its API reads the policy.
+await confirmEverythingAsks(prisma);
 const sfx = randomBytes(3).toString('hex');
 const PW = 'tray-e2e-password-123456';
 const MARK = `zt${sfx}`; // every message and request text carries it, so the audit scan can look for it

@@ -14,6 +14,7 @@
  */
 
 import { PrismaClient } from '@prisma/client';
+import { confirmEverythingAsks } from './lib/confirm-asks.mjs';
 import argon2 from 'argon2';
 import { authenticator } from 'otplib';
 import { createCipheriv, randomBytes } from 'crypto';
@@ -26,6 +27,9 @@ if (/:3001\b|:443\b|^https:/.test(API) && process.env.I_KNOW_THIS_IS_NOT_PRODUCT
 }
 
 const prisma = new PrismaClient();
+// 0.64: every confirmation defaults to off. This suite proves step-ups, so it
+// asks for them all before its API reads the policy.
+await confirmEverythingAsks(prisma);
 const sfx = randomBytes(3).toString('hex');
 const PW = 'test-password-123456';
 const encKey = Buffer.from(process.env.ENCRYPTION_KEY ?? '', 'hex');

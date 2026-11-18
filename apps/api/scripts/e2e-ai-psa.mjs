@@ -31,6 +31,7 @@
  * Ports 3751 (API), 3752 (AI stub), 3753 (webhook stub), 3754 (SMTP sink).
  */
 import { PrismaClient } from '@prisma/client';
+import { confirmEverythingAsks } from './lib/confirm-asks.mjs';
 import argon2 from 'argon2';
 import { spawn } from 'node:child_process';
 import { createHmac, randomBytes } from 'node:crypto';
@@ -49,6 +50,9 @@ const AI_PORT = PORT + 1, HOOK_PORT = PORT + 2, SINK_PORT = PORT + 3;
 for (const p of [PORT, AI_PORT, HOOK_PORT, SINK_PORT]) if (p < 3751 || p > 3759) { console.error(`Refusing port ${p}: this suite uses 3751–3759.`); process.exit(2); }
 const API = `http://127.0.0.1:${PORT}/api/v1`;
 const prisma = new PrismaClient();
+// 0.64: every confirmation defaults to off. This suite proves step-ups, so it
+// asks for them all before its API reads the policy.
+await confirmEverythingAsks(prisma);
 const sfx = randomBytes(3).toString('hex');
 const PW = 'aipsa-e2e-password-123';
 const WEB = 'https://rmm.example.test';

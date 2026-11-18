@@ -17,6 +17,7 @@
  *   API_BASE=http://127.0.0.1:3101/api/v1 DATABASE_URL=… ENCRYPTION_KEY=… node scripts/e2e-offboarding.mjs
  */
 import { PrismaClient } from '@prisma/client';
+import { confirmEverythingAsks } from './lib/confirm-asks.mjs';
 import argon2 from 'argon2';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 import { testApiBase } from './lib/test-api-base.mjs';
@@ -30,6 +31,9 @@ const KEY = Buffer.from(process.env.ENCRYPTION_KEY || '', 'hex');
 if (KEY.length !== 32) { console.error('ENCRYPTION_KEY (the API\'s) is needed to seed and read credentials'); process.exit(2); }
 
 const prisma = new PrismaClient();
+// 0.64: every confirmation defaults to off. This suite proves step-ups, so it
+// asks for them all before its API reads the policy.
+await confirmEverythingAsks(prisma);
 const sfx = randomBytes(3).toString('hex');
 const PW = 'test-password-123456';
 

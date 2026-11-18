@@ -20,6 +20,12 @@
  * device completes a run — after Refresh, and on its periodic re-read. At 375 px no page may
  * scroll sideways: a wide table scrolls inside its own container.
  *
+ * 0.64: the sidebar's "Add device" link under Devices (desktop and the phone
+ * drawer, hidden from a Business User without Add computers), and step 3's
+ * "Download .exe" button and Command tab for the link just made. Every
+ * confirmation now defaults to off, so this suite writes an `ask` row per
+ * function (api/scripts/lib/confirm-asks.mjs) before its API starts.
+ *
  * 0.35 drives the 0.34 screens that had only been built: the Chat tab (start
  * a chat, send, and watch sent → delivered → shown → read as a simulated
  * computer acknowledges over the real device routes, apps/api/scripts/lib/
@@ -140,6 +146,10 @@ const OUT_DIR = process.env.OUT_DIR ?? await mkdtemp(path.join(tmpdir(), 'rem0te
 const { createSmtpSink } = await import(path.join(API_DIR, 'scripts/lib/smtp-sink.mjs'));
 const { chatDevice } = await import(path.join(API_DIR, 'scripts/lib/chat-device.mjs'));
 const prisma = new PrismaClient();
+// 0.64: every confirmation defaults to off. This suite proves the step-up
+// dialog, so it asks for them all before its API reads the policy.
+const { confirmEverythingAsks } = await import(path.join(API_DIR, 'scripts/lib/confirm-asks.mjs'));
+await confirmEverythingAsks(prisma);
 
 // 0.36: a GeoIP database of three documentation networks, one per connectivity
 // state, written here and handed to the API as GEOIP_DB_PATH. Without it the
@@ -601,6 +611,7 @@ async function shellChecks(page, vp, label) {
   const desktopNav = page.locator('nav[aria-label="Main"]').first();
   if (vp === 'desktop') {
     check(!(await trigger.isVisible()) && await desktopNav.isVisible(), `${label}: the sidebar sits beside the page and there is no menu button`);
+    await addDeviceShortcut(page, desktopNav, label);
     return;
   }
   check(await trigger.isVisible() && !(await desktopNav.isVisible()), `${label}: no sidebar beside the page; a menu button in the top bar`);
@@ -617,6 +628,13 @@ async function shellChecks(page, vp, label) {
   const box = await drawer.boundingBox();
   check(box && box.x >= 0 && box.width <= 375 && box.height >= 700, `${label}: the drawer fits the screen`, JSON.stringify(box));
   check(await drawer.locator('nav[aria-label="Main"] [data-nav]').count() >= 3, `${label}: it holds the main menu`);
+  {
+    // 0.64: Add device is in the drawer too, inside its width.
+    const sc = drawer.locator('[data-testid="nav-shortcut-devices"]');
+    const b = await sc.boundingBox().catch(() => null);
+    check(await sc.isVisible() && await sc.getAttribute('href') === '/endpoints/enroll' && /Add device/.test(await sc.innerText()) && b && box && b.x >= box.x && b.x + b.width <= box.x + box.width + 0.5,
+      `${label}: the drawer has an "Add device" link under Devices, inside the drawer`, JSON.stringify(b));
+  }
   await shot(page, `${label}-drawer`);
   // Focus is inside and stays inside, both ways round.
   let escaped = 0;
@@ -651,6 +669,28 @@ async function shellChecks(page, vp, label) {
   await drawer.locator('[data-nav="devices"]').click();
   await drawer.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
   check(!(await drawer.isVisible()), `${label}: a link to the page already open closes it too`);
+}
+
+/**
+ * 0.64: "Add device" is a link of its own in the sidebar, under Devices (until
+ * now it was only a tab on the Devices pages). It opens the flow, and is the
+ * highlighted row there instead of Devices.
+ */
+async function addDeviceShortcut(page, nav, label) {
+  const sc = nav.locator('[data-testid="nav-shortcut-devices"]');
+  const devices = nav.locator('[data-nav="devices"]');
+  const sb = await sc.boundingBox().catch(() => null), db = await devices.boundingBox().catch(() => null);
+  check(await sc.isVisible() && await sc.getAttribute('href') === '/endpoints/enroll' && (await sc.innerText()).trim() === 'Add device',
+    `${label}: the sidebar has an "Add device" link`, await sc.innerText().catch(() => 'missing'));
+  check(sb && db && sb.y > db.y && sb.x > db.x, `${label}: it sits under Devices, indented`, JSON.stringify({ sb, db }));
+  await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
+  await sc.click();
+  await page.waitForURL((u) => u.pathname === '/endpoints/enroll', { timeout: 15_000 }).catch(() => {});
+  await page.locator('[data-testid="add-device-flow"]').waitFor({ timeout: 15_000 }).catch(() => {});
+  check(new URL(page.url()).pathname === '/endpoints/enroll' && await page.locator('[data-testid="add-device-flow"]').isVisible(), `${label}: it opens Add device`, page.url());
+  check(await sc.getAttribute('aria-current') === 'page' && !/bg-primary/.test(await devices.getAttribute('class') ?? ''),
+    `${label}: there it is the highlighted row, not Devices`, await devices.getAttribute('class').catch(() => ''));
+  await settled(page);
 }
 
 async function mainPagesSweep(page, f, vp, label) {
@@ -884,6 +924,19 @@ async function addDevice(page, f, vp, label) {
   const cmd = page.locator('[data-testid="step-command"][data-step-state="active"]');
   await cmd.waitFor({ timeout: 15_000 }).catch(() => {});
   check(await cmd.isVisible() && await prisma.deviceClaimToken.count({ where: { customerId: f.A.id } }) === before + 1, `${label}: confirming makes exactly one link and shows the install command`);
+  // 0.64: the installer is a real download, and the command is its own tab.
+  const dl = cmd.locator('[data-testid="download-installer"]');
+  const href = await dl.getAttribute('href').catch(() => null);
+  check(await dl.isVisible() && /Download \.exe/.test(await dl.innerText()) && /\/api\/v1\/public\/install\/windows\.exe\?token=[0-9a-f]{64}$/.test(href ?? '') && await dl.getAttribute('download') === 'install-reboot-remote.exe',
+    `${label}: Windows opens on a "Download .exe" button for the link just made`, href ?? 'no button');
+  check(await cmd.locator('[data-testid="copy-link"]').innerText().catch(() => '') === href, `${label}: the same link is there to copy and send`);
+  check(await cmd.locator('[data-testid="msi-note"]').isVisible() && /no \.msi package yet/.test(await cmd.locator('[data-testid="msi-note"]').innerText()), `${label}: it says there is no .msi, and points to deployment keys`);
+  const dlBox = await dl.boundingBox();
+  if (vp === 'phone') check(dlBox && dlBox.x >= 0 && dlBox.x + dlBox.width <= 375.5, `${label}: the download button fits the screen`, JSON.stringify(dlBox));
+  await cmd.locator('[data-testid="tab-command"]').click();
+  const cmdText = await cmd.locator('[data-testid="copy-command"]').innerText().catch(() => '');
+  check(/^irm \S+\/api\/v1\/public\/install\/win\/[0-9a-f]{64} \| iex$/.test(cmdText) && cmdText.includes((href ?? '').split('token=')[1] ?? '\0') && !(await dl.isVisible()),
+    `${label}: the Command tab shows the PowerShell command, for the same token`, cmdText);
   if (vp === 'phone') await noSideScroll(page, `${label} install command`);
   await shot(page, `${label}-add-device`);
   await cleanCheck(page, `${label} Add device`, stepUp403);
@@ -1273,6 +1326,9 @@ async function memberChecks(browser, f, vp, theme, label) {
   const ctx = await newContext(browser, vp, theme);
   try {
     const page = await signIn(ctx, f.member.email, `${label} (Business User)`, theme);
+    // 0.64: the Add device link is shown only with Add computers.
+    if (vp === 'desktop') check(await page.locator('nav[aria-label="Main"] [data-nav="devices"]').first().isVisible() && await page.locator('[data-testid="nav-shortcut-devices"]').count() === 0,
+      `${label}: a Business User without Add computers has no "Add device" link in the sidebar`);
     await go(page, '/reports/agent-coverage');
     check(await page.locator('main h1').first().isVisible() && !(await page.locator('[data-testid="schedule-report"]').isVisible()), `${label}: a Business User sees the report without "Schedule this report"`);
     const r = await page.request.get(`${WEB}/api/v1/reports/schedules`, { headers: { 'x-forwarded-for': ip() } });

@@ -43,6 +43,7 @@
  * Run:  DATABASE_URL=…/rem0te_enrol_stepup_test node scripts/e2e-enrol-stepup.mjs
  */
 import { PrismaClient } from '@prisma/client';
+import { confirmEverythingAsks } from './lib/confirm-asks.mjs';
 import argon2 from 'argon2';
 import { spawn } from 'node:child_process';
 import { createHmac, randomBytes } from 'node:crypto';
@@ -59,6 +60,9 @@ if ([3000, 3001, 443, 4000, 4001].includes(PORT)) { console.error(`Refusing port
 const API = `http://127.0.0.1:${PORT}/api/v1`;
 const VERSION_FILE = path.resolve(here, '..', '..', '..', 'version.json');
 const prisma = new PrismaClient();
+// 0.64: every confirmation defaults to off. This suite proves step-ups, so it
+// asks for them all before its API reads the policy.
+await confirmEverythingAsks(prisma);
 const sfx = randomBytes(3).toString('hex');
 const PW = 'enrol-stepup-e2e-password-1';
 const TAG = `ES${sfx}`;

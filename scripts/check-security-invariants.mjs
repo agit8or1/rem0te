@@ -4432,6 +4432,18 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //     Changing the policy is a Platform Admin's; relaxing anything confirms
 //     first with the always-ask `confirm.relax`, tightening never does, and
 //     every change is audited. The web holds no copy of the catalog.
+//
+//     0.64 reverses 0.49's "every key defaults to ask" at the owner's request
+//     ("2fa is still enabled on all features, turn off by default, just on
+//     login"), as §41, §62 itself, §67, §75 and §76 were. Every catalog key
+//     now defaults to `off`, and a key with no row takes its catalog default
+//     (`DEFAULTS`, built from CONFIRM_CATALOG, never a literal). Unchanged and
+//     still checked: an unread policy asks, an unknown or always-ask key asks,
+//     a phishing-resistant check asks, a row saying anything but exactly
+//     'off' asks, the always-ask set is the same three keys. The suites that
+//     prove a step-up write an `ask` row per key themselves
+//     (apps/api/scripts/lib/confirm-asks.mjs, scratch databases only), and
+//     nothing in the API or the seed writes one.
 {
   const SRC = 'apps/api/src';
   const cat = read(`${SRC}/security-controls/confirm-catalog.ts`);
@@ -4446,9 +4458,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const ALWAYS = [...alwaysBody.matchAll(/\{ key: '([a-z.]+)'/g)].map((m) => m[1]);
   const isKey = (k) => KEYS.includes(k) || ALWAYS.includes(k);
 
-  check('confirm: the catalog is plain data (no imports) with unique keys, each defaulting to ask',
+  check('confirm: the catalog is plain data (no imports) with unique keys, each defaulting to off (0.64, the owner\'s "just on login")',
     !/^import /m.test(cat) && KEYS.length >= 30 && new Set(KEYS).size === KEYS.length
-      && (catBody.match(/default: 'ask'/g) ?? []).length === KEYS.length && !/default: 'off'/.test(catBody),
+      && (catBody.match(/default: 'off'/g) ?? []).length === KEYS.length && !/default: 'ask'/.test(catBody),
     `confirm-catalog.ts: ${KEYS.length} keys`);
   check('confirm: the always-ask set is exactly passkey.manage, fresh.auth.passkey, confirm.relax, and none is in the catalog',
     JSON.stringify(ALWAYS) === JSON.stringify(['passkey.manage', 'fresh.auth.passkey', 'confirm.relax']) && ALWAYS.every((k) => !KEYS.includes(k)),
@@ -4555,10 +4567,22 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /\{\s*if \(!opts\.phishingResistant && !confirmRequired\(opts\.action\)\) return;\s*if \(!method\) \{\s*throw new ForbiddenException\(\{\s*code: 'STEP_UP_REQUIRED', action: opts\.action,/.test(assertBody)
       && (assertBody.match(/return;/g) ?? []).length === 1,
     'review.ts assertFresh');
-  check('confirm: an unread policy, an always-ask key and an unknown key ask; only exactly "off" skips',
-    /let confirmLoaded = false;/.test(rev) && /if \(!confirmLoaded\) return true;\s*if \(ALWAYS\.has\(key\) \|\| !CONFIGURABLE\.has\(key\)\) return true;\s*return confirmPolicy\.get\(key\) !== 'off';/.test(rev)
-      && /if \(typeof r\.key === 'string' && CONFIGURABLE\.has\(r\.key\) && !ALWAYS\.has\(r\.key\) && r\.value === 'off'\) m\.set\(r\.key, 'off'\);/.test(rev),
-    'review.ts confirmRequired / setConfirmPolicy');
+  check('confirm: an unread policy, an always-ask key and an unknown key ask; a row skips only when exactly "off"; no row takes the catalog default (0.64)',
+    /let confirmLoaded = false;/.test(rev) && /if \(!confirmLoaded\) return true;\s*if \(ALWAYS\.has\(key\) \|\| !CONFIGURABLE\.has\(key\)\) return true;\s*return \(confirmPolicy\.get\(key\) \?\? DEFAULTS\.get\(key\) \?\? 'ask'\) !== 'off';/.test(rev)
+      && /if \(typeof r\.key === 'string' && CONFIGURABLE\.has\(r\.key\) && !ALWAYS\.has\(r\.key\)\) m\.set\(r\.key, r\.value === 'off' \? 'off' : 'ask'\);/.test(rev)
+      && /const DEFAULTS: ReadonlyMap<string, ConfirmValue> = new Map<string, ConfirmValue>\(CONFIRM_CATALOG\.map\(\(f\) => \[f\.key, f\.default\]\)\);/.test(rev)
+      && (rev.match(/DEFAULTS/g) ?? []).length === 2,
+    'review.ts confirmRequired / setConfirmPolicy / DEFAULTS');
+  // 0.64: the suites ask for every function themselves; nothing shipped does.
+  const asksLib = read('apps/api/scripts/lib/confirm-asks.mjs');
+  const runE2e = read('scripts/run-e2e.sh');
+  const seedSrc = read('apps/api/prisma/seed.ts');
+  const importers = walk(SRC).filter((f) => /confirm-asks/.test(read(f)));
+  check('confirm: the test helper that sets every function to ask refuses a non-scratch database, and only the suites and run-e2e.sh use it',
+    /if \(!\/scratch\|test\/\.test\(name\)\) throw/.test(asksLib) && /export async function confirmEverythingAsks\(prisma\) \{\s*refuseUnlessScratch\(\);/.test(asksLib)
+      && /node scripts\/lib\/confirm-asks\.mjs/.test(runE2e) && runE2e.indexOf('node scripts/lib/confirm-asks.mjs') > runE2e.indexOf('npx prisma db seed') && runE2e.indexOf('node scripts/lib/confirm-asks.mjs') < runE2e.indexOf('── self-starting suites')
+      && importers.length === 0 && !/confirmPolicy/.test(seedSrc) && seedSrc.length > 0,
+    `lib/confirm-asks.mjs, run-e2e.sh; imported from apps/api/src: ${importers.join(', ') || 'none'}`);
   check('confirm: the policy is read at start and every 30 s, and set again after a change',
     /async onModuleInit\(\) \{\s*await this\.load\(\);\s*this\.timer = setInterval\(\(\) => \{ void this\.load\(\); \}, 30_000\);/.test(svc) && /const after = await this\.load\(\);/.test(svc),
     'ConfirmPolicyService');
@@ -5100,7 +5124,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     (mctl.match(/assertFresh\([^;]*?action: 'monitoring\.autoticket'/g) ?? []).length === 1
       && /@Put\('ticket-policy'\)\s*\n\s*async putTicketPolicy\([^\n]*\) \{\s*\n\s*this\.freshTicket\(req\);/.test(mctl)
       && /@Delete\('ticket-policy'\)\s*\n\s*async removeTicketPolicy\([^\n]*\) \{\s*\n\s*this\.freshTicket\(req\);/.test(mctl)
-      && /key: 'monitoring\.autoticket', group: 'Monitoring & notifications', label: '[^']+', default: 'ask'/.test(cat)
+      && /key: 'monitoring\.autoticket', group: 'Monitoring & notifications', label: '[^']+', default: 'off'/.test(cat)
       && (madm.match(/action: 'MONITOR_TICKET_POLICY_CHANGED'/g) ?? []).length === 2
       && /this\.assertPolicy\(a, customerId\);/.test(sliceFrom(madm, '  async putTicketPolicy(')),
     'monitoring.controller freshTicket (monitoring.autoticket); putTicketPolicy/removeTicketPolicy: assertPolicy, logOrFail');

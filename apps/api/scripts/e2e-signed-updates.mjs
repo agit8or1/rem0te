@@ -22,6 +22,7 @@
  * tools/windows-installer. Scratch databases only.
  */
 import { PrismaClient } from '@prisma/client';
+import { confirmEverythingAsks } from './lib/confirm-asks.mjs';
 import argon2 from 'argon2';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -43,6 +44,9 @@ if (!BIN) { console.error('RELEASE_BIN (rem0te-release) is required'); process.e
 const PORT = Number(process.env.SIGNED_API_PORT ?? 3131);
 const API = `http://127.0.0.1:${PORT}/api/v1`;
 const prisma = new PrismaClient();
+// 0.64: every confirmation defaults to off. This suite proves step-ups, so it
+// asks for them all before its API reads the policy.
+await confirmEverythingAsks(prisma);
 const sfx = randomBytes(3).toString('hex');
 const PW = 'signed-e2e-password-123';
 

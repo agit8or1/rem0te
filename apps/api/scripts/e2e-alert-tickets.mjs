@@ -30,6 +30,7 @@
  * database that already has either, or any global monitor.
  */
 import { PrismaClient } from '@prisma/client';
+import { confirmEverythingAsks } from './lib/confirm-asks.mjs';
 import argon2 from 'argon2';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -47,6 +48,9 @@ const HOOK_PORT = PORT + 1;
 for (const p of [PORT, HOOK_PORT]) if (p < 3811 || p > 3813) { console.error(`Refusing port ${p}: this suite uses 3811–3813.`); process.exit(2); }
 const API = `http://127.0.0.1:${PORT}/api/v1`;
 const prisma = new PrismaClient();
+// 0.64: every confirmation defaults to off. This suite proves step-ups, so it
+// asks for them all before its API reads the policy.
+await confirmEverythingAsks(prisma);
 const sfx = randomBytes(3).toString('hex');
 const PW = 'alerttk-e2e-password-123';
 const WEB = 'https://rmm.example.test';

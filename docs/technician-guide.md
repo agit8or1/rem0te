@@ -116,7 +116,8 @@ company-wide; for a technician, only the machines your assignment names.
 
 ![Computers list](screenshots/guide/tech-02-computers.png)
 
-1. **Devices** — the menu entry; its tabs hold *My devices*, *Add device* and the others.
+1. **Devices** — the menu entry; its tabs hold *My devices*, *Add device* and the others. From 0.64 *Add device* is
+   also its own link just under *Devices* in the menu, for anyone with *Add computers*.
 2. **Search** — matches name, hostname, IP address, OS, alias, RustDesk ID, business,
    site and the signed-in user. The server does the matching, so it searches every page,
    not just the one on screen.
@@ -491,8 +492,8 @@ Rem0te does not store the Quick Connect password and never displays it again.
 
 ## 5. Enrol a new computer
 
-**Devices → Add device** (the button on the Devices page, or the *Add device* tab)
-walks through it in six steps on one page:
+**Devices → Add device** (the *Add device* link under *Devices* in the menu, from 0.64; the button on the Devices
+page; or the *Add device* tab) walks through it in six steps on one page:
 
 ![Add device, step 1: business, site and who may connect](screenshots/guide/add-device-1.png)
 
@@ -512,7 +513,7 @@ walks through it in six steps on one page:
 
 ![Add device, step 3: the install command, and step 4 waiting for the device](screenshots/guide/add-device-3.png)
 
-1. **Run the installer** — the PowerShell one-liner and the one-click installer link, shown once. (The token is replaced with a placeholder in this screenshot.)
+1. **Run the installer** — shown once. (The token is replaced with a placeholder in this screenshot, which predates 0.64: from 0.64 this step has two tabs, *Download installer* and *Command*, described below.)
 2. **Wait for the device** — checks every few seconds; *Revoke this link* cancels an unused one.
 3. **First health** — fills in from what the server actually receives once the device checks in.
 
@@ -526,11 +527,17 @@ walks through it in six steps on one page:
    `sudo`) get RustDesk and the read-only agent: heartbeat, inventory and
    pending updates, and nothing the console sends is acted on
    ([inventory.md](inventory.md)).
-3. **Run the installer.** A one-line command (PowerShell as Administrator, or a
-   root shell), and on Windows also a one-click installer link to send to the
-   person at the machine. It contains a single-use enrolment token that expires
-   in 24 hours, and it is shown **once**: reload the page and only the waiting
-   continues. If the command is lost, revoke the link and make a new one.
+3. **Run the installer.** Two tabs (0.64). *Download installer* is a button:
+   on Windows **Download .exe**, a one-click installer (run it, accept the
+   administrator prompt), with the same link to copy and send to the person at
+   the machine; on Linux and macOS the install script as a file, run with
+   `sudo bash install-rustdesk.sh` (or `install-rustdesk-macos.sh`). *Command*
+   is the one-line command (PowerShell as Administrator, or a root shell).
+   There is no .msi or .pkg; for many computers at once see
+   [deployment.md](deployment.md). Every choice carries the same single-use
+   enrolment token that expires in 24 hours; downloading does not use it up,
+   the computer's first check-in does. It is shown **once**: reload the page and
+   only the waiting continues. If the command is lost, revoke the link and make a new one.
    Making it asks you to confirm it is you (password, authenticator code or
    passkey) unless you did in the last 10 minutes (0.33): a link adds a computer
    to the business, so a session left open must not be enough. Your choices are

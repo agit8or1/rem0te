@@ -33,11 +33,18 @@
  * live steps (signing set up, a signed agent published, timestamp fresh,
  * computers moved — automatically, canary first). Shown for computers:view,
  * the capability its API needs.
+ *
+ * 0.64: a hub's pages render only as tabs, so "Add device" — the one page
+ * most people come to Devices for — could not be found from the menu (the
+ * owner: "also add a menu link to add a device"). A section may now name a
+ * `shortcut`, one of its own items that the sidebar also draws as an indented
+ * link under the section's row. It is the same leaf object as the tab, with
+ * the same `show`, so the menu and the tabs still cannot disagree.
  */
 import type { LucideIcon } from 'lucide-react';
 import {
-  Activity, ArrowRightLeft, BarChart3, BellRing, Building2, Cpu, WifiOff, Download, FileCode2, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
-  Monitor, MonitorCheck, MonitorX, Package, PackageCheck, PlayCircle, RefreshCw, Settings, Shield, ShieldCheck, Siren,
+  Activity, ArrowRightLeft, BarChart3, BellRing, Building2, Cpu, WifiOff, FileCode2, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
+  Monitor, MonitorCheck, MonitorX, Package, PackageCheck, PlayCircle, Plus, RefreshCw, Settings, Shield, ShieldCheck, Siren,
   UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail, Sparkles, Ticket, ListChecks, BadgeCheck,
 } from 'lucide-react';
 import { CAP, type Capability } from '@/lib/auth';
@@ -74,9 +81,17 @@ export type NavSection = {
   items: NavLeaf[];
   /** Routes that belong here without being an entry (detail pages, landings). */
   also?: string[];
+  /**
+   * 0.64: one of `items` the sidebar also draws as its own indented link
+   * under this section's row (a hub's items are otherwise only tabs).
+   */
+  shortcut?: NavLeaf;
 };
 
 const all = () => true;
+
+/** Devices → Add device: a tab of Devices, and (0.64) the sidebar's shortcut under it. */
+const ADD_DEVICE: NavLeaf = { href: '/endpoints/enroll', label: 'Add device', icon: Plus, show: (c) => c.can(CAP.COMPUTERS_ADD) };
 
 export const NAV: NavSection[] = [
   {
@@ -89,7 +104,7 @@ export const NAV: NavSection[] = [
       { href: '/endpoints', label: 'All devices', icon: MonitorCheck, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
       { href: '/my-computers', label: 'My devices', icon: Monitor, show: all },
       { href: '/technician', label: 'All assigned', icon: LayoutGrid, show: (c) => c.hasAssignments },
-      { href: '/endpoints/enroll', label: 'Add device', icon: Download, show: (c) => c.can(CAP.COMPUTERS_ADD) },
+      ADD_DEVICE,
       { href: '/admin/unassigned', label: 'Unassigned', icon: MonitorX, show: (c) => c.isPlatformAdmin },
       // 0.57: deployment keys and fleet rollout instructions (GPO, Intune, RMM, Linux, macOS).
       { href: '/admin/deploy', label: 'Deploy agents', icon: HardDriveDownload, show: (c) => c.isPlatformAdmin },
@@ -100,6 +115,7 @@ export const NAV: NavSection[] = [
       { href: '/endpoints/agent-migrations', label: 'Agent migrations', icon: ArrowRightLeft, show: (c) => c.can(CAP.COMPUTERS_EDIT) },
     ],
     also: ['/endpoints/new', '/trmm', '/quickstart'],
+    shortcut: ADD_DEVICE,
   },
   {
     id: 'alerts', label: 'Alerts', icon: Siren, kind: 'link',

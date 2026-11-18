@@ -151,12 +151,21 @@ const SECTIONS: Section[] = [
           <Link href="/endpoints/enroll" className="underline text-foreground">
             Devices → Add device
           </Link>{' '}
-          (the <strong className="text-foreground">Add device</strong> button on the Devices page). One page takes you through it:
+          (the <strong className="text-foreground">Add device</strong> link under Devices in the menu, or the button on the
+          Devices page). One page takes you through it:
         </p>
         <ol className="list-decimal pl-5 space-y-1.5">
           <li>Choose the business, then a site or none, and who may connect. These are fixed into the link: the machine cannot pick another business or site.</li>
           <li>Choose the operating system. Windows gets the Rem0te agent; Linux and macOS (run with sudo) get a read-only agent that reports inventory and pending updates.</li>
-          <li>Make the install command. You are asked to confirm it&apos;s you first, unless you did in the last 10 minutes: a link adds a computer to the business. Your choices are kept while you confirm. Copy the command (or, on Windows, the one-click installer link) and run it on the machine. It works once, expires in 24 hours, and is shown only once.</li>
+          <li>Make the install command. If a Platform Admin set <em>Install links</em> to Ask, you confirm it&apos;s you first; your choices are kept while you do.</li>
+          <li>
+            Install it, from one of two tabs. <strong className="text-foreground">Download installer</strong>: on Windows
+            a <strong className="text-foreground">Download .exe</strong> button (run it on the machine and accept the
+            administrator prompt), with the same link to copy and send; on Linux and macOS the install script as a file,
+            run with <code>sudo bash</code>. <strong className="text-foreground">Command</strong>: the one-line command to
+            paste. Either way it works once, expires in 24 hours, and is shown only once; downloading does not use it up.
+            There is no .msi or .pkg: for Group Policy or Intune, use a deployment key (below).
+          </li>
           <li>Keep the page open. It checks every few seconds and says the device enrolled only when it has.</li>
           <li>It then shows the first health the server has received: online, the agent and its version, and whether the first inventory has arrived. Anything not yet received says so.</li>
           <li>Open the device, or the business&apos;s monitoring policies, from the last step.</li>
@@ -1701,15 +1710,16 @@ const SECTIONS: Section[] = [
           <Link href="/settings?tab=confirm" className="underline text-foreground">Settings → Confirm it is you</Link>,
           in groups (software, patching, approved actions, agents, devices and enrolment, monitoring, reports and email,
           integrations, security and access), with <em>Don&apos;t ask for any</em> and <em>Ask for all</em>. Signing in is
-          still required, permissions are still checked, and every change is still in the audit log. A new installation
-          asks for everything. Turning a confirmation off asks you once; turning one back on never does; every change of
+          still required, permissions are still checked, and every change is still in the audit log. From 0.64 every
+          function starts at <em>Don&apos;t ask</em>: you confirm it is you when you sign in, and only the list below asks
+          again. Press <em>Ask for all</em> to have every function ask. Turning a confirmation off asks you once; turning one back on never does; every change of
           the setting is audited. These always ask, whatever is set: changing your own password or authenticator, adding
           or removing your passkeys, a protected-device exception (a passkey only), and turning a confirmation off.
         </p>
         <p>
-          Making an install link and creating an API key ask by default for every role. A link puts a computer into a
-          business, and a key keeps working after you sign out, so think twice before setting either to Don&apos;t ask:
-          an unattended or stolen session would then be enough. API keys that already have the enrolment scope
+          Making an install link and creating an API key can ask for every role, and are worth setting to Ask (from 0.64
+          they start at Don&apos;t ask, like everything else). A link puts a computer into a business, and a key keeps
+          working after you sign out: while either is Don&apos;t ask, an unattended or stolen session is enough. API keys that already have the enrolment scope
           keep working: a key cannot confirm anything, and is itself the second proof.
         </p>
         <p>

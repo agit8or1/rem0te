@@ -52,7 +52,7 @@ export function deploymentRecipes(origin: string, key: string): Recipe[] {
         { text: 'Uninstall command: leave a no-op (remove the agent from the console). Install behaviour: System. Detection rule: custom script —', code: `if (Get-ScheduledTask -TaskName 'Rem0teHeartbeat' -ErrorAction SilentlyContinue) { 'Installed' }` },
         { text: 'Assign to a device group.' },
       ],
-      note: 'Intune keeps the script content; anyone who can read the policy can read the key. Same advice: a use limit, an expiry, and revoke it afterwards.',
+      note: 'Intune keeps the script content; anyone who can read the policy can read the key. Same advice: a use limit, an expiry, and revoke it afterwards. Rem0te does not build an .msi yet (0.64): the Win32 app above gives Intune the detection rule and retries an .msi would, and Group Policy uses the startup script.',
     },
     {
       id: 'rmm', label: 'Existing RMM',
