@@ -27,7 +27,7 @@ import { DIRECT_DEFAULT_REASON } from '@/lib/direct-mode';
  *
  * A policy is a bounded document — the computers it patches, the classes
  * and severities it installs, KBs it never installs, a weekly or (0.53)
- * monthly maintenance window, its restart rules, an expiry within 90 days —
+ * monthly maintenance window, its restart rules —
  * approved once on the approval signer (by two people, or at once in direct
  * mode). After that the signer signs each plan inside it without further
  * approval. Nothing here approves anything.
@@ -74,7 +74,7 @@ export function PreflightCard() {
   );
 }
 
-interface PolicyRow { id: string; name: string; status: string; expiresAt: string; createdAt: string; computers: number; rings: number; staging?: 'none' | 'canary' | null; window: PolicyWindowInput; nextWindow: { start: string; end: string } | null; schedule?: string; nextRestartWindow?: { start: string; end: string } | null; lastProposal: { at: string; ok: boolean; code: string; message: string } | null }
+interface PolicyRow { id: string; name: string; status: string; expiresAt: string | null; createdAt: string; computers: number; rings: number; staging?: 'none' | 'canary' | null; window: PolicyWindowInput; nextWindow: { start: string; end: string } | null; schedule?: string; nextRestartWindow?: { start: string; end: string } | null; lastProposal: { at: string; ok: boolean; code: string; message: string } | null }
 
 export function PoliciesCard({ businessId }: { businessId: string }) {
   const [creating, setCreating] = useState(false);
@@ -92,7 +92,7 @@ export function PoliciesCard({ businessId }: { businessId: string }) {
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
           <p className="text-xs text-muted-foreground">
-            Approved once on the approval signer: by two people on its roster, or at once in direct mode. Inside its maintenance window every computer in it installs together — or, with &ldquo;Test on one computer first&rdquo;, one computer first and then rings that each wait for the one before — never anything outside the policy. Fixture-tested only: proven against a simulated Windows Update and synthetic passkeys.
+            Approved once on the approval signer: by two people on its roster, or at once in direct mode. Inside its maintenance window every computer in it installs together — or, with &ldquo;Test on one computer first&rdquo;, one computer first and then rings that each wait for the one before — never anything outside the policy. It does not expire: it stands until it is revoked. Fixture-tested only: proven against a simulated Windows Update and synthetic passkeys.
           </p>
           {isLoading ? <p className="text-muted-foreground">Loading…</p>
             : rows.length === 0 ? <p className="text-muted-foreground">No policies.</p>
@@ -101,7 +101,7 @@ export function PoliciesCard({ businessId }: { businessId: string }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <strong>{p.name}</strong>
                   <Badge variant={POLICY_STATUS[p.status] ?? 'outline'}>{p.status.toLowerCase().replace(/_/g, ' ')}</Badge>
-                  <span className="text-xs text-muted-foreground">{p.computers} computer{p.computers === 1 ? '' : 's'} {p.staging === 'none' ? 'all at once' : `in ${p.rings} ring${p.rings === 1 ? '' : 's'}, one computer first`} · {describeWindow(p.window)} · expires {formatDate(p.expiresAt)}</span>
+                  <span className="text-xs text-muted-foreground">{p.computers} computer{p.computers === 1 ? '' : 's'} {p.staging === 'none' ? 'all at once' : `in ${p.rings} ring${p.rings === 1 ? '' : 's'}, one computer first`} · {describeWindow(p.window)}{p.expiresAt ? ` · made before 0.63, expires ${formatDate(p.expiresAt)}` : ''}</span>
                 </div>
                 {p.schedule && <p className="text-xs mt-1" data-testid="policy-schedule">{p.schedule}</p>}
                 {p.nextWindow && <p className="text-xs text-muted-foreground mt-1">Next window: {formatDate(p.nextWindow.start)} – {formatDate(p.nextWindow.end)}</p>}
@@ -135,7 +135,6 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
   const [win, setWin] = useState(defaultWindowDraft);
   const [soakHours, setSoakHours] = useState(24);
   const [failureThreshold, setFailureThreshold] = useState(0);
-  const [expiresInDays, setExpiresInDays] = useState(30);
   const [reason, setReason] = useState('');
   const [reboot, setReboot] = useState<RebootRule>('never');
   const [restart, setRestart] = useState(defaultPolicyRestart);
@@ -163,7 +162,8 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
       businessId, name: name.trim(), rings, staging: testFirst ? 'canary' : 'none',
       // All at once: no soak, and one computer's failure does not hold the rest of the window back.
       soakHours: testFirst ? soakHours : 0, failureThreshold: testFirst ? failureThreshold : MAX_PER_PLAN,
-      expiresInDays, reason: direct ? (reason.trim() || DIRECT_DEFAULT_REASON) : reason.trim(), reboot,
+      // 0.63: no expiry is sent, so the policy never expires; it stands until it is revoked.
+      reason: direct ? (reason.trim() || DIRECT_DEFAULT_REASON) : reason.trim(), reboot,
       allow: { classifications: [...classes], ...(severities.size ? { severities: [...severities] } : {}), ...(kbs.length ? { excludeKbs: [...new Set(kbs)] } : {}) },
       window: windowFromDraft(win), ...policyRestartBody(restart, reboot),
     }),
@@ -252,19 +252,20 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
           </div>
         </div>
 
-        <WindowEditor id="pol" value={win} onChange={setWin} expiresInDays={expiresInDays} />
+        <WindowEditor id="pol" value={win} onChange={setWin} />
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl">
-          {testFirst && <div className="space-y-1"><Label className="text-xs">Soak between rings (hours)</Label><Input type="number" min={0} max={168} value={soakHours} onChange={(e) => setSoakHours(Number(e.target.value))} /></div>}
-          {testFirst && <div className="space-y-1"><Label className="text-xs">Failed computers allowed per ring</Label><Input type="number" min={0} max={25} value={failureThreshold} onChange={(e) => setFailureThreshold(Number(e.target.value))} /></div>}
-          <div className="space-y-1"><Label className="text-xs">Expires after (days, at most 90)</Label><Input type="number" min={1} max={90} value={expiresInDays} onChange={(e) => setExpiresInDays(Number(e.target.value))} /></div>
-        </div>
+        {testFirst && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl">
+            <div className="space-y-1"><Label className="text-xs">Soak between rings (hours)</Label><Input type="number" min={0} max={168} value={soakHours} onChange={(e) => setSoakHours(Number(e.target.value))} /></div>
+            <div className="space-y-1"><Label className="text-xs">Failed computers allowed per ring</Label><Input type="number" min={0} max={25} value={failureThreshold} onChange={(e) => setFailureThreshold(Number(e.target.value))} /></div>
+          </div>
+        )}
 
         <div className="max-w-xl">
           <RebootChoice id="pol-reboot" value={reboot} onChange={setReboot} scope="policy" />
         </div>
 
-        <PolicyRestartEditor id="pol" value={restart} onChange={setRestart} reboot={reboot} expiresInDays={expiresInDays} />
+        <PolicyRestartEditor id="pol" value={restart} onChange={setRestart} reboot={reboot} />
 
         {!direct && (
           <div className="space-y-1 max-w-xl">

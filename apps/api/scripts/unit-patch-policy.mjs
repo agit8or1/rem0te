@@ -640,6 +640,89 @@ const code = (r) => (r.ok ? 'ok' : r.code);
     P.policyAllowsUpdate(allowDrv, { classification: DRV }).ok === true && P.policyAllowsUpdate({ classifications: [SEC] }, { classification: DRV }).ok === false);
 }
 
+// ── 0.63 (§76): a policy that never expires — signed, explicit, fail closed ──
+{
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const k = core.loadSigningKey(privateKey.export({ type: 'pkcs8', format: 'pem' }));
+  const pub = createPublicKey(k.key);
+  const business = { default: { customerSignoff: false }, businesses: {} };
+  const refused = (fn) => { try { fn(); return null; } catch (e) { return e.code ?? e.message; } };
+  const member = (userId, name) => ({ userId, name, credentialId: hex(8), publicKey: hex(16), counter: 0, approve: ['*'], customer: [], addedAt: iso(NOW) });
+  const never = (over = {}) => { const d = doc({ expiry: 'never', ...over }); delete d.expiresAt; return d; };
+  const approved = (d) => {
+    const { doc: dd, digest } = core.admitPolicy(d, NOW);
+    const r = { policyId: dd.policyId, status: 'AWAITING_APPROVAL', doc: dd, digest, decisions: [], signature: null, kid: null, revokedAt: null, revokedBy: null, revokeReason: null, ledger: [], refusals: [], createdAt: iso(NOW), updatedAt: iso(NOW) };
+    core.recordPolicyDecision(r, member('user_olivia01', 'Olivia'), 'approver', 'approve', NOW, false);
+    core.recordPolicyDecision(r, member('user_quinn001', 'Quinn'), 'approver', 'approve', NOW, false);
+    core.signPolicy(r, k, NOW);
+    return r;
+  };
+  // 105 days on (15 weeks, still CST): the same Friday-night window, long past any 90-day cap.
+  const LATER = new Date(NOW.getTime() + 105 * 86_400_000);
+
+  check('expiryMsOf: a signed "never" is Infinity', P.expiryMsOf({ expiry: 'never' }) === Infinity);
+  check('expiryMsOf: a date is that date', P.expiryMsOf({ expiresAt: iso(NOW) }) === NOW.getTime());
+  for (const [what, d] of [['neither', {}], ['both', { expiry: 'never', expiresAt: iso(NOW) }], ['"Never"', { expiry: 'Never' }], ['"forever"', { expiry: 'forever' }], ['true', { expiry: true }], ['null', { expiry: null }], ['a non-date', { expiresAt: 'soon' }], ['a number', { expiresAt: 1 }]]) {
+    check(`expiryMsOf: ${what} is unknown (null), never read as "never"`, P.expiryMsOf(d) === null, String(P.expiryMsOf(d)));
+  }
+
+  // Admission.
+  check('admitPolicy accepts a policy with expiry "never" and no expiresAt', refused(() => core.admitPolicy(never(), NOW)) === null, String(refused(() => core.admitPolicy(never(), NOW))));
+  check('admitPolicy refuses expiry "never" alongside an expiresAt → expiry_conflict', refused(() => core.admitPolicy(doc({ expiry: 'never' }), NOW)) === 'expiry_conflict');
+  const neither = doc(); delete neither.expiresAt;
+  check('admitPolicy refuses a document with neither → expiry_missing', refused(() => core.admitPolicy(neither, NOW)) === 'expiry_missing');
+  for (const bad of ['Never', 'forever', 'none', '', null, true, 0, { never: true }]) {
+    const d = doc({ expiry: bad }); delete d.expiresAt;
+    check(`admitPolicy refuses expiry ${JSON.stringify(bad)} (fail closed)`, refused(() => core.admitPolicy(d, NOW)) === 'invalid_policy');
+  }
+  const past = { ...never(), expiry: 'sometimes' };
+  check('validatePolicyDoc refuses an unknown expiry that got past the schema → expiry_unknown', P.validatePolicyDoc(past, NOW).reason === 'expiry_unknown');
+  check('an old document keeps the 90-day cap on its date → expiry_too_far', refused(() => core.admitPolicy(doc({ expiresAt: iso(NOW.getTime() + 91 * 86_400_000) }), NOW)) === 'expiry_too_far');
+  check('a "never" document\'s window need only open at some time (there is no expiry to open before)', refused(() => core.admitPolicy(never({ window: { days: ['sat'], start: '22:00', end: '23:00', timezone: 'UTC' } }), NOW)) === null);
+
+  // Deciding plans, 105 days on.
+  const rn = approved(never());
+  check('a never-expiring policy is ACTIVE 105 days on', core.effectivePolicyStatus(rn, LATER) === 'ACTIVE', core.effectivePolicyStatus(rn, LATER));
+  let r = evaluate(state(rn.doc), plan(rn.doc, { nb: LATER }), { now: LATER });
+  check('a never-expiring policy\'s canary is decided "ok" 105 days after approval', r.ok, JSON.stringify(r));
+  const { job } = core.signUnderPolicy(rn, { plan: plan(rn.doc, { nb: LATER }), policyDigest: rn.digest, evidence: null }, k, business, LATER);
+  check('…and the signer signs it, 105 days after approval', job.status === 'SIGNED');
+  r = evaluate(state(rn.doc), plan(rn.doc, { nb: new Date(LATER.getTime() + 6 * 3600_000), hours: 1 }), { now: LATER });
+  check('never expiring is not "anything goes": still only inside the window → outside_window', code(r) === 'outside_window', code(r));
+  r = evaluate(state(rn.doc, { revokedAt: iso(LATER), status: 'REVOKED' }), plan(rn.doc, { nb: LATER }), { now: LATER });
+  check('…and revocation still stops it → policy_revoked', code(r) === 'policy_revoked', code(r));
+  r = evaluate(state(rn.doc), plan(rn.doc, { nb: LATER, computers: [OTHER] }), { now: LATER });
+  check('…and the computers still bind → computer_not_in_policy', code(r) === 'computer_not_in_policy', code(r));
+
+  // An old document with an expiry still stops.
+  const old = approved(doc());
+  check('an old document with an expiry is EXPIRED after its date', core.effectivePolicyStatus(old, LATER) === 'EXPIRED');
+  r = evaluate(state(old.doc), plan(old.doc, { nb: LATER }), { now: LATER });
+  check('an old document with an expiry still stops → policy_expired', code(r) === 'policy_expired', code(r));
+  check('…and the signer refuses to sign under it', ['policy_expired', 'policy_not_active'].includes(refused(() => core.signUnderPolicy(old, { plan: plan(old.doc, { nb: LATER }), policyDigest: old.digest, evidence: null }, k, business, LATER))));
+  const CJ = require(join(dist, 'integration', 'crypto.js')).canonicalJson;
+  check('an old document gains no expiry field (its bytes and digest are 0.62\'s)', !('expiry' in old.doc) && P.policyDigest(old.doc) === sha(`rem0te-patch-policy-v1\n${CJ(old.doc)}`));
+
+  // A stored document that says neither, both or something else signs nothing.
+  const bad1 = { ...rn.doc, expiry: 'forever' };
+  r = evaluate({ ...state(rn.doc), doc: bad1, digest: P.policyDigest(bad1) }, plan(bad1, { nb: LATER }), { now: LATER });
+  check('a stored document with an unknown expiry → expiry_unknown, never "never"', code(r) === 'expiry_unknown', code(r));
+  check('…and its status is EXPIRED, never ACTIVE', core.effectivePolicyStatus({ ...rn, doc: bad1 }, NOW) === 'EXPIRED');
+  const bad2 = { ...rn.doc }; delete bad2.expiry;
+  r = evaluate({ ...state(rn.doc), doc: bad2, digest: P.policyDigest(bad2) }, plan(bad2, { nb: LATER }), { now: LATER });
+  check('a stored document with neither field → expiry_unknown', code(r) === 'expiry_unknown', code(r));
+
+  // Tampering: the field is inside the digest.
+  const stretched = { ...old.doc, expiry: 'never' }; delete stretched.expiresAt;
+  r = evaluate({ ...state(old.doc), doc: stretched }, plan(stretched, { nb: LATER }), { now: LATER });
+  check('an expiring document edited to "never" → policy_digest_mismatch', code(r) === 'policy_digest_mismatch', code(r));
+  check('…and the edited record no longer verifies on the signer', !core.verifyPolicy({ ...old, doc: stretched }, pub));
+  const shortened = { ...rn.doc, expiresAt: iso(NOW.getTime() + 86_400_000) }; delete shortened.expiry;
+  r = evaluate({ ...state(rn.doc), doc: shortened }, plan(shortened), {});
+  check('a "never" document edited to carry a date → policy_digest_mismatch', code(r) === 'policy_digest_mismatch', code(r));
+  check('the portal naming the old digest for a "never" document → policy_digest_mismatch', code(evaluate(state(rn.doc), plan(rn.doc, { nb: LATER }), { now: LATER, digest: old.digest })) === 'policy_digest_mismatch');
+}
+
 if (failures.length) {
   console.error(`✗ ${failures.length} failed, ${passed} passed`);
   for (const f of failures) console.error(`  - ${f}`);

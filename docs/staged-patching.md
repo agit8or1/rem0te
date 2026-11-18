@@ -353,7 +353,7 @@ itself**, not the portal, signs each ring plan, but only if the plan falls insid
 | The maintenance window: weekly days, or (0.53) a monthly day; local start and end; IANA time zone | The plan's window must lie inside one occurrence. DST is honoured |
 | Soak and failure threshold | The ring gate, re-run by the signer (below) |
 | The restart rule: *never*, or *restart if required, inside the window* (0.34) | The plan's `params.reboot`. A plan may ask for no more than the policy: under a *never* policy, a plan asking to restart is refused (`reboot_not_allowed`); under an in-window policy, a plan may ask for either |
-| Expiry, at most 90 days | Every plan, and the plan's window end |
+| Expiry: a date at most 90 days out (before 0.63), or (0.63) a signed `expiry: "never"` | Every plan, and the plan's window end, when it has a date. A document with neither, both, or another value signs nothing (`expiry_unknown`) |
 
 **The canary must be effective.** For every ring after the canary, the portal hands the signer the previous ring's
 results and scans, **as each computer signed them** (0.34). The signer checks every signature, then re-runs the same
@@ -362,7 +362,8 @@ unreconciled, failures within the threshold, the soak passed (counted from the t
 the canary, every update effective in a later signed scan**.
 
 **What a compromised portal still can't do:** widen the computers, classes or window, change the ring order, skip
-the canary, or keep using a revoked or expired policy. It also can't approve a policy: there's no approve route, and
+the canary, or keep using a revoked or expired policy, or turn an expiring policy into one that never expires (the
+field is inside the digest). It also can't approve a policy: there's no approve route, and
 the passkeys are checked on the signer's own origin. From 0.34 it also can't forge a ring's results: a canary
 success it writes, signs with a key of its own, edits, replays from another job or borrows from another computer is
 refused (below).
@@ -370,6 +371,44 @@ refused (below).
 **What it can do** is withhold or delay results, so the next ring starts late or never; and, before a computer's
 first policy is approved, propose a result key that isn't the computer's
 ([the trust-on-first-use window](#the-trust-on-first-use-window)).
+
+### Policies that never expire (0.63)
+
+Until 0.63 every approved policy carried an expiry of at most 90 days, and the signer refused every plan after it,
+so a working policy had to be approved again every few months. The owner asked for that to stop ("Policies shouldnt
+expire"). From 0.63, patch policies, company-wide policy revisions, automation schedules and restart windows made in
+the console **do not expire**. They stand until they are revoked, paused or replaced. The forms have no expiry field,
+and the cards no longer warn about one.
+
+**It is signed, not assumed.** A document says how long it stands in exactly one of two ways:
+
+| The document carries | It means |
+|---|---|
+| `expiresAt` (every document before 0.63, and one made through the API with `expiresInDays`) | It stops at that time, as before: `policy_expired` |
+| `expiry: "never"` and no `expiresAt` (0.63) | It never expires. Only revocation, a pause or a replacement stops it |
+| Neither, both, or any other `expiry` value | Refused at admission by the portal and by the signer (`expiry_missing`, `expiry_conflict`, `expiry_unknown`), and if one were ever stored, every plan under it is refused (`expiry_unknown`). It is never read as "never" |
+
+The field is inside the policy's digest, so a portal that adds `expiry: "never"` to an approved document, or removes
+its date, has a document whose digest doesn't match (`policy_digest_mismatch`). An approval signer older than 0.63
+refuses the field outright (its schema is strict); the portal asks for the signer's `neverExpires` capability first
+and says *Install the 0.63 approval signer* (`SIGNER_TOO_OLD`).
+
+**Nothing else is relaxed.** Revocation, pausing, the window, the computers and their identities, the update filter,
+the restart rules, the signed containment pause, the ledger and the retry limits are checked exactly as before. The
+per-plan window (`notAfter`) still bounds each plan. Device result keys are pinned when a policy is approved and are
+not tied to its expiry.
+
+**Policies approved before 0.63 keep their expiry.** Their bytes, digest and signature are unchanged, and they stop on
+their date. To move to one that never expires:
+
+- a patch policy: make it again (and revoke the old one);
+- a company-wide or assignable policy: nothing to do. Its running revision is renewed once more before it expires,
+  and every revision proposed from 0.63 never expires, so that renewal is the last;
+- an automation schedule: make a revision of it;
+- a restart window: **Change → Save**.
+
+The portal's `expiresAt` columns (`PatchPolicy`, `AutomationPolicy`) are null exactly for a "never" document
+(migration 0084 CHECKs that against the stored document).
 
 ### Monthly windows (0.53)
 
@@ -388,7 +427,7 @@ one of:
 The start, end and time zone work exactly as for a weekly window: wall-clock times in a named IANA zone, an end at or
 before the start ends on the next day (so a window can cross midnight, and the end of a month), and the length follows
 the local clock across a DST change. The editor (the policy form and the company-wide policy form) shows the window in
-words and its **next three openings** in the chosen zone, before the expiry. They are not worked out in the browser:
+words and its **next three openings** in the chosen zone. They are not worked out in the browser:
 they come from `POST /patching/window-preview`, which runs the same functions the approval signer holds every ring
 plan to. The policy page and the signer's approval page show the next openings too.
 
@@ -398,7 +437,7 @@ plan to. The policy page and the signer's approval page show the next openings t
 2. **On the second Tuesday** — the week (*first*…*fourth*, *last*) and the weekday.
 3. **plus 2 day(s)** — 0 to 14; *second Tuesday + 2* is the Thursday after Patch Tuesday.
 4. **On day …** — the other monthly kind, a day of the month from 1 to 28.
-5. **The preview** — the window in words and its next three openings before the expiry, from the server.
+5. **The preview** — the window in words and its next three openings, from the server.
 
 The company-wide and assignable policy form has the same editor:
 
@@ -407,11 +446,11 @@ The company-wide and assignable policy form has the same editor:
 1. **Monthly**.
 2. **On day 5** of each month.
 3. **Starts / Ends / Time zone** — as for a weekly window; an end at or before the start ends the next day.
-4. **The preview** — the next three openings before a revision expires.
+4. **The preview** — the next three openings.
 
-**Expiry still applies.** A policy expires at most 90 days after it is proposed, and its window must open at least
-once before then, or the policy is refused (`window_never_opens`) by the portal and by the signer. A monthly window
-proposed just after its day, with a 14-day expiry, never opens; the editor says so before you propose.
+**A window must open.** A window that never opens is refused (`window_never_opens`) by the portal and by the
+signer. From 0.63 a policy made in the console has no expiry, so any valid window opens; a policy that carries an
+expiry (one made before 0.63, or through the API with `expiresInDays`) must open at least once before it.
 
 **What it is in the signed document.** The window is a closed union of three shapes, each strict:
 
@@ -491,8 +530,9 @@ one computer first*:
 
 **When a revision is proposed.** The sweep (`PATCH_POLICY_SWEEP`) works out the rings the next revision would have.
 It proposes one when they differ from the running revision's (a computer joined, left, changed its setting, was
-re-enrolled, or its result key changed), or when the running revision is near its expiry. "Near" means seven days,
-or a third of a short policy's life. Three bounds apply, checked in this order before anything is proposed:
+re-enrolled, or its result key changed), or when a running revision made before 0.63 is near its expiry. "Near"
+means seven days, or a third of a short policy's life. That renewal is the last: every revision proposed from 0.63
+never expires, whatever the series was created with, so nothing is renewed again. Three bounds apply, checked in this order before anything is proposed:
 
 1. **Never mid-ring.** While the running revision has a deployment that is active or paused, nothing is revised. The
    policy shows `mid_ring`.
@@ -551,8 +591,9 @@ stands: *patched automatically*, *pending a revision*, *left out* (and why), *ex
 5. **Save** — offered once the choice differs from the saved one; needs **Edit computers** and, unless *A computer's
    patch policy* is set to *Don't ask*, a fresh sign-in.
 
-A company-wide policy's settings (classes, window, soak, threshold, restart rule, how long each revision lasts,
-canary) are fixed for its life. To change them, retire it and create another.
+A company-wide policy's settings (classes, window, soak, threshold, restart rule,
+canary) are fixed for its life. (Until 0.63 they also set how long each revision lasted; from 0.63 no revision
+expires.) To change them, retire it and create another.
 
 ### Signed results (0.34)
 
@@ -657,7 +698,7 @@ the portal at once, cancels what hasn't been delivered, and asks the signer to r
 the signer confirms. The signer's operator can also revoke with `patch-policy revoke`. Either way the signer writes
 `revocations/<id>.json` once and never rewrites it, and refuses every later plan.
 
-Policy refusal codes, from the signer: `policy_revoked`, `policy_expired`, `policy_not_active`, `policy_not_approved`,
+Policy refusal codes, from the signer: `policy_revoked`, `policy_expired`, `expiry_unknown` (0.63), `policy_not_active`, `policy_not_approved`,
 `policy_digest_mismatch`, `policy_signature_invalid`, `computer_not_in_policy`, `class_not_allowed`,
 `severity_not_allowed`, `kb_excluded`, `filter_mismatch`, `outside_window`, `ring_out_of_order`,
 `ring_already_signed`, `ring_retry_limit` (three signings of one ring), `canary_not_effective`,

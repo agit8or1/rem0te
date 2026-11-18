@@ -4891,7 +4891,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('monthly windows: the signer and the portal share one occurrence function, and the web has none of its own',
     defs.length === 1 && defs[0] === 'apps/api/src/actions/patch-policy.ts' && webDefs.length === 0
       && /const occ = occurrenceAt\(nb, doc\.window\);\s*\n\s*if \(!occ \|\| na > occ\.end\) return no\('outside_window'/.test(ev)
-      && /if \(!nextOccurrence\(now, doc\.window, new Date\(exp\)\)\) return \{ ok: false, reason: 'window_never_opens'/.test(val)
+      && /if \(!nextOccurrence\(now, doc\.window, until\)\) return \{ ok: false, reason: 'window_never_opens'/.test(val)
       && /const occ = occurrenceAt\(now, doc\.window\);/.test(pol) && /nextOccurrences\(now, w\.data, 3, until\)/.test(prev) && /PolicyWindow\.safeParse\(parsed\.data\.window\)/.test(prev)
       && !/this\.prisma|this\.audit|\.create\(|\.update\(/.test(prev)
       && /actions\\\/patch-policy\\\.js\$/.test(read('apps/api/scripts/build-approval-signer.mjs'))
@@ -5685,8 +5685,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'proposeFor: containment.blocking before reading computers; effectiveSetting; skip a patch policy\'s computers; if_required only when Windows says so');
   check('precedence: computer > group > business through the 0.35 rule; a window not approved governs nothing',
     /import \{ applies, resolve[^}]*\} from '\.\.\/group-policy\/precedence';/.test(res) && /export function inForce\(s: Pick<SettingLike, 'mode' \| 'policyLive'>\): boolean \{\n  return s\.mode === 'off' \|\| \(s\.mode === 'window' && s\.policyLive\);\n\}/.test(res)
-      && !/new Map|this\./.test(strip73(res)) && /policyLive: !!s\.policy && s\.policy\.status === 'ACTIVE' && !s\.policy\.pausedAt && s\.policy\.expiresAt > new Date\(\)/.test(svc),
-    'resolve.ts pure; inForce: off, or an ACTIVE unpaused unexpired policy');
+      && !/new Map|this\./.test(strip73(res)) && /policyLive: !!s\.policy && s\.policy\.status === 'ACTIVE' && !s\.policy\.pausedAt && \(s\.policy\.expiresAt === null \|\| s\.policy\.expiresAt > new Date\(\)\),/.test(svc),
+    'resolve.ts pure; inForce: off, or an ACTIVE unpaused unexpired policy (0.63: a null expiresAt is a signed "never")');
   check('retry: only after a RustDesk session or "cannot tell", or a plan that never arrived — 0.54\'s rule',
     res.includes("export const RESTART_RETRY_REASONS: readonly string[] = ['remote_session_open', 'session_state_unknown'];")
       && res.includes("export const RESTART_RETRY_JOB_STATES: readonly string[] = ['REJECTED', 'CANCELED', 'EXPIRED'];")
@@ -5896,6 +5896,118 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /'the signer refuses any gate evidence for an all-at-once plan \(bad_evidence\)'/.test(read('apps/api/scripts/e2e-patch-policies.mjs'))
       && / patch-policies /.test(read('scripts/run-e2e.sh')),
     'unit-patch-policy.mjs in CI; e2e-patch-policies.mjs (its 0.62 sections) in run-e2e.sh');
+}
+
+// ── §76 (0.63): approved policies may never expire — a signed field, fail closed ──
+//     0.63 reverses "every approved policy expires within 90 days" (§63, §71,
+//     §73 and the 0.32 patch policy) at the owner's request ("Does this mean
+//     the policy expires? Policies shouldnt expire"), as §41, §62, §67 and §75
+//     were. The reversal is narrow and signed:
+//       - one value, EXPIRY_NEVER = 'never', in actions/patch-policy.ts; both
+//         documents (PolicyDoc, AutomationDoc) carry `expiresAt` optional and
+//         `expiry: z.literal('never')` optional, in strict schemas, so an older
+//         signer refuses the field;
+//       - expiryMsOf is the one reader: Infinity only for exactly "never" with
+//         no date, the date for a date alone, null for anything else; every
+//         caller treats null as expired, never as "never";
+//       - expiryProblem is the one admission rule, in both validators: an
+//         unknown value, both fields, or neither is refused, and a date keeps
+//         0.32's 90-day cap;
+//       - both evaluators refuse a null expiry (expiry_unknown) before
+//         policy_expired, and bound the plan's notAfter by the expiry when
+//         there is one; the signer's effective statuses read EXPIRED for null;
+//       - the portal writes "never" only when no expiresInDays was given, after
+//         the signer's neverExpires capability (SIGNER_TOO_OLD); the console
+//         sends none; series revisions never carry one;
+//       - the portal's sweeps read a null expiresAt (0084) as "never", never as
+//         expired, and 0084's CHECKs tie the column to the signed document;
+//       - nothing else is relaxed: revocation, pause, window, computers,
+//         restart rules, signed pause, ledger and retry limits are unchanged.
+{
+  console.log('\n§76 policies that never expire');
+  const pp = read('apps/api/src/actions/patch-policy.ts');
+  const ap = read('apps/api/src/actions/automation-policy.ts');
+  const core = read('apps/api/src/approval-signer/core.ts');
+  const srv = read('apps/api/src/approval-signer/server.ts');
+  const pol = read('apps/api/src/patching/policies.service.ts');
+  const asg = read('apps/api/src/patching/assignment.ts');
+  const ser = read('apps/api/src/patching/series.service.ts');
+  const aut = read('apps/api/src/automation/automation.service.ts');
+  const rws = read('apps/api/src/restart-windows/restart-windows.service.ts');
+  const mig = read('apps/api/prisma/migrations/0084_policy_never_expires/migration.sql');
+  const schema = read('apps/api/prisma/schema.prisma');
+  const client = read('apps/web/lib/api-client.ts');
+  const docBlock = (src, name) => (src.match(new RegExp(`export const ${name} = z\\.object\\(\\{([\\s\\S]*?)\\}\\)\\.strict\\(\\);`)) ?? [])[1] ?? '';
+  check('expiry: one value, "never", carried by both signed documents as an optional literal beside an optional expiresAt (strict schemas)',
+    /export const EXPIRY_NEVER = 'never' as const;/.test(pp)
+      && [docBlock(pp, 'PolicyDoc'), docBlock(ap, 'AutomationDoc')].every((b) => /\n  expiresAt: Iso\.optional\(\),/.test(b) && /\n  expiry: z\.literal\(EXPIRY_NEVER\)\.optional\(\),/.test(b)),
+    'patch-policy.ts EXPIRY_NEVER; PolicyDoc and AutomationDoc');
+  check('expiry: expiryMsOf is the one reader — Infinity only for exactly "never" alone, null (expired) for anything else',
+    /export function expiryMsOf\(doc: ExpiryFields\): number \| null \{\s*const never = present\(doc, 'expiry'\), at = present\(doc, 'expiresAt'\);\s*if \(never\) return doc\.expiry === EXPIRY_NEVER && !at \? Infinity : null;\s*if \(!at \|\| typeof doc\.expiresAt !== 'string'\) return null;\s*const t = Date\.parse\(doc\.expiresAt\);\s*return Number\.isFinite\(t\) \? t : null;\s*\}/.test(pp),
+    'patch-policy.ts expiryMsOf');
+  const ep = pp.slice(pp.indexOf('export function expiryProblem('), pp.indexOf('export function expiryInWords('));
+  check('expiry: admission refuses an unknown value, both, or neither, and keeps the 90-day cap on a date — in both validators',
+    /reason: 'expiry_unknown'/.test(ep) && /reason: 'expiry_conflict'/.test(ep) && /reason: 'expiry_missing'/.test(ep) && /reason: 'expiry_too_far'/.test(ep) && /export const MAX_POLICY_DAYS = 90;/.test(pp)
+      && /const ex = expiryProblem\(doc, now, MAX_POLICY_DAYS, 'policy'\);\s*if \(ex\) return \{ ok: false, \.\.\.ex \};/.test(pp)
+      && /const ex = expiryProblem\(doc, now, MAX_AUTOMATION_DAYS, 'automation policy'\);\s*if \(ex\) return bad\(ex\.reason, ex\.message\);/.test(ap),
+    'expiryProblem; validatePolicyDoc; validateAutomationDoc');
+  const standing = pp.slice(pp.indexOf('function policyStanding('), pp.indexOf('function evaluateInstallPlan('));
+  const aev = ap.slice(ap.indexOf('export function evaluateAutomationPlan('), ap.indexOf("if (doc.task.kind === 'restart') return evaluateAutomationRestart("));
+  const decides = (b) => /const exp = expiryMsOf\(doc\);\s*if \(exp === null\) return no\('expiry_unknown'/.test(b) && b.indexOf("no('expiry_unknown'") < b.indexOf("no('policy_expired'")
+    && /if \(now\.getTime\(\) >= exp\) return no\('policy_expired'/.test(b) && /if \(Date\.parse\(p\.window\.notAfter\) > exp\) return no\('policy_expired'/.test(b)
+    && b.indexOf("no('policy_revoked'") >= 0 && b.indexOf("no('policy_revoked'") < b.indexOf("no('expiry_unknown'");
+  check('expiry: both evaluators refuse an unreadable expiry (expiry_unknown) before policy_expired, after revocation, and bound notAfter by a date',
+    decides(standing) && decides(aev),
+    'policyStanding; evaluateAutomationPlan');
+  const scopes = ['apps/api/src/actions', 'apps/api/src/approval-signer', 'apps/api/src/patching', 'apps/api/src/automation', 'apps/api/src/restart-windows'];
+  // expiryMsOf itself is the one place that parses it.
+  const rawParse = scopes.flatMap((d) => walk(d)).filter((f) => /Date\.parse\((doc|d|r\.doc|cur\.doc)\.expiresAt\)|new Date\((doc|d|r\.doc)\.expiresAt\)/.test(read(f).replace(/export function expiryMsOf\([\s\S]*?\n\}\n/, '')));
+  check('expiry: nothing reads a document\'s expiresAt directly (it would read "never" as NaN, which compares as never expired)',
+    rawParse.length === 0, rawParse.length ? `raw reads in: ${rawParse.join(', ')}` : 'only expiryMsOf / expiryUntil');
+  check('expiry: the signer\'s effective statuses read an unreadable expiry as EXPIRED, and it advertises neverExpires',
+    (core.match(/\{ const exp = expiryMsOf\(r\.doc\); if \(exp === null \|\| now\.getTime\(\) >= exp\) return 'EXPIRED'; \}/g) ?? []).length === 2
+      && /restartWindows: 1, neverExpires: 1,/.test(srv),
+    'core.ts effectivePolicyStatus / effectiveAutomationStatus; capabilities');
+  check('expiry: the portal signs "never" only when no expiry was asked for, after the signer says it knows it',
+    /expiresInDays: z\.number\(\)\.int\(\)\.min\(1\)\.max\(MAX_POLICY_DAYS\)\.optional\(\),/.test(pol)
+      && /if \(never && caps\.body\.neverExpires !== 1\) throw new ConflictException\(\{ code: 'SIGNER_TOO_OLD'/.test(pol)
+      && /\.\.\.\(expiresAt \? \{ expiresAt: expiresAt\.toISOString\(\) \} : \{ expiry: EXPIRY_NEVER \}\),/.test(pol)
+      && /expiresInDays: z\.number\(\)\.int\(\)\.min\(1\)\.max\(MAX_AUTOMATION_DAYS\)\.optional\(\),/.test(aut)
+      && /if \(never && !\(await this\.readiness\(\)\)\.signerSupportsNeverExpiry\) throw new ConflictException\(\{ code: 'SIGNER_TOO_OLD'/.test(aut)
+      && /\.\.\.\(expiresAt \? \{ expiresAt: expiresAt\.toISOString\(\) \} : \{ expiry: EXPIRY_NEVER \}\),/.test(aut)
+      && /expiresInDays: z\.number\(\)\.int\(\)\.min\(7\)\.max\(MAX_AUTOMATION_DAYS\)\.optional\(\),/.test(rws),
+    'CreatePolicyDto, CreateAutomationDto, SetWindowDto: optional, no default; admit / submit');
+  check('expiry: a company-wide series takes no expiry, its revisions carry none, and only an expiring revision is renewed',
+    /export const CreateSeriesDto = SeriesSettings\.omit\(\{ expiresInDays: true \}\)\.extend\(\{/.test(asg)
+      && (ser.match(/window: settings\.window, reboot: settings\.reboot,\n/g) ?? []).length === 2 && !/reboot: settings\.reboot, expiresInDays/.test(ser)
+      && /else if \(live\.expiresAt !== null && live\.expiresAt\.getTime\(\) - now <= renewLeadMs\(i\.expiresInDays\)\) trigger = 'renewal';/.test(asg)
+      && /\(i\.current\.expiresAt === null \|\| i\.current\.expiresAt\.getTime\(\) > now\)/.test(asg),
+    'assignment.ts CreateSeriesDto, revisionDecision; series.service.ts admits');
+  const unguarded = [pol, aut, rws, ser].flatMap((src) => [...src.matchAll(/^.*\.expiresAt (<=|<|>|>=) (now|new Date\(\)).*$/gm)].map((m) => m[0].trim()))
+    .filter((l) => !/expiresAt !== null && |expiresAt === null \|\| |r\.expiresAt && r\.expiresAt <= now/.test(l));
+  check('expiry: the portal\'s sweeps read a null expiresAt as "never", never as expired',
+    unguarded.length === 0 && /OR: \[\{ expiresAt: null \}, \{ expiresAt: \{ gt: now \} \}\]/.test(rws),
+    unguarded.length ? `unguarded: ${unguarded.slice(0, 3).join(' | ')}` : 'policies, automation, restart windows, series');
+  check('expiry: 0084 makes the two columns nullable and ties null to a signed "never" in the stored document',
+    /ALTER TABLE "PatchPolicy" ALTER COLUMN "expiresAt" DROP NOT NULL;/.test(mig) && /ALTER TABLE "AutomationPolicy" ALTER COLUMN "expiresAt" DROP NOT NULL;/.test(mig)
+      && (mig.match(/CHECK \(\s*\("expiresAt" IS NULL\) = \(\("document" ->> 'expiry'\) IS NOT DISTINCT FROM 'never' AND NOT \("document" \? 'expiresAt'\)\)\s*\)/g) ?? []).length === 2
+      && (schema.match(/\n  expiresAt       DateTime\?\n/g) ?? []).length >= 2,
+    'migration 0084; schema.prisma');
+  const forms = ['apps/web/components/patching/patch-policies.tsx', 'apps/web/components/patching/company-policies.tsx', 'apps/web/app/(app)/automation/schedules/new/page.tsx', 'apps/web/components/restart-windows/restart-window-card.tsx', 'apps/web/components/patching/window-editor.tsx'];
+  const asking = forms.filter((f) => /expiresInDays|Expires after|lasts \(days/.test(read(f)));
+  const inputs = client.slice(client.indexOf('export interface PatchSeriesInput'), client.indexOf('// ─── Endpoints'));
+  check('expiry: the console sends no expiry and asks for none',
+    asking.length === 0 && inputs.length > 0 && !/expiresInDays:/.test(inputs),
+    asking.length ? `still asks: ${asking.join(', ')}` : 'the policy, company-wide, schedule and restart window forms');
+  const upp = read('apps/api/scripts/unit-patch-policy.mjs');
+  check('expiry: the suites prove it (signed after 90+ days, an old document still stops, unknown values refused, a forged field caught)',
+    upp.includes('canary is decided "ok" 105 days after approval') && upp.includes('an old document with an expiry still stops → policy_expired')
+      && upp.includes('admitPolicy refuses expiry ${JSON.stringify(bad)} (fail closed)') && upp.includes('an expiring document edited to "never" → policy_digest_mismatch')
+      && read('apps/api/scripts/unit-automation-schedule.mjs').includes('run is signed 120 days on')
+      && read('apps/api/scripts/unit-patch-assignment.mjs').includes('a running revision that never expires is live and up to date')
+      && read('apps/api/scripts/unit-approval-signer.mjs').includes('capabilities say the signer signs policies that never expire')
+      && ['unit-patch-policy', 'unit-automation-schedule', 'unit-patch-assignment', 'unit-approval-signer', 'unit-restart-window-settings'].every((u) => read('.github/workflows/ci.yml').includes(`${u}.mjs`)),
+    'unit-patch-policy, unit-automation-schedule, unit-patch-assignment, unit-approval-signer in CI');
 }
 
 // ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──

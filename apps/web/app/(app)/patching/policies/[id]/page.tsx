@@ -24,7 +24,7 @@ import { rebootSummary } from '@/components/patching/patch-reboot-choice';
  */
 
 interface PolicyDoc {
-  name: string; businessName: string; reason: string; createdAt: string; expiresAt: string; createdBy: { name: string };
+  name: string; businessName: string; reason: string; createdAt: string; expiresAt?: string; expiry?: 'never'; createdBy: { name: string };
   rings: { endpointId: string; hostname: string }[][];
   allow: { classifications: string[]; severities?: string[]; excludeKbs?: string[] };
   soakHours: number; failureThreshold: number; window: PolicyWindowInput; reboot: 'never' | 'if_required_in_window';
@@ -33,12 +33,12 @@ interface PolicyDoc {
   staging?: 'none' | 'canary';
 }
 interface Policy {
-  id: string; name: string; status: string; digest: string; approvalUrl: string; expiresAt: string; createdAt: string;
+  id: string; name: string; status: string; digest: string; approvalUrl: string; expiresAt: string | null; createdAt: string;
   approvals: { name: string; role: string; at: string }[];
   revokedAt: string | null; revokeReason: string | null; signerConfirmedRevocation: boolean;
   document: PolicyDoc;
   currentWindow: { start: string; end: string } | null; nextWindow: { start: string; end: string } | null;
-  /** 0.53: the next three openings before expiry, from the signer's own occurrence functions. */
+  /** 0.53: the next three openings (before expiry, for a policy made before 0.63), from the signer's own occurrence functions. */
   upcomingWindows?: { start: string; end: string }[];
   lastProposal: { at: string; windowKey: string | null; ok: boolean; code: string; message: string; deploymentId?: string | null } | null;
   signer: { reachable: boolean; status: string | null; signedPlans: number | null; refusals: { at: string; jobId: string; code: string; message: string }[] };
@@ -90,7 +90,7 @@ export default function PolicyPage() {
   return (
     <div className="space-y-4 p-4 md:p-6">
       <Link href="/patching" className="text-xs text-muted-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3 w-3" />Patching</Link>
-      <PageHeader title={p.name} description={`Patch policy for ${d.businessName} · proposed by ${d.createdBy.name} ${formatDate(p.createdAt)} · expires ${formatDate(p.expiresAt)}`}>
+      <PageHeader title={p.name} description={`Patch policy for ${d.businessName} · proposed by ${d.createdBy.name} ${formatDate(p.createdAt)}${p.expiresAt ? ` · made before 0.63, expires ${formatDate(p.expiresAt)}` : ' · never expires'}`}>
         <div className="flex gap-2 items-center">
           <Badge variant={POLICY_STATUS[p.status] ?? 'outline'}>{p.status.toLowerCase().replace(/_/g, ' ')}</Badge>
           {p.status === 'AWAITING_APPROVAL' && !p.direct && <a href={p.approvalUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="outline"><ExternalLink className="h-3.5 w-3.5 mr-1" />Approval page</Button></a>}
@@ -154,7 +154,7 @@ export default function PolicyPage() {
         <CardHeader className="pb-3"><CardTitle className="text-sm">Activity</CardTitle></CardHeader>
         <CardContent className="text-xs space-y-2">
           {!p.sweep.enabled && <p className="text-destructive">The policy sweep is off on this server (PATCH_POLICY_SWEEP=off): nothing is proposed under any policy.</p>}
-          {p.currentWindow ? <p>Its window is open now, until {formatDate(p.currentWindow.end)}.</p> : p.nextWindow ? <p>Next window: {formatDate(p.nextWindow.start)} – {formatDate(p.nextWindow.end)}.</p> : p.status === 'ACTIVE' ? <p>No window opens before it expires.</p> : null}
+          {p.currentWindow ? <p>Its window is open now, until {formatDate(p.currentWindow.end)}.</p> : p.nextWindow ? <p>Next window: {formatDate(p.nextWindow.start)} – {formatDate(p.nextWindow.end)}.</p> : p.status === 'ACTIVE' ? <p>{p.expiresAt ? 'No window opens before it expires.' : 'No window opens.'}</p> : null}
           {p.currentRestartWindow && <p data-testid="policy-restart-open">Its restart window is open now, until {formatDate(p.currentRestartWindow.end)}.</p>}
           {p.lastProposal && <p>{p.lastProposal.ok ? 'Last' : 'Last refusal'} ({formatDate(p.lastProposal.at)}, <code>{p.lastProposal.code}</code>): {p.lastProposal.message}</p>}
           <p className="text-muted-foreground">Approval signer: {p.signer.reachable ? `${p.signer.status?.toLowerCase().replace(/_/g, ' ')}, ${p.signer.signedPlans} plan${p.signer.signedPlans === 1 ? '' : 's'} signed under it` : 'not reachable'}.</p>

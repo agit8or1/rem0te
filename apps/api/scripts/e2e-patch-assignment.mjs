@@ -17,7 +17,9 @@
  *     assignable policy of the same business, in one pass;
  *   - nothing is revised while a deployment of the running revision is in
  *     progress;
- *   - a revision close to expiry is renewed by revision;
+ *   - (0.63) every revision never expires: its document says expiry "never"
+ *     and the portal's expiresAt is null; a revision made before 0.63 (an
+ *     expiring document) is renewed once, into one that never expires;
  *   - in signed mode a revision waits for two approvals and the previous
  *     revision keeps running until then;
  *   - revoking a revision by hand ends its policy.
@@ -236,7 +238,7 @@ async function all() {
   const live = async (pc) => prisma.patchPolicyComputer.findFirst({ where: { endpointId: pc.id, live: true }, include: { policy: { select: { id: true, seriesId: true, revision: true } } } });
   const ids = (doc) => doc.rings.map((r) => r.map((c) => c.endpointId));
   const window = { days: ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'], start: '00:00', end: '23:59', timezone: 'UTC' };
-  const settings = { allow: { classifications: [SEC] }, soakHours: 0, failureThreshold: 0, window, reboot: 'never', expiresInDays: 30, reason: 'Every computer, security updates, every night' };
+  const settings = { allow: { classifications: [SEC] }, soakHours: 0, failureThreshold: 0, window, reboot: 'never', reason: 'Every computer, security updates, every night' };
 
   section('A company-wide policy: every eligible computer, rings built by the portal');
   let biz, rev1;
@@ -252,6 +254,9 @@ async function all() {
     rev1 = await running(biz.id);
     const doc = rev1?.document;
     check(!!rev1 && rev1.seriesId === biz.id && rev1.revision === 1, 'revision 1 is running', JSON.stringify(rev1 && { s: rev1.seriesId, r: rev1.revision }));
+    check(rev1?.document?.expiry === 'never' && !('expiresAt' in (rev1?.document ?? {})) && rev1?.expiresAt === null, '0.63: revision 1 never expires (signed expiry "never"; the portal\'s expiresAt is null)', JSON.stringify(rev1 && { expiry: rev1.document.expiry, expiresAt: rev1.expiresAt }));
+    r = await req('POST', '/patching/series', { s: Ses.owenF, business: acme.id, body: { businessId: acme.id, scope: 'assigned', name: 'With an expiry', ...settings, expiresInDays: 30 } });
+    check(r.status === 400, '0.63: a new series takes no expiry (refused, not ignored)', msg(r));
     check(doc?.rings[0].length === 1 && doc.rings[0][0].endpointId === B.id && /most reliably/.test(biz.lastCheck?.canary?.why ?? ''), 'the canary is B, the computer that checks in most reliably', JSON.stringify(biz?.lastCheck?.canary));
     check(JSON.stringify(ids(doc ?? { rings: [] })) === JSON.stringify([[B.id], [A.id, C.id, D.id, K.id]]), 'the rest in one ring, in stable (enrolment) order, the computer without a result key last', JSON.stringify(doc && ids(doc)));
     check(doc?.rings[1].slice(0, 3).every((c) => !!c.resultKey) && !doc.rings[1][3].resultKey, 'K, with no result key, is only in the last ring (§38)');
@@ -278,7 +283,7 @@ async function all() {
     check(r2.status === 409, '…and so is one the company-wide policy covers but left out', msg(r2));
     let refused = false;
     try {
-      const other = await prisma.patchPolicy.create({ data: { id: hex(16), customerId: acme.id, name: 'db-only', document: rev1.document, digest: hex(32), status: 'ACTIVE', approvalUrl: 'http://x', expiresAt: new Date(Date.now() + 86_400_000), createdById: owen.id } });
+      const other = await prisma.patchPolicy.create({ data: { id: hex(16), customerId: acme.id, name: 'db-only', document: rev1.document, digest: hex(32), status: 'ACTIVE', approvalUrl: 'http://x', expiresAt: null, createdById: owen.id } });
       try { await prisma.patchPolicyComputer.create({ data: { policyId: other.id, endpointId: C.id, customerId: acme.id, ring: 1, live: true } }); } catch { refused = true; }
       await prisma.patchPolicy.delete({ where: { id: other.id } });
     } catch (e) { failures.push(`db fixture: ${e.message}`); }
@@ -399,13 +404,22 @@ async function all() {
     if (!rev5) throw new Error('no revision 5');
   }
 
-  section('Expiry: renewed by revision before it expires');
+  section('Expiry (0.63): a never-expiring revision is not renewed; one made before 0.63 is renewed once, into one that never expires');
   {
-    // The portal's mirror of the expiry: as if revision 5 were 3 days from its end.
-    await prisma.patchPolicy.update({ where: { id: rev5.id }, data: { expiresAt: new Date(Date.now() + 3 * 86_400_000) } });
+    check(rev5.document.expiry === 'never' && rev5.expiresAt === null, 'revision 5 never expires', JSON.stringify({ expiry: rev5.document.expiry, expiresAt: rev5.expiresAt }));
+    await sleep(6000);
+    check((await running(biz.id))?.revision === 5 && (await prisma.patchPolicy.count({ where: { seriesId: biz.id, revision: 6 } })) === 0, 'with nothing changed, nothing is renewed: revision 5 keeps running', JSON.stringify((await series(biz.id))?.lastCheck));
+    // The portal's mirror, as a pre-0.63 revision would be: an expiring document 3 days from its end
+    // (0084's CHECK needs the stored document and the column to agree).
+    const old = { ...rev5.document, expiresAt: new Date(Date.now() + 3 * 86_400_000).toISOString() };
+    delete old.expiry;
+    let refusedByCheck = false;
+    try { await prisma.patchPolicy.update({ where: { id: rev5.id }, data: { expiresAt: new Date(Date.now() + 3 * 86_400_000) } }); } catch { refusedByCheck = true; }
+    check(refusedByCheck, '0084: a date on a row whose signed document says "never" is refused by the database');
+    await prisma.patchPolicy.update({ where: { id: rev5.id }, data: { document: old, expiresAt: new Date(old.expiresAt) } });
     const rev6 = await until(async () => { const x = await running(biz.id); return x?.revision === 6 ? x : null; }, 60_000);
-    check(!!rev6 && /renewal before expiry/.test(rev6.document.reason) && JSON.stringify(ids(rev6.document)) === JSON.stringify(ids(rev5.document)), 'revision 6 renews it: the same computers, a new 30-day document', JSON.stringify((await series(biz.id))?.lastCheck));
-    check(rev6 && Date.parse(rev6.document.expiresAt) - Date.now() > 29 * 86_400_000, 'with a fresh expiry, at most 90 days (here 30)');
+    check(!!rev6 && /renewal before expiry/.test(rev6.document.reason) && JSON.stringify(ids(rev6.document)) === JSON.stringify(ids(rev5.document)), 'revision 6 renews it: the same computers', JSON.stringify((await series(biz.id))?.lastCheck));
+    check(rev6?.document.expiry === 'never' && rev6.expiresAt === null, '…into a document that never expires, so that renewal is the last', JSON.stringify(rev6 && { expiry: rev6.document.expiry, expiresAt: rev6.expiresAt }));
   }
 
   section('Signed mode: a revision waits for approval; the running revision keeps running');

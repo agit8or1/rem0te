@@ -5,6 +5,99 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.63.0] — 2026-11-17 · *Evergreen*
+
+**Approved policies no longer expire. A patch policy, a company-wide policy, an automation schedule or a restart
+window stays in force until it is revoked, paused or replaced.**
+
+The owner saw *Expires after (days, at most 90)* on the patch policy form and asked: *"Does this mean the policy
+expires? Policies shouldnt expire"*. It did. Since 0.32 every approved policy document has carried a signed
+`expiresAt` at most 90 days out, and from that moment the signer refused every plan under it (`policy_expired`).
+The console defaulted to 30 days. Company-wide policies (0.50) renewed themselves by proposing a new revision a few
+days before the end, which in signed mode meant two approvals every month. Automation schedules (0.58) and restart
+windows (0.60) simply stopped, and the restart window card nagged *renew soon* from day 23. This release reverses
+"every approved policy expires within 90 days" at the owner's request, as §41, §62, §67 and §75 were. It is §76.
+
+### The signed field
+
+A document now carries exactly one of:
+
+- `expiresAt` (an ISO date, at most 90 days out, as before). Every document approved before 0.63 has one, and keeps
+  its bytes, its digest, its signature and its expiry. **Those policies still stop on their date.**
+- `expiry: "never"` (`EXPIRY_NEVER` in `actions/patch-policy.ts`). There is no date to reach.
+
+Both `PolicyDoc` and `AutomationDoc` are strict schemas, so a pre-0.63 signer refuses a document with `expiry`
+outright. Everything reads the expiry through one function, `expiryMsOf`:
+
+- Infinity only for exactly `"never"` with no date;
+- the date for a date alone;
+- `null` for anything else (both fields, neither, another value, an unparseable date).
+
+**Every caller treats `null` as expired**, never as "never", so the field fails closed. Admission
+(`expiryProblem`, in `validatePolicyDoc` and `validateAutomationDoc`) refuses an unknown value (`expiry_unknown`),
+both fields (`expiry_conflict`), neither (`expiry_missing`), and a date past 90 days (`expiry_too_far`, the old
+cap). At signing time `policyStanding` and `evaluateAutomationPlan` refuse an unreadable expiry (`expiry_unknown`)
+after the revocation check and before `policy_expired`, and the signer's effective status reads it as `EXPIRED`.
+The field is inside the digest and the approvers' signature: a portal, or anyone with write access to the signer's
+store, that adds or removes `expiry` gets `policy_digest_mismatch`.
+
+**Nothing else is relaxed.** Revocation, pause, the window, the named computers bound by identity, the restart rule
+and the RustDesk exception, the signed containment pause, the ledger, one open plan per ring and window, and the
+retry limits are all unchanged. A plan's own `notAfter` is still bounded by the window. Device result keys are
+pinned at approval and were never tied to expiry.
+
+### The portal
+
+- **The forms ask for no expiry.** The *Expires after* fields are gone from New policy, Company-wide policy, New
+  schedule and the restart window editor, along with the expiry warnings on the cards. Each says instead that it
+  does not expire. A policy, schedule or window made before 0.63 shows "made before 0.63, expires …" and still
+  stops on that date; set it again to get one that does not.
+- **The API.** `CreatePolicyDto`, `CreateAutomationDto` and the restart window's `SetWindowDto` still accept an
+  optional `expiresInDays` (7–90 for windows), with no default. Without it the document says `"never"`.
+  `CreateSeriesDto` now refuses `expiresInDays` (it was a series setting): no revision carries one.
+- **Capability.** The signer advertises `neverExpires: 1`. The portal checks it before proposing a never-expiring
+  document and refuses with `SIGNER_TOO_OLD` otherwise, rather than letting an older signer's strict schema reject
+  it as `invalid_policy`.
+- **Company-wide policies.** A running revision that never expires is never renewed. A running revision made before
+  0.63 is renewed once more, a few days before its date (the 0.50 rule, `revisionDecision`), into a revision that
+  never expires. In signed mode that is one last pair of approvals.
+- **The window previews** (`POST /patching/window-preview`, the automation preview) list the next openings with no
+  expiry bound.
+
+### Migration 0084
+
+`PatchPolicy.expiresAt` and `AutomationPolicy.expiresAt` become nullable. Existing rows keep their dates and nothing
+is backfilled. Two CHECKs (`PatchPolicy_expiry_matches_document`, `AutomationPolicy_expiry_matches_document`) hold
+the column to the stored document: null exactly when the document says `"never"` and has no `expiresAt`. The
+portal's sweeps (patch policy, series, automation, restart windows) read null as "never", never as expired. The
+signer decides from the document either way.
+
+### Invariants
+
+- **§76** is new: the one signed value, the one reader, the one admission rule, the evaluators, the capability
+  gate, the series rule and 0084. It is in `CLAUDE.md` and `scripts/check-security-invariants.mjs`.
+- **§66 (monthly windows)** and **§73 (restart windows)** checks were reworded for the null-safe forms
+  (`nextOccurrence(now, doc.window, until)`, and `expiresAt === null ||` in `policyLive`).
+
+### Tests
+
+New unit cases in `unit-patch-policy.mjs` (a never-expiring policy signed 105 days on; an old document still stops;
+an unknown, conflicting or missing expiry refused at admission and at signing; tampering in either direction caught
+by the digest), `unit-automation-schedule.mjs` (signed 120 days on), `unit-patch-assignment.mjs` (no renewal of a
+never-expiring revision, renewal of an old one, the series refusing an expiry), `unit-restart-window-settings.mjs`
+and `unit-approval-signer.mjs` (the capability; the approval page's *Never*; `"forever"` and both fields refused over
+HTTP). `e2e-patch-policies`, `e2e-patch-assignment`, `e2e-automation-schedule`, `e2e-restart-window-settings` and
+`e2e-ui` check the console's default end to end, including 0084 refusing a dated column under a `"never"` document.
+
+### Deploy
+
+**Reinstall the approval signer from 0.63 before anyone saves a policy, schedule or restart window.** Until then
+every save is `SIGNER_TOO_OLD`. Then migration 0084 (`prisma migrate deploy`, rsync `prisma/`, `prisma generate` at
+the target), and the API and web as usual. The agent is unchanged. Existing policies keep their dates: replace
+them (or let a company-wide series renew once) to get ones that do not expire.
+
+---
+
 ## [0.62.0] — 2026-11-17 · *Together*
 
 **Patching installs on every computer you tick, together. Testing on one computer first is an option, off by

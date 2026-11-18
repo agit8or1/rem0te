@@ -1227,6 +1227,53 @@ document still gated, unknown values refused, a forged field caught) and
 `unit-patch-assignment.mjs`. Behavioural: `e2e-patch-policies.mjs` and
 `e2e-staged-patching.mjs`.
 
+§76 (0.63) is policies that never expire. **It reverses "every approved
+policy expires within 90 days" (the 0.32 patch policy, §63's revisions, §71's
+automation schedules and §73's restart windows) at the owner's request**
+("Does this mean the policy expires? Policies shouldnt expire"), as §41, §62,
+§67 and §75 were. The console sends no expiry, and the forms and cards no
+longer ask for or warn about one.
+
+- **One signed value.** `EXPIRY_NEVER = 'never'` in `actions/patch-policy.ts`.
+  `PolicyDoc` and `AutomationDoc` carry `expiresAt` optional and `expiry:
+  z.literal('never')` optional, in strict schemas, so an older signer refuses
+  the field. An old document's bytes, digest and expiry are unchanged.
+- **One reader.** `expiryMsOf` returns Infinity only for exactly `"never"`
+  with no date, the date for a date alone, and null for anything else. Every
+  caller treats null as expired, never as "never". Nothing else parses a
+  document's `expiresAt` (a missing one is NaN, which compares as never
+  expired).
+- **One admission rule.** `expiryProblem`, in `validatePolicyDoc` and
+  `validateAutomationDoc`: an unknown value (`expiry_unknown`), both fields
+  (`expiry_conflict`) or neither (`expiry_missing`) is refused, and a date
+  keeps the 90-day cap (`expiry_too_far`).
+- **The evaluators.** `policyStanding` and `evaluateAutomationPlan` refuse a
+  null expiry (`expiry_unknown`) after revocation and before `policy_expired`,
+  and bound the plan's `notAfter` by a date when there is one. The signer's
+  effective statuses read null as `EXPIRED`. The field is in the digest, so a
+  portal that adds or drops it is `policy_digest_mismatch`.
+- **The portal.** `CreatePolicyDto`, `CreateAutomationDto` and `SetWindowDto`
+  take an optional `expiresInDays` with no default; without it the document
+  says `"never"`, and only after the signer's `neverExpires: 1` capability
+  (`SIGNER_TOO_OLD`). `CreateSeriesDto` refuses one, and no revision carries
+  one. An expiring revision made before 0.63 is renewed once more, into one
+  that never expires.
+- **The database.** 0084 makes `PatchPolicy.expiresAt` and
+  `AutomationPolicy.expiresAt` nullable, null exactly for a `"never"`
+  document (two CHECKs against the stored document). The sweeps read null as
+  "never", never as expired.
+- **Nothing else is relaxed.** Revocation, pause, window, computers, restart
+  rules, the signed pause, the ledger and the retry limits are unchanged.
+  Device result keys are pinned at approval and never tied to expiry.
+
+Deploy: reinstall the approval signer from 0.63 before anyone saves a policy,
+schedule or restart window. Unit: `unit-patch-policy.mjs` (signed 105 days
+on, an old document still stops, unknown values refused, a forged field
+caught), `unit-automation-schedule.mjs`, `unit-patch-assignment.mjs`,
+`unit-approval-signer.mjs` and `unit-restart-window-settings.mjs`.
+Behavioural: `e2e-patch-policies.mjs`, `e2e-patch-assignment.mjs`,
+`e2e-automation-schedule.mjs` and `e2e-restart-window-settings.mjs`.
+
 §70 (0.57) is device discovery and adoption. The unassigned pool is
 `common/unassigned.ts`: `tenantId` null OR `customerId` null
 (`UNASSIGNED_WHERE`, `isUnassigned`). `assertAssigned` refuses a pooled

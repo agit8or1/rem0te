@@ -133,8 +133,8 @@ const docOf = (plan, cs) => {
   check('override: nothing else', !A.OverrideDto.safeParse({ mode: 'all' }).success && !A.OverrideDto.safeParse({ mode: 'exclude', seriesId: 'clxyz12345' }).success);
   const s = { allow: { classifications: ['0fa1201d-4330-4fa8-8ae9-b877473b6441'] }, window: { days: ['sat'], start: '22:00', end: '04:00', timezone: 'UTC' }, reason: 'company-wide' };
   const ok = A.SeriesSettings.safeParse(s);
-  check('settings default to never restarting, 30 days, no failures allowed', ok.success && ok.data.reboot === 'never' && ok.data.expiresInDays === 30 && ok.data.failureThreshold === 0);
-  check('settings: at most 90 days', !A.SeriesSettings.safeParse({ ...s, expiresInDays: 91 }).success);
+  check('settings default to never restarting, no expiry (0.63), no failures allowed', ok.success && ok.data.reboot === 'never' && ok.data.expiresInDays === undefined && ok.data.failureThreshold === 0);
+  check('settings: a stored series from before 0.63 keeps its expiresInDays, at most 90 days', A.SeriesSettings.parse({ ...s, expiresInDays: 30 }).expiresInDays === 30 && !A.SeriesSettings.safeParse({ ...s, expiresInDays: 91 }).success);
   check('settings: the restart rule is the closed pair', !A.SeriesSettings.safeParse({ ...s, reboot: 'always' }).success);
   check('settings: nothing unknown', !A.SeriesSettings.safeParse({ ...s, rings: [] }).success);
   // 0.53: a company-wide or assignable policy may be monthly; each revision carries the window as given.
@@ -168,6 +168,23 @@ const docOf = (plan, cs) => {
   check('SeriesSettings: a stored series without staging still parses (and means canary)', A.SeriesSettings.safeParse(base).success && A.SeriesSettings.parse(base).staging === undefined);
   check('SeriesSettings: an unknown staging is refused', !A.SeriesSettings.safeParse({ ...base, staging: 'later' }).success);
   check('CreateSeriesDto: staging defaults to canary for an API caller that leaves it out', A.CreateSeriesDto.parse({ ...base, businessId: 'business01', scope: 'business', name: 'All' }).staging === 'canary');
+}
+
+// ── 0.63 (§76): revisions never expire; an old expiring one is renewed once ──
+{
+  const now = new Date('2026-11-17T12:00:00Z');
+  const later = (min) => new Date(now.getTime() + min * 60_000);
+  const d = (over) => A.revisionDecision({ now, desired: { fingerprint: 'A' }, current: { fingerprint: 'A', expiresAt: null, status: 'ACTIVE' }, pending: null, rejected: null, settle: { fingerprint: null, since: null }, lastClaimAt: null, midRing: false, ...over }, 60, 10);
+  check('a running revision that never expires is live and up to date (no renewal, ever)', d({}).act === 'none' && d({}).code === 'up_to_date');
+  check('…even years on', A.revisionDecision({ now: new Date('2031-01-01T00:00:00Z'), desired: { fingerprint: 'A' }, current: { fingerprint: 'A', expiresAt: null, status: 'ACTIVE' }, pending: null, rejected: null, settle: { fingerprint: null, since: null }, lastClaimAt: null, midRing: false }, 60, 10).code === 'up_to_date');
+  check('a never-expiring revision is still replaced when its computers change (membership)', d({ desired: { fingerprint: 'B' }, settle: { fingerprint: 'B', since: later(-20) } }).trigger === 'membership');
+  check('a never-expiring revision that is not ACTIVE is not live → restart', d({ current: { fingerprint: 'A', expiresAt: null, status: 'REVOKED' } }).trigger === 'restart');
+  check('an old revision with an expiry is still renewed before it runs out (lead from its series, 30 days → 7)', d({ current: { fingerprint: 'A', expiresAt: later(3 * 1440), status: 'ACTIVE' }, expiresInDays: 30 }).trigger === 'renewal');
+  check('…and a series with no expiresInDays reads the lead as the 90-day cap\'s (7 days)', A.renewLeadMs(undefined) === 7 * 86_400_000
+    && d({ current: { fingerprint: 'A', expiresAt: later(3 * 1440), status: 'ACTIVE' } }).trigger === 'renewal');
+  check('an old revision far from its expiry is not renewed', d({ current: { fingerprint: 'A', expiresAt: later(30 * 1440), status: 'ACTIVE' }, expiresInDays: 30 }).code === 'up_to_date');
+  const base = { allow: { classifications: ['0fa1201d-4330-4fa8-8ae9-b877473b6441'] }, window: { days: ['sat'], start: '22:00', end: '04:00', timezone: 'UTC' }, reason: 'unit test', businessId: 'business01', scope: 'business', name: 'All' };
+  check('CreateSeriesDto: a new series takes no expiry (refused, not ignored)', A.CreateSeriesDto.safeParse(base).success && !A.CreateSeriesDto.safeParse({ ...base, expiresInDays: 30 }).success);
 }
 
 if (failures.length) {

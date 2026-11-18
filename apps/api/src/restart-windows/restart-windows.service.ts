@@ -65,7 +65,8 @@ export const SetWindowDto = z.discriminatedUnion('mode', [
     /** Present only when a person ticked it; never by default (§67). */
     ignoreRemoteSession: z.literal(true).optional(),
     priority: z.number().int().min(PRIORITY_MIN).max(PRIORITY_MAX).optional(),
-    expiresInDays: z.number().int().min(7).max(MAX_AUTOMATION_DAYS).default(MAX_AUTOMATION_DAYS),
+    /** 0.63 (the owner's request): absent, what the console sends, signs `expiry: "never"`. An API caller may still ask for 7 to 90 days. */
+    expiresInDays: z.number().int().min(7).max(MAX_AUTOMATION_DAYS).optional(),
     reason: Reason.optional(),
   }).strict(),
   z.object({
@@ -91,7 +92,7 @@ const MIN_RESTART_PLAN_MS = 10 * 60_000;
 const MAX_PLANS_PER_PASS = 100;
 /** Three tries per computer per window: the first and two retries. */
 export const RESTART_ATTEMPTS = MAX_RUNS_PER_OCCURRENCE;
-/** A window is shown as "renew soon" this many days before it expires. */
+/** A window made before 0.63 (or by an API caller with an expiry) is shown as "renew soon" this many days before it expires. */
 export const RENEW_WARNING_DAYS = 14;
 
 type SettingRow = RestartWindowSetting & { policy: AutomationPolicy | null; pendingPolicy: AutomationPolicy | null; group: { name: string } | null; endpoint: { name: string; hostname: string | null } | null };
@@ -141,7 +142,8 @@ export class RestartWindowsService implements OnModuleInit, OnModuleDestroy {
       for (const p of pols) { try { await this.automation.mirror(p, now); } catch (e) { this.logger.warn(`restart window policy ${p.id}: ${(e as Error).message}`); } }
       await this.settle();
       const businesses = await this.prisma.restartWindowSetting.findMany({
-        where: { mode: 'window', policy: { status: 'ACTIVE', pausedAt: null, expiresAt: { gt: now } } },
+        // 0.63: a null expiresAt is a signed "never", in force until revoked or paused.
+        where: { mode: 'window', policy: { status: 'ACTIVE', pausedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] } },
         select: { customerId: true }, distinct: ['customerId'],
       });
       let budget = MAX_PLANS_PER_PASS;
@@ -177,7 +179,7 @@ export class RestartWindowsService implements OnModuleInit, OnModuleDestroy {
   private static like(s: SettingRow): SettingLike & { row: SettingRow } {
     return {
       id: s.id, scope: s.scope as RestartScope, customerId: s.customerId, groupId: s.groupId, endpointId: s.endpointId, priority: s.priority,
-      mode: s.mode === 'off' ? 'off' : 'window', policyLive: !!s.policy && s.policy.status === 'ACTIVE' && !s.policy.pausedAt && s.policy.expiresAt > new Date(),
+      mode: s.mode === 'off' ? 'off' : 'window', policyLive: !!s.policy && s.policy.status === 'ACTIVE' && !s.policy.pausedAt && (s.policy.expiresAt === null || s.policy.expiresAt > new Date()),
       row: s,
     };
   }
@@ -274,7 +276,7 @@ export class RestartWindowsService implements OnModuleInit, OnModuleDestroy {
   private async restartOne(p: AutomationPolicy, doc: AutomationDoc, occ: { start: Date; end: Date }, actor: ActorContext, ep: Parameters<RestartWindowsService['skipReason']>[1] & { name: string; hostname: string | null }, now: Date): Promise<boolean> {
     const windowKey = occ.start.toISOString();
     // Picked up by notAfter at the latest, restarted the warning later: the restart itself falls inside the window.
-    const notAfter = new Date(Math.min(occ.end.getTime() - RESTART_WINDOW_DELAY_MINUTES * 60_000, now.getTime() + Math.min(RESTART_PLAN_MS, MAX_RESTART_PLAN_HOURS * 3_600_000), p.expiresAt.getTime()));
+    const notAfter = new Date(Math.min(occ.end.getTime() - RESTART_WINDOW_DELAY_MINUTES * 60_000, now.getTime() + Math.min(RESTART_PLAN_MS, MAX_RESTART_PLAN_HOURS * 3_600_000), p.expiresAt?.getTime() ?? Infinity));
     if (notAfter.getTime() - now.getTime() < MIN_RESTART_PLAN_MS) return false;
     const rows = await this.prisma.restartWindowAttempt.findMany({ where: { policyId: p.id, endpointId: ep.id, windowKey }, orderBy: { attempt: 'asc' } });
     const last = rows[rows.length - 1];
@@ -371,16 +373,17 @@ export class RestartWindowsService implements OnModuleInit, OnModuleDestroy {
     const d = doc.data;
     const task = d.task as RestartTask;
     const w = PolicyWindow.safeParse(d.recurrence);
-    const live = p.status === 'ACTIVE' && !p.pausedAt && p.expiresAt > now;
+    const live = p.status === 'ACTIVE' && !p.pausedAt && (p.expiresAt === null || p.expiresAt > now);
     return {
       id: p.id, status: p.status, paused: !!p.pausedAt, direct: p.direct, approvalUrl: p.approvalUrl,
       approvals: Array.isArray(p.approvals) ? (p.approvals as unknown[]).length : 0,
       rule: task.rule, ignoreRemoteSession: task.ignoreRemoteSession === true,
       window: w.success ? w.data : null, description: w.success ? describePolicyWindow(w.data) : 'an unrecognised window',
       does: taskInWords(task),
-      expiresAt: p.expiresAt, expiresSoon: live && p.expiresAt.getTime() - now.getTime() < RENEW_WARNING_DAYS * 86_400_000,
-      nextWindow: live && w.success ? nextOccurrence(now, w.data, p.expiresAt) : null,
-      upcoming: live && w.success ? nextOccurrences(now, w.data, 3, p.expiresAt) : [],
+      // 0.63: null for a window that never expires (every one set from 0.63); expiresSoon only for an older one.
+      expiresAt: p.expiresAt, expiresSoon: live && p.expiresAt !== null && p.expiresAt.getTime() - now.getTime() < RENEW_WARNING_DAYS * 86_400_000,
+      nextWindow: live && w.success ? nextOccurrence(now, w.data, p.expiresAt ?? undefined) : null,
+      upcoming: live && w.success ? nextOccurrences(now, w.data, 3, p.expiresAt ?? undefined) : [],
       setBy: d.createdBy.name, setAt: p.createdAt, reason: d.reason,
       lastNote: p.lastProposal as { at: string; code: string; message: string } | null,
     };
@@ -395,7 +398,7 @@ export class RestartWindowsService implements OnModuleInit, OnModuleDestroy {
         : s.policy.status === 'AWAITING_APPROVAL' ? 'it is waiting for approval on the approval signer'
           : s.policy.status === 'REJECTED' ? 'it was rejected on the approval signer'
             : s.policy.status === 'REVOKED' ? 'it was revoked'
-              : s.policy.status === 'EXPIRED' || s.policy.expiresAt <= now ? 'it expired; set it again (Renew)'
+              : s.policy.status === 'EXPIRED' || (s.policy.expiresAt !== null && s.policy.expiresAt <= now) ? 'it expired; set it again (Change, then Save)'
                 : s.policy.pausedAt ? 'it is paused' : null;
     return {
       id: s.id, scope: s.scope, mode: s.mode, priority: s.priority,
@@ -552,7 +555,7 @@ export class RestartWindowsService implements OnModuleInit, OnModuleDestroy {
     // A window can make computers restart: confirm it is you (restart.window), whoever you are.
     assertFresh(freshMethod, { action: 'restart.window', message: 'Setting a restart window lets computers be restarted automatically. Confirm it is you.' });
     const w = PolicyWindow.parse(dto.window);
-    const first = nextOccurrence(now, w, new Date(now.getTime() + dto.expiresInDays * 86_400_000));
+    const first = nextOccurrence(now, w, dto.expiresInDays ? new Date(now.getTime() + dto.expiresInDays * 86_400_000) : undefined);
     if (!first) this.bad('WINDOW_NEVER_OPENS', 'This window never opens before the restart window would expire.');
     if (first!.end.getTime() - first!.start.getTime() < MIN_RESTART_WINDOW_MINUTES * 60_000) this.bad('RESTART_WINDOW_TOO_SHORT', `A restart window is at least ${MIN_RESTART_WINDOW_MINUTES} minutes long: the computer picks the plan up and warns for ${RESTART_WINDOW_DELAY_MINUTES} minutes, and the restart must fall inside the window.`);
     const task: RestartTask = { kind: 'restart', rule: dto.rule as RestartRule, ...(dto.ignoreRemoteSession ? { ignoreRemoteSession: true as const } : {}) };

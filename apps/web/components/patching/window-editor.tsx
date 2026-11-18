@@ -51,8 +51,7 @@ export function draftReady(d: WindowDraft): boolean {
 
 const selectClass = 'h-8 rounded-md border border-input bg-background px-2 text-xs';
 
-export function WindowEditor({ id, value, onChange, expiresInDays: exp, title = 'Maintenance window' }: { id: string; value: WindowDraft; onChange: (d: WindowDraft) => void; expiresInDays?: number; title?: string }) {
-  const expiresInDays = exp !== undefined && Number.isInteger(exp) && exp >= 1 && exp <= 90 ? exp : undefined;
+export function WindowEditor({ id, value, onChange, title = 'Maintenance window' }: { id: string; value: WindowDraft; onChange: (d: WindowDraft) => void; title?: string }) {
   const set = (p: Partial<WindowDraft>) => onChange({ ...value, ...p });
   const toggle = (day: string, on: boolean) => { const n = new Set(value.days); if (on) n.add(day); else n.delete(day); set({ days: n }); };
   const ready = draftReady(value);
@@ -62,8 +61,9 @@ export function WindowEditor({ id, value, onChange, expiresInDays: exp, title = 
   const [key, setKey] = useState(wJson);
   useEffect(() => { const t = setTimeout(() => setKey(wJson), 300); return () => clearTimeout(t); }, [wJson]);
   const preview = useQuery({
-    queryKey: ['window-preview', key, expiresInDays ?? null],
-    queryFn: () => patchingApi.windowPreview(JSON.parse(key), expiresInDays).then((r) => r.data.data as {
+    queryKey: ['window-preview', key],
+    // 0.63: policies made in the console never expire, so the preview has no expiry to stop at.
+    queryFn: () => patchingApi.windowPreview(JSON.parse(key)).then((r) => r.data.data as {
       valid: boolean; message?: string; description?: string; occurrences: { start: string; end: string }[]; opensBeforeExpiry: boolean | null;
     }),
     enabled: ready,
@@ -125,8 +125,8 @@ export function WindowEditor({ id, value, onChange, expiresInDays: exp, title = 
             <>
               <p><span className="text-muted-foreground">Opens</span> {p.description}.</p>
               {p.occurrences.length === 0
-                ? <p className="text-destructive" data-testid={`${id}-never-opens`}>It does not open before the policy expires{expiresInDays ? ` (${expiresInDays} days)` : ''}. Lengthen the expiry or choose a window that opens sooner; the signer refuses a policy whose window never opens (window_never_opens).</p>
-                : <p><span className="text-muted-foreground">Next {p.occurrences.length === 1 ? 'opening' : `${p.occurrences.length} openings`}{expiresInDays ? ' before it expires' : ''}:</span>{' '}
+                ? <p className="text-destructive" data-testid={`${id}-never-opens`}>It never opens. Choose another window; the signer refuses a policy whose window never opens (window_never_opens).</p>
+                : <p><span className="text-muted-foreground">Next {p.occurrences.length === 1 ? 'opening' : `${p.occurrences.length} openings`}:</span>{' '}
                     {p.occurrences.map((o, i) => <span key={o.start} data-testid={`${id}-occurrence`}>{i ? '; ' : ''}<strong>{describeOccurrence(o, value.timezone.trim())}</strong></span>)}
                   </p>}
             </>

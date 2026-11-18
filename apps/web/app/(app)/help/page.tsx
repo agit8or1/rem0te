@@ -1287,7 +1287,7 @@ const SECTIONS: Section[] = [
           people on the approval signer, and then run inside their maintenance window: from 0.62 every computer together,
           or, with <em>Test on one computer first</em>, the canary first and the next ring only once the canary is
           confirmed effective. The approval signer, not this portal, signs each ring, and only if
-          it stays inside the policy&apos;s computers, update classes, excluded KBs, window and expiry. Revoking one is
+          it stays inside the policy&apos;s computers, update classes, excluded KBs and window. Revoking one is
           one-way. Platform Admins see a pre-flight listing what a production
           install still lacks. Fixture-tested only so far. More in{' '}
           <Link href="/docs/patching-setup" className="underline text-foreground">Patching setup</Link> and{' '}
@@ -1358,13 +1358,22 @@ const SECTIONS: Section[] = [
           <Link href="/docs/restart-windows" className="underline text-foreground">Restart windows</Link>.
         </p>
         <p>
+          From 0.63, <strong className="text-foreground">approved policies do not expire</strong>: patch policies,
+          company-wide policy revisions, automation schedules and restart windows stand until they are revoked, paused
+          or replaced. The forms no longer ask for an expiry and nothing warns that one is coming. Each new document
+          says so in a signed field (<code>expiry: &quot;never&quot;</code>) that the approval page shows, so the approvers
+          know what they approve. A policy approved before 0.63 keeps its expiry and stops on that date as before; to
+          replace it with one that does not expire, use <em>Change</em> then <em>Save</em> (a restart window), make a
+          revision (a schedule), or make the policy again. A company-wide policy&apos;s running revision is renewed one
+          last time, into one that does not expire. The approval signer must be 0.63 before anyone saves one.
+        </p>
+        <p>
           From 0.53, a patch policy&apos;s maintenance window can be{' '}
           <strong className="text-foreground">monthly</strong> as well as weekly: the first, second, third, fourth or
           last weekday of each month plus 0–14 days (Patch Tuesday is the second Tuesday, so &ldquo;second Tuesday + 2&rdquo;
           is the Thursday after it), or a day of the month from 1 to 28, so it opens in every month. The start, end and
           time zone work as for a weekly window, across midnight and daylight-saving time. The policy form and the
-          company-wide policy form show the next three openings before the policy expires; a window that never opens
-          before then is refused. Policies approved before 0.53 are weekly and keep working unchanged. The approval
+          company-wide policy form show the next three openings; a window that never opens is refused. Policies approved before 0.53 are weekly and keep working unchanged. The approval
           signer must be updated to 0.53 before it accepts a monthly policy. On the <em>Patches</em> tab, a scheduled
           install can start at the next opening of the computer&apos;s policy window. More in{' '}
           <Link href="/docs/staged-patching#monthly-windows-053" className="underline text-foreground">Staged patching</Link>.

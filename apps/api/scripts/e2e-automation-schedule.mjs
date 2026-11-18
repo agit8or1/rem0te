@@ -310,7 +310,7 @@ async function all() {
   const scriptBody = (over = {}) => ({
     businessId: acme.id, name: `Hourly greeting ${sfx}`, task: { kind: 'script', scriptVersionId: versionId, parameters: { Name: 'world' }, timeoutMinutes: 5 },
     targets: { kind: 'computers', endpointIds: [fd.id, bo.id] }, recurrence: justOpened(), offline: { mode: 'run_when_online' }, maxRunsPerOccurrence: 1,
-    expiresInDays: 7, reason: 'Ticket 41: greet the front desk every hour', ...over,
+    reason: 'Ticket 41: greet the front desk every hour', ...over,
   });
 
   section('Creating a schedule: fresh sign-in, typed arguments, the right business');
@@ -339,6 +339,9 @@ async function all() {
     sp = r.data;
     check(r.status === 201 && sp?.status === 'AWAITING_APPROVAL' && sp.approvalUrl === `${ORIGIN}/approve/automation/${sp.id}` && sp.document.targets.computers.length === 2, 'created: awaiting approval, on the signer\'s own URL', msg(r));
     if (sp?.id) created.policies.push(sp.id);
+    // 0.63 (§76): no expiry asked for, so the document signs "never" and the portal's mirror is null.
+    const row = sp?.id ? await prisma.automationPolicy.findUnique({ where: { id: sp.id } }) : null;
+    check(sp?.document?.expiry === 'never' && !('expiresAt' in (sp?.document ?? {})) && row?.expiresAt === null, '0.63: a schedule made with no expiry signs expiry "never"; the portal\'s expiresAt is null', JSON.stringify({ expiry: sp?.document?.expiry, expiresAt: row?.expiresAt }));
     const a = await prisma.activityLog.findFirst({ where: { resourceId: sp?.id, action: 'AUTOMATION_POLICY_CREATED' } });
     check(a?.metadata?.digest === sp?.digest && a.metadata.sha256 === sha(SCRIPT) && a.metadata.approval === 'signed', 'creating it is audited with the digest, the script hash and the arguments');
     for (const route of ['approve', 'activate', 'sign']) {
@@ -353,6 +356,7 @@ async function all() {
     check((await plansOf(sp.id)).length === 0, 'two sweeps later, no plan has been asked for');
     const page = await (await fetch(sp.approvalUrl)).text();
     check(page.includes('Hourly greeting') && page.includes('FRONTDESK') && page.includes('scheduled hello') && page.includes(sha(SCRIPT)) && /Every hour at :/.test(page), 'the signer\'s page shows the script, its hash, the computers and the schedule');
+    check(/<strong>Never<\/strong>/.test(page) && /until the policy is revoked\. It does not ask/.test(page), '0.63: …and says it never expires');
     let r = await approveAt(`automation/${sp.id}`, pk.sam, { decision: 'approve', role: 'approver' });
     check(r.status === 403 && r.body?.error === 'requester_cannot_approve', 'Sam, who created it, cannot approve it', JSON.stringify(r.body));
     r = await approveAt(`automation/${sp.id}`, pk.abe, { decision: 'approve', role: 'approver' });
@@ -440,6 +444,7 @@ async function all() {
     } });
     wp = r.data;
     check(r.status === 201 && wp?.status === 'AWAITING_APPROVAL' && wp.task.includes('7-Zip'), 'a software schedule, awaiting approval', msg(r));
+    check(typeof wp?.document?.expiresAt === 'string' && !('expiry' in (wp?.document ?? {})) && wp.expiresAt !== null, '0.63: an API caller may still ask for an expiry (7 days): the document carries the date and no "never"', JSON.stringify({ expiresAt: wp?.document?.expiresAt, expiry: wp?.document?.expiry }));
     if (wp?.id) created.policies.push(wp.id);
     const pause = await prisma.containmentPause.create({ data: { scope: 'BUSINESS', customerId: acme.id, kinds: ['actions'], reason: 'containment drill', setById: owen.id, setBy: 'msp' } });
     await approveAt(`automation/${wp.id}`, pk.olivia, { decision: 'approve', role: 'approver' });

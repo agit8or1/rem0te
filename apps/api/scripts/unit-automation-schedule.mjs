@@ -217,6 +217,44 @@ if (new Date().getUTCMinutes() >= 57) await new Promise((r) => setTimeout(r, (61
   check('skip-if-offline: 15 minutes is accepted, 16 refused', evs(planFor(ds, ss.digest, { notBefore: sNow, notAfter: new Date(sNow.getTime() + 15 * 60_000) })) === 'ok' && evs(planFor(ds, ss.digest, { notBefore: sNow, notAfter: new Date(sNow.getTime() + 16 * 60_000) })) === 'offline_rule_mismatch');
 }
 
+// ── 0.63 (§76): a schedule that never expires — signed, explicit, fail closed ─
+{
+  const core = require(join(dist, 'approval-signer', 'core.js'));
+  const never = (over = {}) => { const d = doc({ expiry: 'never', ...over }); delete d.expiresAt; return d; };
+  const refusedAt = (fn) => { try { fn(); return null; } catch (e) { return e.code ?? e.message; } };
+  const admit = (d) => refusedAt(() => core.admitAutomation(d, new Date(), () => null, () => false));
+  check('admitAutomation accepts expiry "never" with no expiresAt', admit(never()) === null, String(admit(never())));
+  check('admitAutomation refuses "never" alongside an expiresAt → expiry_conflict', admit(doc({ expiry: 'never' })) === 'expiry_conflict');
+  const neither = doc(); delete neither.expiresAt;
+  check('admitAutomation refuses neither → expiry_missing', admit(neither) === 'expiry_missing');
+  for (const bad of ['Never', 'forever', '', null, true]) {
+    const d = never({ expiry: bad });
+    check(`admitAutomation refuses expiry ${JSON.stringify(bad)} (fail closed)`, admit(d) === 'invalid_automation');
+  }
+  check('validateAutomationDoc refuses an unknown expiry that got past the schema → expiry_unknown', A.validateAutomationDoc({ ...never(), expiry: 'sometimes' }, new Date()).reason === 'expiry_unknown');
+  check('an old document keeps its 90-day cap', A.validateAutomationDoc(doc({ expiresAt: new Date(Date.now() + 91 * 86_400_000).toISOString() }), new Date()).reason === 'expiry_too_far');
+
+  const approvals = [{ userId: 'user_olivia01', name: 'Olivia', role: 'approver', credentialSha256: 'd'.repeat(64), at: new Date().toISOString() }, { userId: 'user_quinn001', name: 'Quinn', role: 'approver', credentialSha256: 'e'.repeat(64), at: new Date().toISOString() }];
+  const stateOf = (d, over = {}) => ({ doc: d, digest: A.automationDigest(d), status: 'ACTIVE', approvals, signatureValid: true, revokedAt: null, ledger: [], ...over });
+  // 120 days on, 5 minutes into an hour: the always-open hourly schedule is open then.
+  const later = new Date(Math.floor((Date.now() + 120 * 86_400_000) / 3_600_000) * 3_600_000 + 5 * 60_000);
+  const ev = (st, p, now = later) => code(A.evaluateAutomationPlan(st, { plan: p, policyDigest: st.digest }, { now, customerSignoff: false }));
+  const dn = never(), sn = stateOf(dn);
+  check('a never-expiring schedule\'s run is signed 120 days on', ev(sn, planFor(dn, sn.digest, { notBefore: later })) === 'ok', ev(sn, planFor(dn, sn.digest, { notBefore: later })));
+  check('latestNotAfter of a never-expiring schedule is bounded by the window, not an expiry', A.latestNotAfter(dn, A.automationOccurrenceAt(later, dn.recurrence), later).getTime() === A.automationOccurrenceAt(later, dn.recurrence).end.getTime());
+  check('…revocation still stops it', ev(stateOf(dn, { revokedAt: later.toISOString() }), planFor(dn, sn.digest, { notBefore: later })) === 'policy_revoked');
+  check('…a computer it does not name is still refused', ev(sn, planFor(dn, sn.digest, { notBefore: later, targets: [target({ ...C1, endpointId: 'ep_stranger_1' })] })) === 'computer_not_in_policy');
+  const old = doc(), so = stateOf(old);
+  check('an old schedule with an expiry still stops → policy_expired', ev(so, planFor(old, so.digest, { notBefore: later, notAfter: new Date(later.getTime() + 10 * 60_000) })) === 'policy_expired');
+  check('…and the signer reads its status as EXPIRED', core.effectiveAutomationStatus({ status: 'ACTIVE', doc: old, revokedAt: null, createdAt: old.createdAt }, later) === 'EXPIRED'
+    && core.effectiveAutomationStatus({ status: 'ACTIVE', doc: dn, revokedAt: null, createdAt: dn.createdAt }, later) === 'ACTIVE');
+  const unknown = { ...dn, expiry: 'forever' };
+  check('a stored schedule with an unknown expiry → expiry_unknown, and EXPIRED', ev(stateOf(unknown), planFor(unknown, A.automationDigest(unknown), { notBefore: later, notAfter: new Date(later.getTime() + 10 * 60_000) })) === 'expiry_unknown'
+    && core.effectiveAutomationStatus({ status: 'ACTIVE', doc: unknown, revokedAt: null, createdAt: dn.createdAt }, new Date()) === 'EXPIRED');
+  const stretched = { ...old, expiry: 'never' }; delete stretched.expiresAt;
+  check('an expiring schedule edited to "never" → policy_digest_mismatch', ev({ ...so, doc: stretched }, planFor(stretched, so.digest, { notBefore: later })) === 'policy_digest_mismatch');
+}
+
 // ── The approval signer, in-process ─────────────────────────────────────────
 const dir = mkdtempSync(join(tmpdir(), 'rem0te-automation-'));
 const { privateKey } = generateKeyPairSync('ed25519');

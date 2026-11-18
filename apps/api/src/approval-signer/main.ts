@@ -185,7 +185,7 @@ switch (cmd) {
       for (const id of store.patchPolicies()) {
         const r = store.patchPolicy(id)!;
         const ok = verifyPolicy(r, createPublicKey(loadSigningKey(store.keyPem()).key));
-        console.log(`${r.policyId}  ${effectivePolicyStatus(r, now)}  ${!r.signature ? 'unsigned' : ok ? 'signature ok' : 'SIGNATURE DOES NOT VERIFY'}  ${r.doc.businessId}  "${r.doc.name}"  expires ${r.doc.expiresAt}  approvals=${approvalsOf(r).map((a) => a.name).join(',') || '-'}  plans=${r.ledger.length}${r.revokedAt ? `  revoked ${r.revokedAt} by ${r.revokedBy}: ${r.revokeReason}` : ''}`);
+        console.log(`${r.policyId}  ${effectivePolicyStatus(r, now)}  ${!r.signature ? 'unsigned' : ok ? 'signature ok' : 'SIGNATURE DOES NOT VERIFY'}  ${r.doc.businessId}  "${r.doc.name}"  expires ${r.doc.expiresAt ?? r.doc.expiry ?? "?"}  approvals=${approvalsOf(r).map((a) => a.name).join(',') || '-'}  plans=${r.ledger.length}${r.revokedAt ? `  revoked ${r.revokedAt} by ${r.revokedBy}: ${r.revokeReason}` : ''}`);
         for (const f of r.refusals.slice(-3)) console.log(`    refused ${f.at} ${f.jobId}: ${f.code} — ${f.message}`);
       }
       break;
@@ -211,7 +211,7 @@ switch (cmd) {
       for (const id of store.automations()) {
         const r = store.automation(id)!;
         const ok = verifyAutomation(r, createPublicKey(loadSigningKey(store.keyPem()).key));
-        console.log(`${r.policyId}  ${effectiveAutomationStatus(r, now)}  ${!r.signature ? 'unsigned' : ok ? 'signature ok' : 'SIGNATURE DOES NOT VERIFY'}  ${r.doc.businessId}  "${r.doc.name}"  ${r.doc.task.kind}  expires ${r.doc.expiresAt}  approvals=${automationApprovalsOf(r).map((a) => a.name).join(',') || (r.direct ? 'direct' : '-')}  plans=${r.ledger.length}${r.revokedAt ? `  revoked ${r.revokedAt} by ${r.revokedBy}: ${r.revokeReason}` : ''}`);
+        console.log(`${r.policyId}  ${effectiveAutomationStatus(r, now)}  ${!r.signature ? 'unsigned' : ok ? 'signature ok' : 'SIGNATURE DOES NOT VERIFY'}  ${r.doc.businessId}  "${r.doc.name}"  ${r.doc.task.kind}  expires ${r.doc.expiresAt ?? r.doc.expiry ?? "?"}  approvals=${automationApprovalsOf(r).map((a) => a.name).join(',') || (r.direct ? 'direct' : '-')}  plans=${r.ledger.length}${r.revokedAt ? `  revoked ${r.revokedAt} by ${r.revokedBy}: ${r.revokeReason}` : ''}`);
         for (const f of r.refusals.slice(-3)) console.log(`    refused ${f.at} ${f.jobId}: ${f.code} — ${f.message}`);
       }
       break;

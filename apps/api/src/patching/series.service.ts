@@ -240,7 +240,8 @@ export class PatchSeriesService implements OnModuleInit {
     try {
       const out = await this.policies.admit(actor, {
         businessId: s.customerId, name: s.name, rings: d.rings, staging: seriesStaging(settings), allow: settings.allow, soakHours: settings.soakHours, failureThreshold: settings.failureThreshold,
-        window: settings.window, reboot: settings.reboot, expiresInDays: settings.expiresInDays,
+        // 0.63: every revision proposed from 0.63 never expires, whatever an older series' settings say.
+        window: settings.window, reboot: settings.reboot,
         ...(settings.restart ? { restart: settings.restart } : {}), ...(settings.ignoreRemoteSession ? { ignoreRemoteSession: true as const } : {}),
         reason: revisionReason(s.name, s.scope as SeriesScope, revision, decision.trigger, current ? added : [], removed),
       }, now, { seriesId: s.id, revision, supersedesId: current?.id ?? null });
@@ -265,7 +266,7 @@ export class PatchSeriesService implements OnModuleInit {
     const s = await this.prisma.patchPolicySeries.findUnique({ where: { id: seriesId } });
     if (!s || s.status !== 'active') return null;
     const v = await this.revisions(s);
-    const next = v.rows.find((r) => r.status === 'ACTIVE' && r.id !== s.currentPolicyId && (r.revision ?? 0) > (v.current?.revision ?? 0) && r.expiresAt > now);
+    const next = v.rows.find((r) => r.status === 'ACTIVE' && r.id !== s.currentPolicyId && (r.revision ?? 0) > (v.current?.revision ?? 0) && (r.expiresAt === null || r.expiresAt > now));
     if (!next) return null;
     let result: { code: string; message: string };
     if (v.current && v.current.status === 'ACTIVE' && v.midRing) {
@@ -361,7 +362,8 @@ export class PatchSeriesService implements OnModuleInit {
         await this.prisma.patchPolicySeries.update({ where: { id: s.id }, data: { lastRevision: 1 } });
         const out = await this.policies.admit(actor, {
           businessId, name, rings: d.rings, staging: seriesStaging(settings), allow: settings.allow, soakHours: settings.soakHours, failureThreshold: settings.failureThreshold,
-          window: settings.window, reboot: settings.reboot, expiresInDays: settings.expiresInDays,
+          // 0.63: every revision proposed from 0.63 never expires, whatever an older series' settings say.
+        window: settings.window, reboot: settings.reboot,
         ...(settings.restart ? { restart: settings.restart } : {}), ...(settings.ignoreRemoteSession ? { ignoreRemoteSession: true as const } : {}),
           reason: revisionReason(name, scope, 1, 'initial', [], []),
         }, now, { seriesId: s.id, revision: 1, supersedesId: null });
@@ -380,7 +382,7 @@ export class PatchSeriesService implements OnModuleInit {
     }
     await this.audit.log({
       tenantId: biz.tenantId, customerId: businessId, actorId: actor.userId, actorIp: actor.ip, action: 'PATCH_POLICY_SERIES_CREATED', resource: 'patch_policy_series', resourceId: s.id,
-      meta: { scope, name, window: settings.window, reboot: settings.reboot, restart: settings.restart ?? null, ...(settings.ignoreRemoteSession ? { ignoreRemoteSession: true } : {}), expiresInDays: settings.expiresInDays, staging: seriesStaging(settings), canaryEndpointId: settings.canaryEndpointId ?? null, reason: settings.reason },
+      meta: { scope, name, window: settings.window, reboot: settings.reboot, restart: settings.restart ?? null, ...(settings.ignoreRemoteSession ? { ignoreRemoteSession: true } : {}), staging: seriesStaging(settings), canaryEndpointId: settings.canaryEndpointId ?? null, reason: settings.reason },
     });
     return this.one(actor, s.id);
   }
@@ -508,7 +510,7 @@ export class PatchSeriesService implements OnModuleInit {
     if (live && (state === 'covered')) {
       const doc = await this.prisma.patchPolicy.findUnique({ where: { id: live.policy.id }, select: { document: true, expiresAt: true, status: true } });
       const w = PolicyWindow.safeParse((doc?.document as { window?: unknown } | null)?.window);
-      if (w.success) { window = w.data; nextWindow = doc?.status === 'ACTIVE' ? nextOccurrence(new Date(), w.data, doc.expiresAt) : null; }
+      if (w.success) { window = w.data; nextWindow = doc?.status === 'ACTIVE' ? nextOccurrence(new Date(), w.data, doc.expiresAt ?? undefined) : null; }
     } else if (covering) {
       const w = PolicyWindow.safeParse((covering.settings as { window?: unknown } | null)?.window);
       if (w.success) window = w.data;
@@ -560,15 +562,15 @@ function scheduleOf(s: PatchPolicySeries): string | null {
 }
 
 /** 0.54: the next occurrence of a series' restart window, inside its running revision's life. */
-function nextRestartWindowOf(s: PatchPolicySeries, current: { status: string; expiresAt: Date } | null, now = new Date()): { start: Date; end: Date } | null {
+function nextRestartWindowOf(s: PatchPolicySeries, current: { status: string; expiresAt: Date | null } | null, now = new Date()): { start: Date; end: Date } | null {
   if (s.status !== 'active' || !current || current.status !== 'ACTIVE') return null;
   const st = SeriesSettings.safeParse(s.settings);
-  return st.success && st.data.restart ? nextOccurrence(now, st.data.restart.window, current.expiresAt) : null;
+  return st.success && st.data.restart ? nextOccurrence(now, st.data.restart.window, current.expiresAt ?? undefined) : null;
 }
 
 /** 0.52: the next occurrence of a series' window, inside its running revision's life. */
-function nextWindowOf(s: PatchPolicySeries, current: { status: string; expiresAt: Date } | null, now = new Date()): { start: Date; end: Date } | null {
+function nextWindowOf(s: PatchPolicySeries, current: { status: string; expiresAt: Date | null } | null, now = new Date()): { start: Date; end: Date } | null {
   if (s.status !== 'active' || !current || current.status !== 'ACTIVE') return null;
   const w = PolicyWindow.safeParse((s.settings as { window?: unknown } | null)?.window);
-  return w.success ? nextOccurrence(now, w.data, current.expiresAt) : null;
+  return w.success ? nextOccurrence(now, w.data, current.expiresAt ?? undefined) : null;
 }

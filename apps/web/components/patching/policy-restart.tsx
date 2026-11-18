@@ -44,8 +44,8 @@ export const RESTART_RULE_LABEL: Record<RestartRuleChoice, string> = {
   always: 'Restart every computer in a restart window (maintenance restart)',
 };
 
-export function PolicyRestartEditor({ id, value, onChange, reboot, expiresInDays }: {
-  id: string; value: PolicyRestartDraft; onChange: (v: PolicyRestartDraft) => void; reboot: string; expiresInDays?: number;
+export function PolicyRestartEditor({ id, value, onChange, reboot }: {
+  id: string; value: PolicyRestartDraft; onChange: (v: PolicyRestartDraft) => void; reboot: string;
 }) {
   const restarts = value.rule !== 'none' || reboot === 'if_required_in_window';
   return (
@@ -59,7 +59,7 @@ export function PolicyRestartEditor({ id, value, onChange, reboot, expiresInDays
       </div>
       {value.rule !== 'none' && (
         <>
-          <WindowEditor id={`${id}-rw`} title="Restart window" value={value.window} onChange={(w) => onChange({ ...value, window: w })} expiresInDays={expiresInDays} />
+          <WindowEditor id={`${id}-rw`} title="Restart window" value={value.window} onChange={(w) => onChange({ ...value, window: w })} />
           <p className="text-xs text-muted-foreground" data-testid={`${id}-restart-explained`}>
             {value.rule === 'if_required'
               ? 'Inside the restart window, each computer in the policy that Windows says needs a restart is asked to restart. The computer checks again when the plan runs and does nothing if no restart is pending.'

@@ -17,7 +17,6 @@ export const selectClass = 'flex h-9 w-full rounded-md border border-input bg-ba
 export const HOURLY_EVERY = [1, 2, 3, 4, 6, 8, 12] as const;
 export const MAX_TARGETS = 25;
 export const MAX_RUNS_PER_OCCURRENCE = 3;
-export const MAX_DAYS = 90;
 export const SKIP_GRACE_MINUTES = 15;
 
 export const STATUS: Record<string, { label: string; variant: 'success' | 'warning' | 'outline' | 'destructive' | 'secondary' }> = {
@@ -84,11 +83,11 @@ export function hourlyRecurrence(d: HourlyDraft): AutomationRecurrenceInput {
 }
 
 /** The description and next runs, from the server (the signer's functions). */
-export function RecurrencePreview({ recurrence, expiresInDays }: { recurrence: AutomationRecurrenceInput | null; expiresInDays: number }) {
+export function RecurrencePreview({ recurrence }: { recurrence: AutomationRecurrenceInput | null }) {
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['automation-preview', JSON.stringify(recurrence), expiresInDays],
+    queryKey: ['automation-preview', JSON.stringify(recurrence)],
     enabled: !!recurrence,
-    queryFn: () => automationApi.preview({ recurrence: recurrence!, expiresInDays }).then((r) => r.data.data as { valid: boolean; message?: string; description?: string; occurrences: Occurrence[]; opensBeforeExpiry: boolean | null }),
+    queryFn: () => automationApi.preview({ recurrence: recurrence! }).then((r) => r.data.data as { valid: boolean; message?: string; description?: string; occurrences: Occurrence[]; opensBeforeExpiry: boolean | null }),
     retry: false,
   });
   if (!recurrence) return null;
@@ -99,7 +98,7 @@ export function RecurrencePreview({ recurrence, expiresInDays }: { recurrence: A
     <div className="text-xs space-y-1" data-testid="schedule-preview">
       <p><strong>{data.description}</strong></p>
       {data.occurrences.length === 0
-        ? <p className="text-destructive">It never opens before the schedule expires.</p>
+        ? <p className="text-destructive">It never opens.</p>
         : <ul className="list-disc pl-5 text-muted-foreground">{data.occurrences.map((o) => <li key={o.start}>{when(o)}</li>)}</ul>}
     </div>
   );

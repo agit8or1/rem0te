@@ -30,7 +30,7 @@ interface Detail {
   id: string; name: string; businessId: string; status: string; digest: string; approvalUrl: string; direct: boolean;
   approvals: { userId: string; name: string; role: string; at: string }[];
   paused: { at: string; byId: string; reason: string } | null;
-  expiresAt: string; createdAt: string; revokedAt: string | null; revokeReason: string | null; signerConfirmedRevocation: boolean;
+  expiresAt: string | null; createdAt: string; revokedAt: string | null; revokeReason: string | null; signerConfirmedRevocation: boolean;
   supersedesId: string | null; supersededAt: string | null; supersededBy: { id: string; name: string; status: string } | null;
   document: { reason: string; createdBy: { name: string }; maxRunsPerOccurrence: number; targets: { kind: 'computers'; computers: { endpointId: string; hostname: string }[] } | { kind: 'group'; groupName: string; maxTargets: number } };
   task: string; schedule: string; offline: string;
@@ -95,7 +95,7 @@ export default function ScheduleDetailPage() {
             <p><span className="text-muted-foreground">When:</span> {d.schedule}</p>
             <p><span className="text-muted-foreground">Offline:</span> {d.offline}</p>
             <p><span className="text-muted-foreground">Plans per window:</span> {d.document.maxRunsPerOccurrence}; runs never overlap</p>
-            <p><span className="text-muted-foreground">Expires:</span> {formatDate(d.expiresAt)}</p>
+            <p><span className="text-muted-foreground">Expires:</span> {d.expiresAt ? `${formatDate(d.expiresAt)} (made before 0.63; a revision made now never expires)` : 'never — it runs until it is paused or revoked'}</p>
             <p><span className="text-muted-foreground">Created by:</span> {d.document.createdBy.name}, {formatDate(d.createdAt)} — {d.document.reason}</p>
             <p className="text-xs text-muted-foreground break-all">Digest {d.digest}</p>
           </CardContent>
