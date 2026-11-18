@@ -82,8 +82,8 @@ check('assertFresh: no method asks for sso.enforce and breakglass.manage', throw
 
 // ── The catalog ─────────────────────────────────────────────────────────────
 const cat = (k) => C.CONFIRM_CATALOG.find((f) => f.key === k);
-check('catalog: sso.enforce and breakglass.manage are configurable keys defaulting to ask, under Security & access',
-  ['sso.enforce', 'breakglass.manage'].every((k) => cat(k)?.default === 'ask' && cat(k)?.group === 'Security & access' && !C.ALWAYS_ASK_KEYS.includes(k)));
+check('catalog: sso.enforce and breakglass.manage are configurable keys defaulting to off (0.64), under Security & access',
+  ['sso.enforce', 'breakglass.manage'].every((k) => cat(k)?.default === 'off' && cat(k)?.group === 'Security & access' && !C.ALWAYS_ASK_KEYS.includes(k)));
 check('catalog: no key was added for the SSO step-up itself (it is a method)', !C.CONFIRM_KEYS.some((k) => /^sso\.step|stepup/.test(k)));
 
 // ── Back-channel logout claims ──────────────────────────────────────────────

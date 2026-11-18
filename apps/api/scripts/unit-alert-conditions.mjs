@@ -230,7 +230,7 @@ const posture = (o = {}) => ({ schema: 'rem0te-patch-posture/1', scannedAt: at(-
 // ── Confirm it is you ───────────────────────────────────────────────────────
 {
   const f = C.CONFIRM_CATALOG.find((x) => x.key === 'monitoring.autoticket');
-  check('confirm: monitoring.autoticket is in the catalog, under Monitoring & notifications, asking by default', !!f && f.group === 'Monitoring & notifications' && f.default === 'ask');
+  check('confirm: monitoring.autoticket is in the catalog, under Monitoring & notifications, off by default (0.64), like every function', !!f && f.group === 'Monitoring & notifications' && f.default === 'off');
   check('confirm: it is configurable, not always-ask', !C.ALWAYS_ASK.some((x) => x.key === 'monitoring.autoticket'));
 }
 

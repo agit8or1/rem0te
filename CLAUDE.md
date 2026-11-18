@@ -960,7 +960,8 @@ site names its catalog key; whether that key asks is the policy's.
 
 There is one catalog, `apps/api/src/security-controls/confirm-catalog.ts`,
 plain data with no imports: about thirty functions in nine groups, each with a
-stable key, a label, a description, a prompt and a default of `ask`. The web
+stable key, a label, a description, a prompt and a default (`off` from 0.64,
+below). The web
 holds no copy. It reads `GET /security/confirm-policy` (`lib/confirm-policy.ts`,
 `useAsks('key')`), and every key it words a prompt by must be in the catalog.
 Every step-up site in the API names exactly one key: `assertFresh`'s required
@@ -971,7 +972,9 @@ must be named by some site.
 
 The policy is `ConfirmPolicy` rows (0071; CHECK `ask` / `off`, key charset).
 `confirmRequired(key)` asks until the rows have been read, and for an
-always-ask key or one the catalog does not name; only exactly `'off'` skips. A
+always-ask key or one the catalog does not name. A key's row skips only when
+it is exactly `'off'`; a key with no row takes its catalog default
+(`DEFAULTS` in `review.ts`, built from the catalog, never a literal). A
 phishing-resistant check (a protected-device exception) always asks. The
 policy is read at start and every 30 s, and set again after a change. Only
 `ConfirmPolicyService` touches the rows. The always-ask set is exactly
@@ -985,10 +988,24 @@ is a Platform Admin's. Any change from `ask` to `off` needs `assertFresh` with
 
 0071 sets 0.47's seven everyday keys to `off` only where `routineConfirm` was
 `'off'`. Any of the five configurable `StepUpService` actions missing from
-`stepUpActions` becomes an `off` row. Both columns are then dropped. A fresh
-database has no rows, so the e2e suites keep proving that everything asks.
-`e2e-confirm-policy.mjs` (port 3761) restores the rows it found. Behavioural
-proof: `e2e-confirm-policy.mjs`; unit: `apps/api/scripts/unit-confirm-policy.mjs`.
+`stepUpActions` becomes an `off` row. Both columns are then dropped.
+
+**0.64 reverses "every key defaults to ask" at the owner's request** ("2fa is
+still enabled on all features, turn off by default, just on login"), as §41,
+§62 itself, §67, §75 and §76 were. Every catalog key now defaults to `off`, so
+a fresh install asks only at sign-in, and an install that never saved a
+choice stops asking when it upgrades (saved rows are kept). The always-ask set
+is unchanged, and so is everything that fails closed: an unread policy, an
+unknown key, a phishing-resistant check and a row saying anything but exactly
+`off` all ask. A fresh database therefore no longer proves the step-ups by
+itself. Every suite that proves one writes an `ask` row per catalog key before
+its API reads the policy, through `apps/api/scripts/lib/confirm-asks.mjs`
+(scratch or test databases only), and `run-e2e.sh` runs it after the seed for
+the scratch-API suites. Nothing under `apps/api/src`, and not the seed, writes
+an `ask` row. `e2e-confirm-policy.mjs` (port 3761) starts from no rows, proves
+the defaults, then proves every rule on `ask` rows, and restores the rows it
+found. Behavioural proof: `e2e-confirm-policy.mjs`; unit:
+`apps/api/scripts/unit-confirm-policy.mjs`.
 
 §63 (0.50) is company-wide patch policies and the per-computer Patch policy
 setting. A series (`PatchPolicySeries`, `business` or `assigned`) exists only in

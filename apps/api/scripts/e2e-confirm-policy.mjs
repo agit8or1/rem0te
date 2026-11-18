@@ -3,9 +3,13 @@
  * End-to-end proof of Settings → Confirm it is you (0.49), against the real
  * built API:
  *
- *   - a fresh database asks for every function (no ConfirmPolicy rows);
+ *   - 0.64: a fresh database (no ConfirmPolicy rows) asks for nothing but
+ *     the always-ask set: every catalog function defaults to `off`, so a stale
+ *     session's API key creation goes ahead and adding a passkey still asks;
  *   - GET /security/confirm-policy: the catalog, the values and canChange
  *     (true only for a Platform Admin), and the always-ask note;
+ *   - "Ask for all" (off → ask) needs no fresh confirmation and writes an
+ *     `ask` row per function, which overrides the default;
  *   - `ask` asks: a stale session's API key creation is STEP_UP_REQUIRED
  *     naming its key (apikey.create);
  *   - PUT is a Platform Admin's: a Business Owner is refused, even fresh;
@@ -20,14 +24,16 @@
  *     passkey.manage still asks;
  *   - asking again (off → ask) needs no fresh confirmation, and asks at once;
  *   - on restart the API reads the rows; a row naming an always-ask or an
- *     unknown key is ignored, and 0071's CHECK refuses any value but
+ *     unknown key is ignored, a function with no row falls back to its
+ *     catalog default (off), and 0071's CHECK refuses any value but
  *     ask / off.
  *
  *   cd apps/api && npx nest build
  *   DATABASE_URL=postgresql://…/<scratch or test> node scripts/e2e-confirm-policy.mjs
  *
  * Port 3761 (API). Fixtures are namespaced and removed, and the database's
- * ConfirmPolicy rows are put back as they were, so later suites still ask.
+ * ConfirmPolicy rows are put back as they were, so later suites still ask
+ * (run-e2e.sh seeds an `ask` row for every function: lib/confirm-asks.mjs).
  */
 import { PrismaClient } from '@prisma/client';
 import argon2 from 'argon2';
@@ -127,17 +133,31 @@ async function all() {
   const S = { admin: await login(admin.email), owner: await login(owner.email) };
   const newKey = (s, fresh) => req('POST', '/apikeys', { s, fresh, body: { name: `cp-${sfx}-${randomBytes(2).toString('hex')}`, scopes: ['computers:read'] } });
 
-  section('A fresh database asks for everything');
+  section('0.64: a fresh database asks only at sign-in');
   let r = await req('GET', '/security/confirm-policy', { s: S.owner });
   const view = r.data;
-  check(r.status === 200 && Array.isArray(view?.catalog) && view.catalog.length >= 30, 'any signed-in user reads the catalog', msg(r));
-  check(view && Object.values(view.values).every((v) => v === 'ask') && view.catalog.every((f) => f.value === 'ask' && f.default === 'ask'), 'every function is ask', JSON.stringify(view?.values));
+  const N = view?.catalog?.length ?? 0;
+  check(r.status === 200 && Array.isArray(view?.catalog) && N >= 30, 'any signed-in user reads the catalog', msg(r));
+  check(view && Object.values(view.values).every((v) => v === 'off') && view.catalog.every((f) => f.value === 'off' && f.default === 'off'), 'every function defaults to off, and is off', JSON.stringify(view?.values));
   check(view?.canChange === false, 'canChange is false for a Business Owner');
   check(view && !view.catalog.some((f) => ['passkey.manage', 'confirm.relax', 'fresh.auth.passkey'].includes(f.key)), 'no always-ask key is offered as a toggle');
   check(view && view.alwaysAsk.some((l) => /password/i.test(l)) && view.alwaysAsk.some((l) => /authenticator/i.test(l)) && view.alwaysAsk.some((l) => /passkeys/i.test(l)), 'the always-ask note names password, authenticator and passkeys', JSON.stringify(view?.alwaysAsk));
   check(view && ['Software', 'Agents', 'Integrations', 'Security & access'].every((g) => view.groups.includes(g)) && view.catalog.every((f) => view.groups.includes(f.group)), 'every function is in a listed group', JSON.stringify(view?.groups));
   r = await req('GET', '/security/confirm-policy', { s: S.admin });
   check(r.status === 200 && r.data.canChange === true, 'canChange is true for a Platform Admin', msg(r));
+  r = await newKey(S.owner, false);
+  check(r.status === 201 || r.status === 200, 'a stale API key creation goes ahead (apikey.create defaults to off)', msg(r));
+  r = await req('GET', '/auth/step-up', { s: S.owner });
+  check(r.status === 200 && r.data.actions.includes('passkey.manage') && !r.data.actions.includes('credential.reveal') && !r.data.actions.includes('platform.configure'),
+    "the step-up status lists only the always-ask actions as asking", msg(r));
+  r = await req('POST', '/auth/passkeys/register/options', { s: S.owner });
+  check(isStepUp(r, 'passkey.manage'), 'adding a passkey still asks (always-ask)', msg(r));
+  check((await prisma.confirmPolicy.count()) === 0, 'reading the defaults wrote nothing');
+
+  section('Ask for all: tightening needs no confirmation, and an ask row overrides the default');
+  r = await req('PUT', '/security/confirm-policy', { s: S.admin, body: { values: Object.fromEntries(view.catalog.map((f) => [f.key, 'ask'])) } });
+  check(r.status === 200 && Object.values(r.data.values).every((v) => v === 'ask'), 'a stale Platform Admin sets every function to ask', msg(r));
+  check((await prisma.confirmPolicy.count({ where: { value: 'ask' } })) === N && (await prisma.confirmPolicy.count()) === N, `one ask row per function (${N})`);
 
   section('ask asks');
   r = await newKey(S.owner, false);
@@ -166,17 +186,17 @@ async function all() {
   check(r.status === 400 && code(r) === 'INVALID_CONFIRM_VALUE', "a value other than ask / off: refused", msg(r));
   r = await req('PUT', '/security/confirm-policy', { s: S.admin, fresh: true, body: { value: 'off' } });
   check(r.status === 400 && code(r) === 'INVALID_CONFIRM_POLICY', "0.47's body shape is refused", msg(r));
-  check((await prisma.confirmPolicy.count()) === 0, 'nothing was written by any refusal');
+  check((await prisma.confirmPolicy.count({ where: { value: 'off' } })) === 0 && (await prisma.confirmPolicy.count()) === N, 'nothing was written by any refusal');
 
   section('Relaxing needs a fresh confirmation');
   r = await req('PUT', '/security/confirm-policy', { s: S.admin, body: { values: { 'apikey.create': 'off', 'credential.reveal': 'off' } } });
   check(isStepUp(r, 'confirm.relax'), 'a stale Platform Admin turning a confirmation off: STEP_UP_REQUIRED (confirm.relax)', msg(r));
-  check((await prisma.confirmPolicy.count()) === 0, 'and nothing was written');
+  check((await prisma.confirmPolicy.count({ where: { value: 'off' } })) === 0, 'and nothing was written');
   const t0 = new Date();
   r = await req('PUT', '/security/confirm-policy', { s: S.admin, fresh: true, body: { values: { 'apikey.create': 'off', 'credential.reveal': 'off' } } });
   check(r.status === 200 && r.data.values['apikey.create'] === 'off' && r.data.values['credential.reveal'] === 'off' && r.data.values['software.catalog'] === 'ask', 'with a fresh confirmation: written', msg(r));
-  const rows = await prisma.confirmPolicy.findMany({ orderBy: { key: 'asc' } });
-  check(rows.length === 2 && rows.every((x) => x.value === 'off' && x.updatedById === admin.id), 'two rows, off, recording who', JSON.stringify(rows));
+  const rows = await prisma.confirmPolicy.findMany({ where: { value: 'off' }, orderBy: { key: 'asc' } });
+  check(rows.length === 2 && rows.every((x) => x.updatedById === admin.id) && rows.map((x) => x.key).join() === 'apikey.create,credential.reveal', 'two rows now off, recording who', JSON.stringify(rows));
   const au = await prisma.activityLog.findMany({ where: { action: 'CONFIRM_POLICY_CHANGED', createdAt: { gte: t0 } } });
   check(au.length === 1 && au[0].actorId === admin.id, 'one CONFIRM_POLICY_CHANGED audit row, by the admin', JSON.stringify(au.map((a) => a.actorId)));
   check(au[0] && canon(au[0].metadata) === canon({ before: { 'apikey.create': 'ask', 'credential.reveal': 'ask' }, after: { 'apikey.create': 'off', 'credential.reveal': 'off' } }),
@@ -212,6 +232,8 @@ async function all() {
   await prisma.confirmPolicy.upsert({ where: { key: 'apikey.create' }, update: { value: 'off' }, create: { key: 'apikey.create', value: 'off' } });
   await prisma.confirmPolicy.create({ data: { key: 'passkey.manage', value: 'off' } });
   await prisma.confirmPolicy.create({ data: { key: 'made.up.key', value: 'off' } });
+  // 0.64: a function whose row is gone falls back to its catalog default.
+  await prisma.confirmPolicy.delete({ where: { key: 'software.catalog' } });
   await stopApi();
   api = startApi();
   await waitUp();
@@ -222,6 +244,8 @@ async function all() {
   check(isStepUp(r, 'passkey.manage'), 'a passkey.manage row saying off is ignored: still asks', msg(r));
   r = await req('GET', '/security/confirm-policy', { s: S2.admin });
   check(r.status === 200 && !('made.up.key' in r.data.values) && !('passkey.manage' in r.data.values), 'rows outside the catalog are not reported', msg(r));
+  check(r.status === 200 && r.data.values['software.catalog'] === 'off' && r.data.values['credential.reveal'] === 'off' && r.data.values['email.relay'] === 'ask',
+    'a function with no row is its catalog default (off); one with an ask row still asks', msg(r));
 }
 
 async function cleanup() {

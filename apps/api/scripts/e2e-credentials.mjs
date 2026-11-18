@@ -23,6 +23,7 @@
  *   DATABASE_URL=postgresql://…/reboot_remote_it_scratch node scripts/e2e-credentials.mjs
  */
 import { PrismaClient } from '@prisma/client';
+import { confirmEverythingAsks } from './lib/confirm-asks.mjs';
 import argon2 from 'argon2';
 import { authenticator } from 'otplib';
 import { spawn } from 'node:child_process';
@@ -41,6 +42,9 @@ if (!/scratch|test/.test(dbName)) {
 const PORT = Number(process.env.CREDENTIALS_API_PORT ?? 3161);
 const API = `http://127.0.0.1:${PORT}/api/v1`;
 const prisma = new PrismaClient();
+// 0.64: every confirmation defaults to off. This suite proves step-ups, so it
+// asks for them all before its API reads the policy.
+await confirmEverythingAsks(prisma);
 const sfx = randomBytes(3).toString('hex');
 const PW = 'credentials-e2e-password-123';
 

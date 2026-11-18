@@ -105,15 +105,29 @@ Then send anyone who needs help to `https://<your-host>/quick`.
 
 ## Enrolling a Device
 
-1. Go to **Devices → Add device** (the Devices page's *Add device* button, or the tab).
+1. Go to **Devices → Add device** (the *Add device* link under *Devices* in the menu, the Devices page's
+   *Add device* button, or the tab).
 2. Pick the business, then a site (or none), and who should be able to reach the computer. The
    binding is fixed at this point — the machine that runs the link cannot choose a different
    business or site.
-3. Pick the operating system and make the install command — you confirm it is you first, unless a Platform Admin set *Install links* to *Don't ask* (0.33; 0.49,
-   [sign-in.md](sign-in.md#install-links-and-api-keys)). Copy the one-line command (or, on
-   Windows, the one-click installer link). It is single-use, expires in 24 hours, and is shown once.
-4. Run it on the device, or send it to the person there.
-5. Leave the page open: it shows the device arriving, then its first health — online, the agent
+3. Pick the operating system and make the install command. From 0.64 *Install links* is *Don't ask* by default;
+   a Platform Admin who sets it to *Ask* has you confirm it is you first (0.33; 0.49,
+   [sign-in.md](sign-in.md#install-links-and-api-keys)).
+4. Choose how to install (0.64), on two tabs:
+   - **Download installer.** Windows: **Download .exe**, a one-click installer — run it on the computer and accept
+     the administrator prompt — and the same link to copy and send. Linux and macOS: the install script as a file;
+     run it with `sudo bash install-rustdesk.sh` (macOS: `install-rustdesk-macos.sh`).
+   - **Command.** The one-line command for PowerShell as Administrator, or a root shell.
+
+   All of them carry the same enrolment token: single use, expiring in 24 hours, and shown once. Downloading does
+   not use it up; the computer's first check-in does.
+
+   **There is no .msi or .pkg.** Building an MSI needs a Windows Installer toolchain (`wixl` from `msitools`, or
+   WiX on Windows) that this server does not have, and a macOS package needs Apple's tools and a Developer ID. For
+   Group Policy, Intune or another RMM use a deployment key ([deployment.md](deployment.md)): the same installer,
+   run from a startup script, a Win32 app or the RMM.
+5. Run it on the device, or send it to the person there.
+6. Leave the page open: it shows the device arriving, then its first health — online, the agent
    and its version, whether its first inventory has arrived — and links to the device and to the
    business's monitoring policies. See [technician-guide.md](technician-guide.md) §5.
 

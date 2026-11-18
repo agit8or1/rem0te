@@ -25,6 +25,7 @@
  * simulated; none of it has run on a real Windows computer.
  */
 import { PrismaClient } from '@prisma/client';
+import { confirmEverythingAsks } from './lib/confirm-asks.mjs';
 import argon2 from 'argon2';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto';
@@ -58,6 +59,9 @@ const API = `http://127.0.0.1:${PORT}/api/v1`;
 const ROOT = `http://127.0.0.1:${PORT}`;
 const ORIGIN = `http://127.0.0.1:${SIGNER_PUBLIC}`;
 const prisma = new PrismaClient();
+// 0.64: every confirmation defaults to off. This suite proves step-ups, so it
+// asks for them all before its API reads the policy.
+await confirmEverythingAsks(prisma);
 const sfx = randomBytes(3).toString('hex');
 const PW = 'software-e2e-password-123';
 // The 0.34 catalog: the original six, then script run, then software.

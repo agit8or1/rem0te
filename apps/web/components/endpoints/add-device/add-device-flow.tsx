@@ -3,12 +3,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, CheckCircle2, Circle, Copy, Loader2, XCircle } from 'lucide-react';
+import { Check, CheckCircle2, Circle, Copy, Download, Loader2, Terminal, XCircle } from 'lucide-react';
 import { businessesApi, endpointsApi, enrollmentApi, sitesApi, usersApi } from '@/lib/api-client';
 import { CAP, usePermissions } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiError } from '@/components/security-controls/shared';
 import { agentType, ago, describeMonitor } from '@/components/endpoints/workspace/device-model';
 import { useMonitoringView } from '@/components/endpoints/workspace/use-device-data';
@@ -31,6 +32,14 @@ import { useAsks } from '@/lib/confirm-policy';
  * "waiting" stays "waiting" until a row says otherwise. The raw token exists
  * only in this component's memory, once, as the creation response returns it.
  * The URL carries the token's id (not the token) so a reload keeps waiting.
+ *
+ * 0.64: step 3 offers each platform's choices as two tabs, "Download
+ * installer" and "Command". Windows downloads the one-click .exe (the same
+ * GET /public/install/windows.exe?token=… link 0.32 offered only as text to
+ * copy, now also a real download button). Linux and macOS download the same
+ * script the command pipes into bash, from the same path-token URL, so no new
+ * route carries the token and the token rules are unchanged: made once,
+ * single use, 24 hours. There is no .msi or .pkg (see docs/setup.md).
  *
  * Making the link needs a fresh re-authentication (0.33). The server answers
  * STEP_UP_REQUIRED; the api-client interceptor opens the step-up dialog and
@@ -60,19 +69,26 @@ type Status = {
   };
 };
 
-const OS: Record<Os, { label: string; shell: string; path: (t: string) => string; cmd: (u: string) => string; agent: string }> = {
+const OS: Record<Os, {
+  label: string; shell: string; path: (t: string) => string; cmd: (u: string) => string; agent: string;
+  /** 0.64: what the downloaded file is called (the server's Content-Disposition) and how to run it. */
+  file: string; runFile: string;
+}> = {
   windows: {
     label: 'Windows', shell: 'PowerShell, as Administrator',
+    file: 'install-reboot-remote.exe', runFile: 'Run it on the computer and accept the administrator prompt. Nothing else to type.',
     path: (t) => `/api/v1/public/install/win/${t}`, cmd: (u) => `irm ${u} | iex`,
     agent: 'Installs RustDesk and the full Rem0te agent: heartbeat, inventory, monitoring, update scans, and installs, restarts and scripts from the dashboard. (Before this server publishes a signed agent, the standard agent, which can be upgraded later.)',
   },
   linux: {
     label: 'Linux', shell: 'a root shell',
+    file: 'install-rustdesk.sh', runFile: 'Copy it to the computer and run: sudo bash install-rustdesk.sh',
     path: (t) => `/api/v1/public/install/linux/${t}`, cmd: (u) => `curl -fsSL ${u} | sudo bash`,
     agent: 'Installs RustDesk and the read-only Linux agent: heartbeat, inventory and pending package updates every 3 minutes. It runs nothing the console sends.',
   },
   macos: {
     label: 'macOS', shell: 'Terminal, with sudo',
+    file: 'install-rustdesk-macos.sh', runFile: 'Copy it to the Mac and run in Terminal: sudo bash install-rustdesk-macos.sh',
     path: (t) => `/api/v1/public/install/mac/${t}`, cmd: (u) => `curl -fsSL ${u} | sudo bash`,
     agent: 'Installs RustDesk and, with sudo, the read-only macOS agent: heartbeat, inventory and the updates macOS last found, every 3 minutes. It runs nothing the console sends.',
   },
@@ -133,7 +149,7 @@ function HealthRow({ ok, waiting, label, detail, testId }: { ok: boolean; waitin
 
 export function AddDeviceFlow() {
   const qc = useQueryClient();
-  const { user, can, businessId: ownBusinessId } = usePermissions();
+  const { user, can, isPlatformAdmin, businessId: ownBusinessId } = usePermissions();
 
   // From the URL, read after mount so the page still prerenders:
   //   endpointId + businessId — re-enrol that computer (from its page);
@@ -270,7 +286,11 @@ export function AddDeviceFlow() {
     const url = `${base}${OS[os].path(rawToken)}`;
     return {
       command: OS[os].cmd(url),
-      exe: os === 'windows' ? `${base}/api/v1/public/install/windows.exe?token=${encodeURIComponent(rawToken)}` : null,
+      // 0.64: what the Download button fetches. Windows: the one-click .exe
+      // (its existing route and query). Linux and macOS: the very script the
+      // command fetches, from the same path-token URL; the server already
+      // sends it as an attachment.
+      download: os === 'windows' ? `${base}/api/v1/public/install/windows.exe?token=${encodeURIComponent(rawToken)}` : url,
     };
   }, [rawToken, os]);
 
@@ -407,19 +427,48 @@ export function AddDeviceFlow() {
       </StepCard>
 
       <StepCard n={3} testId="step-command" title="Run the installer" active={!!tokenId && !enrolled} done={enrolled}
-        description={os && !enrolled ? `Run once on the computer, in ${OS[os].shell}. Single-use; expires ${status ? formatDate(status.token.expiresAt) : 'in 24 hours'}.` : undefined}>
+        description={os && !enrolled ? `Download the installer, or copy the command, and run it once on the computer. Single-use; expires ${status ? formatDate(status.token.expiresAt) : 'in 24 hours'}.` : undefined}>
         {enrolled ? (
           <p className="text-sm text-muted-foreground">The link has been used and cannot enrol another computer.</p>
-        ) : commands ? (
+        ) : commands && os ? (
           <>
-            <CopyLine text={commands.command} label="command" />
-            {commands.exe && (
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Or send this link: the person downloads and runs a one-click installer, no PowerShell needed.</p>
-                <CopyLine text={commands.exe} label="link" />
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground">The command contains the enrolment token and is shown only now. Anyone holding it can enrol one computer into {businessLabel} until it is used or expires.</p>
+            <Tabs defaultValue="download" className="space-y-3" data-testid="install-choices">
+              <TabsList aria-label="How to install">
+                <TabsTrigger value="download" data-testid="tab-download"><Download className="mr-1.5 h-4 w-4" />Download installer</TabsTrigger>
+                <TabsTrigger value="command" data-testid="tab-command"><Terminal className="mr-1.5 h-4 w-4" />Command</TabsTrigger>
+              </TabsList>
+              <TabsContent value="download" className="mt-0 space-y-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button asChild>
+                    {/* A plain same-origin download: the browser fetches it once, nothing is kept here. */}
+                    <a href={commands.download} download={OS[os].file} data-testid="download-installer" rel="noreferrer">
+                      <Download className="mr-2 h-4 w-4" />
+                      {os === 'windows' ? 'Download .exe' : `Download ${OS[os].label} installer (.sh)`}
+                    </a>
+                  </Button>
+                  <span className="text-xs text-muted-foreground">{OS[os].file}</span>
+                </div>
+                <p className="text-sm">{OS[os].runFile}</p>
+                {os === 'windows' && (
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">Or send this link to the person at the computer: it downloads the same installer.</p>
+                    <CopyLine text={commands.download} label="link" />
+                  </div>
+                )}
+                {os === 'windows' && (
+                  <p className="text-xs text-muted-foreground" data-testid="msi-note">
+                    Need an .msi for Group Policy or Intune? There is no .msi package yet. For many computers at once use a
+                    deployment key, which runs this same installer from Group Policy, Intune or another RMM
+                    {isPlatformAdmin ? <>: <Link href="/admin/deploy" className="underline">Deploy agents</Link>.</> : ' (a Platform Admin makes one under Devices → Deploy agents).'}
+                  </p>
+                )}
+              </TabsContent>
+              <TabsContent value="command" className="mt-0 space-y-2">
+                <p className="text-xs text-muted-foreground">Paste into {OS[os].shell} on the computer.</p>
+                <CopyLine text={commands.command} label="command" />
+              </TabsContent>
+            </Tabs>
+            <p className="text-xs text-muted-foreground">The installer, the link and the command all carry the enrolment token and are shown only now. Anyone holding one can enrol one computer into {businessLabel} until it is used or expires.</p>
           </>
         ) : tokenId ? (
           <p className="text-sm text-muted-foreground">The install command is shown only once, when the link is made. If it was lost, revoke this link and make a new one.</p>

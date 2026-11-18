@@ -25,7 +25,10 @@
  *     no device secret;
  *   - expired and revoked tokens report as such;
  *   - minting needs a fresh re-authentication (0.33): a stale session gets
- *     STEP_UP_REQUIRED and writes nothing, and a scope refusal comes first.
+ *     STEP_UP_REQUIRED and writes nothing, and a scope refusal comes first;
+ *   - (0.64) the downloads step 3 offers — the Linux and macOS scripts from
+ *     the command's own path-token URL and the Windows .exe — are
+ *     attachments carrying the token, and fetching them consumes nothing.
  *
  * Self-starting: it runs its own API from dist/ on ADDDEVICE_API_PORT (3861)
  * against DATABASE_URL, which must name a scratch/test database. Fixtures are
@@ -34,6 +37,7 @@
  * Run:  DATABASE_URL=…/rem0te_adddevice_test node scripts/e2e-add-device.mjs
  */
 import { PrismaClient } from '@prisma/client';
+import { confirmEverythingAsks } from './lib/confirm-asks.mjs';
 import argon2 from 'argon2';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -52,6 +56,9 @@ const API = `http://127.0.0.1:${PORT}/api/v1`;
 const VERSION_FILE = path.resolve(here, '..', '..', '..', 'version.json');
 const AGENT_VERSION = JSON.parse(readFileSync(VERSION_FILE, 'utf8')).version;
 const prisma = new PrismaClient();
+// 0.64: every confirmation defaults to off. This suite proves step-ups, so it
+// asks for them all before its API reads the policy.
+await confirmEverythingAsks(prisma);
 const sfx = randomBytes(3).toString('hex');
 const PW = 'add-device-e2e-password-1';
 const TAG = `AD${sfx}`;
@@ -207,6 +214,23 @@ async function all() {
   check(r.status === 403, 'a Platform Admin must name a business', msg(r));
   const leaked = await prisma.deviceClaimToken.count({ where: { customerId: B.id } });
   check(leaked === 0, 'after every refused attempt, business B has no tokens at all', `B tokens: ${leaked}`);
+
+  // ── 0.64: the downloads step 3 offers ───────────────────────────────────
+  section('0.64: the installer downloads Add device offers carry the token, are attachments, and consume nothing');
+  {
+    const get = async (p) => { const res = await fetch(`${API}${p}`, { headers: { 'x-forwarded-for': ip() } }); const buf = Buffer.from(await res.arrayBuffer()); return { status: res.status, cd: res.headers.get('content-disposition') ?? '', ct: res.headers.get('content-type') ?? '', cc: res.headers.get('cache-control') ?? '', buf }; };
+    for (const [os, file] of [['linux', 'install-rustdesk.sh'], ['mac', 'install-rustdesk-macos.sh']]) {
+      const d = await get(`/public/install/${os}/${t1.token}`);
+      check(d.status === 200 && d.cd === `attachment; filename="${file}"` && /no-store/.test(d.cc) && d.buf.toString('utf8').includes(t1.token),
+        `${os}: the Download button's URL (the command's own path-token URL) is an attachment named ${file}, not cached, carrying the token`, `${d.status} ${d.cd} ${d.cc}`);
+    }
+    const exe = await get(`/public/install/windows.exe?token=${t1.token}`);
+    // A test build may have no installer binary (503); when it has one, it is an attachment with the token in its slot.
+    check((exe.status === 200 && exe.cd === 'attachment; filename="install-reboot-remote.exe"' && exe.ct.startsWith('application/octet-stream') && /no-store/.test(exe.cc) && exe.buf.includes(Buffer.from(t1.token)))
+      || exe.status === 503, 'windows: the Download .exe URL is an attachment named install-reboot-remote.exe with the token in it (or 503 without an installer build)', `${exe.status} ${exe.cd}`);
+    const row = await prisma.deviceClaimToken.findUnique({ where: { id: t1.id } });
+    check(row.claimedAt === null && row.expiresAt > new Date(), 'downloading every installer consumed nothing: the token is still unclaimed and unexpired');
+  }
 
   // ── Status: waiting, scoped, nothing secret ───────────────────────────────
   section('Status while waiting: scoped to the business, and nothing secret in it');

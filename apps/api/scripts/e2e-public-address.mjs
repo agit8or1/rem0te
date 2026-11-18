@@ -18,6 +18,7 @@
  *   API_BASE=http://127.0.0.1:3101/api/v1 DATABASE_URL=… node scripts/e2e-public-address.mjs
  */
 import { PrismaClient } from '@prisma/client';
+import { confirmEverythingAsks } from './lib/confirm-asks.mjs';
 import argon2 from 'argon2';
 import http from 'node:http';
 import path from 'node:path';
@@ -35,6 +36,9 @@ if (/:3001\b|:443\b|^https:/.test(API) && process.env.I_KNOW_THIS_IS_NOT_PRODUCT
 const API_ORIGIN = new URL(API).origin;
 
 const prisma = new PrismaClient();
+// 0.64: every confirmation defaults to off. This suite proves step-ups, so it
+// asks for them all before its API reads the policy.
+await confirmEverythingAsks(prisma);
 const sfx = randomBytes(3).toString('hex');
 const PW = 'test-password-123456';
 
@@ -155,7 +159,7 @@ try {
   check(r.status === 403 && r.body.code === 'STEP_UP_REQUIRED', 'saving needs step-up', `${r.status} ${j(r.body)}`);
   check(r.body.action === 'platform.configure', 'the step-up response names the action (platform.configure)', j(r.body));
   const pol = await prisma.confirmPolicy.findUnique({ where: { key: 'platform.configure' } });
-  check(!pol || pol.value === 'ask', 'the confirm policy asks for platform.configure (0.49: no off row)', j(pol));
+  check(pol?.value === 'ask', 'the confirm policy asks for platform.configure (0.64: an ask row, written above; with no row it defaults to off)', j(pol));
   const sAdmin = await stepUp(cAdmin);
 
   section('Reachability check');

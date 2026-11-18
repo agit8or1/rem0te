@@ -77,7 +77,7 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   approved by passkey on a separate approval signer and verified by the agent; setup, the roster ceremony, results,
   reconciliation, and what is and is not proven. Also the maintenance actions (0.32), direct mode for a single
   operator (0.40), service control and ending a process (0.45), the Spooler's state on the Actions tab (0.47.1), and
-  which functions ask you to confirm it is you, set per function since 0.49 ([sign-in.md](sign-in.md#which-functions-ask-049)).
+  which functions ask you to confirm it is you, set per function since 0.49 and off by default since 0.64 ([sign-in.md](sign-in.md#which-functions-ask-049)).
 - **[staged-patching.md](staged-patching.md)** — Windows updates in stages (0.27): a canary, then rings, each a
   signed plan two approvers authorize; what is installed and refused, the promotion gate, what *effective* means,
   and what is and is not proven. Since 0.32 it also covers installing from one computer's Patches tab and patch

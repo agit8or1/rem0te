@@ -3,11 +3,15 @@
 // Mints a key via the admin console, uses it via Bearer auth, cleans up.
 
 import { PrismaClient } from '@prisma/client';
+import { confirmEverythingAsks } from './lib/confirm-asks.mjs';
 import argon2 from 'argon2';
 import { randomBytes } from 'crypto';
 import { testApiBase } from './lib/test-api-base.mjs';
 
 const prisma = new PrismaClient();
+// 0.64: every confirmation defaults to off. This suite proves step-ups, so it
+// asks for them all before its API reads the policy.
+await confirmEverythingAsks(prisma);
 const API = testApiBase();
 // Every suite writes fixtures into DATABASE_URL and then talks to API: if the
 // two point at different stacks it silently mixes a scratch database with a

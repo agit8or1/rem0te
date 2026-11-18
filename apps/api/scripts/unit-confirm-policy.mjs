@@ -5,10 +5,12 @@
  * ConfirmPolicyService's rules, against an in-memory Prisma. No database.
  * Needs `nest build` (dist/). Replaces 0.47's unit-routine-confirm.mjs.
  *
- * The e2e suites run on fresh databases, which have no ConfirmPolicy rows, so
- * they keep proving that everything asks. This proves the other half: a key
- * set to 'off' skips, and nothing else ever does. The behavioural proof over
- * HTTP is e2e-confirm-policy.mjs.
+ * 0.64: every catalog key defaults to 'off' (the owner's "just on login"), so a
+ * policy read with no rows skips every configurable key and still asks for the
+ * always-ask set, an unknown key, and everything before the first read. A row
+ * saying 'ask' asks; only a row saying exactly 'off' (or no row) skips. The e2e
+ * suites write an 'ask' row per key (lib/confirm-asks.mjs) to keep proving the
+ * step-ups. The behavioural proof over HTTP is e2e-confirm-policy.mjs.
  */
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -38,8 +40,8 @@ const ALWAYS = C.ALWAYS_ASK_KEYS;
 
 // ── The catalog ────────────────────────────────────────────────────────────
 check('the catalog has unique keys', new Set(KEYS).size === KEYS.length);
-check('every function has a known group, a label, a description, a prompt and default ask',
-  C.CONFIRM_CATALOG.every((f) => C.CONFIRM_GROUPS.includes(f.group) && f.label && f.description && f.prompt && f.default === 'ask'));
+check('every function has a known group, a label, a description, a prompt and default off (0.64)',
+  C.CONFIRM_CATALOG.every((f) => C.CONFIRM_GROUPS.includes(f.group) && f.label && f.description && f.prompt && f.default === 'off'));
 check('every group has at least one function', C.CONFIRM_GROUPS.every((g) => C.CONFIRM_CATALOG.some((f) => f.group === g)));
 check('no always-ask key is in the configurable catalog', ALWAYS.every((k) => !KEYS.includes(k)));
 check('the always-ask set is passkey.manage, fresh.auth.passkey and confirm.relax',
@@ -61,6 +63,14 @@ check('0071 drops both old settings', /DROP COLUMN "routineConfirm"/.test(mig) &
 R.resetConfirmPolicy();
 check('before the policy is read, every key asks', KEYS.every((k) => R.confirmRequired(k)) && refuses(() => R.assertFresh(null, { action: 'software.catalog' })));
 
+R.setConfirmPolicy([]);
+check('0.64: a policy read with no rows skips every catalog key (its default is off)', KEYS.every((k) => !R.confirmRequired(k) && !refuses(() => R.assertFresh(null, { action: k }))));
+check('0.64: with no rows, the always-ask keys and an unknown key still ask', ALWAYS.every((k) => R.confirmRequired(k) && refuses(() => R.assertFresh(null, { action: k }))) && R.confirmRequired('made.up'));
+check('0.64: with no rows, a phishing-resistant check still asks', refuses(() => R.assertFresh(null, { action: 'temporary.access', phishingResistant: true })));
+check('0.64: confirmValues reports the defaults, all off', Object.values(R.confirmValues()).every((v) => v === 'off'));
+R.setConfirmPolicy([{ key: 'apikey.create', value: 'ask' }]);
+check("0.64: an 'ask' row overrides the default; a key with no row keeps it", R.confirmRequired('apikey.create') && refuses(() => R.assertFresh(null, { action: 'apikey.create' })) && !R.confirmRequired('software.catalog'));
+
 R.setConfirmPolicy(KEYS.map((k) => ({ key: k, value: 'off' })));
 check("with every key 'off', every catalog key passes without a fresh method", KEYS.every((k) => !refuses(() => R.assertFresh(null, { action: k }))));
 check("with every key 'off', the always-ask keys still ask", ALWAYS.every((k) => R.confirmRequired(k) && refuses(() => R.assertFresh(null, { action: k }))));
@@ -69,8 +79,8 @@ check('a phishing-resistant check still asks, and still wants a passkey', refuse
   && refuses(() => R.assertFresh('password', { action: 'temporary.access', phishingResistant: true })) && !refuses(() => R.assertFresh('passkey', { action: 'temporary.access', phishingResistant: true })));
 check('confirmValues reports them all off', Object.values(R.confirmValues()).every((v) => v === 'off'));
 
-R.setConfirmPolicy([{ key: 'software.catalog', value: 'off' }, { key: 'passkey.manage', value: 'off' }, { key: 'confirm.relax', value: 'off' }, { key: 'made.up', value: 'off' }]);
-check('one key off: only that key skips', !R.confirmRequired('software.catalog') && KEYS.filter((k) => k !== 'software.catalog').every((k) => R.confirmRequired(k)));
+R.setConfirmPolicy([...KEYS.map((k) => ({ key: k, value: k === 'software.catalog' ? 'off' : 'ask' })), { key: 'passkey.manage', value: 'off' }, { key: 'confirm.relax', value: 'off' }, { key: 'made.up', value: 'off' }]);
+check('every key ask but one off: only that key skips', !R.confirmRequired('software.catalog') && KEYS.filter((k) => k !== 'software.catalog').every((k) => R.confirmRequired(k)));
 check('a row naming an always-ask or unknown key is ignored', R.confirmRequired('passkey.manage') && R.confirmRequired('confirm.relax') && R.confirmRequired('made.up'));
 check("with a key 'ask', a fresh method still passes", !refuses(() => R.assertFresh('totp', { action: 'apikey.create' })));
 
@@ -100,7 +110,13 @@ const admin = { userId: 'u-admin', isPlatformAdmin: true, ip: '127.0.0.1' };
 const owner = { userId: 'u-owner', isPlatformAdmin: false, ip: '127.0.0.1' };
 
 R.resetConfirmPolicy();
-const prisma = fakePrisma();
+const fresh = new ConfirmPolicyService(fakePrisma(), audit);
+const e0 = fresh.view(await fresh.load(), owner);
+check('0.64: a fresh database (no rows) shows every function off, at its default', e0.catalog.length === KEYS.length && e0.catalog.every((f) => f.value === 'off' && f.default === 'off'));
+
+// From here, a database whose every function was set to ask.
+R.resetConfirmPolicy();
+const prisma = fakePrisma(KEYS.map((key) => ({ key, value: 'ask' })));
 const svc = new ConfirmPolicyService(prisma, audit);
 const v0 = svc.view(await svc.load(), owner);
 check('the view lists every catalog key with its value, the groups and the always-ask note',
@@ -114,9 +130,10 @@ check('an unknown key is refused', await refusesAsync(() => svc.set(admin, { val
 check('a bad value is refused', await refusesAsync(() => svc.set(admin, { values: { 'software.catalog': 'every' } }, 'passkey'), 'INVALID_CONFIRM_VALUE'));
 check('an empty or malformed body is refused', await refusesAsync(() => svc.set(admin, { values: {} }, 'passkey'), 'INVALID_CONFIRM_POLICY')
   && await refusesAsync(() => svc.set(admin, { value: 'off' }, 'passkey'), 'INVALID_CONFIRM_POLICY') && await refusesAsync(() => svc.set(admin, null, 'passkey'), 'INVALID_CONFIRM_POLICY'));
-check('nothing was written by a refusal', prisma.store.size === 0 && audits.length === 0);
+const allAsk = () => prisma.store.size === KEYS.length && [...prisma.store.values()].every((r) => r.value === 'ask');
+check('nothing was written by a refusal', allAsk() && audits.length === 0);
 
-check('relaxing without a fresh confirmation is refused (confirm.relax)', await refusesAsync(() => svc.set(admin, { values: { 'software.catalog': 'off' } }, null), 'STEP_UP_REQUIRED') && prisma.store.size === 0);
+check('relaxing without a fresh confirmation is refused (confirm.relax)', await refusesAsync(() => svc.set(admin, { values: { 'software.catalog': 'off' } }, null), 'STEP_UP_REQUIRED') && allAsk());
 // Even when every other key is off, relaxing asks.
 const out = await svc.set(admin, { values: { 'software.catalog': 'off', 'actions.direct': 'off' } }, 'totp');
 check('relaxing with a fresh confirmation is written, and takes effect at once', out.values['software.catalog'] === 'off' && !R.confirmRequired('software.catalog') && !R.confirmRequired('actions.direct'));
@@ -135,6 +152,10 @@ prisma.store.set('made.up', { key: 'made.up', value: 'off' });
 prisma.store.set('passkey.manage', { key: 'passkey.manage', value: 'off' });
 await svc.load();
 check('rows outside the catalog are ignored on load', R.confirmRequired('made.up') && R.confirmRequired('passkey.manage'));
+// 0.64: a function whose row is gone takes its default.
+prisma.store.delete('email.relay');
+await svc.load();
+check('0.64: a function with no row falls back to its default (off); one with an ask row still asks', !R.confirmRequired('email.relay') && R.confirmRequired('software.catalog'));
 
 // A failed read keeps the last policy (and an unread one asks).
 const broken = new ConfirmPolicyService({ confirmPolicy: { findMany: async () => { throw new Error('down'); } } }, audit);

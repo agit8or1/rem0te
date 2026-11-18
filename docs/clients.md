@@ -137,8 +137,12 @@ and nothing can connect to or act on it before then. The business still comes
 only from the code or the key, never from the computer. See
 [deployment.md](deployment.md).
 
-Add device then shows the computer arriving and its first health (online, agent,
-inventory) as the server receives it; see [technician-guide.md](technician-guide.md) §5.
+Add device offers the installer two ways (0.64): **Download installer** (a
+one-click `.exe` on Windows, the install script as a file on Linux and macOS)
+and **Command** (the one-line command). There is no `.msi` or `.pkg`; see
+[setup.md](setup.md#enrolling-a-device). It then shows the computer arriving and
+its first health (online, agent, inventory) as the server receives it; see
+[technician-guide.md](technician-guide.md) §5.
 
 It is **idempotent** — safe to re-run, and re-running is the supported way to
 repair a broken install, apply a staged upgrade, or replace the heartbeat

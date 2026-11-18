@@ -104,12 +104,29 @@ export function Sidebar({ className }: { className?: string } = {}) {
     const { icon: Icon } = section;
     // A Business User without the device list still has their own devices.
     const label = section.id === 'devices' && items[0].href === '/my-computers' ? 'My devices' : section.label;
-    return (
-      <Link key={section.id} href={items[0].href} className={linkClass(here?.section.id === section.id)}
+    // 0.64: a section's shortcut (Devices → Add device) is its own indented
+    // link under the row, drawn only for whoever may see that tab. On its
+    // page the shortcut is the highlighted row, not the section.
+    const sc = section.shortcut && section.shortcut.show(ctx) ? section.shortcut : null;
+    const onShortcut = !!sc && here?.leaf?.href === sc.href;
+    const row = (
+      <Link key={section.id} href={items[0].href} className={linkClass(here?.section.id === section.id && !onShortcut)}
         data-nav={section.id}>
         <Icon className="h-4 w-4" />
         {label}
       </Link>
+    );
+    if (!sc) return row;
+    const { icon: ScIcon } = sc;
+    return (
+      <div key={section.id} className="space-y-0.5">
+        {row}
+        <Link href={sc.href} className={cn(linkClass(onShortcut), 'ml-4 py-1 text-[13px]')}
+          data-nav={`${section.id}-shortcut`} data-testid={`nav-shortcut-${section.id}`} aria-current={onShortcut ? 'page' : undefined}>
+          <ScIcon className="h-3.5 w-3.5" />
+          {sc.label}
+        </Link>
+      </div>
     );
   }
 

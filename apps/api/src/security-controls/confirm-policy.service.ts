@@ -15,7 +15,9 @@ const ALWAYS: ReadonlySet<string> = new Set<string>(ALWAYS_ASK_KEYS);
  * The rows are read at start and every 30 s, and the in-memory policy is set
  * at once on a change, so assertFresh and StepUpService.assert decide
  * synchronously. Until the first read everything asks (review.ts fails
- * closed); a failed read keeps the last policy read.
+ * closed); a failed read keeps the last policy read. A function with no row
+ * takes its catalog default, which from 0.64 is `off` for every function:
+ * a fresh install asks only at sign-in.
  *
  * Reading: any signed-in user (the console words its prompts from it).
  * Changing: a Platform Admin only. Each key must be in the configurable
