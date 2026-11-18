@@ -5,6 +5,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.65.1] — 2026-11-18 · *Parcel*
+
+**A standard tray left running on a computer that moved to the signed agent no longer floods the audit log.**
+
+- **Symptom.** The dashboard's Recent activity was nothing but *System heartbeat rejected*, one a minute: 4,337
+  `ENDPOINT_HEARTBEAT_REJECTED` rows (`reason: tray_key_unauthenticated`) since 2026-11-15, all from DEWEY-WKS2022.
+- **Cause.** DEWEY-WKS2022 moved to the signed agent on 2026-11-14. The signed agent removes the standard tray's
+  Run value and `tray.json` (0.51, `retire.go`), but the standard tray process already running in a Windows session
+  keeps its key in memory and polls `/tray/status` every minute until that session ends. It has no way to be told
+  to stop. The portal refused it correctly (`identify` refuses a tray key on a signed computer) and wrote an audit
+  row for every refusal.
+- **Fix.** The right tray key from a computer that now runs the signed agent (`runsSignedAgent`, §64) is still
+  refused, now with `401 TRAY_KEY_RETIRED`, and audited at most once a day per computer
+  (`reason: tray_key_retired`, `RETIRED_TRAY_AUDIT_EVERY_MS`, the same cadence as `AGENT_DUAL_REPORT`). An unknown
+  key, a wrong secret, or an archived computer is audited every time, as before. Nothing is accepted that was refused
+  before.
+- **On the computer.** The old tray goes away at the next sign-out or restart. No agent change.
+- **Tests.** `e2e-tray.mjs`: three refusals of a retired key write one row; the same key id with a wrong secret is an
+  ordinary refusal.
+
 ## [0.65.0] — 2026-11-18 · *Parcel*
 
 **A Windows Installer package: Add device has *Download .msi* next to *Download .exe*, and the silent

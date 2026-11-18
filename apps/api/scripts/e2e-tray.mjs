@@ -270,6 +270,20 @@ async function all() {
   check(r.status === 401, 'an unknown tray key: 401', msg(r));
   const rej = await prisma.activityLog.findFirst({ where: { action: 'ENDPOINT_HEARTBEAT_REJECTED', createdAt: { gte: startedAt }, metadata: { path: ['reason'], equals: 'tray_key_unauthenticated' } } });
   check(!!rej && !JSON.stringify(rej.metadata).includes('AAAA'), 'refused tray keys are audited, without the key', JSON.stringify(rej?.metadata));
+  // 0.65.1: a standard tray left running after its computer moved to the
+  // signed agent (DEWEY-WKS2022 polled once a minute for days).
+  {
+    const old = await mkEp(acme, 'OLDTRAY', { channel: 'legacy' });
+    const oldKey = (await tray.pair(old)).data?.trayKey;
+    await prisma.endpoint.update({ where: { id: old.id }, data: { updateChannel: 'signed', signedSeenAt: new Date() } });
+    const retiredRows = () => prisma.activityLog.count({ where: { action: 'ENDPOINT_HEARTBEAT_REJECTED', resourceId: old.id, metadata: { path: ['reason'], equals: 'tray_key_retired' } } });
+    let rr = null;
+    for (let i = 0; i < 3; i++) rr = await req('POST', '/tray/status', { body: { trayKey: oldKey, localUser: ALICE } });
+    check(rr.status === 401 && code(rr) === 'TRAY_KEY_RETIRED', 'a standard tray key on a computer now running the signed agent: still refused (TRAY_KEY_RETIRED)', msg(rr));
+    check(await retiredRows() === 1, 'three refusals, one audit row a day (tray_key_retired), not one a minute', String(await retiredRows()));
+    rr = await req('POST', '/tray/status', { body: { trayKey: `${oldKey.split('.')[0]}.${'B'.repeat(43)}` } });
+    check(rr.status === 401 && code(rr) !== 'TRAY_KEY_RETIRED', 'that key id with the wrong secret is an ordinary refusal, audited every time', msg(rr));
+  }
   const paired = await prisma.activityLog.findMany({ where: { action: 'TRAY_PAIRED', resourceId: std.id }, orderBy: { seq: 'asc' } });
   check(paired.length === 2 && paired[1].metadata.replaced === true && paired.every((a) => !JSON.stringify(a.metadata).includes(key2.split('.')[1])), 'TRAY_PAIRED twice (the second "replaced"), never with the secret', JSON.stringify(paired.map((a) => a.metadata)));
   r = await req('POST', '/tray/status', { body: { rustdeskId: sPC.rid, agentSecret: randomBytes(24).toString('hex') } });

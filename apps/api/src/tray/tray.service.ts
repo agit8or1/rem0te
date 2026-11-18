@@ -55,6 +55,8 @@ export interface TrayDevice {
 }
 
 const SWEEP_MS = 3600_000;
+/** At most one `tray_key_retired` rejection audit row per computer per this long. */
+export const RETIRED_TRAY_AUDIT_EVERY_MS = 24 * 3600_000;
 /** Self-help runs are kept this long on the computer's history. */
 export const SELF_HELP_RETENTION_DAYS = 400;
 
@@ -92,6 +94,25 @@ export class TrayService implements OnModuleInit, OnModuleDestroy {
     if (body.trayKey !== undefined) {
       const k = parseTrayKey(body.trayKey);
       const ep = k ? await this.prisma.endpoint.findUnique({ where: { trayKeyId: k.keyId }, select: { id: true, tenantId: true, customerId: true, trayKeyHash: true, updateChannel: true, signedSeenAt: true, status: true } }) : null;
+      // 0.65.1: the right key from a computer that has since moved to the
+      // signed agent is the old standard tray still running in a Windows
+      // session (it polls every minute until that session ends, and cannot be
+      // told to stop). Still refused, but audited at most once a day per
+      // computer — DEWEY-WKS2022 wrote 1,440 rejections a day and buried
+      // everything else in Recent activity. A wrong key is audited every time.
+      if (k && ep && hashMatches(ep.trayKeyHash, k.secret) && runsSignedAgent(ep) && ep.status !== 'ARCHIVED') {
+        const recent = await this.prisma.activityLog.findFirst({
+          where: { action: 'ENDPOINT_HEARTBEAT_REJECTED', resourceId: ep.id, createdAt: { gte: new Date(Date.now() - RETIRED_TRAY_AUDIT_EVERY_MS) }, metadata: { path: ['reason'], equals: 'tray_key_retired' } },
+          select: { id: true },
+        });
+        if (!recent) {
+          await this.audit.log({
+            tenantId: ep.tenantId ?? undefined, action: 'ENDPOINT_HEARTBEAT_REJECTED', resource: 'endpoint', resourceId: ep.id,
+            meta: { reason: 'tray_key_retired' },
+          });
+        }
+        throw new UnauthorizedException({ code: 'TRAY_KEY_RETIRED', message: 'This computer runs the signed agent; the standard tray is retired. Sign out of Windows to close it.' });
+      }
       if (!k || !ep || !hashMatches(ep.trayKeyHash, k.secret) || runsSignedAgent(ep) || ep.status === 'ARCHIVED') {
         await this.audit.log({
           tenantId: ep?.tenantId ?? undefined, action: 'ENDPOINT_HEARTBEAT_REJECTED', resource: 'endpoint', resourceId: ep?.id,
