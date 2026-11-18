@@ -57,7 +57,8 @@ so you can tell keys apart), and it appears in no list, audit entry or log.
 A key is 96 hexadecimal characters. Every installer already accepts it in the
 place it takes a single-use code, so there is no new installer and no new
 option: the Windows script, `windows.exe`, the signed agent's
-`rem0te-agent.exe install --token`, `linux.sh` and `macos.sh` all work with it.
+`rem0te-agent.exe install --token`, `linux.sh` and `macos.sh` all work with it,
+and so does the `.msi` (0.65) as `TOKEN=`.
 
 **Uses are counted exactly.** Each computer that enrols takes one use, counted
 in one conditional database update, so twenty computers enrolling at the same
@@ -89,13 +90,8 @@ Every method runs the same installer as **Add device**. On Windows that
 installs the signed agent when this server publishes one, and the standard
 agent otherwise.
 
-**There is no .msi package (0.64).** Rem0te does not build one: an MSI needs a
-Windows Installer toolchain (`wixl` from the `msitools` package, or WiX on a
-Windows computer), which the portal host does not have. The routes below cover
-what an MSI is usually wanted for: Group Policy runs the startup script, and
-Intune's Win32 app gives the detection rule and retries. An MSI built later
-would have to wrap this same signed installer, with the key passed in, and
-change none of the token rules.
+The Windows Installer package (`.msi`, 0.65) is a fourth way, below; it takes
+the key as `TOKEN`.
 
 ### Group Policy (Active Directory)
 
@@ -128,6 +124,59 @@ the end of the rollout, and revoke it afterwards.
   `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-rem0te.ps1`,
   install behaviour *System*, and a custom detection script:
   `if (Get-ScheduledTask -TaskName 'Rem0teHeartbeat' -ErrorAction SilentlyContinue) { 'Installed' }`.
+- **Line-of-business app** (the .msi, below): upload `rem0te.msi` and put
+  `TOKEN=<DEPLOYMENT-KEY>` in *Command-line arguments*.
+
+### Windows Installer package (.msi, 0.65)
+
+**It has never been run on real Windows.** It was built and read back on Linux
+(`msiinfo`, `msiextract`) and its parts are tested there; try it on one
+computer before a rollout, and tell us what happened.
+
+```text
+https://<portal>/api/v1/public/install/windows.msi                       the package, no key inside
+msiexec /i rem0te.msi TOKEN=<DEPLOYMENT-KEY> /qn /l*v "%ProgramData%\Rem0te-msi.log"
+```
+
+What it is:
+
+- **A per-machine package that carries the signed agent**, byte for byte the
+  published `windows/rem0te-agent.exe`, in its Binary table, and one custom
+  action. On a first install it runs that agent, deferred, as SYSTEM:
+  `rem0te-agent.exe install --token <TOKEN> --portal <portal>`. That is the
+  same command the `.exe` download runs when it is double-clicked, so nothing
+  about enrolment changes: the agent verifies the installer, RustDesk and the
+  tray against signed metadata, and the claim decides where the computer lands.
+  A failed install fails the `msiexec` (exit 1603), so Intune and the RMM see it.
+- **It needs a signed agent.** Only the signed agent takes a token on its
+  command line. A server that does not publish one answers
+  `503 MSI_NEEDS_SIGNED_AGENT`; use the startup script or the `.exe`.
+- **`TOKEN` is required on install**, and must be hexadecimal: a missing one,
+  or one with a space or a quote, stops the install at its launch condition
+  with a message saying so. `TOKEN` is hidden from the installer's log. A
+  deployment key (96 hex) and an Add device code (64 hex) both work.
+- **Uninstalling it removes only its own entry** in *Programs and Features* (and
+  the `HKLM\SOFTWARE\Rem0te\Installer` marker it writes). It installs no files
+  and never removes the agent. The agent updates itself from signed releases,
+  which a Windows Installer repair would roll back, and a computer leaves
+  through the console (see [offboarding.md](offboarding.md)), not through
+  Programs and Features. A newer package replaces an older one's entry.
+- **Downloading it consumes nothing.** The computer's first check-in uses the
+  key, exactly as with every other method; a computer already enrolled uses
+  nothing.
+
+**Group Policy Software Installation** cannot pass `TOKEN` on a command line.
+Use the startup script above, or download a package with the key already in it
+(`windows.msi?token=<DEPLOYMENT-KEY>`) and assign that. That copy carries the
+key in the share, like the script does, and Windows keeps a copy of every
+installed package in its installer cache on each computer: give the key a use
+limit and an expiry, and revoke it when the rollout is done.
+
+The server builds each package when it is downloaded, with `wixl` and
+`msibuild` from the `msitools` package (`apt-get install wixl msitools`). A
+server without them answers `503 MSI_BUILDER_UNAVAILABLE`, and **Add device**
+says so. Each build happens in its own private temporary directory, removed
+before the download is sent; nothing is cached.
 
 ### An existing RMM
 
@@ -145,8 +194,8 @@ The other RMM's job history keeps the command, and so the key.
 ### Manual
 
 `irm 'https://<portal>/api/v1/public/install/win/<DEPLOYMENT-KEY>' | iex` in an
-elevated PowerShell, or the `windows.exe?token=` download with the key built
-in. For a single computer, **Add device**'s single-use code is the better tool.
+elevated PowerShell, the `windows.exe?token=` download with the key built
+in, or the `.msi` above. For a single computer, **Add device**'s single-use code is the better tool.
 
 ### Linux
 

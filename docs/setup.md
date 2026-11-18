@@ -115,17 +115,21 @@ Then send anyone who needs help to `https://<your-host>/quick`.
    [sign-in.md](sign-in.md#install-links-and-api-keys)).
 4. Choose how to install (0.64), on two tabs:
    - **Download installer.** Windows: **Download .exe**, a one-click installer — run it on the computer and accept
-     the administrator prompt — and the same link to copy and send. Linux and macOS: the install script as a file;
-     run it with `sudo bash install-rustdesk.sh` (macOS: `install-rustdesk-macos.sh`).
+     the administrator prompt — and the same link to copy and send. Beside it (0.65) **Download .msi**, a Windows
+     Installer package with the token already in it, and the silent line `msiexec /i rem0te.msi TOKEN=<token> /qn`
+     to copy. Linux and macOS: the install script as a file; run it with `sudo bash install-rustdesk.sh` (macOS:
+     `install-rustdesk-macos.sh`).
    - **Command.** The one-line command for PowerShell as Administrator, or a root shell.
 
    All of them carry the same enrolment token: single use, expiring in 24 hours, and shown once. Downloading does
    not use it up; the computer's first check-in does.
 
-   **There is no .msi or .pkg.** Building an MSI needs a Windows Installer toolchain (`wixl` from `msitools`, or
-   WiX on Windows) that this server does not have, and a macOS package needs Apple's tools and a Developer ID. For
-   Group Policy, Intune or another RMM use a deployment key ([deployment.md](deployment.md)): the same installer,
-   run from a startup script, a Win32 app or the RMM.
+   **The .msi** (0.65) installs the same signed agent, silently, as SYSTEM, and needs the server to publish the
+   signed agent ([update-signing.md](update-signing.md)) and to have `wixl` and `msibuild` (`apt-get install wixl
+   msitools`); when either is missing the page says so. Uninstalling it removes only its entry in *Programs and
+   Features*, never the agent. **It has never been run on real Windows.** For Group Policy, Intune or another RMM
+   use a deployment key as the `TOKEN` ([deployment.md](deployment.md#windows-installer-package-msi-065)). There is
+   no macOS `.pkg`: that needs Apple's tools and a Developer ID.
 5. Run it on the device, or send it to the person there.
 6. Leave the page open: it shows the device arriving, then its first health — online, the agent
    and its version, whether its first inventory has arrived — and links to the device and to the

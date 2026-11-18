@@ -413,6 +413,16 @@ jobs:
       - name: Tray tests
         run: node apps/api/scripts/unit-tray.mjs
 
+      # The Windows Installer package (0.65, §77): real .msi builds with wixl
+      # and msibuild, read back with msiinfo and msiextract. The runner image
+      # has no msitools; without them the suite fails under CI rather than
+      # skipping.
+      - name: Windows Installer package tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y wixl msitools
+          node apps/api/scripts/unit-windows-msi.mjs
+
       # `pnpm typecheck` and `pnpm build` cover api and web only. The launcher is
       # built separately here because it is the package that broke last, and it
       # targets safari13, which is what makes it sensitive to esbuild bumps.
@@ -468,6 +478,12 @@ jobs:
           go build -o "$RUNNER_TEMP/rem0te-action-sim" ./cmd/rem0te-action-sim
           echo "RELEASE_BIN=$RUNNER_TEMP/rem0te-release" >> "$GITHUB_ENV"
           echo "ACTION_SIM=$RUNNER_TEMP/rem0te-action-sim" >> "$GITHUB_ENV"
+      # e2e-add-device downloads real .msi packages (0.65) and reads them
+      # back with msiinfo; under CI it fails without msitools.
+      - name: Install msitools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y wixl msitools
       - name: End-to-end suites
         run: scripts/run-e2e.sh
       # The console in a real browser (0.34). Until now nothing in CI opened a

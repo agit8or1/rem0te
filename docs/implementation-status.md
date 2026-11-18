@@ -127,6 +127,7 @@ statement until it has been.
 |---|---|---|---|
 | Everything since the tray (0.36) and approved actions beyond Spooler | not yet | — | — |
 | 0.54 restart scheduling | pending (DEWEY-WKS2022, DS-HOME1 on 0.54.0) | — | — |
+| 0.65 Windows Installer package (`windows.msi`) | not yet (built and read back on Linux only) | — | — |
 
 Simulators (`rem0te-action-sim`, pwsh-on-Linux parse/run) are not real-system tests.
 
