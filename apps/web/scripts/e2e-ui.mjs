@@ -2122,8 +2122,8 @@ async function adoptionScreens(page, f, vp, label) {
     check(gpo.includes(`/api/v1/public/install/win/${shown}`) && /Rem0teHeartbeat/.test(gpo), `${label}: the Group Policy script has the key filled in by the browser`);
     // 0.65: the .msi tab — the plain package carries no key; the key goes in TOKEN.
     await page.getByRole('tab', { name: 'Windows Installer (.msi)' }).click();
-    const msiCode = (await page.locator('[role="tabpanel"] pre').allInnerTexts().catch(() => [])).join('\n');
-    check(msiCode.includes(`msiexec /i rem0te.msi TOKEN=${shown} /qn`) && /\/api\/v1\/public\/install\/windows\.msi\n/.test(`${msiCode}\n`) && /has not yet been run on real Windows/.test(await page.locator('[role="tabpanel"]').innerText().catch(() => '')),
+    const msiCode = (await page.locator('[role="tabpanel"][data-state="active"] pre').allInnerTexts().catch(() => [])).join('\n');
+    check(msiCode.includes(`msiexec /i rem0te.msi TOKEN=${shown} /qn`) && /\/api\/v1\/public\/install\/windows\.msi\n/.test(`${msiCode}\n`) && /has not yet been run on real Windows/.test(await page.locator('[role="tabpanel"][data-state="active"]').innerText().catch(() => '')),
       `${label}: the Windows Installer tab gives the key-free .msi URL and msiexec … TOKEN=<key> /qn, and says it has not run on real Windows`, msiCode.slice(0, 300));
     await page.getByRole('tab', { name: 'Group Policy' }).click();
     await shot(page, `${label}-deploy-agents`);
