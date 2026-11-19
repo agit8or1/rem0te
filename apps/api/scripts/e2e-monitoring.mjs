@@ -342,6 +342,27 @@ async function all() {
   const resolvedHook = await until(async () => hookFor(ea.id).length > before);
   check(resolvedHook && hookFor(ea.id).at(-1).body.type === 'alert.resolved', 'everyone who was told hears it is resolved', JSON.stringify(hookFor(ea.id).at(-1)?.body?.type));
 
+  section('Clear a computer (0.70): resolved until the next check');
+  check(!!(await openAlert(fdB.id, 'disk-free')), 'Birch FRONTDESK still has its disk alert open', '');
+  r = await req('POST', `/monitoring/endpoints/${fdB.id}/alerts/clear`, { s: S.owen, business: acme.id, body: {} });
+  check(r.status === 200 && r.data.cleared === 0 && !!(await openAlert(fdB.id, 'disk-free')), "Acme's owner cannot clear Birch's computer: nothing is cleared", msg(r));
+  r = await req('POST', `/monitoring/endpoints/${fdB.id}/alerts/clear`, { s: S.bea, business: birch.id, body: { note: 'x' } });
+  check(r.status === 400, 'a note, when given, needs 3+ characters', msg(r));
+  r = await req('POST', '/monitoring/endpoints/..%2Fx/alerts/clear', { s: S.bea, business: birch.id, body: {} });
+  check(r.status === 404, 'a malformed computer id is a 404', msg(r));
+  const clearedBefore = await prisma.activityLog.count({ where: { action: 'MONITOR_ALERT_RESOLVED', resourceId: bAlert.id } });
+  r = await req('POST', `/monitoring/endpoints/${fdB.id}/alerts/clear`, { s: S.bea, business: birch.id, body: {} });
+  check(r.status === 200 && r.data.cleared >= 1 && r.data.more === false, "Birch's owner clears FRONTDESK", msg(r));
+  const clearedRow = await prisma.monitorAlert.findUnique({ where: { id: bAlert.id } });
+  check(clearedRow.state === 'RESOLVED' && clearedRow.resolvedById && /next check/.test(clearedRow.resolveNote ?? ''), 'the alert is resolved by a person, with the default note saying it comes back', JSON.stringify({ state: clearedRow.state, note: clearedRow.resolveNote }));
+  const clearAudit = await prisma.activityLog.findMany({ where: { action: 'MONITOR_ALERT_RESOLVED', resourceId: bAlert.id }, orderBy: { createdAt: 'desc' }, take: 1 });
+  check(clearAudit.length === 1 && (await prisma.activityLog.count({ where: { action: 'MONITOR_ALERT_RESOLVED', resourceId: bAlert.id } })) === clearedBefore + 1 && clearAudit[0].metadata?.cleared === 'computer', 'each cleared alert gets its own audit row, marked as a computer clear', JSON.stringify(clearAudit[0]?.metadata));
+  r = await req('POST', `/monitoring/endpoints/${fdB.id}/alerts/clear`, { s: S.bea, business: birch.id, body: {} });
+  check(r.status === 200 && r.data.cleared === 0, 'clearing again finds nothing', msg(r));
+  await heartbeat(fdB, live(5_000));
+  const back = await until(async () => { const x = await openAlert(fdB.id, 'disk-free'); return x && x.id !== bAlert.id ? x : null; });
+  check(!!back, 'the next check, still at 5% free, raises the disk alert again (a new alert)', '');
+
   section('Maintenance windows: silenced, not hidden — and not a pause');
   r = await req('POST', '/monitoring/suppressions', { s: S.owen, business: acme.id, body: { scope: 'global', reason: 'try', endsAt: new Date(Date.now() + 3600_000).toISOString() } });
   check(r.status === 403, 'a Business Owner cannot open a global window', msg(r));

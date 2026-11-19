@@ -41,6 +41,11 @@ export class MonitoringController {
   @HttpCode(HttpStatus.OK)
   async resolve(@Actor() a: ActorContext, @Param('id') id: string, @Body() body: unknown, @Query() q: Record<string, unknown>) { return { success: true, data: await this.svc.resolveAlert(a, id, body, biz(q)) }; }
 
+  /** 0.70: resolve every open alert on one computer ("Clear", until the next check). */
+  @Post('endpoints/:endpointId/alerts/clear')
+  @HttpCode(HttpStatus.OK)
+  async clear(@Actor() a: ActorContext, @Param('endpointId') endpointId: string, @Body() body: unknown, @Query() q: Record<string, unknown>) { return { success: true, data: await this.svc.clearForComputer(a, endpointId, body, biz(q)) }; }
+
   @Get('rules')
   async rules(@Actor() a: ActorContext, @Query() q: Record<string, unknown>) { return { success: true, data: await this.svc.listRules(a, biz(q)) }; }
 

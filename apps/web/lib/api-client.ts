@@ -914,6 +914,8 @@ export const monitoringApi = {
   alert: (id: string, businessId?: string | null) => api.get(`/monitoring/alerts/${id}`, bq(businessId)),
   acknowledge: (id: string, note?: string) => api.post(`/monitoring/alerts/${id}/acknowledge`, note ? { note } : {}),
   resolve: (id: string, note: string) => api.post(`/monitoring/alerts/${id}/resolve`, { note }),
+  /** 0.70: resolve every open alert on one computer, until the next check raises what is still true. */
+  clearComputer: (endpointId: string) => api.post(`/monitoring/endpoints/${endpointId}/alerts/clear`, {}),
   rules: (businessId?: string | null) => api.get('/monitoring/rules', bq(businessId)),
   /** 0.35: scope 'group' names groupId and a priority (1 first). */
   createRule: (data: { scope: MonitorScope; businessId?: string; siteId?: string; groupId?: string; priority?: number; endpointId?: string; key: string; kind: MonitorKindId; name: string; enabled?: boolean; severity: Severity; params: Record<string, unknown> }) =>

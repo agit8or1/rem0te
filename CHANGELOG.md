@@ -5,6 +5,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.70.0] — 2026-11-19 · *Slate*
+
+**Health labels open the computer's monitoring, and a computer's alerts can be cleared until the next
+check.**
+
+### Health labels are links
+
+Each **Healthy**, **Warning**, **Issues** or **Unknown** label in the device list now opens that computer's
+**Monitoring** tab (`/endpoints/<id>?tab=monitoring`), which lists the alerts behind the label or why it is
+Unknown. Until now the label was text only, and the alerts behind it were a click on the device name and
+another on the tab away.
+
+### Clear
+
+**Clear** sits beside a **Warning** or **Issues** label, and at the top of the Monitoring tab's alert list.
+After a confirmation it resolves every open or acknowledged alert on that one computer, through the
+existing single-alert resolve:
+
+- **Who can.** The same visibility as resolving one alert (`alertWhere`, so `monitoring:alerts` and only
+  computers the caller can see), AND that computer. Site-wide alerts are never touched.
+- **Audit.** One `MONITOR_ALERT_RESOLVED` row per alert, as for a hand resolve, with `cleared: 'computer'`
+  in its metadata. Anyone who was notified is told it is resolved, as for a hand resolve.
+- **The note.** It is optional; the default reads "Cleared from the console; raised again at the next
+  check if the problem is still there."
+- **Bounds.** At most 200 alerts a call; the answer says when there were more.
+
+The route is `POST /monitoring/endpoints/:endpointId/alerts/clear`.
+
+**"Until the next check" is not a timer.** Clearing changes no monitor. The next agent report or
+monitoring sweep that still finds the problem raises it again as a *new* alert, with new notifications
+and, where the rule asks for one, a new ticket. To silence something on purpose, use a maintenance window
+or an alert quality rule instead.
+
+Proof: `e2e-monitoring.mjs` (117 checks): another business's owner clears nothing, a short note is
+refused, a malformed id is a 404, the owner clears, each alert is audited once, a second clear finds
+nothing, and the next report at 5% free raises the disk alert again. `e2e-ui.mjs` checks every Health
+label links to its Monitoring tab and that Clear appears beside exactly the Warning and Issues labels.
+
+---
+
 ## [0.69.0] — 2026-11-19 · *Preflight*
 
 **Managed Secure Access, build step 2: the signed agent checks the installed RustDesk, read-only, and the console

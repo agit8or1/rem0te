@@ -35,6 +35,10 @@ export const SuppressionInput = z.object({
 }).strict();
 const NoteInput = z.object({ note: z.string().trim().max(300).optional() }).strict();
 const ResolveInput = z.object({ note: z.string().trim().min(3).max(300) }).strict();
+// 0.70: clearing a computer's alerts. The note is optional; the default says what clearing means.
+const ClearInput = z.object({ note: z.string().trim().min(3).max(300).optional() }).strict();
+const CLEAR_NOTE = 'Cleared from the console; raised again at the next check if the problem is still there.';
+const CLEAR_MAX = 200;
 const AlertQuery = z.object({
   state: z.enum(['open', 'acknowledged', 'resolved', 'active', 'all']).default('active'),
   severity: z.enum(['info', 'warning', 'critical']).optional(),
@@ -216,6 +220,34 @@ export class MonitoringAdminService {
     await this.mon.resolve(r, a.userId, d.data.note);
     await this.audit.log({ action: 'MONITOR_ALERT_RESOLVED', tenantId: r.tenantId ?? undefined, customerId: r.customerId ?? undefined, actorId: a.userId, actorIp: a.ip, resource: 'monitor_alert', resourceId: id, meta: { monitor: r.ruleKey, note: d.data.note } });
     return this.getAlert(a, id, businessId);
+  }
+
+  /**
+   * 0.70: clear a computer's alerts — resolve every open or acknowledged
+   * alert on that one computer the caller can see. It is the single-alert
+   * resolve, repeated: the same visibility (`alertWhere` AND the computer),
+   * the same `MonitoringService.resolve`, one MONITOR_ALERT_RESOLVED audit row
+   * per alert. Nothing about the monitors changes, so a problem that is still
+   * true is raised again by the next report or sweep: "cleared until the next
+   * check", which is what the console says. Site-wide alerts (no computer) are
+   * never touched.
+   */
+  async clearForComputer(a: ActorContext, endpointId: string, raw: unknown, businessId?: string | null) {
+    if (!ID.test(endpointId)) throw new NotFoundException('Computer not found');
+    const d = ClearInput.safeParse(raw ?? {});
+    if (!d.success) throw bad(d.error);
+    const note = d.data.note ?? CLEAR_NOTE;
+    const rows = await this.prisma.monitorAlert.findMany({
+      where: { AND: [this.alertWhere(a, businessId), { endpointId }, { state: { in: ['OPEN', 'ACKNOWLEDGED'] } }] },
+      orderBy: { lastSeenAt: 'desc' }, take: CLEAR_MAX,
+    });
+    let cleared = 0;
+    for (const r of rows) {
+      if (!(await this.mon.resolve(r, a.userId, note))) continue; // resolved meanwhile
+      cleared++;
+      await this.audit.log({ action: 'MONITOR_ALERT_RESOLVED', tenantId: r.tenantId ?? undefined, customerId: r.customerId ?? undefined, actorId: a.userId, actorIp: a.ip, resource: 'monitor_alert', resourceId: r.id, meta: { monitor: r.ruleKey, note, cleared: 'computer', endpointId } });
+    }
+    return { cleared, more: rows.length === CLEAR_MAX };
   }
 
   async summary(a: ActorContext, businessId?: string | null) {

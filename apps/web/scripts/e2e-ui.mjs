@@ -752,6 +752,12 @@ async function devicesAndWorkspace(page, f, vp, label) {
   // 0.68: Health in words, never "None".
   const health = await page.locator('table [data-health]').evaluateAll((els) => els.map((e) => e.getAttribute('data-health')));
   check(health.length === 5 && health.every((h) => ['healthy', 'warning', 'issues', 'unknown'].includes(h)), `${label}: Health says healthy, warning, issues or unknown for each`, health.join(','));
+  // 0.70: each Health label opens that computer's Monitoring tab.
+  const healthLinks = await page.locator('table a[data-testid="health-link"]').evaluateAll((els) => els.map((e) => e.getAttribute('href')));
+  check(healthLinks.length === 5 && healthLinks.every((h) => /^\/endpoints\/[^/?]+\?tab=monitoring$/.test(h ?? '')), `${label}: every Health label links to its computer's Monitoring tab`, healthLinks.join(','));
+  const flagged = health.filter((h) => h === 'warning' || h === 'issues').length;
+  const clears = await page.locator('table [data-testid="clear-alerts"]').count();
+  check(clears === flagged, `${label}: Clear is offered beside each Warning or Issues label and nowhere else`, `clear ${clears}, flagged ${flagged}`);
   if (vp === 'phone') {
     const table = await page.locator('table').first().evaluate((t) => ({ table: t.scrollWidth, box: t.parentElement.clientWidth, scrolls: getComputedStyle(t.parentElement).overflowX }));
     check(table.table > table.box && /auto|scroll/.test(table.scrolls), `${label}: the wide table scrolls inside its own container`, JSON.stringify(table));

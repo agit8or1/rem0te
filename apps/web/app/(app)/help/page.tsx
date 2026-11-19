@@ -374,7 +374,7 @@ const SECTIONS: Section[] = [
           <strong className="text-foreground">Pending patches</strong> comes from the last update scan; CPU, RAM,
           disk and the logged-in user come from the last heartbeat. Each shows its age, and a value that is stale —
           a resource sample older than 15 minutes, an update scan older than 36 hours — is greyed: it is what the
-          device last reported, not what it is doing now. Health and alerts need the monitoring:alerts permission.
+          device last reported, not what it is doing now. Click a Health label to open that computer&apos;s Monitoring tab; Clear, beside Warning or Issues, resolves its open alerts until the next check raises whatever is still wrong. Health and alerts need the monitoring:alerts permission.
         </p>
         <p>
           <strong className="text-foreground">Narrower windows show fewer columns (0.47.1, 0.48.1).</strong> So the

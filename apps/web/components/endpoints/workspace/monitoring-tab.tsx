@@ -12,6 +12,7 @@ import { formatDate } from '@/lib/utils';
 import { ago, CHANGE_LABEL, describeMonitor, MONITOR_KIND_LABEL, monitorSource, openAlerts } from './device-model';
 import { useMonitoringView } from './use-device-data';
 import { EntryActions } from '@/components/endpoints/ai-ticket-actions';
+import { ClearAlertsButton } from '@/components/monitoring/clear-alerts';
 
 /**
  * One computer's monitoring: its alerts first, then what is watched and what
@@ -59,7 +60,10 @@ export function DeviceMonitoringTab({ endpointId }: { endpointId: string }) {
     <div className="space-y-4" data-testid="endpoint-monitoring">
       <Card data-testid="mon-alerts">
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm">Alerts{data.alerts ? ` · ${active.length} open` : ''}</CardTitle>
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="text-sm">Alerts{data.alerts ? ` · ${active.length} open` : ''}</CardTitle>
+            <ClearAlertsButton endpointId={endpointId} name="this computer" count={active.length} />
+          </div>
         </CardHeader>
         <CardContent className="p-0 text-sm">
           {data.alerts === null && <p className="px-4 pb-4 text-muted-foreground">Seeing alerts needs the monitoring:alerts permission.</p>}
