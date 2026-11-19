@@ -810,7 +810,7 @@ async function deviceNaming(page, f, label) {
   await page.locator('[data-testid="rename-description"]').fill('Reception, by the window');
   await page.locator('[data-testid="rename-save"]').click();
   await dlg.waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {});
-  await settled(page);
+  await page.locator('[data-testid="device-description"]').waitFor({ timeout: 15_000 }).catch(() => {});
   const h1 = await page.locator('[data-testid="device-header"] h1').innerText().catch(() => '');
   const desc = await page.locator('[data-testid="device-description"]').innerText().catch(() => '');
   check(h1 === nick && desc === 'Reception, by the window', `${label}: the new name and description show in the header`, JSON.stringify({ h1, desc }));
@@ -818,25 +818,25 @@ async function deviceNaming(page, f, label) {
   check(audit?.metadata?.renamed?.before === before.name && audit?.metadata?.renamed?.after === nick && audit?.metadata?.descriptionChanged === true
     && !JSON.stringify(audit?.metadata).includes('Reception'), `${label}: the rename is audited, before and after, without the description's text`, JSON.stringify(audit?.metadata));
 
+  // settled() waits for the page's first load only; after a click, wait for what the click must produce.
+  const shows = (sel, text) => page.locator(sel, { hasText: text }).first().waitFor({ timeout: 15_000 }).then(() => true, () => false);
   await page.locator('[data-testid="alias-add"]').click();
   await page.locator('[data-testid="alias-input"]').fill('FRONT-PC');
   await page.locator('[data-testid="alias-input"]').press('Enter');
-  await settled(page);
-  check(await page.locator('[data-testid="device-aliases"]').innerText().then((t) => t.includes('FRONT-PC')), `${label}: an alias is added in place`);
+  check(await shows('[data-testid="device-aliases"]', 'FRONT-PC'), `${label}: an alias is added in place`);
   await page.locator('[data-testid="alias-add"]').click();
   await page.locator('[data-testid="alias-input"]').fill('front-pc');
   await page.locator('[data-testid="alias-input"]').press('Enter');
-  await settled(page);
-  check(await page.locator('[data-testid="device-aliases"]').innerText().then((t) => /already has the alias/.test(t)), `${label}: the same alias in another case is refused, with the reason`);
+  check(await shows('[data-testid="device-aliases"]', 'already has the alias'), `${label}: the same alias in another case is refused, with the reason`);
   await page.locator('button[aria-label="Remove alias FRONT-PC"]').click();
-  await settled(page);
-  check((await prisma.endpointAlias.count({ where: { endpointId: f.main.id, alias: 'FRONT-PC' } })) === 0, `${label}: and removed`);
+  const gone = await page.locator('button[aria-label="Remove alias FRONT-PC"]').waitFor({ state: 'detached', timeout: 15_000 }).then(() => true, () => false);
+  check(gone && (await prisma.endpointAlias.count({ where: { endpointId: f.main.id, alias: 'FRONT-PC' } })) === 0, `${label}: and removed`);
 
   await page.locator('[data-testid="overview-note-input"]').fill(`${TAG} replaced the dock`);
   await page.locator('[data-testid="overview-note-add"]').click();
-  await settled(page);
-  check(await page.locator('[data-testid="overview-notes"]').innerText().then((t) => t.includes(`${TAG} replaced the dock`)), `${label}: a note is added from the Overview`);
-  await cleanCheck(page, `${label} device naming`);
+  check(await shows('[data-testid="overview-notes"]', `${TAG} replaced the dock`), `${label}: a note is added from the Overview`);
+  // The refused duplicate alias is the one failed request this section causes, on purpose.
+  await cleanCheck(page, `${label} device naming`, (p) => (p.kind === 'http' && p.status === 409 && p.code === 'ALIAS_EXISTS') || (p.kind !== 'http' && /409/.test(p.text ?? '')));
   await prisma.endpoint.update({ where: { id: f.main.id }, data: { name: before.name, description: before.description } });
   await page.reload();
   await page.locator('[data-testid="workspace-tabs"]').waitFor({ timeout: 20_000 });
