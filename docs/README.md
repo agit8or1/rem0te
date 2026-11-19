@@ -25,6 +25,9 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[capabilities.md](capabilities.md)** — what each agent type can do (standard,
   signed, Linux/macOS, Quick Connect), what needs configuring first, and what has
   been tested on real Windows versus simulated (0.30).
+- **[lab-testing.md](lab-testing.md)** — the Windows lab (0.68.3): what runs on a disposable GitHub Windows runner
+  (RustDesk's command line as SYSTEM, the agent's service, process, removal, update-scan and script code), how to
+  read the `lab-evidence-windows` artifact, and what it cannot prove.
 - **[inventory.md](inventory.md)** — the specs a managed computer reports, its
   installed software and change history, its pending Windows updates, and how
   to read a slice of its event log.
