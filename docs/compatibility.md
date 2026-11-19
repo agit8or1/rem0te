@@ -20,6 +20,14 @@ server's plans, results and refusals. It does not say the agent's Windows
 calls work; that is what the lab and the fleet are for
 (`docs/readiness.md` and `docs/lab-testing.md`, both in review).
 
+### New report fields (0.69)
+
+A signed agent from 0.69 adds one heartbeat field, `rustdeskPreflight`
+(Managed Secure Access readiness). Older agents send nothing and get exactly
+the answer they got before — no new key in it. The portal drops a block it
+cannot parse rather than refusing the heartbeat, so an agent newer than the
+portal never fails either. `e2e-msa-readiness.mjs` checks both.
+
 ## Supported versions
 
 `scripts/compat/supported-agents.json` lists them, each with why it is there:
@@ -27,7 +35,8 @@ calls work; that is what the lab and the fleet are for
 | Agent | Why |
 |---|---|
 | v0.64.0 | running on production computers (2026-11-19) |
-| v0.67.0 | the previous release |
+| v0.67.0 | the previous minor release before 0.68 |
+| v0.68.3 | the previous release (0.69 adds the RustDesk preflight; 0.68.3 sends none) |
 
 The agent built from the commit under test is always covered by the ordinary
 suites.

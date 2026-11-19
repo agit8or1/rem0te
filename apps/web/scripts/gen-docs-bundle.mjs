@@ -71,7 +71,7 @@ const ORDER = [
   ['technician-access.md', 'Technician access and abuse prevention', 'People and access', 'L1/L2/L3 presets, policy, independent review and temporary access.'],
   ['access-control.md', 'Access control', 'People and access', 'Roles, capabilities and what each permission allows.'],
   ['security-model.md', 'Security model: who can reach a computer', 'People and access', 'The portal / RustDesk / endpoint boundary and what evidence you will have.'],
-  ['managed-secure-access.md', 'Managed Secure Access (design)', 'People and access', 'The design for endpoint-enforced remote access on RustDesk: what RustDesk enforces, session grants, cutover and limits. Not built yet.'],
+  ['managed-secure-access.md', 'Managed Secure Access (design)', 'People and access', 'The design for endpoint-enforced remote access on RustDesk: what RustDesk enforces, session grants, cutover and limits. Only readiness reporting (0.69) is built.'],
   ['sign-in.md', 'Sign-in, SSO and passkeys', 'People and access', 'Passwords, MFA, single sign-on, passkeys, step-up and which functions ask for it.'],
   ['sso-keycloak.md', 'Single sign-on with Keycloak', 'People and access', 'PKCE, private_key_jwt, back-channel logout, ACR to LoA levels and the organization claim, for a self-hosted Keycloak.'],
   ['break-glass.md', 'Break-glass accounts', 'People and access', 'The two accounts that can always sign in, how to set them up, and what to do when one is used.'],

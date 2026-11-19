@@ -8,6 +8,7 @@
 //   rustdesk-<version>.json  rustdesk-lab.ps1's result for one RustDesk release
 //   go-evidence.jsonl        one line per Go lab test (internal/labevidence)
 //   go-os.json               the Go runner's Windows edition and build
+//   preflight-evidence-<v>.jsonl  the agent's RustDesk preflight (0.69.0) against release <v>
 //
 // Every result is { id, status: pass|fail|skip, detail, real, os }. For the
 // RustDesk rows, "fail" means RustDesk did not do what was asked — a finding,
@@ -136,6 +137,22 @@ for (const f of files.filter((p) => /rustdesk-[^/\\]+\.json$/.test(p))) {
   const net = part.network ?? {};
   add(`rustdesk/${v}/network/no-off-host-connections`, (net.offHost ?? []).length === 0 ? 'pass' : 'fail',
     `${(net.rustdeskConnections ?? []).length} TCP connections held by rustdesk.exe at the end, ${(net.offHost ?? []).length} to an address that is not loopback ${q(net.offHost)}; firewall drop events naming rustdesk: ${net.firewallBlocks}`, os);
+}
+
+// ── The agent's RustDesk preflight (0.69.0), one file per installed release ──
+for (const f of files.filter((p) => /preflight-evidence-[^/\\]+\.jsonl$/.test(p))) {
+  const v = f.match(/preflight-evidence-([^/\\]+)\.jsonl$/)[1];
+  const os = osOf(rustdesk[v]?.os);
+  for (const line of readFileSync(f, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    const r = JSON.parse(line);
+    add(r.id, r.status, r.detail, os, r.real);
+  }
+}
+for (const v of Object.keys(rustdesk)) {
+  if (rustdesk[v].download?.verified && !files.some((p) => p.endsWith(`preflight-evidence-${v}.jsonl`))) {
+    problems.push(`rustdesk ${v}: no agent preflight evidence (preflight-evidence-${v}.jsonl)`);
+  }
 }
 
 // ── Go ───────────────────────────────────────────────────────────────────────

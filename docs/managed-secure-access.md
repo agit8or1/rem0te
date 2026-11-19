@@ -1,10 +1,13 @@
 # Managed Secure Access (MSA) — audit and design
 
-**Status: design.** Nothing on this page is built yet, and nothing on it is
-turned on for any computer. Every computer stays in today's mode (*Legacy*)
-until a Platform Admin moves it, one computer or group at a time, after it
-passes a preflight. RustDesk stays the remote desktop; the technician still
-selects a computer and presses **Connect**.
+**Status: design, with build step 2 (readiness reporting) built in 0.69.**
+The signed agent now reports a read-only RustDesk preflight and the console
+shows each computer's readiness (§3.7, §4). Nothing else on this page is
+built, and nothing on it is turned on for any computer: no setting, password
+or session is changed, and no computer can be Managed. Every computer stays
+in today's mode (*Legacy*) until a Platform Admin moves it, one computer or
+group at a time, after it passes a preflight. RustDesk stays the remote
+desktop; the technician still selects a computer and presses **Connect**.
 
 Written 2026-11-19 against Rem0te 0.68 and RustDesk's source at 1.2.3–1.5.3
 (client) and 1.1.16 (hbbs/hbbr OSS). Every RustDesk claim below names the
@@ -76,10 +79,12 @@ the TOML files while the service runs does not work: the service keeps its
 settings in memory and writes them back. A changed permanent password applies
 to the next login at once and does not end sessions already open.
 
-**Unverified on Windows:** whether `--option` / `--password` run by the signed
-agent from session 0 pass RustDesk 1.4.7+'s tightened local-pipe check. This is
-the first thing the lab must prove (Phase 1a, below); MSA does not proceed
-without it.
+**Proven in the Windows lab (0.68.3, `docs/lab-testing.md`):** `--option` and
+`--password` run as SYSTEM from session 0 change a running RustDesk 1.4.1,
+1.4.6, 1.4.7, 1.4.9 and 1.5.3, read back, and survive a service restart.
+1.4.7 and later refuse a *copy* of `rustdesk.exe` outside its install folder,
+so the agent only ever runs the installed one. 1.3.9 was not tested. Windows 10
+and 11 desktops, a signed-in user and a live session are still untested.
 
 ## 3. Design
 
@@ -186,7 +191,7 @@ verified.
 
 - **Preflight** (read-only, any time): signed agent version, RustDesk version
   and Flutter build, CLI works as SYSTEM, readback works. Result: Compatible /
-  Upgrade available / Unsupported.
+  Upgrade available / Unsupported. **Built in 0.69** — see §3.9.
 - **Cutover** needs a Platform Admin (fresh sign-in), one computer, a group or
   a business at a time, canary first. The legacy password is kept until a
   managed test session succeeds; only then is it replaced. Never automatic,
@@ -209,14 +214,76 @@ A modified RustDesk client (AGPL-3.0: source must be published with every
 build) would be needed for locked settings or endpoint-side recording. Not
 planned unless the agent-based design proves insufficient.
 
+### 3.9 Readiness reporting (built, 0.69)
+
+**Readiness only — Managed Secure Access is not available yet; nothing has
+changed on any computer.** The console says this above every readiness view.
+
+**What the agent reports.** `rem0te-agent.exe rustdesk-preflight`, started by
+the signed heartbeat at most every 30 minutes, runs for real at most every 6
+hours, or sooner when the installed `rustdesk.exe` changed (its version, size
+or modification time; kept locally, never reported). It writes one small block
+(`rem0te-rustdesk-preflight/1`, at most 4 KB) that the heartbeat sends until
+the portal acknowledges it:
+
+| Field | What it is |
+|---|---|
+| `installed` | `%ProgramFiles%\RustDesk\rustdesk.exe` exists as a regular file (not a reparse point) |
+| `expectedPath` | the RustDesk service runs that file. A boolean, **never the path**: a RustDesk installed elsewhere usually lives under a user's profile, and the path would carry their name |
+| `version` | the exe's FileVersion resource (`1.4.7+65`), strict charset, or null |
+| `build` | `flutter` / `sciter` / `unknown` — **a heuristic**: `flutter_windows.dll` or `sciter.dll` beside the exe. The lab confirms only the Flutter half (every official x64 build is Flutter); no Sciter build has been checked |
+| `service` | `running` / `stopped` / `missing` / `other`, read with query rights only |
+| `cli`, `keys` | whether each of the eleven `rustdesk.exe --option <key>` **reads** answered with a well-formed value (`ok` / `unparsed` / `timeout` / `error`); `cli` is `ok`, `partial`, `failed` or `not_run` |
+
+It never reports a setting's value, never passes a value to `--option`, never
+calls `--password`, and runs nothing but the installed exe, by its absolute
+path, as an argument array with no shell, and only when the service runs that
+same file. Each read times out after 15 s and keeps at most 4 KB of output.
+
+**What the portal accepts.** Only from an authenticated heartbeat on the
+signed channel that may act (§64): never a standard heartbeat, an installer's
+check-in, a leftover standard heartbeat or a pooled computer. Anything that
+does not parse is dropped; the heartbeat never fails for it, so an older or
+newer agent is never refused. One row per computer (`RustdeskPreflight`,
+migration 0087), newest report wins.
+
+**The states** (`apps/api/src/msa/readiness.ts`, one pure function; the first
+rule that applies decides):
+
+| State | When |
+|---|---|
+| Unsupported | Linux or macOS; the standard agent; a Sciter build |
+| Unknown | the platform is not reported; not reporting now (no heartbeat within 30 minutes); no report yet; a report older than 7 days; the build or version unreadable; RustDesk newer than the newest lab-tested release (1.5.3); the service not running; any read unanswered |
+| Upgrade available | a signed agent older than 0.69.0 (it cannot report); RustDesk not in Program Files\RustDesk, no service, or a service running another copy (Update RustDesk fixes it); RustDesk older than 1.4.1 — **not lab-tested**, not known to be broken |
+| Compatible | everything above passed on a release within 1.4.1–1.5.3, every read answered. It says whether that exact release was in the lab. Still Legacy |
+
+*Managed (pending)*, *Managed and verified* and *Enforcement failure* exist in
+the type and in the console's vocabulary, and nothing can produce them yet: a
+unit test runs 622,080 combinations of facts and the security invariants
+(§80) check the source. No readiness answer is ever marked verified.
+
+**Where it shows.** The device page's *Secure remote access readiness* card
+(Overview), and *Devices → Remote access readiness*: counts per state and every
+computer the viewer can see, from `GET /msa/readiness` (View computers;
+`endpointVisibilityWhere`). `GET /msa/readiness/:endpointId` is the card's.
+
+**Evidence.** The preflight ran on real Windows Server 2025 in the Windows lab
+against RustDesk 1.4.1, 1.4.6, 1.4.7, 1.4.9 and 1.5.3, as the administrator and
+as SYSTEM through the real `rem0te-agent.exe` from a scheduled task
+(`TestLabRustdeskPreflight`). It has **not** run on a Windows 10 or 11 desktop,
+with someone signed in, or on any fleet computer: reports appear only once a
+computer's signed agent has updated to 0.69, through the existing automatic
+update policy.
+
 ## 4. Build order (each a reviewable PR, none deployed without approval)
 
 1. **Lab proof** on GitHub's `windows-latest`: install RustDesk, run the signed
    agent's `--option` / `--password` / readback / `stop-service` path as SYSTEM
    against RustDesk 1.2.x, 1.3.x, 1.4.6 and 1.4.7+. Go/no-go for everything
-   below.
+   below. **Done in 0.68.3** for 1.4.1–1.5.3 (go); 1.3.9 and older untested.
 2. **Capability reporting and modes** (read-only): the agent reports RustDesk
    version, build and preflight; the console shows each computer's mode.
+   **Built in 0.69** (§3.9).
 3. **Grants and the long-poll channel**, behind a feature flag, off.
 4. **Agent enforcement** (signed agent release), managed test session, cutover
    and rollback.

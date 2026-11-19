@@ -1618,6 +1618,7 @@ async function combo(browser, f, vp, theme) {
     await systemStatus(page, label, vp);
     await coverage035(page, f, vp, label);
     await fullAgentPage(page, f, vp, theme, label);
+    await msaReadinessUi(page, f, vp, theme, label);
     await headerAgentUpgrade(page, f, vp, theme, label);
     if (theme === 'light') await mainPagesSweep(page, f, vp, label);
   } finally { await ctx.close(); }
@@ -2054,6 +2055,82 @@ async function fullAgentPage(page, f, vp, theme, label) {
   if (vp === 'phone') await noSideScroll(page, `${label} Full agent`);
   await shot(page, `${label}-full-agent`);
   await cleanCheck(page, `${label} Full agent`);
+}
+
+// ── 0.69: Managed Secure Access readiness ──────────────────────────────────
+// A third business of its own, so no other screen's counts move: one signed
+// 0.69 computer whose stored preflight is a lab-tested RustDesk with every
+// read answered (Compatible). Its name carries no TAG, so the device list,
+// the palette and the map never meet it.
+async function seedMsa(f) {
+  const C = await prisma.customer.create({ data: { tenantId: f.tenant.id, name: `RDY ${sfx} Readiness` } });
+  created.businesses.push(C.id);
+  const ready = await prisma.endpoint.create({ data: {
+    tenantId: f.tenant.id, customerId: C.id, name: `RDY-${sfx}-READY`, hostname: `rdy-${sfx}.corp.example.com`, platform: 'Windows', osVersion: 'Windows 11 Pro',
+    status: 'ACTIVE', isOnline: true, isManaged: true, accessMode: 'COMPANY_WIDE', lastSeenAt: new Date(), deviceClass: 'WORKSTATION',
+    updateChannel: 'signed', signedSeenAt: new Date(), agentVersion: '0.69.0', ipAddress: '10.20.0.9',
+  } });
+  const keys = Object.fromEntries(['access-mode', 'enable-keyboard', 'enable-clipboard', 'enable-file-transfer', 'enable-audio', 'enable-tunnel',
+    'enable-remote-restart', 'approve-mode', 'verification-method', 'allow-auto-disconnect', 'auto-disconnect-timeout'].map((k) => [k, 'ok']));
+  await prisma.rustdeskPreflight.create({ data: {
+    endpointId: ready.id, checkedAt: new Date(Date.now() - 3600_000), schema: 'rem0te-rustdesk-preflight/1', installed: true, expectedPath: true,
+    version: '1.4.7+65', build: 'flutter', service: 'running', cli: 'ok', keys, keysOk: 11, durationMs: 1300, agentVersion: '0.69.0',
+  } });
+  return { C, ready };
+}
+
+/**
+ * Remote access readiness (0.69), as the Platform Admin, at both widths and
+ * in both themes: the device card on a Compatible computer and on the main
+ * (standard agent, Unsupported) one, each leading with "Readiness only";
+ * its link to Devices → Remote access readiness; the counts; filtering by a
+ * count (wait for the rows the click must produce: settled() only covers the
+ * first load); the Devices tab is current; no sideways scroll at 375 px.
+ */
+async function msaReadinessUi(page, f, vp, theme, label) {
+  const NOTE = 'Readiness only — Managed Secure Access is not available yet; nothing has changed on this computer.';
+  const cardState = async () => {
+    const card = page.getByTestId('msa-readiness-card');
+    await card.waitFor({ timeout: 15_000 });
+    await page.getByTestId('msa-card-state').waitFor({ timeout: 15_000 }).catch(() => {});
+    return { card, state: await page.getByTestId('msa-card-state').getAttribute('data-state').catch(() => null), text: await card.innerText().catch(() => '') };
+  };
+  await go(page, `/endpoints/${f.msa.ready.id}`);
+  let c = await cardState();
+  check(c.state === 'compatible' && c.text.includes(NOTE) && /lab-tested release/.test(c.text) && /11 of 11 answered/.test(c.text) && /1\.4\.7\+65/.test(c.text) && /not managed now/.test(c.text),
+    `${label}: the device card says Readiness only first, then Compatible with its reasons and facts`, c.text.slice(0, 500));
+  if (vp === 'phone') await noSideScroll(page, `${label} readiness card`);
+  await shot(page, `${label}-msa-card`);
+  await go(page, `/endpoints/${f.main.id}`);
+  c = await cardState();
+  check(c.state === 'unsupported' && c.text.includes(NOTE) && /standard agent/.test(c.text), `${label}: a standard-agent computer reads Unsupported, with the same note`, c.text.slice(0, 300));
+  await c.card.getByTestId('msa-card-fleet-link').click();
+  await page.waitForURL((u) => u.pathname === '/endpoints/remote-readiness', { timeout: 15_000 });
+  await hydrated(page); await settled(page);
+  await page.getByTestId('msa-fleet-counts').waitFor({ timeout: 15_000 }).catch(() => {});
+  const h1 = await page.locator('main h1').first().innerText().catch(() => '');
+  const note = await page.getByTestId('msa-fleet-note').innerText().catch(() => '');
+  const compat = Number((await page.getByTestId('msa-count-compatible').innerText().catch(() => '0')).split('\n')[0]);
+  check(h1 === 'Remote access readiness' && /nothing has changed on any computer/.test(note) && compat >= 1 && await page.locator('[data-testid^="msa-count-"]').count() === 4,
+    `${label}: Remote access readiness opens from the card: the note, four counts, Compatible ≥ 1`, JSON.stringify({ h1, note, compat }));
+  await page.getByTestId('msa-count-compatible').click();
+  await page.waitForFunction(() => {
+    const rows = [...document.querySelectorAll('[data-testid="msa-fleet-rows"] li')];
+    return rows.length > 0 && rows.every((r) => r.getAttribute('data-state') === 'compatible');
+  }, null, { timeout: 15_000 }).catch(() => {});
+  const rows = await page.locator('[data-testid="msa-fleet-rows"] li').evaluateAll((els) => els.map((e) => ({ s: e.getAttribute('data-state'), t: e.textContent ?? '' })));
+  check(rows.length >= 1 && rows.every((r) => r.s === 'compatible') && rows.some((r) => r.t.includes(`RDY-${sfx}-READY`)) && await page.getByTestId('msa-count-compatible').getAttribute('aria-pressed') === 'true',
+    `${label}: clicking Compatible lists only compatible computers, ours among them`, JSON.stringify(rows.slice(0, 5)));
+  await page.getByTestId('msa-filter-clear').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="msa-fleet-rows"] li')].some((r) => r.getAttribute('data-state') !== 'compatible'), null, { timeout: 15_000 }).catch(() => {});
+  const states = await page.locator('[data-testid="msa-fleet-rows"] li').evaluateAll((els) => [...new Set(els.map((e) => e.getAttribute('data-state')))]);
+  check(states.includes('unsupported') && states.every((s) => ['unsupported', 'upgrade_available', 'compatible', 'unknown'].includes(s)), `${label}: Show all brings the rest back, and no computer is managed`, JSON.stringify(states));
+  const current = await page.locator('[data-section-tabs="devices"] a[aria-current="page"]').innerText().catch(() => null);
+  check(current === 'Remote access readiness', `${label}: Remote access readiness is the current Devices tab`, String(current));
+  await themeCheck(page, theme, `${label} Remote access readiness`);
+  if (vp === 'phone') await noSideScroll(page, `${label} Remote access readiness`);
+  await shot(page, `${label}-remote-readiness`);
+  await cleanCheck(page, `${label} Remote access readiness`);
 }
 
 /**
@@ -2643,6 +2720,7 @@ async function main() {
   check(h.status < 500, `web on ${WEB}, its /api rewrite reaching the suite's API`, `HTTP ${h.status}`);
   const f = await seed();
   f.c = await seed035(f);
+  f.msa = await seedMsa(f);
   if (process.env.UI_HOLD === '1') {
     // Debugging only: leave the stack and fixtures up until interrupted.
     console.log(`  holding: ${WEB}  admin ${f.admin.email} / owner ${f.owner.email}  password in UI_HOLD_PW_FILE`);

@@ -380,6 +380,22 @@ try {
             if ([string]$po.scannedAt -and ($acked -cne [string]$po.scannedAt)) { $body['patchPosture'] = $po }
         }
     }
+} catch {}
+# RustDesk preflight (0.69): the agent's last read-only Managed Secure Access
+# readiness check, sent until the portal acknowledges that check.
+$MSA_DIR = 'C:\\ProgramData\\Rem0te\\msa'
+$PREFLIGHT_ACK = Join-Path $MSA_DIR 'preflight.acked'
+try {
+    $mf = Join-Path $MSA_DIR 'preflight.json'
+    if (Test-Path -LiteralPath $mf) {
+        $mj = Get-Content -Raw -LiteralPath $mf -ErrorAction Stop
+        if ($mj.Length -le 8000) {
+            $mo = $mj | ConvertFrom-Json
+            $macked = ''
+            try { $macked = ([string](Get-Content -Raw -LiteralPath $PREFLIGHT_ACK -ErrorAction Stop)).Trim() } catch {}
+            if ([string]$mo.checkedAt -and ($macked -cne [string]$mo.checkedAt)) { $body['rustdeskPreflight'] = $mo }
+        }
+    }
 } catch {}`,
     // Each delivered envelope is handed to the signed agent, which verifies
     // the signature against keys from the signed update chain, the target, the
@@ -433,6 +449,25 @@ try {
         if (-not $last -or ((Get-Date).ToUniversalTime() - $last).TotalMinutes -ge 30) {
             Set-Content -LiteralPath $stamp -Value '' -Encoding ASCII
             Start-Process -FilePath $agentExe -ArgumentList @('patch-scan') -WindowStyle Hidden
+        }
+    }
+} catch {}
+try {
+    $ma = [string]$resp.data.rustdeskPreflightAck
+    if ($ma -cmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$') { Set-Content -LiteralPath $PREFLIGHT_ACK -Value $ma -Encoding ASCII }
+} catch {}
+try {
+    # The RustDesk preflight (0.69): read-only, started at most every 30
+    # minutes; the agent itself runs it at most every 6 hours, or when the
+    # installed rustdesk.exe changed.
+    if (Test-Path -LiteralPath $agentExe) {
+        if (-not (Test-Path -LiteralPath $MSA_DIR)) { New-Item -ItemType Directory -Force -Path $MSA_DIR | Out-Null }
+        $mstamp = Join-Path $MSA_DIR 'preflight.started'
+        $mlast = $null
+        try { $mlast = (Get-Item -LiteralPath $mstamp -ErrorAction Stop).LastWriteTimeUtc } catch {}
+        if (-not $mlast -or ((Get-Date).ToUniversalTime() - $mlast).TotalMinutes -ge 30) {
+            Set-Content -LiteralPath $mstamp -Value '' -Encoding ASCII
+            Start-Process -FilePath $agentExe -ArgumentList @('rustdesk-preflight') -WindowStyle Hidden
         }
     }
 } catch {}`,

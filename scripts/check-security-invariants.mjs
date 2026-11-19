@@ -6308,6 +6308,125 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'e2e-alert-quality-rules.mjs in run-e2e.sh, unit-alert-quality-rules.mjs in CI');
 }
 
+// ── §80 (0.69): Managed Secure Access readiness — read-only, signed, never managed ──
+//     Build step 2 of docs/managed-secure-access.md. The signed agent reads
+//     an installed RustDesk and reports; the portal stores the report and
+//     shows a readiness state. Nothing changes on any computer:
+//       - the agent's preflight builds its argv only through msa.ReadArgs —
+//         exactly {"--option", <key on the closed list>}, never a value — and
+//         nothing in the preflight names `--password`;
+//       - it runs only %ProgramFiles%\RustDesk\rustdesk.exe by its absolute
+//         path, through its one exec site (no shell), only when that file is
+//         installed and is what the RustDesk service runs; the service is
+//         opened with query rights only; no path comes from the heartbeat;
+//       - the portal accepts the block only from an authenticated heartbeat
+//         on the signed channel that may act (§64), after the not-may-act and
+//         pooled returns; only MsaService writes the table; a malformed block
+//         is dropped (strict zod), never an error;
+//       - msa/readiness.ts is pure and cannot produce managed,
+//         managed_verified or enforcement_failure, and never says verified;
+//       - the readiness routes are GETs under computers:view, reading
+//         computers only through endpointVisibilityWhere.
+{
+  console.log('\n§80 Managed Secure Access readiness');
+  const J = JSON.stringify;
+  const goMsa = read('tools/windows-installer/internal/msa/preflight.go');
+  const goWin = read('tools/windows-installer/rustdesk_preflight_windows.go');
+  const goMain = read('tools/windows-installer/main.go');
+  const ws = read('apps/api/src/public/windows-script.ts');
+  const pre = read('apps/api/src/msa/preflight.ts');
+  const rd = read('apps/api/src/msa/readiness.ts');
+  const svc = read('apps/api/src/msa/msa.service.ts');
+  const ctl = read('apps/api/src/msa/msa.controller.ts');
+  const enr = read('apps/api/src/enrollment/enrollment.service.ts');
+  const dto = read('apps/api/src/enrollment/dto/enrollment.dto.ts');
+  const mig = read('apps/api/prisma/migrations/0087_rustdesk_preflight/migration.sql');
+  const strip = (s) => s.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+
+  const goKeys = [...(/var Keys = \[\]string\{([^}]*)\}/.exec(goMsa)?.[1] ?? '').matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
+  const tsKeys = [...(/export const PREFLIGHT_KEYS = \[([^\]]*)\]/.exec(pre)?.[1] ?? '').matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
+  const readArgs = goMsa.slice(goMsa.indexOf('func ReadArgs('), goMsa.indexOf('}', goMsa.indexOf('return []string{"--option", key}')) + 1);
+  check('the preflight reads only: ReadArgs is exactly {"--option", key} for the closed list (the same eleven keys on the agent and the portal), nil otherwise',
+    goKeys.length === 11 && J(goKeys) === J(tsKeys)
+      && /if !isKey\(key\) \{\n\s*return nil\n\s*\}\n\s*return \[\]string\{"--option", key\}/.test(readArgs)
+      && (goMsa.match(/\[\]string\{"--option"/g) ?? []).length === 1,
+    `agent keys ${J(goKeys)}; portal keys ${J(tsKeys)}`);
+  const goFiles = [];
+  (function gw(dir) {
+    for (const n of readdirSync(join(ROOT, dir))) {
+      const rel = `${dir}/${n}`;
+      if (statSync(join(ROOT, rel)).isDirectory()) gw(rel); else if (n.endsWith('.go') && !n.endsWith('_test.go')) goFiles.push(rel);
+    }
+  })('tools/windows-installer');
+  const optionSites = goFiles.filter((f) => /"--option"/.test(strip(read(f))));
+  const pwInPreflight = ['tools/windows-installer/internal/msa', 'tools/windows-installer/rustdesk_preflight_windows.go']
+    .flatMap((p) => goFiles.filter((f) => f === p || f.startsWith(`${p}/`))).filter((f) => /--password/.test(read(f)));
+  check('nothing in the preflight names --password, and only the preflight names --option',
+    pwInPreflight.length === 0 && J(optionSites) === J(['tools/windows-installer/internal/msa/preflight.go', 'tools/windows-installer/rustdesk_preflight_windows.go']),
+    `--password in ${J(pwInPreflight)}; --option in ${J(optionSites)}`);
+  const execs = [...strip(goWin).matchAll(/exec\.\w+\(/g)];
+  check('one exec site: the installed rustdesk.exe by absolute path with msa.ReadArgs, an argument array, no shell, no window, output capped',
+    execs.length === 1 && /cmd := exec\.CommandContext\(ctx, r\.exe, msa\.ReadArgs\(args\[1\]\)\.\.\.\)/.test(goWin)
+      && /if len\(args\) != 2 \|\| args\[0\] != "--option" \|\| msa\.ReadArgs\(args\[1\]\) == nil \{/.test(goWin)
+      && /return filepath\.Join\(pf, "RustDesk", "rustdesk\.exe"\)/.test(goWin) && /exe := installedRustdeskExe\(\)\n\s*f, fp := preflightFacts\(exe\)\n\s*return msa\.Run\(ctx, preflightRunner\{exe: exe\}, f, time\.Now\), fp/.test(goWin)
+      && /CreationFlags: windows\.CREATE_NO_WINDOW/.test(goWin) && /cmd\.Stdout = out/.test(goWin)
+      && !/cmd\.exe|powershell|"\/c"/i.test(strip(goWin)),
+    'rustdesk_preflight_windows.go preflightRunner.Read / installedRustdeskExe / runPreflight');
+  check('it runs only when that exe is installed (no reparse point) and is what the RustDesk service runs; the service is opened with query rights only',
+    /if rep\.Installed && rep\.ExpectedPath \{/.test(goMsa) && /ExpectedPath: f\.Installed && f\.ExpectedPath,/.test(goMsa)
+      && /attrs&windows\.FILE_ATTRIBUTE_REPARSE_POINT != 0/.test(goWin)
+      && /windows\.OpenService\(scm, windows\.StringToUTF16Ptr\("RustDesk"\), windows\.SERVICE_QUERY_CONFIG\|windows\.SERVICE_QUERY_STATUS\)/.test(goWin)
+      && /windows\.OpenSCManager\(nil, nil, windows\.SC_MANAGER_CONNECT\)/.test(goWin)
+      && !/mgr\.Connect|ChangeServiceConfig|UpdateConfig|\.Control\(|\.Start\(|SERVICE_ALL_ACCESS/.test(strip(goWin)),
+    'internal/msa Run; rustdesk_preflight_windows.go rustdeskService');
+  check('no path comes from the heartbeat: the subcommand takes only --force, and the heartbeat starts it with no argument',
+    /if args\[0\] == "rustdesk-preflight" \{\n\s*return cmdRustdeskPreflight\(args\[1:\]\)/.test(goMain)
+      && /force := len\(args\) == 1 && args\[0\] == "--force"\n\s*if len\(args\) > 0 && !force \{/.test(goWin)
+      && /Start-Process -FilePath \$agentExe -ArgumentList @\('rustdesk-preflight'\) -WindowStyle Hidden/.test(ws) && !/'rustdesk-preflight', /.test(ws),
+    'main.go subcommand; cmdRustdeskPreflight; windows-script.ts');
+
+  const call = enr.indexOf('this.msa.recordPreflight(');
+  const guard = enr.lastIndexOf('if (', call);
+  check('the portal accepts the block only from an authenticated signed heartbeat that may act, after the not-may-act and pooled returns',
+    (enr.match(/this\.msa\.recordPreflight\(/g) ?? []).length === 1
+      && enr.slice(guard, call).startsWith("if (authenticated && mayAct && kind === 'signed' && dto.rustdeskPreflight !== undefined) {")
+      && call > enr.indexOf('if (authenticated && !mayAct) {') && call > enr.indexOf('if (authenticated && pooled) {')
+      && walk('apps/api/src').filter((f) => /\.recordPreflight\(/.test(read(f))).every((f) => /enrollment\/enrollment\.service\.ts$/.test(f)),
+    'enrollment.service.ts heartbeat');
+  const writers = walk('apps/api/src').filter((f) => /rustdeskPreflight\.(create|update|updateMany|upsert|delete|deleteMany|createMany)\(/.test(read(f)));
+  check('only MsaService writes RustdeskPreflight; a malformed block is dropped, never an error to any agent',
+    J(writers.map((f) => f.replace(/^.*apps\/api\/src\//, ''))) === J(['msa/msa.service.ts'])
+      && /@Allow\(\) rustdeskPreflight\?: unknown;/.test(dto) && /export const Preflight = z\.strictObject\(\{/.test(pre) && /keys: z\.strictObject\(keyShape\),/.test(pre)
+      && /const p = Preflight\.safeParse\(raw\);\n\s*if \(!p\.success\) return null;/.test(pre) && /const p = parsePreflight\(raw, now\.getTime\(\)\);\n\s*if \(!p\) return null;/.test(svc),
+    `writers: ${writers.join(', ')}`);
+  const rdImports = [...rd.matchAll(/^import [\s\S]*? from '([^']+)';/gm)].map((m) => m[1]);
+  const decide = rd.slice(rd.indexOf('export function decideReadiness'));
+  const pureDeps = ['apps/api/src/common/connectivity.ts', 'apps/api/src/common/platform.ts'].every((f) => !/^import /m.test(read(f)));
+  check('readiness.ts is pure and cannot produce a managed state, or say verified',
+    J(rdImports) === J(['../common/connectivity', '../common/platform']) && pureDeps && !/process\.env|fetch\(|prisma/i.test(rd)
+      && /export const PRODUCIBLE_STATES = \['unsupported', 'upgrade_available', 'compatible', 'unknown'\] as const/.test(rd)
+      && /state: ProducibleState;/.test(rd) && /verified: false;/.test(rd) && /state, label: STATE_LABEL\[state\], reasons, verified: false,/.test(decide)
+      && !/'managed'|'managed_verified'|'enforcement_failure'/.test(decide),
+    `imports: ${rdImports.join(', ')}`);
+  const routes = [...ctl.matchAll(/@(Get|Post|Put|Patch|Delete)\(/g)].map((m) => m[1]);
+  check('the readiness routes are GETs under computers:view, reading computers only through endpointVisibilityWhere',
+    J(routes) === J(['Get', 'Get']) && (ctl.match(/@RequireCapability\(CAP\.COMPUTERS_VIEW\)/g) ?? []).length === 2
+      && /@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)/.test(ctl)
+      && /const vis = this\.acl\.endpointVisibilityWhere\(actor, businessId\);\n\s*const rows = await this\.prisma\.endpoint\.findMany\(\{\n\s*where: \{ AND: \[vis, /.test(svc)
+      && /await this\.acl\.assertEndpointInScope\(actor, endpointId, 'computers:view'\);\n\s*const r = await this\.prisma\.endpoint\.findFirst\(\{ where: \{ AND: \[\{ id: endpointId \}, this\.acl\.endpointVisibilityWhere\(actor\)\] \}/.test(svc)
+      && (svc.match(/this\.prisma\.endpoint\.find/g) ?? []).length === 2,
+    'msa.controller.ts / msa.service.ts');
+  check('0087 CHECKs the schema, version, build, service, cli, counts and not_run',
+    ['RustdeskPreflight_schema_check', 'RustdeskPreflight_version_check', 'RustdeskPreflight_build_check', 'RustdeskPreflight_service_check',
+      'RustdeskPreflight_cli_check', 'RustdeskPreflight_keys_check', 'RustdeskPreflight_keysOk_check', 'RustdeskPreflight_not_run_check'].every((c) => mig.includes(`"${c}" CHECK`))
+      && /ON DELETE CASCADE/.test(mig),
+    '0087 migration');
+  check('MSA readiness: the suites prove it',
+    / msa-readiness;/.test(read('scripts/run-e2e.sh')) && /unit-msa-readiness\.mjs/.test(read('.github/workflows/ci.yml'))
+      && /TestLabRustdeskPreflight/.test(read('.github/workflows/lab-windows.yml')),
+    'e2e-msa-readiness.mjs in run-e2e.sh, unit-msa-readiness.mjs in CI, TestLabRustdeskPreflight in the Windows lab');
+}
+
 // ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──
 //     A dozen suites fell back to http://127.0.0.1:3001 when API_BASE was
 //     unset. Run by hand with only DATABASE_URL set, one wrote its fixtures to

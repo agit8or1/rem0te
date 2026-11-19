@@ -51,6 +51,31 @@ jobs:
         run: |
           & "$env:GITHUB_WORKSPACE\tools\lab\windows\rustdesk-lab.ps1" -Version '${{ matrix.version }}' -Part "$env:RUNNER_TEMP\lab-part\rustdesk-${{ matrix.version }}.json"
           exit $LASTEXITCODE
+      # 0.69.0: the agent's read-only RustDesk preflight (Managed Secure
+      # Access readiness) against the release just installed — as this
+      # administrator, and as SYSTEM through the real rem0te-agent.exe run
+      # from a scheduled task. It only reads (`--option <key>`, no value), so
+      # running it after the probe changes nothing. 1.3.9 is never installed.
+      - uses: actions/setup-go@v7
+        if: matrix.version != '1.3.9'
+        with:
+          go-version-file: tools/windows-installer/go.mod
+          cache-dependency-path: tools/windows-installer/go.sum
+      - name: Agent RustDesk preflight ${{ matrix.version }} (read-only)
+        if: matrix.version != '1.3.9'
+        working-directory: tools/windows-installer
+        shell: powershell
+        env:
+          REM0TE_LAB: '1'
+          REM0TE_LAB_RUSTDESK: ${{ matrix.version }}
+          REM0TE_LAB_EVIDENCE: ${{ runner.temp }}\lab-part\preflight-evidence-${{ matrix.version }}.jsonl
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\lab-part" | Out-Null
+          go build -o "$env:RUNNER_TEMP\rem0te-agent.exe" .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:REM0TE_LAB_AGENT_EXE = "$env:RUNNER_TEMP\rem0te-agent.exe"
+          go test -tags labwindows -count=1 -v -timeout 15m -run '^TestLabRustdeskPreflight$' .
+          exit $LASTEXITCODE
       - name: Keep the part
         if: always()
         uses: actions/upload-artifact@v7

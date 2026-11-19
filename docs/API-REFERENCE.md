@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **609** of them across
-**90** controllers.
+integration, under `/api/integration/v1`). There are **611** of them across
+**91** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -588,6 +588,15 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/monitoring/ticket-policy` | signed in | — |
 | `PUT` | `/api/v1/monitoring/ticket-policy` | signed in | — |
 | `DELETE` | `/api/v1/monitoring/ticket-policy` | signed in | — |
+
+## Msa
+
+`apps/api/src/msa/msa.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/msa/readiness` | signed in | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/msa/readiness/:endpointId` | signed in | `COMPUTERS_VIEW` |
 
 ## Notes
 
