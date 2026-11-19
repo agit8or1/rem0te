@@ -391,7 +391,7 @@ check(
   check('no portal module imports the approval signer', reachIn.length === 0, `imports it: ${reachIn.join(', ')}`);
   const ctl = read('apps/api/src/actions/actions.controller.ts');
   const routes = [...ctl.matchAll(/@(?:Get|Post|Put|Patch|Delete)\('([^']*)'\)/g)].map((m) => m[1]);
-  check('the portal has no approve route', routes.length > 0 && !routes.some((r) => /approv|sign/i.test(r)) && !walk('apps/api/src').filter((f) => /controller\.ts$/.test(f)).some((f) => /@(?:Post|Put|Patch)\('[^']*approve/i.test(read(f)) && !/trust|grant|elevation|technician|support/i.test(f)),
+  check('the portal has no approve route', routes.length > 0 && !routes.some((r) => /approv|sign/i.test(r)) && !walk('apps/api/src').filter((f) => /controller\.ts$/.test(f)).some((f) => /@(?:Post|Put|Patch)\('[^']*approve/i.test(read(f)) && !/trust|grant|elevation|technician|support|alert-quality/i.test(f)),
     `actions routes: ${routes.join(', ')}`);
   check('the portal never reads an approval private key', !portal.some((f) => /APPROVAL_SIGNER_DIR|signing\.key|loadSigningKey/.test(read(f))),
     'only the signer may load the job-approval key');
@@ -4518,6 +4518,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'enrollment/enrollment.service.ts': ['enrollment.create'],
     'integration/integration-admin.controller.ts': ['technicians.manage'],
     'monitoring/monitoring.controller.ts': ['monitoring.autoticket', 'monitoring.notify'],
+    'monitoring/alert-quality.controller.ts': ['monitoring.qualityrule'],
     'offboarding/offboarding.controller.ts': ['permissions.change'],
     'passkeys/passkeys.controller.ts': ['passkey.manage'],
     'patching/patching.controller.ts': ['patching.policy'],
@@ -6193,6 +6194,118 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('alert classification: the suites prove it',
     / alert-quality /.test(read('scripts/run-e2e.sh')) && /unit-alert-classification\.mjs/.test(read('.github/workflows/ci.yml')),
     'e2e-alert-quality.mjs in run-e2e.sh, unit-alert-classification.mjs in CI');
+}
+
+// ── §79 (0.67): false positives and alert quality rules ─────────────────────
+//     A report of a false positive is a person's opinion about one alert. It
+//     never changes a monitor or a rule, however many people make it. A rule
+//     that suppresses, downgrades or holds back alerts applies only once it
+//     was tested against stored history and approved, and never crosses a
+//     business:
+//       - quality-rules.ts is pure (node:crypto, zod, ./engine, ./classify);
+//         a rule applies only while `active` (and unexpired); a pending rule
+//         is counted in the shadow, never applied; every scope stays in its
+//         own business, and only a platform/OS-everywhere/global-monitor rule
+//         reaches more than one;
+//       - the false-positive service writes no monitor and no rule; its audit
+//         meta carries no comment;
+//       - only QualityRulesService creates or changes a rule's status; the
+//         engine writes counters only, by conditional updateMany;
+//       - a rule for every business is a Platform Admin's; `allowBroad` is a
+//         Platform Admin's; every create and edit runs the narrowness check;
+//       - approving needs a current simulation, accepted dangerous matches,
+//         a different second approver for a high-risk rule, and
+//         assertFresh('monitoring.qualityrule') after those checks and before
+//         the first write; reject and rollback never ask;
+//       - rules apply on the ingest path after the events are recorded and
+//         before the threshold, and before a threshold alert is raised — so
+//         before any notification or ticket;
+//       - expiry runs only inside the monitoring sweep; admin mail goes only
+//         to confirmed recipients and stops under a `notifications` pause;
+//       - 0086 holds the one-active-rule index, the approval and
+//         second-approver CHECKs and the same-business trigger.
+{
+  console.log('\n§79 false positives and alert quality rules');
+  const qr = read('apps/api/src/monitoring/quality-rules.ts');
+  const eng = read('apps/api/src/monitoring/quality-engine.service.ts');
+  const svc = read('apps/api/src/monitoring/quality-rules.service.ts');
+  const fp = read('apps/api/src/monitoring/false-positive.service.ts');
+  const ctl = read('apps/api/src/monitoring/alert-quality.controller.ts');
+  const ms = read('apps/api/src/monitoring/monitoring.service.ts');
+  const tk = read('apps/api/src/monitoring/alert-tickets.service.ts');
+  const mig = read('apps/api/prisma/migrations/0086_alert_quality_rules/migration.sql');
+  const J = JSON.stringify;
+  const imports = [...qr.matchAll(/^import [\s\S]*? from '([^']+)';/gm)].map((m) => m[1]);
+  check('quality-rules.ts: pure — node:crypto, zod, ./engine and ./classify only; no clock, environment or network',
+    J(imports) === J(['node:crypto', 'zod', './engine', './classify']) && !/process\.env|fetch\(|Date\.now\(/.test(qr),
+    `imports: ${imports.join(', ')}`);
+  const covers = qr.slice(qr.indexOf('export function scopeCovers'), qr.indexOf('export function eventMatches'));
+  check('a rule applies only while active and unexpired; a pending rule is only counted; no scope crosses a business',
+    /export const inForce = \(r: QualityRuleLike, now: Date\) => r\.status === 'active' && /.test(qr)
+      && /const live = rules\.filter\(\(r\) => inForce\(r, now\)\);/.test(qr) && /const shadow = rules\.filter\(\(r\) => r\.status === 'pending'\);/.test(qr)
+      && /pickRule\(live, c, d\)/.test(qr) && /pickRule\(rules\.filter\(\(r\) => inForce\(r, now\)\), c, null\)/.test(qr)
+      && /case 'endpoint': return r\.endpointId === c\.endpointId && r\.customerId === c\.customerId;/.test(covers)
+      && /case 'group': return !!r\.groupId && c\.groupIds\.has\(r\.groupId\) && r\.customerId === c\.customerId;/.test(covers)
+      && /case 'business': return !!r\.customerId && r\.customerId === c\.customerId;/.test(covers)
+      && /case 'platform': return r\.customerId === null;/.test(covers) && /default: return false;/.test(covers),
+    'quality-rules.ts inForce / adjustSamples / adjustThreshold / scopeCovers');
+  const fpMeta = fp.slice(fp.indexOf("action: 'ALERT_FALSE_POSITIVE_REPORTED'"), fp.indexOf("action: 'ALERT_FALSE_POSITIVE_REPORTED'") + 600);
+  check('a false-positive report writes no monitor and no rule, and its audit meta carries no comment',
+    !/monitorRule\.(create|update|updateMany|upsert|delete|deleteMany)\(/.test(fp) && !/alertQualityRule\.(create|update|updateMany|upsert|delete|deleteMany)\(/.test(fp)
+      && fpMeta.length > 100 && !/comment/.test(fpMeta.slice(fpMeta.indexOf('meta:'), fpMeta.indexOf('});'))),
+    'false-positive.service.ts');
+  const writers = walk('apps/api/src').filter((f) => /alertQualityRule\.(create|update|upsert|delete|deleteMany)\(/.test(read(f)));
+  const engWrites = [...eng.matchAll(/alertQualityRule\.(\w+)\(\{ where: \{ id: h\.ruleId, status: '(\w+)' \}, data: \{ ([^}]*)/g)];
+  check('only QualityRulesService creates or changes a rule; the engine writes counters only, conditionally',
+    J(writers.map((f) => f.replace(/^.*apps\/api\/src\//, ''))) === J(['monitoring/quality-rules.service.ts'])
+      && engWrites.length === 2 && engWrites.every((m) => m[1] === 'updateMany' && !/status|behaviour|match:|scope/.test(m[3]))
+      && !/alertQualityRule\.(create|update|upsert|delete)\(/.test(eng),
+    `writers: ${writers.join(', ')}; engine writes: ${engWrites.length}`);
+  check('a rule for every business, and allowBroad, are a Platform Admin\'s; create and edit run the narrowness and expiry checks',
+    /if \(customerId === null\) this\.platformOnly\(a\);\n\s*else this\.admin\.assertConfigure\(a, customerId\);/.test(svc)
+      && /if \(!a\.isPlatformAdmin \|\| a\.technician\) throw new ForbiddenException\(\{ code: 'PLATFORM_ADMIN_ONLY'/.test(svc)
+      && /if \(d\.allowBroad && \(!a\.isPlatformAdmin \|\| a\.technician\)\)/.test(svc)
+      && /const np = narrownessProblem\(/.test(svc) && /const ep = expiryProblem\(d, now\);/.test(svc)
+      && (svc.match(/await this\.check\(a, /g) ?? []).length === 2,
+    'quality-rules.service.ts resolveScope / check');
+  const appr = svc.slice(svc.indexOf('  async approve('), svc.indexOf('  async reject('));
+  const at = (s) => appr.indexOf(s);
+  check('approve: scope, a current simulation, accepted dangerous matches, a different second approver, then fresh authentication, then the first write',
+    at('await this.assertManage(a, r);') > 0 && at("code: 'SIMULATION_REQUIRED'") > at('await this.assertManage(a, r);')
+      && at("code: 'DANGEROUS_MATCHES'") > at("code: 'SIMULATION_REQUIRED'") && at("code: 'SECOND_APPROVER_REQUIRED'") > at("code: 'DANGEROUS_MATCHES'")
+      && at('fresh();') > at("code: 'SECOND_APPROVER_REQUIRED'") && at('fresh();') < at('updateMany(') && (appr.match(/fresh\(\);/g) ?? []).length === 1
+      && /return \(\) => assertFresh\([^;]*\{ action: 'monitoring\.qualityrule' \}\);/.test(ctl)
+      && /this\.rules\.approve\(a, id, body, this\.fresh\(req\)\)/.test(ctl) && (ctl.match(/this\.fresh\(req\)/g) ?? []).length === 1
+      && !/fresh\(/.test(svc.slice(svc.indexOf('  async reject('), svc.indexOf('  private async applyToOpen('))),
+    'quality-rules.service.ts approve; alert-quality.controller.ts');
+  const ing = ms.slice(ms.indexOf("} else if (r.kind === 'EVENT_MATCH') {"), ms.indexOf('/** After a heartbeat wrote a live sample'));
+  const raise = ms.slice(ms.indexOf('let decided = cls ?? classifyThreshold(rule.severity);'), ms.indexOf('const severity = (decided.severity ?? rule.severity) as Severity;'));
+  check('rules apply after the events are recorded and before the threshold; a threshold alert\'s rule before it is raised',
+    ing.indexOf('this.recordFingerprints(') > 0 && ing.indexOf('this.quality.forEvents(') > ing.indexOf('this.recordFingerprints(')
+      && ing.indexOf('this.quality.forEvents(') < ing.indexOf('evaluateEvents(') && /classifyEvents\(view, \{ count: ev\.count, samples: ev\.samples \}, q\.adjust\)/.test(ing)
+      && raise.length > 0 && /const t = await this\.quality\.forThreshold\(/.test(raise) && /if \(t\.severity === null\) return null;/.test(raise),
+    'monitoring.service.ts ingestReport / raise');
+  check('expiry runs only in the monitoring sweep; nothing in the quality services has its own timer',
+    /onModuleInit\(\) \{ this\.mon\.addSweepStep\('quality-rules', \(now\) => this\.expiryPass\(now\)\); \}/.test(svc)
+      && ![svc, eng, fp].some((s) => /setInterval|setTimeout|@Cron|@Interval/.test(s)),
+    'quality-rules.service.ts onModuleInit');
+  const notify = svc.slice(svc.indexOf('  async notifyAdmins('), svc.indexOf('const RANKS'));
+  check('rule mail: a notifications pause stops it, only confirmed recipients, never throws',
+    notify.indexOf("activePause(this.prisma, 'notifications', r.customerId)") > 0 && /verifiedAt: \{ not: null \}/.test(notify) && /this\.email\.sendToRecipients\(/.test(notify)
+      && /\} catch \(e\) \{/.test(notify) && !/sample|message|comment/.test(notify.slice(notify.indexOf('const lines'), notify.indexOf('const admins'))),
+    'quality-rules.service.ts notifyAdmins');
+  check('tickets: one event signature on one computer gets one ticket a day, linked rather than resent',
+    /if \(!prior && a\.fingerprint && a\.kind === 'EVENT_MATCH' && await this\.linkDuplicate\(a, now\)\) continue;/.test(tk)
+      && tk.indexOf('this.linkDuplicate(a, now)') < tk.indexOf('this.psa.alertTicket(') && /status: 'gave_up', attempts: 1, lastAttemptAt: now, lastStatus: 'duplicate'/.test(tk),
+    'alert-tickets.service.ts');
+  check('0086: one active rule per scope and conditions, approvals, a distinct second approver, the same-business trigger',
+    /CREATE UNIQUE INDEX "AlertQualityRule_active_key" ON "AlertQualityRule"\("scopeKey", "matchKey"\) WHERE "status" = 'active';/.test(mig)
+      && /"secondApprovedById" <> "approvedById"/.test(mig) && /CREATE TRIGGER "AlertQualityRule_business" BEFORE INSERT OR UPDATE/.test(mig)
+      && /"simulatedRevision" = "revision"/.test(mig),
+    '0086 migration');
+  check('alert quality rules: the suites prove it',
+    / alert-quality-rules /.test(read('scripts/run-e2e.sh')) && /unit-alert-quality-rules\.mjs/.test(read('.github/workflows/ci.yml')),
+    'e2e-alert-quality-rules.mjs in run-e2e.sh, unit-alert-quality-rules.mjs in CI');
 }
 
 // ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──

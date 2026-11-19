@@ -1177,6 +1177,93 @@ async function alertExplanation(page, f, vp, label) {
   await cleanCheck(page, `${label} alert explanation`);
 }
 
+/**
+ * 0.67: Report false positive and the False positives & rules page. The
+ * first desktop run reports DS-HOME1's alert (recommending prevention, not
+ * resolving it, so the 0.66 checks still hold on later runs), proposes a rule
+ * from the recommendation, tests it and opens the approval dialog — which it
+ * cancels, so nothing is approved and the alert is unchanged. Every run checks
+ * the modal and the page draw without a console error or a side scroll.
+ */
+let fpReported = false;
+async function falsePositiveUi(page, f, vp, label) {
+  const al = f.c.dsAlert;
+  await go(page, `/alerts?alert=${al.id}`);
+  const open = page.getByTestId('fp-open').first();
+  await open.waitFor({ timeout: 20_000 }).catch(() => {});
+  await open.click();
+  const dlg = page.getByTestId('fp-dialog');
+  await dlg.getByTestId('fp-alert').waitFor({ timeout: 20_000 }).catch(() => {});
+  const t = await dlg.innerText().catch(() => '');
+  check(/does not turn off the monitor/.test(t) && /disk-errors/.test(t) && /Similar alerts/.test(t),
+    `${label}: Report false positive shows the alert, its monitor and similar alerts, and says it does not turn the monitor off`, t.replace(/\s+/g, ' ').slice(0, 300));
+  if (!fpReported) {
+    const reasons = await dlg.getByTestId('fp-reasons').locator('input[type="radio"]').count();
+    check(reasons === 8, `${label}: the dialog offers the eight reasons`, String(reasons));
+    check(await dlg.getByTestId('fp-submit').isDisabled(), `${label}: Report waits for a reason`);
+    await dlg.getByLabel('Known harmless event').check();
+    await dlg.getByTestId('fp-recommend').check();
+    const proposed = await dlg.getByTestId('fp-proposed').innerText().catch(() => '');
+    check(/a suggestion/.test(proposed), `${label}: recommending prevention shows the proposed handling as a suggestion`, proposed.slice(0, 200));
+    if (vp === 'phone') await noSideScroll(page, `${label} false-positive dialog`);
+    await dlg.getByTestId('fp-submit').click();
+    await dlg.waitFor({ state: 'detached', timeout: 20_000 }).catch(() => {});
+    fpReported = true;
+    const badge = page.getByTestId('alert-fp-count').first();
+    await badge.waitFor({ timeout: 20_000 }).catch(() => {});
+    check(/×1/.test(await badge.innerText().catch(() => '')), `${label}: the alert now says it was reported as a false positive once`);
+    const st = await prisma.monitorAlert.findUnique({ where: { id: al.id }, select: { state: true, severity: true } });
+    check(st?.state !== 'RESOLVED' && st?.severity === al.severity, `${label}: reporting without "Also resolve" left the alert open and unchanged`, JSON.stringify(st));
+  } else {
+    check(await dlg.getByTestId('fp-already').count() === 1, `${label}: a second look says you already reported it`);
+    if (vp === 'phone') await noSideScroll(page, `${label} false-positive dialog`);
+    await page.keyboard.press('Escape');
+  }
+  await cleanCheck(page, `${label} false-positive dialog`);
+
+  await go(page, '/alerts/quality');
+  await page.getByTestId('q-totals').waitFor({ timeout: 20_000 }).catch(() => {});
+  const totals = await page.getByTestId('q-totals').innerText().catch(() => '');
+  check(/False-positive reports/.test(totals) && /Rules awaiting approval/.test(totals), `${label}: False Positives & Rule Improvements shows its totals`, totals.replace(/\s+/g, ' ').slice(0, 200));
+  if (fpProposed) {
+    // Proposing converted the recommendation; the rule waits in the rules list, unapproved.
+    const row = page.getByTestId('q-rule-row').filter({ hasText: 'disk-errors' }).first();
+    await row.waitFor({ timeout: 20_000 }).catch(() => {});
+    check(/pending/.test(await row.innerText().catch(() => '')), `${label}: the proposed rule is listed as pending, not applied`);
+  }
+  const rec = page.locator('[data-testid="q-rec"][data-monitor="disk-errors"]').first();
+  if (!fpProposed) {
+    await rec.waitFor({ timeout: 20_000 }).catch(() => {});
+    check(/never approve anything/.test(await rec.innerText().catch(() => '')), `${label}: the recommendation card says reports never approve anything`);
+  }
+  if (vp === 'desktop' && !fpProposed) {
+    fpProposed = true;
+    await rec.getByTestId('q-rec-propose').click();
+    const ed = page.getByTestId('q-editor');
+    await ed.waitFor({ timeout: 10_000 });
+    await ed.getByTestId('q-editor-save').click();
+    const detail = page.getByTestId('q-rule-detail').first();
+    await detail.waitFor({ timeout: 20_000 }).catch(() => {});
+    check(/Not tested yet/.test(await detail.innerText().catch(() => '')) && await detail.getByTestId('q-approve').isDisabled(), `${label}: a proposed rule cannot be approved before it is tested`);
+    await detail.getByRole('button', { name: /Test proposed rule/ }).click();
+    await detail.getByTestId('q-sim').waitFor({ timeout: 30_000 }).catch(() => {});
+    const sim = await detail.getByTestId('q-sim').innerText().catch(() => '');
+    check(/Over the last \d+ days/.test(sim), `${label}: Test proposed rule shows what it would have done to stored alerts`, sim.slice(0, 200));
+    await detail.getByTestId('q-approve').click();
+    const ad = page.getByTestId('q-approve-dialog');
+    await ad.waitFor({ timeout: 10_000 }).catch(() => {});
+    check(/roll it back/.test(await ad.innerText().catch(() => '')), `${label}: the approval dialog says what the rule will do and that it can be rolled back`);
+    await ad.getByRole('button', { name: 'Cancel' }).click();
+    const row = await prisma.alertQualityRule.findFirst({ where: { customerId: f.B.id }, orderBy: { createdAt: 'desc' }, select: { status: true } });
+    check(row?.status === 'pending', `${label}: cancelling leaves the rule awaiting approval`, JSON.stringify(row));
+    const st = await prisma.monitorAlert.findUnique({ where: { id: al.id }, select: { state: true, severity: true } });
+    check(st?.state !== 'RESOLVED' && st?.severity === al.severity, `${label}: an unapproved rule did not touch the alert`, JSON.stringify(st));
+  }
+  if (vp === 'phone') await noSideScroll(page, `${label} false positives page`);
+  await cleanCheck(page, `${label} false positives page`);
+}
+let fpProposed = false;
+
 // ── 0.36 ────────────────────────────────────────────────────────────────────
 
 const FILL = { online: 'rgb(16, 185, 129)', agent_silent: 'rgb(245, 158, 11)', offline: 'rgb(100, 116, 139)' }; // emerald-500, amber-500, slate-500
@@ -1470,6 +1557,7 @@ async function combo(browser, f, vp, theme) {
     await filtersSheet(page, vp, label);
     await agentSilentUi(page, f, label);
     await alertExplanation(page, f, vp, label);
+    await falsePositiveUi(page, f, vp, label);
     if (vp === 'desktop') await mapMarkers(page, label);
     await savedViewAndBulk(page, f, vp, label);
     await palette(page, f, vp, label);

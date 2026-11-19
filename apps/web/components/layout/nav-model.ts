@@ -118,8 +118,12 @@ export const NAV: NavSection[] = [
     shortcut: ADD_DEVICE,
   },
   {
-    id: 'alerts', label: 'Alerts', icon: Siren, kind: 'link',
-    items: [{ href: '/alerts', label: 'Alerts', icon: Siren, show: (c) => c.can(CAP.ALERTS_VIEW) }],
+    // 0.67: a hub — the alerts, and False positives & rules (reports, recommendations, rules, quality checks).
+    id: 'alerts', label: 'Alerts', icon: Siren, kind: 'hub',
+    items: [
+      { href: '/alerts', label: 'Alerts', icon: Siren, show: (c) => c.can(CAP.ALERTS_VIEW) },
+      { href: '/alerts/quality', label: 'False positives & rules', icon: BadgeCheck, show: (c) => c.can(CAP.ALERTS_VIEW) },
+    ],
   },
   {
     id: 'automation', label: 'Automation', icon: FileCode2, kind: 'hub',

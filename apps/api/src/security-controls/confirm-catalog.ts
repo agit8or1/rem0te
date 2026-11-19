@@ -128,6 +128,9 @@ export const CONFIRM_CATALOG = [
   { key: 'monitoring.autoticket', group: 'Monitoring & notifications', label: 'Automatic tickets from alerts', default: 'off',
     prompt: 'change which alerts open tickets',
     description: 'Changing or removing the rule that opens a PSA ticket when an alert opens: tickets carry the alert and the computer name.' },
+  { key: 'monitoring.qualityrule', group: 'Monitoring & notifications', label: 'Approving alert quality rules', default: 'off',
+    prompt: 'approve an alert quality rule',
+    description: 'Approving a rule that suppresses, downgrades or holds back matching alerts. Rejecting or rolling one back never asks.' },
 
   // ── Reports & email ─────────────────────────────────────────────────────
   { key: 'email.relay', group: 'Reports & email', label: 'Email relay', default: 'off',

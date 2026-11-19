@@ -30,6 +30,8 @@ export interface ExplainInput {
   detail: unknown;
   classification: Classification | null;
   rule: { name: string; severity: 'INFO' | 'WARNING' | 'CRITICAL'; params: Record<string, unknown> } | null;
+  /** 0.67: the approved alert quality rules that changed this alert, by name. */
+  qualityRules?: { id: string; name: string }[];
 }
 
 const levelName = (l: number | null | undefined) => (typeof l === 'number' ? `${WINDOWS_LEVEL_NAMES[l] ?? `level ${l}`} (level ${l})` : 'an unknown level');
@@ -43,7 +45,15 @@ const CERTAINTY: Record<Basis, string> = {
   rule: 'Unverified: Rem0te does not recognise this event, so the severity is the one set on the monitor.',
   partial: 'Partly seen: the agent counted more matching events than it sent, so the rest could not be checked.',
   threshold: 'Monitor threshold: the monitor measured a value against its own limit and hysteresis.',
+  quality_rule: 'Alert quality rule: an approved rule for this scope changed the severity. It was tested against stored history and approved before it applied.',
 };
+
+/** 0.67: "An approved alert quality rule … lowered it", or nothing. */
+function ruleNote(a: ExplainInput): string {
+  const r = a.qualityRules ?? [];
+  if (!r.length) return '';
+  return ` An approved alert quality rule (${r.map((x) => `"${x.name}"`).join(', ')}) applies to it${a.rule && a.rule.severity !== a.severity ? ` and lowered it to ${sevWord(a.severity)}` : ''}; see False Positives & Rule Improvements.`;
+}
 
 const KIND_TEXT: Record<string, { what: (d: Record<string, unknown>, title: string) => string; action: string }> = {
   OFFLINE: { what: (d) => `The computer has not been heard from${typeof d.minutes === 'number' ? ` for ${d.minutes} minutes` : ''}: no agent heartbeat and RustDesk cannot reach it.`, action: 'Check whether it is switched off, asleep or off the network. If several computers at one site are offline, look at that site\'s internet connection.' },
@@ -71,10 +81,10 @@ export function explainAlert(a: ExplainInput): Explanation {
       whatHappened: t ? t.what(d, a.title) : a.title,
       whyGenerated: a.kind === 'SITE_OUTAGE'
         ? 'Rem0te groups offline alerts when at least three computers at a site, and at least half of it, are offline at once.'
-        : `The monitor "${ruleName}" (${a.ruleKey}) found the condition it watches for, past its threshold. Its severity is ${sevWord(a.severity)}.`,
+        : `The monitor "${ruleName}" (${a.ruleKey}) found the condition it watches for, past its threshold. Its severity is ${sevWord(a.severity)}.${ruleNote(a)}`,
       howSerious: a.severity === 'CRITICAL' ? 'Set as critical on the monitor: someone should look soon.' : a.severity === 'WARNING' ? 'Set as a warning on the monitor: worth looking at, rarely urgent.' : 'Set as information on the monitor: for the record.',
       recommendedAction: t?.action ?? 'Open the computer and check the condition the monitor describes.',
-      certainty: CERTAINTY.threshold,
+      certainty: c.basis === 'quality_rule' ? CERTAINTY.quality_rule : CERTAINTY.threshold,
       classification: { class: c.class, basis: c.basis, matched: null, matchedTitle: null, version: c.v, seen: 0, unseen: 0, benign: 0 },
     };
   }
@@ -107,8 +117,10 @@ export function explainAlert(a: ExplainInput): Explanation {
       : basis === 'level' ? `Windows logged the event as Information, so Rem0te made the alert ${sevWord(a.severity)} instead of the monitor's severity.`
         : basis === 'partial' ? `the newest event${benign ? ` is a known harmless pattern ("${benign.title}")` : ' was checked'}, but ${unseen} of ${count} matching events were not sent by the agent and could not be checked, so the alert stays ${sevWord(a.severity)}.`
           : basis === 'known_benign' ? 'every counted event matched a known harmless pattern.'
-            : `Rem0te does not recognise this event, so the alert has the monitor's severity, ${sevWord(a.severity)}.`)
-    + ((c?.reasons ?? []).some((r) => r.startsWith('recurring:')) ? ` It recurred ${count} times in one report, which raised it to ${sevWord(a.severity)}.` : '');
+            : basis === 'quality_rule' ? `an approved alert quality rule lowered it to ${sevWord(a.severity)}.`
+              : `Rem0te does not recognise this event, so the alert has the monitor's severity, ${sevWord(a.severity)}.`)
+    + ((c?.reasons ?? []).some((r) => r.startsWith('recurring:')) ? ` It recurred ${count} times in one report, which raised it to ${sevWord(a.severity)}.` : '')
+    + ruleNote(a);
 
   const serious =
     cls === 'BENIGN' ? 'Not a problem: a known harmless Windows event. Nothing needs doing.'

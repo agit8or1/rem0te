@@ -1514,6 +1514,44 @@ Behavioural proof: `e2e-alert-quality.mjs` (port 3921, in `run-e2e.sh`);
 unit: `unit-alert-classification.mjs` (in CI) and `unit-monitoring.mjs` with
 `PWSH`. **The samples block has never run on real Windows.**
 
+§79 (0.67) is false positives and alert quality rules. Reporting a false
+positive is a record, never a change: `FalsePositiveService.report` writes the
+report, may resolve that one alert and may count towards a recommendation; it
+writes no monitor and no rule, and its audit meta carries no comment.
+Recommendations rank by reports, reporters and computers and approve nothing.
+
+- **One pure module**, `monitoring/quality-rules.ts` (node:crypto, zod,
+  `./engine`, `./classify` only): the schemas, `RULE_TOO_BROAD`, risk,
+  precedence (endpoint > group > business > monitor > os > platform, then
+  conditions, then what keeps more), `inForce` (active and unexpired), and
+  `scopeCovers`, which never crosses a business.
+- **Only `QualityRulesService`** creates or changes an `AlertQualityRule`.
+  `QualityEngineService` caches rules for 30 s and writes only match
+  counters, conditionally. A pending rule is shadow: counted, never applied.
+- **Approval**, in order: scope (`assertConfigure`), a simulation of the
+  current revision under seven days old, `acceptDangerous` when it found
+  dangerous matches, a different second approver for a high-risk rule, then
+  `assertFresh` naming `monitoring.qualityrule` (default `off`), then the
+  first write. A platform rule and `allowBroad` are a Platform Admin's.
+  Reject and rollback never ask. Rollback restores a superseded predecessor.
+- **Where rules apply**: in `ingestReport` after fingerprints are recorded
+  and before the threshold, and in `raise()` for a threshold alert, so
+  notifications and PSA tickets see the result. A rule only lowers.
+- **Expiry** is a `MonitoringService.addSweepStep`; nothing in the quality
+  services has its own timer, so `MONITOR_SWEEP=off` stops it.
+- **Mail** goes only to confirmed recipients, stops under a `notifications`
+  pause, and never throws.
+- **Tickets**: `linkDuplicate` links one event signature on one computer to
+  its ticket for 24 hours instead of sending another.
+- **0086** holds one active rule per scope and conditions, the approval and
+  distinct-second-approver CHECKs, `simulatedRevision = revision` and the
+  same-business trigger.
+
+Behavioural proof: `e2e-alert-quality-rules.mjs` (ports 3931–3933, a loopback
+webhook and SMTP, `MONITOR_SWEEP` on, in `run-e2e.sh`); unit:
+`unit-alert-quality-rules.mjs` (in CI); `e2e-ui.mjs` drives the dialog and
+the page.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs
