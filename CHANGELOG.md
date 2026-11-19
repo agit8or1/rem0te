@@ -5,6 +5,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.68.2] — 2026-11-19 · *Nametag*
+
+**Every pull request now tests the server against older released signed agents, built from their release
+tags exactly as released. CI and documentation only; nothing changes on the server or any computer.**
+
+### Why
+
+A server release reaches the portal at once, but agents follow on their own schedule: the signed agent
+checks once a day, a computer can be off for weeks, and updates can be paused. On 2026-11-19 two production
+computers ran 0.64.0 while the server ran 0.67.0. Until now CI tested the server only against the agent
+built from the same commit, so a change that broke the agents actually installed would have passed.
+
+### What runs
+
+- `scripts/compat/supported-agents.json` lists the supported released signed agents (today v0.64.0, on
+  production computers, and v0.67.0, the previous release), the suites to run, documented known
+  incompatibilities (none), and retired versions with their reasons. A version leaves the list only by
+  moving to `retired`, so coverage cannot shrink unnoticed.
+- `scripts/compat-agents.sh <tag>` builds `rem0te-action-sim` (the agent's real Go decision code) from the
+  tag with `git archive`, builds the release tool from the commit under test, and runs that commit's
+  suites against its API on a scratch database: presets, approved actions, staged patching, maintenance
+  actions, patch policies, and service and process control. It refuses any database whose name lacks
+  `scratch` or `test`, and writes `evidence.json` (tag, server version and commit, each suite's result).
+- CI: `compat-matrix` reads the list, and one `compat (agent vX.Y.Z)` job per tag runs the script and
+  uploads its evidence. They are not required checks yet; that is the owner's decision once they have run
+  stably.
+
+Run by hand on 2026-11-19: v0.64.0 (against 0.67.0) and v0.67.0 (against this branch) each passed all 611 checks across the six suites.
+
+### What it does not prove
+
+The evidence is the simulator: the older agent's decisions against fake Windows services. It does not test
+that agent's Windows calls (that is the lab's job), the standard PowerShell agent or the Linux and macOS
+agents (their recorded request bodies, replayed per version, are next), RustDesk client versions, or
+ClientSt0r contract versions. `docs/compatibility.md` says the same.
+
+---
+
 ## [0.68.1] — 2026-11-19 · *Nametag*
 
 **Documentation: an evidence-graded readiness report, and the design for Managed Secure Access. No code
@@ -47,6 +85,7 @@ Windows first.
 
 ---
 
+||||||| parent of 9b2946c (v0.68.2: test every pull request against older released signed agents)
 ## [0.68.0] — 2026-11-19 · *Nametag*
 
 **A new computer's first inventory arrives within seconds of the installer finishing, and the device page lets

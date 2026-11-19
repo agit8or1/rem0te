@@ -58,3 +58,4 @@ __pycache__/
 /tools/windows-installer/**/*.pem
 /deploy/**/*.pem
 rem0te-repo/
+/.compat-logs/

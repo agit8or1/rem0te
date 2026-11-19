@@ -87,6 +87,7 @@ const ORDER = [
   ['server-sizing.md', 'Server sizing', 'Running the server', 'CPU, memory, disk and PostgreSQL for 50 to 5,000 computers, with measured heartbeat cost and database growth.'],
   ['data-retention.md', 'Data retention', 'Running the server', 'What ages out of the database, after how long, what is never removed (the audit log), and how to change it.'],
   ['architecture.md', 'Architecture', 'Running the server', 'How the pieces fit together.'],
+  ['compatibility.md', 'Compatibility testing', 'Running the server', 'How every release is tested against the older agents still installed, which versions are supported, and what a pass does and does not prove.'],
 ];
 const badGroup = ORDER.find(([, , g]) => !GROUPS.includes(g));
 if (badGroup) { console.error(`✗ ${badGroup[0]}: group "${badGroup[2]}" is not in GROUPS`); process.exit(1); }
