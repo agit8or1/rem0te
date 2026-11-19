@@ -1,4 +1,10 @@
-import { IsString, IsOptional, IsBoolean, IsIn, Matches } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsIn, Length, Matches, MaxLength } from 'class-validator';
+
+/** 0.68: a computer's nickname, its description and each alias. */
+export const NAME_MAX = 100;
+export const DESCRIPTION_MAX = 2000;
+export const ALIAS_MAX = 64;
+export const ALIASES_PER_COMPUTER = 20;
 
 export class CreateEndpointDto {
   @IsString() name!: string;
@@ -17,8 +23,10 @@ export class CreateEndpointDto {
 }
 
 export class UpdateEndpointDto {
-  @IsOptional() @IsString() name?: string;
-  @IsOptional() @IsString() description?: string;
+  // 0.68: the console's Rename sets these (the nickname and a short
+  // description). Bounded here; the service trims and refuses a blank name.
+  @IsOptional() @IsString() @Length(1, NAME_MAX) name?: string;
+  @IsOptional() @IsString() @MaxLength(DESCRIPTION_MAX) description?: string;
   @IsOptional() @IsString() customerId?: string;
   @IsOptional() @IsString() siteId?: string;
   @IsOptional() @IsString() hostname?: string;
@@ -34,7 +42,7 @@ export class AddTagDto {
 }
 
 export class AddAliasDto {
-  @IsString() alias!: string;
+  @IsString() @Length(1, ALIAS_MAX) alias!: string;
   @IsOptional() @IsBoolean() isPrimary?: boolean;
 }
 

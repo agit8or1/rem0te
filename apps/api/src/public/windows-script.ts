@@ -2108,6 +2108,13 @@ $(($diag | ForEach-Object { '    ' + $_ }) -join [Environment]::NewLine)
   Refusing to report success for a device nobody can connect to.
 "@ 22
 }
+# The first heartbeat now, not when the task first fires (0.68). schtasks
+# /SC MINUTE /MO 3 first runs three minutes after it is created, so the
+# inventory, the update scan and the agent's version reached the console
+# only then, and Add device sat on "Inventory - not received yet" for that
+# long. /Run starts the same task, as SYSTEM, once; it changes nothing else.
+try { schtasks /Run /TN 'Rem0teHeartbeat' *>$null; Log '  First heartbeat started.' } catch {}
+
 if ($rdId -and $registered) {
     Write-Host '  Rem0te installed successfully' -ForegroundColor Green
 } elseif ($rdId) {

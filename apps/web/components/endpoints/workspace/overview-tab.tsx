@@ -16,6 +16,7 @@ import { formatDate } from '@/lib/utils';
 import { ago, CHANGE_LABEL, openAlerts, type WorkspaceTab } from './device-model';
 import type { MonitoringView } from './use-device-data';
 import { personName, type SessionRow } from './history-tab';
+import { AliasEditor, OverviewNotes } from './device-naming';
 
 /**
  * The Overview summarises without sending anyone elsewhere: assignment, key
@@ -105,9 +106,7 @@ export function DeviceOverviewTab({
             </div>
           </Row>
           <Row label="Aliases">
-            <div className="flex flex-wrap gap-1 justify-end">
-              {aliases.length ? aliases.map((a) => <Badge key={a.id} variant="outline" className="text-xs font-mono">{a.alias}</Badge>) : '—'}
-            </div>
+            <AliasEditor endpointId={endpointId} aliases={aliases} />
           </Row>
           <Row label="Enrolled">{formatDate(ep.createdAt as string)}</Row>
         </SummaryCard>
@@ -164,6 +163,8 @@ export function DeviceOverviewTab({
             </ul>
           )}
         </SummaryCard>
+
+        <OverviewNotes endpointId={endpointId} onOpenHistory={() => onOpenTab('history')} />
       </div>
 
       <EndpointSpecs endpointId={endpointId} endpoint={ep} onOpenPatches={showAlertsAndPatches ? () => onOpenTab('patches') : undefined} />

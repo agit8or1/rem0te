@@ -5,6 +5,94 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.68.0] — 2026-11-19 · *Nametag*
+
+**A new computer's first inventory arrives within seconds of the installer finishing, and the device page lets
+you rename a computer, describe it, give it aliases and write notes on it. The device list's Health column now
+says Healthy, Warning, Issues or Unknown instead of "None".**
+
+### Fixed: Add device sat on "Inventory — not received yet"
+
+DSLAPTOP-2021 enrolled at 13:29:24 and its inventory came in at 13:32:10. For those three minutes, step 5 of
+Add device said "Inventory — not received yet — the agent sends it after its first heartbeat", with nothing
+to show that anything was happening. Two causes:
+
+- **The installer's own check-ins were handed the inventory request.** `Register`, the `Test-Registered`
+  poll (every 5 seconds for up to 90 while RustDesk registers) and the `Rem0teEnrollment` retry are
+  authenticated heartbeats with no live state. `collectForHeartbeat` staged the first inventory pass and
+  update scan on the first of them and handed both out on every one. The installer reads nothing in the
+  answer but the RustDesk registration, yet each hand-out counted towards the command's limit of four
+  (`MAX_DISPATCHES`). DSLAPTOP-2021's request had been handed out twice before the agent ever beat. A
+  RustDesk registration slower than about 15 seconds used all four: the request was then failed ("Handed
+  to this computer 4 times without a result … re-run the installer") and, being automatic, not asked
+  again for an hour (`FAILED_RETRY_HOURS`). The page polls for 20 minutes, so it never moved. Queued
+  collection work now goes only to a check-in that carries a live sample (`carriesLiveSample` in
+  `common/agent-identity.ts`: a user, uptime, boot time, CPU, memory or disk figure) or comes from the signed
+  agent. Every agent's heartbeat carries one; the installers' check-ins carry none. Nothing else about those
+  check-ins changes.
+- **The first heartbeat waited for the task's first run.** `schtasks /Create … /SC MINUTE /MO 3` first runs
+  the task three minutes after it is created. The install script now runs `schtasks /Run /TN Rem0teHeartbeat`
+  once, just before it reports success, so the first inventory pass and update scan are asked for and answered
+  as the installer finishes. The task, its schedule and its account are unchanged.
+
+Step 5 now says where the inventory is instead of "not received yet" whatever happened: "asked for at the
+agent's first check-in" before the agent has beaten, "asked for 1 minute ago; it arrives with the agent's
+next check-in" once it has, and the agent's own reason if the pass failed, with the Refresh inventory button
+to ask again. The enrolment status carries the automatic request's state (`device.inventoryAsk`: status,
+error and when it was handed out), only while no inventory has arrived.
+
+### New: rename a computer, describe it, aliases and notes on the device page
+
+The API has taken a computer's name, description and aliases since early releases, and notes have lived on
+the History tab, but the device page offered no way to change the first three and put notes where nobody
+looked.
+
+- **Rename** next to the computer's name opens *Name and description*. The name is how the computer appears
+  everywhere in Rem0te. The agent never overwrites it; the hostname stays its own field, shown in the
+  header whenever the two differ and still searchable, and *Use hostname* puts it back. The description
+  shows under the name.
+- **Aliases** on the Overview's Assignment card can be added and removed in place. They are searchable
+  (`alias:`).
+- **Notes** has its own card on the Overview: the latest three and a box to add one. Editing, and every
+  note, stay on History.
+
+All of it needs Edit computers. The server now trims and bounds what it stores: a name is 1–100 characters
+and never blank (`NAME_REQUIRED`), a description at most 2,000 (an empty one clears it), and an alias 1–64,
+at most 20 a computer, with no duplicate ignoring case (`409 ALIAS_EXISTS`, `TOO_MANY_ALIASES`). A rename
+is audited as `ENDPOINT_UPDATED` with the name before and after, a description change as
+`descriptionChanged` (never its text), and adding or removing an alias with the alias. Alias changes were
+not audited before.
+
+### Changed: Health says Healthy, Warning, Issues or Unknown
+
+The device list's Health column is the worst open monitoring alert. It said "None" when there was none,
+which read as "no health" rather than "nothing wrong". It now says:
+
+| Shown | When |
+|---|---|
+| **Issues** (red) | a critical alert is open |
+| **Warning** (amber) | a warning is open |
+| **Healthy** (green) | no open alert, or informational ones only, and the agent is reporting |
+| **Unknown** (outlined) | no warning or critical alert, but the agent is silent or the computer offline |
+
+"Unknown" is deliberate: an agent that is not reporting raises no alerts, so a quiet computer that has
+stopped checking in is not called healthy. An open warning or critical alert shows whether or not the
+computer is reporting. The tooltip gives the count. Sorting by Health is unchanged.
+
+### Tests
+
+- `e2e-add-device.mjs`: six installer check-ins are handed nothing and leave no command dispatched or failed;
+  the status says the inventory is not yet asked for, then asked for after the first real heartbeat.
+- `e2e-presets.mjs`: its dispatch-time re-check heartbeat carries a live figure, as a real one does.
+- `unit-agent-identity.mjs`: `carriesLiveSample` for Register, Test-Registered, a Windows heartbeat and a
+  posix heartbeat missing the user and uptime; with `PWSH`, the install scripts still parse.
+
+**Deploy:** the install script is built into the signed release, so `rem0te-signed-publish` carries the
+immediate first heartbeat to new signed installs; the legacy script is served by the portal and changes with
+the deploy. No migration.
+
+---
+
 ## [0.67.0] — 2026-11-19 · *Whetstone*
 
 **An alert that was not a real problem can now be reported as a false positive, and the fix becomes a reviewed,

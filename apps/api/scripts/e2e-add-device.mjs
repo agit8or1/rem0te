@@ -351,10 +351,25 @@ async function all() {
   check(d?.agentType === 'none' && d?.inventoryCollectedAt === null, 'before any heartbeat: no agent type and no inventory are claimed', JSON.stringify({ agentType: d?.agentType, inv: d?.inventoryCollectedAt }));
   check(!r.text.includes(dev1.secret) && !/agentSecretHash/.test(r.text), 'the status body carries no device secret or its hash');
 
-  r = await req('POST', '/enrollment/heartbeat', null, { rustdeskId: dev1.rid, agentSecret: dev1.secret, hostname: dev1.host, platform: 'Windows', agentVersion: AGENT_VERSION });
+  // 0.68: the installer's own check-ins (Register: a version, no live state;
+  // the Test-Registered poll: every 5 s for up to 90) are handed no command.
+  // They used to be, and each hand-out counted towards the four allowed, so a
+  // slow RustDesk registration failed the first inventory before the agent beat.
+  for (let i = 0; i < 6; i++) {
+    r = await req('POST', '/enrollment/heartbeat', null, { rustdeskId: dev1.rid, agentSecret: dev1.secret, hostname: dev1.host, platform: 'Windows', agentVersion: AGENT_VERSION });
+    if (r.status !== 200 || (r.data?.commands ?? []).length) break;
+  }
+  check(r.status === 200 && (r.data?.commands ?? []).length === 0, 'six installer check-ins (no live state): accepted, and handed no command', msg(r));
+  const cmdsBefore = await prisma.endpointCommand.findMany({ where: { endpointId: ep1 }, select: { type: true, dispatchCount: true, status: true } });
+  check(cmdsBefore.every((c) => c.dispatchCount === 0 && c.status !== 'FAILED'), 'nothing was dispatched to them, so nothing was failed for want of an answer', JSON.stringify(cmdsBefore));
+  const s0 = await status(S.ownerA, t1.id);
+  check(s0.data?.device?.inventoryCollectedAt === null && !s0.data?.device?.inventoryAsk?.dispatchedAt, 'status: no inventory, and not yet asked of the agent');
+
+  r = await req('POST', '/enrollment/heartbeat', null, { rustdeskId: dev1.rid, agentSecret: dev1.secret, hostname: dev1.host, platform: 'Windows', agentVersion: AGENT_VERSION, loggedOnUser: 'WS01\\user', uptimeSeconds: 120 });
   check(r.status === 200 && r.data?.authenticated !== false, 'the agent\'s first heartbeat is accepted', msg(r));
   const inv = (r.data?.commands ?? []).find((c) => c.type === 'INVENTORY_REFRESH');
   let s1 = await status(S.ownerA, t1.id);
+  check(s1.data?.device?.inventoryAsk?.status === 'DISPATCHED' && !!s1.data.device.inventoryAsk.dispatchedAt, 'status: the inventory was asked of the agent, and when', JSON.stringify(s1.data?.device?.inventoryAsk));
   check(s1.data?.device?.agentType === 'standard' && s1.data?.device?.agentVersion === AGENT_VERSION, 'after the heartbeat: standard agent, with its version', JSON.stringify(s1.data?.device && { t: s1.data.device.agentType, v: s1.data.device.agentVersion }));
   check(s1.data?.device?.inventoryCollectedAt === null, 'inventory is still not claimed before the agent sends it');
   check(!!inv, 'the heartbeat hands the agent an inventory command', JSON.stringify(r.data?.commands));

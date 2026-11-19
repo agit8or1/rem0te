@@ -94,6 +94,22 @@ export function isInstallerCheckIn(dto: HeartbeatShape & { agentVersion?: string
   return !carriesLiveState(dto) && dto.updateChannel !== 'signed';
 }
 
+/**
+ * Whether a check-in carries any live sample at all (0.68). Every agent's
+ * heartbeat reports at least one of these (the posix agents may lack a user
+ * or the uptime, never all of them); the installers' Register,
+ * Test-Registered and Rem0teEnrollment retry report none. Only such a
+ * check-in is handed queued collection work: an installer cannot run it,
+ * and each hand-out counts towards the command's dispatch limit.
+ */
+export function carriesLiveSample(dto: HeartbeatShape & {
+  lastBootAt?: unknown; cpuLoadPercent?: unknown; memoryTotalMb?: unknown; memoryFreeMb?: unknown;
+  systemDiskTotalMb?: unknown; systemDiskFreeMb?: unknown;
+}): boolean {
+  return carriesLiveState(dto) || [dto.lastBootAt, dto.cpuLoadPercent, dto.memoryTotalMb, dto.memoryFreeMb, dto.systemDiskTotalMb, dto.systemDiskFreeMb]
+    .some((v) => v !== undefined && v !== null);
+}
+
 /** Whether a heartbeat of this kind may write agent fields or be handed any update or work. */
 export function heartbeatMayAct(kind: HeartbeatKind): boolean {
   return kind === 'signed' || kind === 'standard';

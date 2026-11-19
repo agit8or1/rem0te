@@ -72,8 +72,29 @@ type Status = {
     customerId: string | null; customer: { id: string; name: string } | null; site: { id: string; name: string } | null;
     agentType: 'signed' | 'standard' | 'none'; agentBound: boolean; agentBoundAt: string | null;
     inventoryCollectedAt: string | null; liveSampledAt: string | null; updatesCheckedAt: string | null; osCaption: string | null;
+    /** 0.68: the automatic inventory pass, while none has arrived. */
+    inventoryAsk?: { status: string; error: string | null; dispatchedAt: string | null; completedAt: string | null } | null;
   };
 };
+
+/**
+ * Where the first inventory is (0.68). It used to say "not received yet"
+ * whatever had happened, including after the request had failed.
+ */
+export function inventoryDetail(d: NonNullable<Status['device']>): { text: string; failed: boolean } {
+  if (d.inventoryCollectedAt) {
+    return { text: `received ${ago(d.inventoryCollectedAt)}${d.osCaption ? ` · ${d.osCaption}` : ''}`, failed: false };
+  }
+  const ask = d.inventoryAsk;
+  if (ask && (ask.status === 'FAILED' || ask.status === 'EXPIRED')) {
+    return {
+      text: `the agent could not collect it${ask.error ? `: ${ask.error}` : ''}. It is asked again within the hour; Refresh inventory on the device's Software tab asks now.`,
+      failed: true,
+    };
+  }
+  if (ask?.dispatchedAt) return { text: `asked for ${ago(ask.dispatchedAt)}; it arrives with the agent's next check-in (every 3 minutes)`, failed: false };
+  return { text: 'asked for at the agent\u2019s first check-in, which starts as soon as the installer finishes', failed: false };
+}
 
 const OS: Record<Os, {
   label: string; shell: string; path: (t: string) => string; cmd: (u: string) => string; agent: string;
@@ -594,8 +615,8 @@ export function AddDeviceFlow() {
                   detail={device.agentType === 'none' ? 'waiting for its first heartbeat (every 3 minutes)' : `version ${device.agentVersion ?? 'unknown'}`} />
                 <HealthRow testId="health-identity" ok={device.agentBound} label="Device identity"
                   detail={device.agentBound ? `bound ${ago(device.agentBoundAt)}` : 'not bound — the installer did not send a device secret, so nothing it reports is trusted'} />
-                <HealthRow testId="health-inventory" ok={!!device.inventoryCollectedAt} waiting={!device.inventoryCollectedAt}
-                  label="Inventory" detail={device.inventoryCollectedAt ? `received ${ago(device.inventoryCollectedAt)}${device.osCaption ? ` · ${device.osCaption}` : ''}` : 'not received yet — the agent sends it after its first heartbeat'} />
+                <HealthRow testId="health-inventory" ok={!!device.inventoryCollectedAt} waiting={!device.inventoryCollectedAt && !inventoryDetail(device).failed}
+                  label="Inventory" detail={inventoryDetail(device).text} />
               </>
             ) : (
               <HealthRow testId="health-agent" ok={false} label="Agent"

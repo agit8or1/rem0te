@@ -12,6 +12,7 @@ import {
   type WorkspaceTab,
 } from './device-model';
 import type { MonitoringView } from './use-device-data';
+import { RenameDevice } from './device-naming';
 
 /**
  * The top of a computer's page: who it is, whether it is reachable, and what
@@ -166,7 +167,13 @@ export function DeviceHeader({
     <div className="space-y-3" data-testid="device-header">
       <div>
         <div className="min-w-0 space-y-1">
-          <h1 className="text-2xl font-semibold text-foreground break-words">{ep.name as string}</h1>
+          <div className="flex flex-wrap items-center gap-1">
+            <h1 className="text-2xl font-semibold text-foreground break-words">{ep.name as string}</h1>
+            <RenameDevice endpointId={ep.id as string} ep={ep} />
+          </div>
+          {typeof ep.description === 'string' && ep.description && (
+            <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words" data-testid="device-description">{ep.description}</p>
+          )}
           <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
             <div className="flex items-center gap-1.5" data-testid="device-status">
               <dt className="sr-only">Status</dt>

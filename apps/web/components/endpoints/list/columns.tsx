@@ -128,14 +128,7 @@ export const COLUMNS: ColumnDef[] = [
   },
   {
     id: 'health', label: 'Health', defaultOn: true, sort: 'health', needsAlerts: true,
-    cell: (r) => {
-      if (!r.alerts) return <span className="text-muted-foreground" title="Seeing alerts needs the monitoring:alerts permission">—</span>;
-      // Derived from open monitoring alerts only: "no open alerts" is not a
-      // claim that nothing is wrong, only that no monitor says so.
-      if (!r.alerts.open) return <span className="text-xs text-muted-foreground whitespace-nowrap" title="No open alerts">None</span>;
-      const w = r.alerts.worst;
-      return <Badge variant={w === 'CRITICAL' ? 'destructive' : w === 'WARNING' ? 'warning' : 'secondary'}>{w === 'CRITICAL' ? 'Critical' : w === 'WARNING' ? 'Warning' : 'Info'}</Badge>;
-    },
+    cell: (r, c) => <HealthCell r={r} now={c.now} />,
   },
   {
     id: 'agent', label: 'Agent', defaultOn: true, sort: 'agent', hideBelow: 'agent',
@@ -237,3 +230,30 @@ export const COLUMNS: ColumnDef[] = [
 ];
 
 export const DEFAULT_COLUMNS = COLUMNS.filter((c) => c.defaultOn).map((c) => c.id);
+
+/**
+ * Health, in words (0.68): Healthy, Warning or Issues, from the open
+ * monitoring alerts. It said "None" for no open alerts, which read as "no
+ * health". "Healthy" is said only for a computer that is reporting: an agent
+ * that has gone quiet raises nothing, so its lack of alerts proves nothing,
+ * and it is "Unknown" until it checks in again. An open alert always shows,
+ * reporting or not. Informational alerts alone are still Healthy.
+ */
+export function healthOf(r: Pick<DeviceRow, 'alerts' | 'connectivity' | 'isOnline' | 'lastSeenAt'>, now?: number):
+  { label: 'Healthy' | 'Warning' | 'Issues' | 'Unknown'; variant: 'success' | 'warning' | 'destructive' | 'outline'; title: string } | null {
+  if (!r.alerts) return null;
+  const n = r.alerts.open;
+  const plural = `${n} open alert${n === 1 ? '' : 's'}`;
+  if (n && r.alerts.worst === 'CRITICAL') return { label: 'Issues', variant: 'destructive', title: `${plural}, the worst critical` };
+  if (n && r.alerts.worst === 'WARNING') return { label: 'Warning', variant: 'warning', title: `${plural}, the worst a warning` };
+  if (connectivityFrom(r, now) !== 'online') {
+    return { label: 'Unknown', variant: 'outline', title: n ? `${plural}, informational only; the agent is not reporting, so nothing new would be raised` : 'No open alerts, but the agent is not reporting, so nothing new would be raised' };
+  }
+  return { label: 'Healthy', variant: 'success', title: n ? `${plural}, informational only` : 'No open monitoring alerts' };
+}
+
+function HealthCell({ r, now }: { r: DeviceRow; now?: number }) {
+  const h = healthOf(r, now);
+  if (!h) return <span className="text-muted-foreground" title="Seeing alerts needs the monitoring:alerts permission">—</span>;
+  return <Badge variant={h.variant} title={h.title} data-health={h.label.toLowerCase()} className="whitespace-nowrap">{h.label}</Badge>;
+}
