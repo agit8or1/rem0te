@@ -151,13 +151,29 @@ export function parseParams(kind: MonitorKind, raw: unknown): { ok: true; params
  * (the owner's decision); a scope that already pressed "Add recommended"
  * gets it only when someone presses it again.
  */
+/** The recommended disk-errors monitor before 0.66, exactly as stored (zod defaults included). */
+export const DISK_ERRORS_PRE066_PARAMS = { log: 'System', ids: [7, 11, 51, 153], levels: [], threshold: 1, clearAfterMinutes: 1440 } as const;
+/** And from 0.66. */
+export const DISK_ERRORS_PARAMS = { log: 'System', ids: [7, 11, 51, 52, 55, 153], levels: [1, 2, 3], threshold: 1, clearAfterMinutes: 1440 };
+
 export const RECOMMENDED: { key: string; kind: MonitorKind; name: string; severity: Severity; params: Record<string, unknown> }[] = [
   { key: 'offline', kind: 'OFFLINE', name: 'Computer offline', severity: 'WARNING', params: { minutes: 15 } },
   { key: 'disk-free', kind: 'DISK_FREE', name: 'System disk nearly full', severity: 'WARNING', params: { minFreePercent: 10 } },
   { key: 'cpu-high', kind: 'CPU_HIGH', name: 'Processor pinned', severity: 'INFO', params: { percent: 95, samples: 5 } },
   { key: 'memory-high', kind: 'MEMORY_HIGH', name: 'Memory exhausted', severity: 'WARNING', params: { percent: 95, samples: 5 } },
   { key: 'reboot-pending', kind: 'REBOOT_PENDING', name: 'Restart pending for 3 days', severity: 'INFO', params: { hours: 72 } },
-  { key: 'disk-errors', kind: 'EVENT_MATCH', name: 'Disk errors in the System log', severity: 'CRITICAL', params: { log: 'System', ids: [7, 11, 51, 153], levels: [], threshold: 1, clearAfterMinutes: 1440 } },
+  // 0.66: levels 1–3 (Critical, Error, Warning). Before 0.66 it named no
+  // level and no provider, so any provider's event 7, 11, 51 or 153 at any
+  // level was a critical disk alert — including Kernel-General's informational
+  // event 11 for a registry hive inside a read-only shadow copy (DS-HOME1).
+  // The genuine events with these ids are Error or Warning. No provider is
+  // named, deliberately: event 11 "controller error" is logged by each storage
+  // controller driver under its own name (atapi, iaStor…, storahci, LSI…), and
+  // one provider would have dropped them. 52 (the disk's SMART prediction) and
+  // 55 (NTFS corruption) were added in the same release. classify.ts then
+  // judges each event by provider. AlertQualityService corrects a stored rule
+  // that still has DISK_ERRORS_PRE066_PARAMS exactly.
+  { key: 'disk-errors', kind: 'EVENT_MATCH', name: 'Disk errors in the System log', severity: 'CRITICAL', params: DISK_ERRORS_PARAMS },
   { key: 'agent-silent', kind: 'AGENT_SILENT', name: 'Agent silent, RustDesk still reachable', severity: 'WARNING', params: { minutes: AGENT_SILENT_BOUNDS.def } },
   // 0.55. C: is left to disk-free above (the live system-disk sample), so the
   // system drive is not alerted twice.
@@ -264,7 +280,14 @@ const SERVICE_STATUS = ['Running', 'Stopped', 'StartPending', 'StopPending', 'Pa
 const START_TYPES = ['Automatic', 'AutomaticDelayedStart', 'Manual', 'Disabled', 'Boot', 'System', 'Unknown'] as const;
 
 export interface ServiceReport { name: string; status: (typeof SERVICE_STATUS)[number]; startType: string | null }
-export interface EventReport { key: string; checkedAt: string; count: number; newestAt: string | null; sample: { eventId: number | null; level: number | null; provider: string | null; message: string | null } | null }
+export interface EventSampleReport { eventId: number | null; level: number | null; provider: string | null; message: string | null; at?: string | null }
+/**
+ * `sample` is the newest matching event (every agent since 0.29); `samples`
+ * (0.66 agents) is up to SAMPLES_MAX newest, so each can be classified. For an
+ * older agent `samples` is `[sample]`.
+ */
+export interface EventReport { key: string; checkedAt: string; count: number; newestAt: string | null; sample: EventSampleReport | null; samples: EventSampleReport[] }
+export const SAMPLES_MAX = 5;
 
 /**
  * A monitor report. Only services and event keys the server asked for are
@@ -299,10 +322,12 @@ export function sanitizeReport(raw: unknown, asked: { services: string[]; eventK
     const count = typeof e.count === 'number' && Number.isFinite(e.count) ? Math.max(0, Math.min(100_000, Math.round(e.count))) : 0;
     const sm = (e.sample && typeof e.sample === 'object' ? e.sample : null) as Record<string, unknown> | null;
     const int = (v: unknown, max: number) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max ? v : null);
-    events.push({
-      key, checkedAt, count, newestAt: isoOrNull(e.newestAt),
-      sample: count > 0 && sm ? { eventId: int(sm.eventId, 4_294_967_295), level: int(sm.level, 5), provider: cleanStr(sm.provider, 128), message: cleanStr(sm.message, LIMITS.sampleChars) } : null,
-    });
+    const one = (x: Record<string, unknown>): EventSampleReport => ({ eventId: int(x.eventId, 4_294_967_295), level: int(x.level, 5), provider: cleanStr(x.provider, 128), message: cleanStr(x.message, LIMITS.sampleChars) });
+    const sample = count > 0 && sm ? one(sm) : null;
+    const many = count > 0 && Array.isArray(e.samples)
+      ? e.samples.slice(0, Math.min(SAMPLES_MAX, count)).filter((x): x is Record<string, unknown> => !!x && typeof x === 'object').map((x) => ({ ...one(x), at: isoOrNull(x.at) }))
+      : [];
+    events.push({ key, checkedAt, count, newestAt: isoOrNull(e.newestAt), sample, samples: many.length ? many : sample ? [sample] : [] });
   }
   return { services, events };
 }
@@ -489,14 +514,16 @@ export function evaluateService(rule: RuleLike, svc: ServiceReport | undefined, 
  * the alert clears after `clearAfterMinutes` with no further matches — the
  * sweep calls this with `ev` undefined to check that.
  */
-export function evaluateEvents(rule: RuleLike, ev: EventReport | undefined, name: string, st: MonitorStateLike, now: Date): Verdict {
+export function evaluateEvents(rule: RuleLike, ev: EventReport | undefined, name: string, st: MonitorStateLike, now: Date, counted: number = ev?.count ?? 0): Verdict {
   const p = parseParams(rule.kind, rule.params);
   if (!p.ok) return { verdict: 'skip', reason: `invalid params: ${p.error}` };
   const P = p.params as { log: string; ids: number[]; threshold: number; clearAfterMinutes: number };
-  if (ev && ev.count >= P.threshold) {
+  // 0.66: `counted` is what the classifier left after taking out events that
+  // matched a known-harmless pattern (classify.ts); it defaults to the count.
+  if (ev && counted >= P.threshold) {
     return {
-      verdict: 'breach', title: `${name}: ${ev.count} matching event${ev.count === 1 ? '' : 's'} in ${P.log}`,
-      detail: { log: P.log, count: ev.count, newestAt: ev.newestAt, sample: ev.sample, threshold: P.threshold },
+      verdict: 'breach', title: `${name}: ${counted} matching event${counted === 1 ? '' : 's'} in ${P.log}`,
+      detail: { log: P.log, count: ev.count, ...(counted !== ev.count ? { counted } : {}), newestAt: ev.newestAt, sample: ev.sample, samples: ev.samples, threshold: P.threshold },
       state: { ...st, breachCount: st.breachCount + 1, okCount: 0, breachSince: st.breachSince ?? now, lastMatchAt: now },
     };
   }

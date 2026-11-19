@@ -272,6 +272,10 @@ ${blk}
     check('pwsh: since is honoured; ids and levels are passed', filters[0]?.StartTime?.startsWith(PWSH_SINCE.slice(0, 19)) && JSON.stringify(filters[0].Id) === '[7,11]' && JSON.stringify(filters[1].Level) === '[1,2]', JSON.stringify(filters));
     const ev = Object.fromEntries(body.events.map((e) => [e.key, e]));
     check('pwsh: matches are counted and one sample kept, clamped to 300', ev['disk-errors']?.count === 2 && ev['disk-errors'].sample.message.length === 300);
+    // 0.66: the newest five (here both), each clamped and timed, newest first.
+    const five = ev['disk-errors']?.samples ?? [];
+    check('pwsh: up to five samples are sent, newest first, each clamped to 300 with its time', five.length === 2 && five[0].eventId === 7 && five[1].eventId === 11 && five[0].message.length === 300 && five.every((x) => !Number.isNaN(Date.parse(x.at))), JSON.stringify(five).slice(0, 300));
+    check('pwsh: no samples when nothing matched', ev.quiet && !ev.quiet.samples);
     check('pwsh: no matches is a count of 0, not an error', ev.quiet?.count === 0);
     check('pwsh: a query that failed is left out (state unchanged)', !ev.failing && !ev.evil);
     const san = m.sanitizeReport(body, { services: ['Spooler', 'NoSuch', 'W32Time'], eventKeys: ['disk-errors', 'quiet'] });

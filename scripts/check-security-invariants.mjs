@@ -6113,6 +6113,88 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'ci.yml; unit-windows-msi.mjs');
 }
 
+// ── §78 (0.66): alert classification — narrow, deterministic, never above the monitor ──
+//     The pre-0.66 recommended disk-errors monitor named no level and no
+//     provider, so Kernel-General's informational event 11 for a registry hive
+//     in a read-only shadow copy was a critical disk alert (DS-HOME1). So:
+//       - classify.ts is pure (node:crypto only) and versioned;
+//       - every known-benign pattern names log, provider, event id, quiet
+//         levels only, an 8-digit status code and a component, and the
+//         matcher compares every one of them — never message words;
+//       - the classifier never raises an alert above the monitor's severity,
+//         never lowers one by level in the Security log or at level 0, and
+//         leaves an unknown event at the monitor's severity;
+//       - events counted but not sent keep an alert at WARNING at least;
+//       - fingerprints keep 8-digit status codes;
+//       - the recommended monitor asks for levels, none of them 4 or 5;
+//       - the start-up correction is a conditional write on the exact pre-0.66
+//         parameters and audited; reclassification is conditional on the
+//         version it read, audited, and deletes nothing;
+//       - a report is classified, and its events recorded, before anything is
+//         raised; similar alerts are read through the caller's alert scope.
+{
+  console.log('\n§78 alert classification');
+  const cls = read('apps/api/src/monitoring/classify.ts');
+  const eng = read('apps/api/src/monitoring/engine.ts');
+  const aq = read('apps/api/src/monitoring/alert-quality.service.ts');
+  const ms = read('apps/api/src/monitoring/monitoring.service.ts');
+  const adm = read('apps/api/src/monitoring/monitoring-admin.service.ts');
+  const ws = read('apps/api/src/public/windows-script.ts');
+  const J = JSON.stringify;
+  const imports = [...cls.matchAll(/^import .* from '([^']+)';/gm)].map((m) => m[1]);
+  check('classify: pure — it imports node:crypto and nothing else, and is versioned',
+    J(imports) === J(['node:crypto']) && /export const CLASSIFIER_VERSION = [1-9]\d*;/.test(cls) && !/process\.env|fetch\(|Date\.now\(|new Date\(/.test(cls),
+    `imports: ${imports.join(', ')}`);
+  const benignBlock = cls.slice(cls.indexOf('export const KNOWN_BENIGN'), cls.indexOf('export function benignMatch'));
+  const entries = benignBlock.split(/\n  \{\n/).slice(1);
+  const entryOk = (e) => /\n {4}id: '[a-z0-9-]+',/.test(e) && /\n {4}log: '(System|Application|Setup)',/.test(e) && /\n {4}provider: '[A-Za-z0-9 _.\/-]+',/.test(e)
+    && /\n {4}eventId: \d+,/.test(e) && /\n {4}levels: \[[45](, ?[45])?\],/.test(e) && /\n {4}statusCode: '0x[0-9A-F]{8}',/.test(e) && /\n {4}component: '[a-z-]+',/.test(e);
+  const matcher = cls.slice(cls.indexOf('export function benignMatch'), cls.indexOf('// ── Catalogued events'));
+  check('classify: every known-benign pattern names log, provider, id, quiet levels, status code and component; the matcher checks all six',
+    entries.length >= 1 && entries.every(entryOk)
+      && ['f.log !== p.log', 'f.providerKey !== p.provider.toLowerCase()', 'f.eventId !== p.eventId', '!p.levels.includes(f.level)', 'f.statusCode !== p.statusCode', 'f.component !== p.component'].every((t) => matcher.includes(t))
+      && !/message/.test(matcher.replace(/\/\/.*$/gm, '')),
+    `${entries.length} entries; matcher: ${matcher.slice(0, 200)}`);
+  check('classify: never above the monitor; never lowered by level in the Security log or at level 0; unknown keeps the monitor; unseen keeps WARNING',
+    /export const QUIET_LEVELS: ReadonlySet<number> = new Set\(\[4, 5\]\);/.test(cls)
+      && /QUIET_LEVELS\.has\(f\.level\) && log !== 'Security' && !ruleLevels\.includes\(f\.level\)/.test(cls)
+      && /d\.class === 'UNKNOWN' \? ruleSeverity : d\.class === 'BENIGN' \? 'INFO' : minSev\(CLASS_SEVERITY\[d\.class\], ruleSeverity\)/.test(cls)
+      && /const up = minSev\('CRITICAL', ruleSeverity\);/.test(cls) && /const floor = minSev\('WARNING', ruleSeverity\);/.test(cls)
+      && /if \(unseen > 0 && RANK\[sev\] < RANK\.WARNING\)/.test(cls),
+    'classify.ts decideSample / sevOf / classifyEvents');
+  check('classify: fingerprints keep 8-digit status codes (only 9+ hex digits are taken out)',
+    /\.replace\(\/\(\?<!\[0-9a-z\]\)0x\[0-9a-f\]\{9,\}\(\?!\[0-9a-f\]\)\/g, '<hex>'\)/.test(cls) && !/0x\[0-9a-f\]\{8\}\/g/.test(cls.slice(cls.indexOf('export function normaliseMessage'), cls.indexOf('export function fingerprintOf'))),
+    'normaliseMessage');
+  const dp = /export const DISK_ERRORS_PARAMS = \{ log: 'System', ids: \[([\d, ]+)\], levels: \[([\d, ]+)\],/.exec(eng);
+  check('the recommended disk-errors monitor asks for levels, none of them Information or Verbose, and still watches 7, 11, 51 and 153',
+    !!dp && dp[2].split(',').map(Number).every((l) => l >= 1 && l <= 3) && [7, 11, 51, 153].every((i) => dp[1].split(',').map(Number).includes(i))
+      && /\{ key: 'disk-errors', kind: 'EVENT_MATCH', name: 'Disk errors in the System log', severity: 'CRITICAL', params: DISK_ERRORS_PARAMS \},/.test(eng),
+    'engine.ts DISK_ERRORS_PARAMS / RECOMMENDED');
+  check('start-up: the correction is conditional on the exact pre-0.66 parameters and audited; reclassification is conditional, audited, and deletes nothing',
+    /this\.prisma\.monitorRule\.updateMany\(\{ where: \{ id: r\.id, key: 'disk-errors', kind: 'EVENT_MATCH', params: \{ equals: old \} \}/.test(aq)
+      && aq.indexOf("action: 'MONITOR_RULE_CHANGED'") > aq.indexOf('if (!u.count) continue;')
+      && /where: \{ id: a\.id, state: \{ not: 'RESOLVED' \}, classifierVersion: a\.classifierVersion \}/.test(aq)
+      && /action: 'MONITOR_ALERT_RECLASSIFIED'/.test(aq) && /type: 'reclassified'/.test(aq)
+      && !/\.(delete|deleteMany)\(/.test(aq) && !/monitorRule\.(update|upsert)\(/.test(aq),
+    'alert-quality.service.ts');
+  const ing = ms.slice(ms.indexOf("} else if (r.kind === 'EVENT_MATCH') {"), ms.indexOf('/** After a heartbeat wrote a live sample'));
+  check('a report is classified and its events recorded before anything is raised; the threshold sees the classified count',
+    ing.indexOf('classifyEvents(') > 0 && ing.indexOf('classifyEvents(') < ing.indexOf('this.recordFingerprints(') && ing.indexOf('this.recordFingerprints(') < ing.indexOf('evaluateEvents(')
+      && ing.indexOf('evaluateEvents(') < ing.indexOf('this.apply(') && /cls \? cls\.effectiveCount : 0\)/.test(ing)
+      && /const severity = \(decided\.severity \?\? rule\.severity\) as Severity;/.test(ms),
+    'monitoring.service.ts ingestReport / raise');
+  check('similar alerts are read through the caller\'s alert scope',
+    /\{ where: \{ AND: \[\{ fingerprint: r\.fingerprint, id: \{ not: id \} \}, where\] \}/.test(adm) && /const where = this\.alertWhere\(a, businessId\);/.test(adm),
+    'monitoring-admin.service.ts getAlert');
+  check('the agent sends at most five samples, each at most 300 characters, and only reads',
+    /foreach \(\\\$h5 in @\(\\\$hits \| Select-Object -First 5\)\)/.test(ws) && /if \(\\\$m5\.Length -gt 300\) \{ \\\$m5 = \\\$m5\.Substring\(0, 300\) \}/.test(ws)
+      && /e\.samples\.slice\(0, Math\.min\(SAMPLES_MAX, count\)\)/.test(eng) && /export const SAMPLES_MAX = 5;/.test(eng),
+    'windows-script.ts monitor block; engine.ts sanitizeReport');
+  check('alert classification: the suites prove it',
+    / alert-quality /.test(read('scripts/run-e2e.sh')) && /unit-alert-classification\.mjs/.test(read('.github/workflows/ci.yml')),
+    'e2e-alert-quality.mjs in run-e2e.sh, unit-alert-classification.mjs in CI');
+}
+
 // ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──
 //     A dozen suites fell back to http://127.0.0.1:3001 when API_BASE was
 //     unset. Run by hand with only DATABASE_URL set, one wrote its fixtures to

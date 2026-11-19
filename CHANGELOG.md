@@ -5,6 +5,109 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.66.0] — 2026-11-18 · *Sieve*
+
+**A critical "disk errors" alert on DS-HOME1 was a harmless Windows event. The monitor that raised it is fixed, and
+every event-log match is now classified — by one deterministic, versioned classifier — before anything is raised,
+with a plain-English explanation on every alert.**
+
+### What happened, and why
+
+- **Symptom.** DS-HOME1 raised a *critical* alert from the recommended `disk-errors` monitor: two matching events,
+  sample `Microsoft-Windows-Kernel-General` event 11, level 4 (Information): *"TxR init phase for hive
+  \??\GLOBALROOT\Device\HarddiskVolumeShadowCopy59\Windows\System32\config\DRIVERS … finished with result=0xC00000A2
+  (Internal code=7)."*
+- **Cause.** The recommended monitor (0.29) was `{ log: 'System', ids: [7, 11, 51, 153], levels: [] }`: no level and
+  no provider, so *any* provider's event 7, 11, 51 or 153 at *any* level was a critical disk alert. Kernel-General's
+  event 11 is not a disk event: Windows tried to start the transactional registry (TxR) for a hive inside a Volume
+  Shadow Copy, which is read-only, and got STATUS_MEDIA_WRITE_PROTECTED. Backup or System Restore mounting a snapshot
+  causes it. The genuine events with those ids come from `disk` (7 bad block, 11 controller error, 51 paging error,
+  153 I/O retried) and from each storage controller driver's own event 11, all at Error or Warning.
+- **What the agent sends**, which bounded the fix: per event monitor, the count of matching events and the newest one
+  (id, level, provider, message cut to 300 characters). No EventData. So the status code and the affected component
+  are read from the message by two narrow extractors — an 8-digit `0x` code and the NT device path, which Windows does
+  not translate — never from words.
+
+### The fix
+
+- **The recommended monitor** asks the agent for levels 1–3 (Critical, Error, Warning), and adds 52 (the disk's own
+  SMART failure prediction) and 55 (NTFS corruption): `ids [7, 11, 51, 52, 55, 153], levels [1, 2, 3]`. It names **no
+  provider, deliberately**: "controller error" (11) is logged by atapi, iaStor…, storahci, stornvme, LSI, megasas and
+  others under their own names, and `provider: 'disk'` would have dropped all of them silently.
+- **Stored monitors are corrected on API start** (`AlertQualityService`), not by a migration, so the change lands in
+  the sealed audit log: every `disk-errors` monitor whose parameters are *exactly* the pre-0.66 ones gets the new ones,
+  in one conditional write, audited as `MONITOR_RULE_CHANGED` with `op: corrected`, before and after, by no person. A
+  `disk-errors` monitor whose parameters someone changed is never touched. Production has one (global, unedited).
+- **Open alerts are reclassified, not hidden.** On start, open event alerts classified by an older classifier (or by
+  none) are classified again from the event they stored. DS-HOME1's goes from critical to **warning**, not further:
+  the agent counted two events and sent one, and the unsent one cannot be called harmless. It clears by itself after
+  the monitor's 24-hour quiet period, because the corrected monitor no longer matches Information events. An alert
+  whose every counted event was harmless is resolved by the monitor with a note. Each change is a *Reclassified*
+  history entry and a `MONITOR_ALERT_RECLASSIFIED` audit row (ids and classes, no event text). Nothing is deleted.
+
+### Alert classification (`apps/api/src/monitoring/classify.ts`)
+
+Pure, versioned (`CLASSIFIER_VERSION = 1`), no AI. Five classes: **Critical** and **Warning** (a catalogued event:
+`disk` 7, 11, 51, 52, 153; a storage controller's 11 and 129; NTFS 55), **Informational** (Windows logged it as
+Information or Verbose and the monitor did not ask for that level), **Benign** (a known-harmless pattern: recorded,
+never raised), **Unknown** (Rem0te does not know it: the monitor's severity stands).
+
+- **Never above the monitor**: the monitor's severity is the ceiling. A WARNING-class storage event seen five or more
+  times in one report becomes CRITICAL, under that ceiling.
+- **Never lowered without evidence.** An unknown event keeps the monitor's severity — so a backup product's failure
+  event or an application's error, in a monitor you made, is never lowered. The Security log is never lowered by
+  level, nor is level 0 (LogAlways), which audit events use.
+- **Known-harmless patterns are narrow**: each names the log, provider, event id, a quiet level (4 or 5 only), an
+  8-digit status code and a component, and all six must match. The first:
+  `kernel-general-11-txr-shadow-copy` — System, Microsoft-Windows-Kernel-General, 11, level 4, 0xC00000A2,
+  `volume-shadow-copy`, any shadow-copy number. Event 11 itself is not suppressed.
+- **A harmless event cannot hide a real one.** Harmless events are only taken out of the count the monitor's
+  threshold sees; a report with a harmless event and a disk error raises the disk error.
+- **Counted but not sent** keeps an alert at warning at least (under the monitor's severity).
+- **An open event alert keeps the worst it has seen**: a later informational report does not lower a critical alert.
+
+### Fingerprints, history and the explanation
+
+- **Event fingerprints** (32 hex): log, provider, id, level, status code, component and the message with what varies
+  taken out (shadow-copy numbers, GUIDs, dates and times, process ids, temporary paths, profile names, block
+  addresses, hex longer than 8 digits). Status codes, disk numbers and internal codes stay.
+- **`MonitorEventFingerprint`** (migration 0085): one row per computer, monitor and fingerprint, counted per report,
+  with the newest raw event — harmless events included, so nothing the agent reported is lost when no alert is raised.
+  At most five upserts per report with matches, none without.
+- **`MonitorAlert`** gains `classification` (the decision), `classifierVersion` and `fingerprint` (indexed).
+- **Every alert explains itself**: *What happened?*, *Why was this alert generated?*, *How serious is it?*,
+  *Recommended action* and *Classification details*, built on read (so alerts from before 0.66 are explained too). It
+  says when one event cannot show that hardware is failing, and says "unverified" when Rem0te does not know an event.
+  Under it: *View raw event*, *View similar alerts* (same fingerprint, through the caller's own alert scope, and how
+  often this computer reported it) and *View matching monitor rule*. The list shows a class badge on event alerts, and
+  `GET /monitoring/alerts?fingerprint=` filters by fingerprint.
+
+### The agent
+
+The heartbeat's monitor block also sends the **five newest** matching events (`samples`, each cut to 300 characters,
+with its time), so the server can judge each one. It only reads, as before. An agent older than 0.66 keeps working
+with one sample. **The signed agent must be published** (`rem0te-signed-publish`) for computers to send samples;
+standard agents get it when their installer re-runs.
+
+### What is not monitored
+
+There is no SMART polling (only the disk's own event 52, when the monitor asks for it), no backup-product
+integration, and no RAID health beyond the Windows event log. Report False Positive, reviewed suppression rules and
+the false-positive dashboard are the next release.
+
+### Tests
+
+`unit-alert-classification.mjs` (84 checks, in CI): the exact DS-HOME1 event and other shadow-copy numbers; every
+condition of the pattern required; disk, controller (seven drivers), SMART, NTFS and I/O events; informational events
+that name a disk; backup and Security-log monitors never lowered; recurrence and the ceiling; fingerprints; the
+corrected monitor; the sanitiser; the explanation. `e2e-alert-quality.mjs` (port 3921, in `run-e2e.sh`): the start-up
+correction and reclassification (and a second start changing nothing), the DS-HOME1 event raising nothing, genuine
+errors raising critical alerts with or without a harmless event beside them, an old agent, the explanation, similar
+alerts and tenant isolation. `unit-monitoring.mjs` runs the agent's block under pwsh for the samples. `e2e-ui.mjs`
+drives the explanation and the three views. §78 in `check-security-invariants.mjs`.
+
+**Deploy:** migration 0085; no production dependency change; no signer change; the signed agent should be published.
+
 ## [0.65.1] — 2026-11-18 · *Parcel*
 
 **A standard tray left running on a computer that moved to the signed agent no longer floods the audit log.**

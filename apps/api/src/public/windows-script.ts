@@ -1848,6 +1848,15 @@ if (\$state.agentSecret -and \$resp -and \$resp.data -and \$resp.data.monitor) {
                 if (\$m.Length -gt 300) { \$m = \$m.Substring(0, 300) }
                 \$item['newestAt'] = \$h.TimeCreated.ToUniversalTime().ToString('o')
                 \$item['sample'] = @{ eventId = [int]\$h.Id; level = [int]\$h.Level; provider = [string]\$h.ProviderName; message = \$m }
+                # 0.66: the five newest, so the server can judge each one
+                # (classify.ts). One sample let a harmless event stand for the rest.
+                \$five = @()
+                foreach (\$h5 in @(\$hits | Select-Object -First 5)) {
+                    \$m5 = [string]\$h5.Message
+                    if (\$m5.Length -gt 300) { \$m5 = \$m5.Substring(0, 300) }
+                    \$five += @{ eventId = [int]\$h5.Id; level = [int]\$h5.Level; provider = [string]\$h5.ProviderName; message = \$m5; at = \$h5.TimeCreated.ToUniversalTime().ToString('o') }
+                }
+                \$item['samples'] = \$five
             }
             \$evOut += \$item
         }

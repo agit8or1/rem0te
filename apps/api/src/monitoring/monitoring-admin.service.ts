@@ -17,6 +17,8 @@ import { maskAddress } from '../email/mail-content';
 import { isMspActor, mayManageNotifications } from './notify-who';
 import { AlertEventsService } from './alert-events.service';
 import { GroupMembershipService } from '../group-policy/membership.service';
+import { FINGERPRINT_RE, type Classification } from './classify';
+import { explainAlert } from './explain';
 
 const bad = (e: z.ZodError) => new BadRequestException({ code: 'INVALID_REQUEST', message: e.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ') });
 const ID = /^[A-Za-z0-9_-]{8,64}$/;
@@ -39,6 +41,8 @@ const AlertQuery = z.object({
   endpointId: z.string().regex(ID).optional(),
   siteId: z.string().regex(ID).optional(),
   kind: z.string().max(32).optional(),
+  /** 0.66: "similar alerts" — the same event fingerprint. */
+  fingerprint: z.string().regex(FINGERPRINT_RE).optional(),
   before: z.string().datetime({ offset: true }).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 }).passthrough();
@@ -118,6 +122,9 @@ export class MonitoringAdminService {
       acknowledgedAt: r.acknowledgedAt, acknowledgedById: r.acknowledgedById,
       resolvedAt: r.resolvedAt, resolvedById: r.resolvedById, resolvedBy: r.resolvedAt ? (r.resolvedById ? 'person' : 'monitor') : null, resolveNote: r.resolveNote,
       ticket: r.ticketId ? { id: r.ticketId, url: r.ticketUrl, peer: r.ticketPeerId, linkedAt: r.ticketLinkedAt } : null,
+      // 0.66: the classifier's verdict, in short (the full record is on the detail).
+      classification: r.classification ? { class: (r.classification as unknown as Classification).class, basis: (r.classification as unknown as Classification).basis, matched: (r.classification as unknown as Classification).matched, version: r.classifierVersion } : null,
+      fingerprint: r.fingerprint,
       // 0.55: the automatic PSA ticket. The URL is the connector's own answer (https only, cleanUrl).
       autoTicket: r.autoTicket ? {
         status: r.autoTicket.status, attempts: r.autoTicket.attempts, lastStatus: r.autoTicket.lastStatus, connectorKind: r.autoTicket.connectorKind,
@@ -138,6 +145,7 @@ export class MonitoringAdminService {
         q.data.endpointId ? { endpointId: q.data.endpointId } : {},
         q.data.siteId ? { siteId: q.data.siteId } : {},
         q.data.kind ? { kind: q.data.kind } : {},
+        q.data.fingerprint ? { fingerprint: q.data.fingerprint } : {},
         q.data.before ? { lastSeenAt: { lt: new Date(q.data.before) } } : {},
       ],
     };
@@ -154,11 +162,29 @@ export class MonitoringAdminService {
 
   async getAlert(a: ActorContext, id: string, businessId?: string | null) {
     const r = await this.alertFor(a, id, businessId);
-    const [events, children] = await Promise.all([
+    const where = this.alertWhere(a, businessId);
+    const [events, children, rule, similar, similarCount, recorded] = await Promise.all([
       this.prisma.monitorAlertEvent.findMany({ where: { alertId: id }, orderBy: { createdAt: 'asc' }, take: 200 }),
-      this.prisma.monitorAlert.findMany({ where: { AND: [{ parentId: id }, this.alertWhere(a, businessId)] }, include: VIEW_INCLUDE, take: 200, orderBy: { firstSeenAt: 'asc' } }),
+      this.prisma.monitorAlert.findMany({ where: { AND: [{ parentId: id }, where] }, include: VIEW_INCLUDE, take: 200, orderBy: { firstSeenAt: 'asc' } }),
+      r.ruleId ? this.prisma.monitorRule.findUnique({ where: { id: r.ruleId }, select: { id: true, key: true, name: true, kind: true, severity: true, enabled: true, params: true, scopeKey: true } }) : null,
+      // 0.66: the same event fingerprint, among the alerts this person may see.
+      r.fingerprint ? this.prisma.monitorAlert.findMany({ where: { AND: [{ fingerprint: r.fingerprint, id: { not: id } }, where] }, include: VIEW_INCLUDE, take: 10, orderBy: { lastSeenAt: 'desc' } }) : [],
+      r.fingerprint ? this.prisma.monitorAlert.count({ where: { AND: [{ fingerprint: r.fingerprint, id: { not: id } }, where] } }) : 0,
+      // And how often this computer reported it, harmless or not (an alert is one row per problem).
+      r.fingerprint && r.endpointId ? this.prisma.monitorEventFingerprint.findFirst({ where: { endpointId: r.endpointId, fingerprint: r.fingerprint }, select: { seen: true, firstSeenAt: true, lastSeenAt: true, class: true } }) : null,
     ]);
-    return { ...this.view(r), events: events.map((e) => ({ type: e.type, actorId: e.actorId, detail: e.detail, at: e.createdAt })), children: children.map((c) => this.view(c)) };
+    const classification = (r.classification as unknown as Classification | null) ?? null;
+    const explanation = explainAlert({
+      kind: r.kind, ruleKey: r.ruleKey, title: r.title, severity: r.severity, detail: r.detail, classification,
+      rule: rule ? { name: rule.name, severity: rule.severity, params: (rule.params ?? {}) as Record<string, unknown> } : null,
+    });
+    return {
+      ...this.view(r),
+      events: events.map((e) => ({ type: e.type, actorId: e.actorId, detail: e.detail, at: e.createdAt })), children: children.map((c) => this.view(c)),
+      explanation, classificationDetail: classification,
+      rule: rule ? { ...rule, scope: scopeOfKey(rule.scopeKey) } : null,
+      similar: { total: similarCount, recent: similar.map((x) => this.view(x)), onThisComputer: recorded },
+    };
   }
 
   async acknowledge(a: ActorContext, id: string, raw: unknown, businessId?: string | null) {

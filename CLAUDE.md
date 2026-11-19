@@ -1477,6 +1477,43 @@ unchanged. **No restart window has restarted a real Windows computer.**
 Behavioural proof: `e2e-restart-window-settings.mjs` (ports 3871–3873,
 `RELEASE_BIN` / `ACTION_SIM`); unit: `unit-restart-window-settings.mjs`.
 
+§78 (0.66) is alert classification. The pre-0.66 recommended `disk-errors`
+monitor named no level and no provider, so Kernel-General's informational
+event 11 for a registry hive inside a read-only shadow copy (0xC00000A2) was
+a critical disk alert on DS-HOME1. Every event-monitor match now goes through
+`apps/api/src/monitoring/classify.ts`, which is pure (it imports only
+`node:crypto`) and versioned (`CLASSIFIER_VERSION`).
+
+- **Known-harmless patterns** (`KNOWN_BENIGN`) each name the log, provider,
+  event id, levels 4 or 5 only, an 8-digit status code and a component.
+  `benignMatch` compares all six and never message words. The status code
+  and component come from the `0x…` code and the NT device path in the
+  message, which Windows does not translate.
+- **Never above the monitor.** The monitor's severity is the ceiling
+  (`minSev(…, ruleSeverity)` everywhere). An unknown event keeps it. The
+  Security log and level 0 are never lowered by level. Events counted but not
+  sent keep an alert at WARNING at least.
+- **Fingerprints** keep 8-digit status codes; only 9+ hex digits are taken
+  out.
+- **The recommended monitor** (`DISK_ERRORS_PARAMS`) asks for levels 1–3 and
+  names no provider, on purpose: every storage controller driver logs its own
+  event 11.
+- **On start**, `AlertQualityService` corrects a `disk-errors` monitor only by
+  a conditional write on the exact `DISK_ERRORS_PRE066_PARAMS`, audited
+  (`MONITOR_RULE_CHANGED`, `op: corrected`). It reclassifies open event
+  alerts conditionally on the version it read, audited
+  (`MONITOR_ALERT_RECLASSIFIED`) and in the alert's history. It deletes
+  nothing.
+- **`ingestReport`** classifies, then records fingerprints
+  (`MonitorEventFingerprint`, 0085), then evaluates the classified count,
+  then raises. Similar alerts are read through `alertWhere`.
+- **The agent** sends at most five samples of 300 characters. Older agents
+  keep working with one.
+
+Behavioural proof: `e2e-alert-quality.mjs` (port 3921, in `run-e2e.sh`);
+unit: `unit-alert-classification.mjs` (in CI) and `unit-monitoring.mjs` with
+`PWSH`. **The samples block has never run on real Windows.**
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs
