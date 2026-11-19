@@ -6,7 +6,7 @@ import { AUTO_TICKET, autoTicketDecision, ticketPolicyFor, type Severity, type T
 
 const ALERT_SELECT = {
   id: true, kind: true, ruleKey: true, severity: true, state: true, title: true, firstSeenAt: true, notifyFrom: true,
-  tenantId: true, customerId: true, siteId: true, endpointId: true,
+  tenantId: true, customerId: true, siteId: true, endpointId: true, fingerprint: true,
   endpoint: { select: { id: true, name: true } },
   customer: { select: { name: true } },
   parent: { select: { state: true } },
@@ -29,6 +29,13 @@ const ALERT_SELECT = {
  * unique per alert), PSA_AUTO_TICKET_REQUESTED written before the send, and
  * the send. A failed send is retried with backoff (AUTO_TICKET.backoffMinutes)
  * up to AUTO_TICKET.maxAttempts sends, then given up. Nothing here sends.
+ *
+ * 0.67: alert quality rules act before this (at ingest, and on the open
+ * alerts when a rule is approved), so a suppressed alert is never raised and
+ * a downgraded one is judged at its new severity. And one event signature on
+ * one computer gets one ticket a day: an event alert whose computer, monitor
+ * and fingerprint already had a ticket sent in the last 24 hours is linked to
+ * that ticket (`duplicate`) instead of sending another.
  */
 @Injectable()
 export class AlertTicketsService {
@@ -84,6 +91,7 @@ export class AlertTicketsService {
         const n = used.get(bkey) ?? await this.prisma.monitorAlertTicket.count({ where: { customerId: a.customerId, lastAttemptAt: { gte: new Date(now.getTime() - 3_600_000) } } });
         used.set(bkey, n);
         if (n >= this.perHour()) continue;
+        if (!prior && a.fingerprint && a.kind === 'EVENT_MATCH' && await this.linkDuplicate(a, now)) continue;
         const r = await this.psa.alertTicket({ ...a, endpoint: a.endpoint }, prior, now);
         if (r.attempted) { attempted++; used.set(bkey, n + 1); }
       } catch (e) {
@@ -92,4 +100,22 @@ export class AlertTicketsService {
     }
     return { attempted };
   }
+
+  /** The same event on the same computer already has a ticket from the last day: link this alert to it, send nothing. */
+  private async linkDuplicate(a: { id: string; customerId: string | null; endpointId: string | null; ruleKey: string; fingerprint: string | null }, now: Date) {
+    const prev = await this.prisma.monitorAlertTicket.findFirst({
+      where: { status: 'sent', lastAttemptAt: { gte: new Date(now.getTime() - DUPLICATE_WINDOW_MS) }, alert: { endpointId: a.endpointId, ruleKey: a.ruleKey, fingerprint: a.fingerprint, id: { not: a.id } } },
+      orderBy: { lastAttemptAt: 'desc' }, select: { psaTicketId: true, ref: true, url: true, connectorKind: true, connectorScope: true },
+    });
+    if (!prev) return false;
+    try {
+      await this.prisma.monitorAlertTicket.create({ data: { alertId: a.id, customerId: a.customerId, status: 'gave_up', attempts: 1, lastAttemptAt: now, lastStatus: 'duplicate', ...prev } });
+    } catch (e) {
+      if ((e as { code?: string }).code !== 'P2002') throw e; // another sweeper got it first
+    }
+    return true;
+  }
 }
+
+/** One ticket per event signature per computer per day. */
+const DUPLICATE_WINDOW_MS = 24 * 3_600_000;

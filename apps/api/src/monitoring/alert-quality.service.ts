@@ -3,6 +3,7 @@ import { Prisma, type MonitorAlert } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CLASSIFIER_VERSION, classifyEvents, KNOWN_BENIGN, samplesOf } from './classify';
+import { QualityEngineService } from './quality-engine.service';
 import { DISK_ERRORS_PARAMS, DISK_ERRORS_PRE066_PARAMS, type Severity } from './engine';
 import { MonitoringService } from './monitoring.service';
 import { AlertEventsService } from './alert-events.service';
@@ -38,6 +39,7 @@ export class AlertQualityService implements OnApplicationBootstrap {
     private readonly audit: AuditService,
     private readonly mon: MonitoringService,
     private readonly events: AlertEventsService,
+    private readonly quality: QualityEngineService,
   ) {}
 
   async onApplicationBootstrap() {
@@ -75,8 +77,14 @@ export class AlertQualityService implements OnApplicationBootstrap {
     return moved;
   }
 
-  /** Returns true when the severity changed or the alert was closed. */
-  async reclassifyOne(a: MonitorAlert, now: Date) {
+  /**
+   * Returns true when the severity changed or the alert was closed. 0.67:
+   * approved alert quality rules in force apply here too (a dry run: no
+   * counters), so a later classifier version never undoes an approved rule,
+   * and an approval reclassifies the open alerts it covers through this one
+   * path (QualityRulesService.applyToOpen, `byRule`).
+   */
+  async reclassifyOne(a: MonitorAlert, now: Date, byRule: { id: string; name: string } | null = null) {
     const rule = a.ruleId ? await this.prisma.monitorRule.findUnique({ where: { id: a.ruleId }, select: { severity: true, params: true } }) : null;
     const detail = (a.detail && typeof a.detail === 'object' ? a.detail : {}) as Record<string, unknown>;
     const samples = samplesOf(detail);
@@ -84,7 +92,9 @@ export class AlertQualityService implements OnApplicationBootstrap {
     const ruleView = rule
       ? { severity: rule.severity as Severity, params: rule.params as Record<string, unknown> }
       : { severity: a.severity as Severity, params: { log: detail.log } };
-    const cls = classifyEvents(ruleView, { count, samples });
+    const first = classifyEvents(ruleView, { count, samples });
+    const q = a.endpointId && a.ruleId ? await this.quality.forEvents({ id: a.endpointId, customerId: a.customerId }, { key: a.ruleKey, id: a.ruleId }, first, now, false) : null;
+    const cls = q ? classifyEvents(ruleView, { count, samples }, q.adjust) : first;
     const stamp = { classification: cls as unknown as Prisma.InputJsonValue, classifierVersion: cls.v, fingerprint: cls.fingerprint };
     const from = a.severity as Severity;
     const to = cls.severity;
@@ -95,14 +105,16 @@ export class AlertQualityService implements OnApplicationBootstrap {
     if (!u.count) return false;
     if (to === from) return false;
     const benign = cls.matched ? KNOWN_BENIGN.find((b) => b.id === cls.matched) : undefined;
-    const ev = { from, to: to ?? null, class: cls.class, basis: cls.basis, matched: cls.matched, classifierVersion: cls.v, seen: cls.seen, unseen: cls.unseen };
+    const ev = { from, to: to ?? null, class: cls.class, basis: cls.basis, matched: cls.matched, classifierVersion: cls.v, seen: cls.seen, unseen: cls.unseen, ...(cls.qualityRules?.length ? { qualityRules: cls.qualityRules } : {}) };
     await this.prisma.monitorAlertEvent.create({ data: { alertId: a.id, type: 'reclassified', detail: ev as Prisma.InputJsonValue } });
     await this.audit.log({
       action: 'MONITOR_ALERT_RECLASSIFIED', tenantId: a.tenantId ?? undefined, customerId: a.customerId ?? undefined,
       resource: 'monitor_alert', resourceId: a.id, meta: { monitor: a.ruleKey, endpointId: a.endpointId, ...ev, closed: to === null },
     });
     if (to === null) {
-      await this.mon.resolve({ ...a, ...stamp } as MonitorAlert, null, `Closed by reclassification: every matching event was a known harmless pattern${benign ? ` (${benign.title})` : ''}.`, now);
+      await this.mon.resolve({ ...a, ...stamp } as MonitorAlert, null, cls.basis === 'quality_rule'
+        ? `Closed by an approved alert quality rule${byRule ? ` ("${byRule.name}")` : ''}: its events are suppressed for this computer. They are still recorded.`
+        : `Closed by reclassification: every matching event was a known harmless pattern${benign ? ` (${benign.title})` : ''}.`, now);
     } else {
       await this.events.emit(a.id, 'alert.updated');
     }

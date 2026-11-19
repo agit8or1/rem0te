@@ -383,6 +383,11 @@ try {
     let c = await login(mfaUser.email);
     const setup = await req('POST', '/mfa/totp/setup', { cookie: c });
     const totpSecret = setup.body?.data?.secret;
+    // The server checks a code in its own 30-second step only (otplib's window
+    // 0): a code made in a step's last moment is checked in the next one and
+    // refused. Wait out the end of a step before making one.
+    const left = 30 - (Math.floor(Date.now() / 1000) % 30);
+    if (left < 4) await new Promise((r) => setTimeout(r, (left + 1) * 1000));
     const code = authenticator.generate(totpSecret);
     const conf = await req('POST', '/mfa/totp/confirm', { cookie: c, body: { code } });
     check(conf.status === 200, 'TOTP enrolled', `HTTP ${conf.status}`);

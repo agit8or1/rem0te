@@ -15,6 +15,7 @@ import { alertMail } from '../email/mail-content';
 import { PublicUrlService } from '../platform/public-url.service';
 import { GroupMembershipService } from '../group-policy/membership.service';
 import { classifyEvents, classifyThreshold, worse, type Classification } from './classify';
+import { QualityEngineService } from './quality-engine.service';
 
 /**
  * Monitoring (v0.29): the evaluator, the sweep and the notifier.
@@ -37,7 +38,7 @@ import { classifyEvents, classifyThreshold, worse, type Classification } from '.
  * turns the sweep off in a process anyway.
  */
 
-type Ep = { id: string; tenantId: string | null; customerId: string | null; siteId: string | null; name: string };
+type Ep = { id: string; tenantId: string | null; customerId: string | null; siteId: string | null; name: string; platform?: string | null; osVersion?: string | null };
 type Policy = { scopeKey: string; levels: NotifyLevel[]; ticketing: { enabled: boolean; minSeverity: Severity } };
 
 const LIVE_KINDS = new Set(['DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH']);
@@ -74,6 +75,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
     private readonly urls: PublicUrlService,
     private readonly groups: GroupMembershipService,
     private readonly tickets: AlertTicketsService,
+    private readonly quality: QualityEngineService,
   ) {}
 
   onModuleInit() {
@@ -119,7 +121,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async endpoint(endpointId: string): Promise<Ep | null> {
-    return this.prisma.endpoint.findFirst({ where: { id: endpointId, status: 'ACTIVE' }, select: { id: true, tenantId: true, customerId: true, siteId: true, name: true } });
+    return this.prisma.endpoint.findFirst({ where: { id: endpointId, status: 'ACTIVE' }, select: { id: true, tenantId: true, customerId: true, siteId: true, name: true, platform: true, osVersion: true } });
   }
 
   /** The `monitor` block of an authenticated heartbeat response, or null when nothing is asked. */
@@ -158,8 +160,15 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
         // 0.66: classify before anything is raised (classify.ts). Events that
         // match a known-harmless pattern are taken out of the count the
         // threshold sees, and recorded, never dropped.
-        const cls = ev.count > 0 ? classifyEvents({ severity: r.severity, params: r.params as Record<string, unknown> }, { count: ev.count, samples: ev.samples }) : null;
-        if (cls) await this.recordFingerprints(ep, r.key, String((r.params as { log?: unknown }).log ?? ''), ev.samples, cls, now);
+        const view = { severity: r.severity, params: r.params as Record<string, unknown> };
+        const first = ev.count > 0 ? classifyEvents(view, { count: ev.count, samples: ev.samples }) : null;
+        if (first) await this.recordFingerprints(ep, r.key, String((r.params as { log?: unknown }).log ?? ''), ev.samples, first, now);
+        // 0.67: approved alert quality rules, before the threshold and before
+        // anything is raised, notified or ticketed. The classifier makes the
+        // one decision again with each rule's verdict; pending rules are only
+        // counted (quality-engine.service.ts).
+        const q = first ? await this.quality.forEvents(ep, { key: r.key, id: r.id }, first, now) : null;
+        const cls = first && q ? classifyEvents(view, { count: ev.count, samples: ev.samples }, q.adjust) : first;
         const v = evaluateEvents(r, ev, ep.name, states.get(r.key) ?? EMPTY_STATE, now, cls ? cls.effectiveCount : 0);
         const alertId = await this.apply(ep, r, v, now, { repeat: true, checkedAt: ev.checkedAt, cls });
         if (alertId && cls) {
@@ -252,7 +261,15 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   async raise(ep: Ep, rule: RuleLike & { id: string }, title: string, detail: Record<string, unknown>, now: Date, repeat: boolean, dedupKey = dedupKeyOf(rule.key, ep.id), cls: Classification | null = null) {
     // 0.66: an event monitor's severity is the classifier's (never above the
     // monitor's); a threshold monitor's is the monitor's own.
-    const decided = cls ?? classifyThreshold(rule.severity);
+    let decided = cls ?? classifyThreshold(rule.severity);
+    // 0.67: a threshold monitor's alert under an approved alert quality rule:
+    // suppressed (nothing raised, notified or ticketed) or capped. (A site
+    // outage is not raised here, and no rule names one.)
+    if (!cls) {
+      const t = await this.quality.forThreshold(ep, { key: rule.key, id: rule.id }, rule.severity as Severity, now);
+      if (t.severity === null) return null;
+      if (t.ruleId && t.severity !== rule.severity) decided = { ...classifyThreshold(t.severity), basis: 'quality_rule', ruleSeverity: rule.severity as Severity, qualityRules: [t.ruleId], reasons: [`rule_capped:${t.ruleId}`] };
+    }
     const severity = (decided.severity ?? rule.severity) as Severity;
     const bump = async (a: MonitorAlert) => {
       // An open event alert keeps the worst it has seen, and the decision
@@ -318,10 +335,21 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
 
   // ── The sweep ─────────────────────────────────────────────────────────────
 
+  /**
+   * 0.67: extra steps run first in every sweep (alert quality rules' expiry
+   * and review reminders). Registered by their own service, so the sweep stays
+   * the one timer: MONITOR_SWEEP=off stops them with it.
+   */
+  private readonly steps: { name: string; run: (now: Date) => Promise<unknown> }[] = [];
+  addSweepStep(name: string, run: (now: Date) => Promise<unknown>) { this.steps.push({ name, run }); }
+
   async sweep(now = new Date()) {
     if (this.busy) return;
     this.busy = true;
     try {
+      for (const s of this.steps) {
+        try { await s.run(now); } catch (e) { this.logger.error(`monitoring sweep step ${s.name}: ${(e as Error).message}`); }
+      }
       await this.evaluateSweepRules(now);
       await this.correlateOutages(now);
       await this.notifyPass(now);

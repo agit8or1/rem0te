@@ -135,6 +135,14 @@ enum ActivityAction {
   MONITOR_ALERT_ACKNOWLEDGED
   MONITOR_ALERT_RESOLVED
   MONITOR_ALERT_RECLASSIFIED
+  ALERT_FALSE_POSITIVE_REPORTED
+  ALERT_RECOMMENDATION_DISMISSED
+  ALERT_QUALITY_RULE_PROPOSED
+  ALERT_QUALITY_RULE_EDITED
+  ALERT_QUALITY_RULE_APPROVED
+  ALERT_QUALITY_RULE_REJECTED
+  ALERT_QUALITY_RULE_ROLLED_BACK
+  ALERT_QUALITY_RULE_EXPIRED
   MONITOR_ALERT_TICKET_LINKED
   LOGIN_SUCCESS
   LOGIN_FAILURE
@@ -693,6 +701,10 @@ model Customer {
   monitorRules         MonitorRule[]
   monitorAlerts        MonitorAlert[]
   monitorSuppressions  MonitorSuppression[]
+  /// 0.67: false-positive reports, recommendations and alert quality rules.
+  falsePositiveReports AlertFalsePositiveReport[]
+  ruleRecommendations  AlertRuleRecommendation[]
+  alertQualityRules    AlertQualityRule[]
   monitorTicketPolicies MonitorTicketPolicy[]
   clientUpdatePolicies ClientUpdatePolicy[]
   /// 0.60: restart window settings of this business, its groups and its computers.
@@ -874,6 +886,9 @@ model Endpoint {
   monitorStates     EndpointMonitorState[]
   /// 0.66: event fingerprints seen from this computer's event monitors.
   eventFingerprints MonitorEventFingerprint[]
+  /// 0.67: false-positive reports about this computer's alerts, and rules scoped to it.
+  falsePositiveReports AlertFalsePositiveReport[]
+  alertQualityRules    AlertQualityRule[]
   changes           EndpointChange[]
   metricSamples     EndpointMetricSample[]
   metricHourly      EndpointMetricHourly[]
@@ -1067,6 +1082,8 @@ model EndpointGroup {
   /// 0.35: policies scoped to this group. They keep the group from being deleted.
   monitorRules         MonitorRule[]
   clientUpdatePolicies ClientUpdatePolicy[]
+  /// 0.67: alert quality rules scoped to this group. Deleting the group removes them (they only ever reduce alerts).
+  alertQualityRules    AlertQualityRule[]
   /// 0.60: this group's restart window setting. It keeps the group from being deleted.
   restartWindowSetting RestartWindowSetting?
 
@@ -3251,6 +3268,9 @@ model MonitorRule {
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
+  /// 0.67: alert quality rules scoped to this one monitor.
+  qualityRules AlertQualityRule[]
+
   @@unique([scopeKey, key])
   @@index([customerId])
   @@index([groupId])
@@ -3300,6 +3320,8 @@ model MonitorAlert {
   ticketUrl        String?
   ticketLinkedAt   DateTime?
   events           MonitorAlertEvent[]
+  /// 0.67: false-positive reports. A report outlives its alert (retention) with its own copy of what it was about.
+  falsePositiveReports AlertFalsePositiveReport[]
   /// 0.55: the automatic PSA ticket, at most one per alert (alertId is unique).
   autoTicket       MonitorAlertTicket?
   /// 0.66: the classifier's decision (monitoring/classify.ts Classification)
@@ -4576,4 +4598,159 @@ model RestartWindowAttempt {
   @@unique([policyId, endpointId, windowKey, attempt])
   @@index([endpointId, createdAt])
   @@index([customerId, createdAt])
+}
+
+/// 0.67: "Report false positive" on one alert. It records a person's view of
+/// one alert and changes nothing: not the alert's monitor, not any rule (the
+/// reporter may choose to resolve the alert too, as Resolve does). It keeps
+/// its own copy of what the alert was, because retention may prune the alert.
+/// One report per person per alert.
+model AlertFalsePositiveReport {
+  id               String                   @id @default(cuid())
+  alertId          String?
+  alert            MonitorAlert?            @relation(fields: [alertId], references: [id], onDelete: SetNull)
+  tenantId         String?
+  customerId       String?
+  customer         Customer?                @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  endpointId       String?
+  endpoint         Endpoint?                @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+  ruleId           String?
+  ruleKey          String
+  kind             String
+  fingerprint      String?
+  alertSeverity    AlertSeverity
+  alertClass       String?
+  alertTitle       String
+  /// quality-rules.ts FP_REASONS (CHECK in 0086).
+  reason           String
+  comment          String?
+  recommendPrevent Boolean
+  recommendationId String?
+  recommendation   AlertRuleRecommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  reportedById     String
+  createdAt        DateTime                 @default(now())
+
+  @@unique([alertId, reportedById])
+  @@index([customerId, createdAt])
+  @@index([ruleKey, createdAt])
+  @@index([fingerprint])
+  @@index([reportedById, createdAt])
+}
+
+/// 0.67: what false-positive reports recommend, one open row per business,
+/// monitor and event fingerprint. A recommendation is never applied: a person
+/// makes a rule from it, which then needs simulation and approval.
+model AlertRuleRecommendation {
+  id              String                     @id @default(cuid())
+  tenantId        String?
+  customerId      String?
+  customer        Customer?                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  ruleKey         String
+  ruleId          String?
+  fingerprint     String?
+  /// What the reported alerts were: log, provider, eventId, level, statusCode, component, kind, monitor name and severity.
+  facts           Json
+  status          String                     @default("open")
+  reportCount     Int                        @default(1)
+  reporters       Json
+  reasons         Json
+  endpointIds     Json
+  firstReportedAt DateTime                   @default(now())
+  lastReportedAt  DateTime                   @default(now())
+  qualityRuleId   String?
+  dismissedById   String?
+  dismissedAt     DateTime?
+  dismissNote     String?
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+  reports         AlertFalsePositiveReport[]
+
+  @@index([customerId, status])
+  @@index([status, lastReportedAt])
+}
+
+/// 0.67: a reviewed rule that changes what a monitor raises — suppress,
+/// downgrade, or raise only on a count or on repeats — for one narrowly
+/// matched event signature, in one scope. Only an `active` rule has any
+/// effect; a `pending` one is evaluated in the shadow (counted, never
+/// applied). A rule's definition is fixed once approved: a change is a new
+/// rule that supersedes it, so every version is kept and a rollback restores
+/// the one before. Its history is AlertQualityRuleEvent.
+model AlertQualityRule {
+  id                  String                  @id @default(cuid())
+  tenantId            String?
+  customerId          String?
+  customer            Customer?               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// quality-rules.ts SCOPE_KINDS (CHECK in 0086).
+  scopeKind           String
+  scopeKey            String
+  endpointId          String?
+  endpoint            Endpoint?               @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  groupId             String?
+  group               EndpointGroup?          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  monitorRuleId       String?
+  monitorRule         MonitorRule?            @relation(fields: [monitorRuleId], references: [id], onDelete: Cascade)
+  osFamily            String?
+  name                String
+  description         String
+  justification       String
+  ruleKey             String
+  match               Json
+  matchKey            String
+  behaviour           Json
+  behaviourKind       String
+  temporary           Boolean
+  expiresAt           DateTime?
+  reviewAt            DateTime?
+  reviewNotifiedAt    DateTime?
+  status              String                  @default("pending")
+  revision            Int                     @default(1)
+  risk                String
+  riskReasons         Json
+  allowBroad          Boolean                 @default(false)
+  simulation          Json?
+  simulatedRevision   Int?
+  simulatedAt         DateTime?
+  createdById         String
+  approvedById        String?
+  approvedAt          DateTime?
+  secondApprovedById  String?
+  secondApprovedAt    DateTime?
+  rejectedById        String?
+  rejectedAt          DateTime?
+  rolledBackById      String?
+  rolledBackAt        DateTime?
+  closedNote          String?
+  supersedesId        String?
+  supersedes          AlertQualityRule?       @relation("RuleSupersedes", fields: [supersedesId], references: [id], onDelete: SetNull)
+  supersededBy        AlertQualityRule[]      @relation("RuleSupersedes")
+  recommendationId    String?
+  matchCount          Int                     @default(0)
+  lastMatchedAt       DateTime?
+  shadowMatchCount    Int                     @default(0)
+  shadowLastMatchedAt DateTime?
+  dangerousMatchCount Int                     @default(0)
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  events              AlertQualityRuleEvent[]
+
+  @@index([status])
+  @@index([customerId, status])
+  @@index([ruleKey, status])
+}
+
+/// 0.67: a rule's history — proposed, edited (with the version before),
+/// simulated, approved, rejected, rolled back, expired, superseded, restored.
+model AlertQualityRuleEvent {
+  id        String           @id @default(cuid())
+  ruleId    String
+  rule      AlertQualityRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  type      String
+  actorId   String?
+  revision  Int
+  snapshot  Json?
+  detail    Json?
+  createdAt DateTime         @default(now())
+
+  @@index([ruleId, createdAt])
 }

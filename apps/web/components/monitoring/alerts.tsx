@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { apiError } from '@/components/security-controls/shared';
+import { ReportFalsePositiveButton } from '@/components/monitoring/false-positive-dialog';
+import { EntryActions } from '@/components/endpoints/ai-ticket-actions';
 
 /** Alert rows, badges and the expandable detail — shared by /alerts and the computer page (0.29). */
 
@@ -36,6 +38,9 @@ type Detail = AlertRow & {
   explanation?: Explanation;
   rule?: { id: string; key: string; name: string; kind: string; severity: string; enabled: boolean; params: Record<string, unknown>; scope: string | null } | null;
   similar?: { total: number; recent: AlertRow[]; onThisComputer: { seen: number; firstSeenAt: string; lastSeenAt: string; class: string } | null };
+  /** 0.67: the approved alert quality rules that changed it, and its false-positive reports. */
+  qualityRules?: { id: string; name: string; status: string }[];
+  falsePositive?: { reports: number; mine: { reason: string; createdAt: string } | null };
 };
 export type Summary = { visible: boolean; open: number; acknowledged: number; critical: number; warning: number; info: number; suppressed: number };
 
@@ -59,10 +64,11 @@ const BASIS_TIP: Record<string, string> = {
   known_benign: 'Matched a known harmless pattern on every condition.', known_event: 'A Windows event Rem0te recognises.',
   level: 'Windows logged it as Information.', rule: 'Rem0te does not recognise this event: the monitor\'s severity stands.',
   partial: 'The agent counted more events than it sent; the rest could not be checked.', threshold: 'The monitor\'s own threshold.',
+  quality_rule: 'An approved alert quality rule for this scope changed it (Alerts → False positives & rules).',
 };
 export function ClassBadge({ c }: { c: AlertRow['classification'] }) {
   if (!c || c.basis === 'threshold') return null;
-  return <Badge variant="outline" title={BASIS_TIP[c.basis] ?? c.basis} data-testid="alert-class">{c.basis === 'partial' ? 'partly checked' : CLASS_LABEL[c.class]}</Badge>;
+  return <Badge variant="outline" title={BASIS_TIP[c.basis] ?? c.basis} data-testid="alert-class">{c.basis === 'partial' ? 'partly checked' : c.basis === 'quality_rule' ? 'changed by a rule' : CLASS_LABEL[c.class]}</Badge>;
 }
 
 const EVENT_LABEL: Record<string, string> = {
@@ -71,6 +77,7 @@ const EVENT_LABEL: Record<string, string> = {
   ticket_linked: 'Ticket linked', ticket_event: 'Sent to ClientSt0r',
   ticketed: 'Ticket opened in the PSA', ticket_failed: 'PSA ticket not sent',
   reclassified: 'Reclassified',
+  false_positive_reported: 'Reported as a false positive',
 };
 
 /** 0.55: the automatic PSA ticket as a short badge — its reference (a link when the PSA gave one), or what went wrong. */
@@ -161,6 +168,11 @@ export function AlertDetail({ id, onChanged }: { id: string; onChanged: () => vo
         {data.resolveNote && <div className="md:col-span-3"><div className="text-xs text-muted-foreground">Resolution</div>{data.resolveNote}</div>}
       </div>
       {data.explanation && <ExplanationBox e={data.explanation} />}
+      {!!data.qualityRules?.length && (
+        <p className="text-xs text-muted-foreground" data-testid="alert-quality-rules">
+          Changed by {data.qualityRules.map((q, i) => <span key={q.id}>{i ? ', ' : ''}<Link className="text-primary hover:underline" href={`/alerts/quality?rule=${q.id}`}>{q.name}</Link>{q.status !== 'active' ? ` (${q.status.replace('_', ' ')})` : ''}</span>)}.
+        </p>
+      )}
       {data.detail && Object.keys(data.detail).length > 0 && <DetailList detail={data.detail} />}
       <div className="flex flex-wrap gap-2" data-testid="alert-views">
         {data.detail && <Button size="sm" variant="ghost" aria-expanded={show === 'raw'} onClick={() => toggle('raw')}>View raw event</Button>}
@@ -205,11 +217,18 @@ export function AlertDetail({ id, onChanged }: { id: string; onChanged: () => vo
               {typeof e.detail?.note === 'string' && <>: “{e.detail.note}”</>}
               {e.type === 'ticketed' && typeof e.detail?.ref === 'string' && <>: {e.detail.ref}</>}
               {e.type === 'ticket_failed' && typeof e.detail?.status === 'string' && <>: {e.detail.status}{typeof e.detail?.retryAt === 'string' ? `, retry at ${fmt(e.detail.retryAt)}` : ', not retried'}</>}
+              {e.type === 'false_positive_reported' && typeof e.detail?.reason === 'string' && <>: {String(e.detail.reason).replace(/_/g, ' ')}{e.detail.recommendPrevent ? ', recommending prevention' : ''}</>}
               {e.type === 'reclassified' && typeof e.detail?.from === 'string' && <>: {String(e.detail.from).toLowerCase()} → {e.detail.to ? String(e.detail.to).toLowerCase() : 'closed (harmless)'}{typeof e.detail.class === 'string' ? ` (${CLASS_LABEL[e.detail.class as AlertClass] ?? e.detail.class})` : ''}</>}
               {Array.isArray(e.detail?.results) && <> → {(e.detail.results as { label: string; ok: boolean; status: string }[]).map((r) => `${r.label} ${r.ok ? '✓' : `✗ ${r.status}`}`).join(', ') || 'no destination for this severity'}</>}
             </li>
           ))}
         </ol>
+      </div>
+      <div className="flex flex-wrap items-center gap-2" data-testid="alert-quality-actions">
+        {data.kind !== 'SITE_OUTAGE' && <ReportFalsePositiveButton alertId={id} onDone={done} />}
+        {data.falsePositive && data.falsePositive.reports > 0 && <Badge variant="outline" data-testid="alert-fp-count">reported false positive ×{data.falsePositive.reports}</Badge>}
+        {/* 0.67: advisory AI only, through the existing AI module (Settings → AI); it never decides. */}
+        {data.computer && <EntryActions endpointId={data.computer.id} source={{ source: 'alert', alertId: id }} />}
       </div>
       {data.state !== 'RESOLVED' && (
         <div className="space-y-2">

@@ -971,6 +971,20 @@ const SECTIONS: Section[] = [
           monitor you add. See{' '}
           <Link href="/docs/monitoring" className="underline text-foreground">Monitoring and alerts</Link>.
         </p>
+        <p className="font-medium text-foreground">False positives and alert quality rules (0.67)</p>
+        <p>
+          On an alert, <em>Report false positive</em> records that it was not a real problem: a reason, an optional comment,
+          and optionally <em>Also resolve this alert</em> and <em>Recommend preventing similar alerts</em>. A report never
+          turns a monitor off and never creates a rule; repeated reports only raise a recommendation&apos;s priority.{' '}
+          <Link href="/alerts/quality" className="underline text-foreground">Alerts → False positives &amp; rules</Link>{' '}
+          shows the reports, the recommendations and the <em>alert quality rules</em>. A rule suppresses, lowers, or waits
+          for a count or for repeated reports, for one computer, a group, a business, one monitor or an operating system
+          (every business is a Platform Admin&apos;s). It is tested against the last 90 days of stored alerts and approved
+          before it applies; a high-risk rule (a critical, Security-log, backup or storage monitor, or one with dangerous
+          matches) needs two different people. Temporary rules end by themselves; permanent ones carry a review date. Roll
+          back at any time. A suppressed event is still recorded. See{' '}
+          <Link href="/docs/monitoring" className="underline text-foreground">Monitoring and alerts</Link>.
+        </p>
         <p className="font-medium text-foreground">One alert per problem</p>
         <p>
           A repeat raises the count on the open alert instead of making another. When three or more

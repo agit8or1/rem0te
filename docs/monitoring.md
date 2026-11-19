@@ -367,6 +367,126 @@ event*, *View similar alerts* and *View matching monitor rule*. The alert list
 shows a small badge for an event alert's class (*known failure*, *known
 warning*, *informational*, *unverified*, *partly checked*).
 
+## False positives and alert quality rules (0.67)
+
+An alert that was not a real problem is **reported**, not silenced. Fixing
+the cause is a **rule**, which is proposed, tested and approved before it
+changes anything. The two are kept apart on purpose.
+
+### Report false positive
+
+On any alert (except a site outage), *Report false positive* shows the alert,
+its monitor and classification, the original event, how many similar alerts
+you can see and on which computers, and asks why:
+
+*Known harmless event*, *Incorrect severity*, *Duplicate alert*, *Expected
+activity*, *Incorrect threshold*, *Monitoring rule too broad*, *Incorrect
+correlation*, or *Other* (which needs a comment).
+
+- **Also resolve this alert** resolves that one alert, nothing else.
+- **Recommend preventing similar alerts in the future** adds the report to a
+  recommendation for that monitor and event signature in that business. It
+  shows the proposed handling as a suggestion.
+- **A report changes no monitor and creates no rule.** Anyone who can see
+  the alert can report it, once. The report is in the alert's history and
+  audited (`ALERT_FALSE_POSITIVE_REPORTED`, without the comment).
+
+### Recommendations
+
+*Alerts → False positives & rules* lists open recommendations: the issue, the
+recommendation, its impact and a caution. More reports, from more people and
+on more computers, raise its priority. **They never approve anything.**
+*Preview matching events* tests the suggested rule against stored alerts
+without saving it. *Edit scope and propose* turns it into a proposed rule;
+*Dismiss* closes it with a note.
+
+### Alert quality rules
+
+A rule names:
+
+| | |
+|---|---|
+| **Scope** | one computer, a device group, a business, one monitor, an operating system, or every business (*platform*, Platform Admin only). It never reaches outside its business. |
+| **Which alerts** | the monitor key and, for an event-log monitor, the event fingerprint or both the provider and the event id (plus optional levels, status code, component). A rule on a monitor's every event is refused (`RULE_TOO_BROAD`). A threshold monitor (disk space, offline…) takes no event conditions and cannot be changed everywhere at once. |
+| **What it does** | *suppress* (the event is still recorded, no alert), *lower* to warning or info, *alert only at a count* in one report, or *alert only after repeated reports*. |
+| **How long** | *temporary* (ends by itself, at most 90 days) or *permanent* with a review date (at most a year). |
+
+A rule only ever makes an alert quieter: it never raises one above the
+monitor's severity, and the classifier's own rules (0.66) still apply first.
+
+**Precedence.** When two active rules match, the narrower scope wins
+(computer, group, business, monitor, OS, platform); then the one with more
+conditions; then the one that keeps more of the alert. There is one active
+rule per scope and conditions (`RULE_CONFLICT`).
+
+**Proposing and testing.** A proposal changes nothing. While pending, a rule
+is evaluated in **shadow**: it is counted on matching alerts but not applied.
+*Test proposed rule* replays it over the last 90 days of stored alerts (at
+most 5,000) and the recorded event signatures, and shows what would have
+been suppressed or lowered, on which computers and businesses, and any
+**dangerous matches**: events the classifier knows as genuine failures, or
+Security-log events.
+
+**Approving.** Approval needs a test of the current revision less than seven
+days old (`SIMULATION_REQUIRED`), an explicit acceptance of any dangerous
+matches (`DANGEROUS_MATCHES`), and someone who may configure monitoring for
+that scope. A **high-risk** rule — one that lowers a critical monitor, or
+touches the Security log, a backup monitor, storage events, every business,
+or has dangerous matches — needs a **second, different approver**
+(`SECOND_APPROVER_REQUIRED`). Approving may ask you to confirm it is you
+(*Settings → Confirm it is you*, *Approving alert quality rules*, off by
+default). On approval, open alerts it covers are re-checked at once, each
+change recorded as *Reclassified*.
+
+**Rolling back, revising, expiring.** *Roll back now* ends a rule at once; if
+it had replaced an earlier version, that version is restored. *Revise* makes
+a new proposal that replaces the active rule only once approved; the old
+version is kept. A temporary rule expires in the monitoring sweep; a
+permanent one past its review date is flagged *review overdue* and keeps
+working. Every step is in the rule's history and the audit log
+(`ALERT_QUALITY_RULE_PROPOSED`, `_EDITED`, `_APPROVED`, `_REJECTED`,
+`_ROLLED_BACK`, `_EXPIRED`).
+
+**Notifications and tickets.** Rules apply before an alert is raised, so a
+suppressed alert notifies nobody and opens no ticket. A lowered alert is
+notified at its new severity. Automatic tickets are also de-duplicated: the
+same event signature on the same computer within 24 hours links to the
+earlier ticket instead of sending a new one.
+
+**Who hears about it.** A proposal, approval, rollback or expiry is mailed to
+confirmed recipients: Platform Admins for a platform rule, the business's
+owners for a business's. A `notifications` pause stops the mail.
+
+### The page
+
+*Alerts → False positives & rules* also shows totals (reports, pending
+recommendations, rules awaiting approval, approved rules, temporary
+exceptions, expiring in 7 days, review due, alerts prevented), the most
+reported monitors, computers, businesses and reasons, a 12-week accuracy
+trend (the share of alerts nobody reported — unreported is not the same as
+confirmed), filters, and **monitoring-quality checks**: monitors with a high
+volume, flapping, never triggering, duplicated, with a sensitive threshold,
+escalating informational events, often reported, or alerting after an agent
+update; conflicting rules; rules that suppressed known failures; and rules
+due for review. The checks are recommendations only.
+
+### AI
+
+The alert's *Ask AI* (Settings → AI) is advisory only. It can help read an
+event; it never reports, proposes or approves anything. With no AI
+configured, everything above works the same.
+
+### Limits
+
+- A business with one person who configures monitoring cannot approve a
+  high-risk rule: it needs a second approver.
+- A backup monitor is recognised (for risk) by its key, name or provider
+  containing "backup".
+- The agent-update check uses each computer's current agent version.
+- A threshold rule is not shadow-counted while pending; the test covers it.
+- *Alert only after repeated reports* is approximated in the test from the
+  stored alerts.
+
 ## Alerts
 
 There is **one alert per problem**, not per occurrence: while an alert is
@@ -492,6 +612,15 @@ skipping system components and updates, up to 500 entries. Agents older than
   and narrow the monitor (levels or a provider). A `disk-errors` monitor someone
   edited before 0.66 still has its old parameters — compare it with the
   recommended ones above.
+- **An alert was not raised although the event is in the log** — open the
+  computer's Monitoring tab: the event's signature is recorded. Then *Alerts →
+  False positives & rules*: an active rule for that scope may suppress it. An
+  alert a rule changed says *changed by a rule* and names it.
+- **Approve is greyed out** — the rule has not been tested, or the test is for
+  an older revision or more than a week old: *Test proposed rule* again. A
+  high-risk rule you approved first waits for someone else.
+- **`RULE_TOO_BROAD`** — name the event fingerprint (or the provider and event
+  id), or scope a threshold rule to a business, group or computer.
 - **An alert says "partly checked"** — the agent counted more matching events
   than it sent (agents older than 0.66 send one). Look in the computer's event
   log at the time of the alert for the others.

@@ -75,7 +75,7 @@ export class MonitoringAdminService {
     return this.acl.resolveScope(a, requested);
   }
 
-  private assertConfigure(a: ActorContext, customerId: string) {
+  assertConfigure(a: ActorContext, customerId: string) {
     if (this.isMsp(a)) return;
     this.acl.resolveScope(a, customerId); // 403 outside the business
     if (a.technician) {
@@ -174,9 +174,17 @@ export class MonitoringAdminService {
       r.fingerprint && r.endpointId ? this.prisma.monitorEventFingerprint.findFirst({ where: { endpointId: r.endpointId, fingerprint: r.fingerprint }, select: { seen: true, firstSeenAt: true, lastSeenAt: true, class: true } }) : null,
     ]);
     const classification = (r.classification as unknown as Classification | null) ?? null;
+    // 0.67: the approved alert quality rules that changed it (names only), and its false-positive reports.
+    const ruleIds = [...new Set((classification?.qualityRules ?? []).filter((x) => typeof x === 'string'))].slice(0, 20);
+    const [qualityRules, fpReports, myReport] = await Promise.all([
+      ruleIds.length ? this.prisma.alertQualityRule.findMany({ where: { id: { in: ruleIds } }, select: { id: true, name: true, status: true } }) : [],
+      this.prisma.alertFalsePositiveReport.count({ where: { alertId: id } }),
+      this.prisma.alertFalsePositiveReport.findFirst({ where: { alertId: id, reportedById: a.userId }, select: { reason: true, createdAt: true } }),
+    ]);
     const explanation = explainAlert({
       kind: r.kind, ruleKey: r.ruleKey, title: r.title, severity: r.severity, detail: r.detail, classification,
       rule: rule ? { name: rule.name, severity: rule.severity, params: (rule.params ?? {}) as Record<string, unknown> } : null,
+      qualityRules: qualityRules.map((q) => ({ id: q.id, name: q.name })),
     });
     return {
       ...this.view(r),
@@ -184,6 +192,7 @@ export class MonitoringAdminService {
       explanation, classificationDetail: classification,
       rule: rule ? { ...rule, scope: scopeOfKey(rule.scopeKey) } : null,
       similar: { total: similarCount, recent: similar.map((x) => this.view(x)), onThisComputer: recorded },
+      qualityRules, falsePositive: { reports: fpReports, mine: myReport },
     };
   }
 

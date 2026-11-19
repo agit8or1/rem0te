@@ -5,6 +5,106 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.67.0] — 2026-11-19 · *Whetstone*
+
+**An alert that was not a real problem can now be reported as a false positive, and the fix becomes a reviewed,
+tested, versioned rule — never a monitor quietly switched off.**
+
+### Why
+
+0.66 fixed the DS-HOME1 disk-errors alert in code. The next harmless event would have needed another release, or
+someone turning the monitor off for everyone. Technicians had no way to say "this alert was wrong" that anyone could
+act on, and no safe way to act on it.
+
+### Report false positive
+
+- On any alert except a site outage. It shows the alert, its monitor, its classification, the original event, the
+  number of similar alerts you can see and the computers they are on, and asks for one of eight reasons (*Other*
+  needs a comment).
+- *Also resolve this alert* resolves only that alert. *Recommend preventing similar alerts in the future* adds the
+  report to a **recommendation** for that monitor and event signature in that business, and shows the proposed
+  handling as a suggestion.
+- **A report changes no monitor and creates no rule.** One report per person per alert (`409 ALREADY_REPORTED`).
+  It is in the alert's history and audited as `ALERT_FALSE_POSITIVE_REPORTED`, with no comment in the audit meta.
+- More reports, reporters and computers raise a recommendation's priority. They never approve anything.
+
+### Alert quality rules
+
+- **Scope**: one computer, a device group, a business, one monitor, an operating system, or every business
+  (*platform*, Platform Admin only). A rule never reaches outside its business.
+- **Behaviour**: suppress (the event is still recorded), lower to warning or info, alert only at a count in one
+  report, or alert only after repeated reports. A rule only makes an alert quieter; it never raises one above the
+  monitor's severity.
+- **Duration**: temporary (at most 90 days, then it expires) or permanent with a review date (at most a year; overdue
+  rules are flagged and keep working).
+- **Too broad is refused** (`RULE_TOO_BROAD`): an event rule must name the event fingerprint, or both the provider and
+  the event id; a threshold rule cannot apply everywhere. Two rules with the same scope and conditions cannot both be
+  active (`RULE_CONFLICT`).
+- **Precedence**: computer, group, business, monitor, OS, platform; then more conditions; then whatever keeps more of
+  the alert.
+- **Shadow first.** A pending rule is counted on matching alerts but never applied. *Test proposed rule* replays it
+  over the last 90 days of stored alerts (at most 5,000) and recorded event signatures, and lists dangerous matches:
+  events the classifier knows as genuine failures, and Security-log events.
+- **Approval** needs a test of the current revision under seven days old (`SIMULATION_REQUIRED`), explicit acceptance
+  of dangerous matches (`DANGEROUS_MATCHES`), and permission to configure monitoring for the scope. A **high-risk**
+  rule (lowering a critical monitor, the Security log, a backup or storage monitor, every business, or dangerous
+  matches) needs a **second, different approver** (`SECOND_APPROVER_REQUIRED`). Approving may ask you to confirm it is
+  you: new key `monitoring.qualityrule`, *Approving alert quality rules*, **off by default** like every catalog key
+  since 0.64. Open alerts a newly approved rule covers are re-checked at once (*Reclassified* in their history).
+- **Versions and rollback.** *Revise* proposes a new version that replaces the active one only once approved; the
+  old one is kept as *superseded*. *Roll back now* ends a rule at once and restores the version it replaced. Every
+  step is in the rule's history and audited (`ALERT_QUALITY_RULE_PROPOSED`, `_EDITED`, `_APPROVED`, `_REJECTED`,
+  `_ROLLED_BACK`, `_EXPIRED`). Expiry runs in the monitoring sweep.
+- **Notifications and tickets.** Rules apply at ingest, after the event signatures are recorded and before the
+  monitor's threshold, and before a threshold alert is raised — so a suppressed alert notifies nobody and opens no
+  PSA ticket, and a lowered one is notified at its new severity. Automatic tickets are also de-duplicated: the same
+  event signature on the same computer within 24 hours links to the earlier ticket (`lastStatus: duplicate`) instead
+  of sending another.
+- **Admin mail** on a proposal, approval, rollback or expiry: confirmed recipients only (Platform Admins for a
+  platform rule, the business's owners for a business's); a `notifications` pause stops it.
+
+### False Positives & Rule Improvements
+
+*Alerts* is now a hub with a second tab, *False positives & rules* (`/alerts/quality`): totals (reports, pending
+recommendations, rules awaiting approval, approved rules, temporary exceptions, expiring within 7 days, review due,
+alerts prevented), the most reported monitors, computers, businesses and reasons, a 12-week accuracy trend (the share
+of alerts nobody reported), filters (monitor, severity, reason, status, technician, dates, computer), recommendation
+cards (*Preview matching events*, *Edit scope and propose*, *Dismiss*), the rules with their tests, approvals,
+history and versions, monitoring-quality checks (high volume, flapping, never triggering, duplicate monitors,
+sensitive thresholds, informational events escalated, often reported, alerting after an agent update, conflicting
+rules, rules hiding failures, reviews overdue — recommendations only) and the reports themselves.
+
+The alert detail gains *Report false positive*, a count of reports, the names of any rules that changed it, and the
+existing *Ask AI* / *Create ticket* actions (0.48). **AI is advisory only**, through the existing AI module; with no
+provider configured everything works the same, and AI never reports, proposes or approves.
+
+### Also
+
+- `e2e-security-audit.mjs` failed once in CI (#171) with TOTP enrolment `HTTP 400`: the code was computed in one
+  30-second step and checked in the next. It now waits out the last seconds of a step before computing a code.
+
+### Limits
+
+- A business with only one person who can configure monitoring cannot approve a high-risk rule.
+- A backup monitor is recognised, for risk, by "backup" in its key, name or provider.
+- The *alerting after an agent update* check compares with each computer's current agent version.
+- A threshold rule is not shadow-counted while pending; the test covers it. *Alert only after repeated reports* is
+  approximated in the test from the stored alerts.
+
+### Tests
+
+`unit-alert-quality-rules.mjs` (103 checks, in CI): schemas, too-broad and conflict rules, risk, precedence, expiry,
+tenant isolation of scopes, each behaviour, the second classification pass, the checks. `e2e-alert-quality-rules.mjs`
+(117 checks; ports 3931–3933, loopback webhook and SMTP, `MONITOR_SWEEP` on; in `run-e2e.sh`): reporting without
+approval, recommendations, tenant-specific and global rule permissions, the simulation gate, dangerous matches, two
+approvers, fresh authentication, reclassification after approval and after a revision, conflicts, rollback to the
+previous version, expiry in the sweep, notifications and PSA tickets with and without a rule, duplicate tickets, admin
+mail, AI unavailable, and the audit history. `e2e-ui.mjs` drives the dialog and the page in every combination. §79 in
+`check-security-invariants.mjs`.
+
+**Deploy:** migration 0086 (`prisma migrate deploy`, then the Prisma client regenerated at the target). No production
+dependency change. No signer or agent change.
+
 ## [0.66.0] — 2026-11-18 · *Sieve*
 
 **A critical "disk errors" alert on DS-HOME1 was a harmless Windows event. The monitor that raised it is fixed, and

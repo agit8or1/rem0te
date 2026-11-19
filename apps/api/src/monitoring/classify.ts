@@ -28,6 +28,14 @@
  * status code and the affected component are read from the message by the
  * two narrow extractors below — device paths and an 8-digit status code,
  * which Windows does not translate — never by matching words in the text.
+ *
+ * 0.67: a reviewed, approved alert quality rule (quality-rules.ts) can change
+ * what one event means for one scope — suppress it, cap its severity, or
+ * raise it only on a count or on repeats. The rule's verdict for each event
+ * comes in as `adjust`, one entry per sample; this module still makes the one
+ * decision. A suppressed event is taken out of the count like a harmless one,
+ * a cap only lowers, and an event the agent counted but did not send is still
+ * not vouched for by any rule (the WARNING floor below holds).
  */
 import { createHash } from 'node:crypto';
 
@@ -42,7 +50,7 @@ const maxSev = (a: Sev, b: Sev): Sev => (RANK[a] >= RANK[b] ? a : b);
 export const CLASS_SEVERITY: Record<Exclude<AlertClass, 'BENIGN' | 'UNKNOWN'>, Sev> = { CRITICAL: 'CRITICAL', WARNING: 'WARNING', INFORMATIONAL: 'INFO' };
 
 /** How a class was reached. */
-export const BASES = ['known_benign', 'known_event', 'level', 'rule', 'partial', 'threshold'] as const;
+export const BASES = ['known_benign', 'known_event', 'level', 'rule', 'partial', 'threshold', 'quality_rule'] as const;
 export type Basis = (typeof BASES)[number];
 
 /** Windows event levels, as Get-WinEvent numbers them. 0 (LogAlways) is what the Security log's audit events use. */
@@ -243,7 +251,14 @@ export interface SampleDecision {
   basis: Basis;
   matched: string | null;
   eventId: number | null; level: number | null; provider: string | null; statusCode: string | null; component: Component | null;
+  /** 0.67: the alert quality rule that changed this event, and how. */
+  qualityRule?: string;
+  ruleEffect?: 'suppressed' | 'capped';
+  ruleCap?: Sev;
 }
+
+/** 0.67: one approved rule's verdict on one sample (quality-rules.ts adjustSamples). */
+export interface SampleAdjust { ruleId: string; suppressed?: boolean; cap?: Sev }
 
 export interface Classification {
   v: number;
@@ -257,7 +272,11 @@ export interface Classification {
   seen: number;
   unseen: number;
   benign: number;
-  /** count minus the benign events seen: what the monitor's threshold is compared with. */
+  /** 0.67: events an approved alert quality rule suppressed (seen ones only). */
+  suppressed?: number;
+  /** 0.67: the alert quality rules that changed any event in this report. */
+  qualityRules?: string[];
+  /** count minus the benign (and, 0.67, rule-suppressed) events seen: what the monitor's threshold is compared with. */
   effectiveCount: number;
   /** The deciding event's fingerprint, or null for a threshold monitor. */
   fingerprint: string | null;
@@ -287,19 +306,29 @@ const sevOf = (d: SampleDecision, ruleSeverity: Sev): Sev =>
  * but did not send are "unseen": they cannot be called harmless, so when any
  * are left, the alert is at least WARNING (under the monitor's severity).
  */
-export function classifyEvents(rule: EventRuleView, report: { count: number; samples: EventSample[] }): Classification {
+export function classifyEvents(rule: EventRuleView, report: { count: number; samples: EventSample[] }, adjust?: readonly (SampleAdjust | null | undefined)[]): Classification {
   const log = typeof rule.params.log === 'string' ? rule.params.log : '';
   const ruleLevels = Array.isArray(rule.params.levels) ? (rule.params.levels as unknown[]).filter((x): x is number => typeof x === 'number') : [];
   const ruleSeverity = rule.severity;
   const count = Math.max(0, report.count | 0);
-  const samples = report.samples.slice(0, Math.max(0, count)).map((s) => decideSample(log, ruleLevels, s));
+  const samples = report.samples.slice(0, Math.max(0, count)).map((s, i): SampleDecision => {
+    const d = decideSample(log, ruleLevels, s);
+    // A rule never touches a known-harmless event (it is not raised anyway).
+    const a = adjust?.[i];
+    if (!a || d.class === 'BENIGN') return d;
+    if (a.suppressed) return { ...d, qualityRule: a.ruleId, ruleEffect: 'suppressed' };
+    if (a.cap) return { ...d, qualityRule: a.ruleId, ruleEffect: 'capped', ruleCap: a.cap };
+    return d;
+  });
   const seen = samples.length;
   const unseen = Math.max(0, count - seen);
   const benign = samples.filter((d) => d.class === 'BENIGN').length;
-  const effectiveCount = count - benign;
+  const suppressed = samples.filter((d) => d.ruleEffect === 'suppressed').length;
+  const effectiveCount = count - benign - suppressed;
+  const qualityRules = [...new Set(samples.flatMap((d) => (d.qualityRule ? [d.qualityRule] : [])))];
   const reasons: string[] = [];
   const out = (o: Omit<Classification, 'v' | 'ruleSeverity' | 'count' | 'seen' | 'unseen' | 'benign' | 'effectiveCount' | 'samples'>): Classification =>
-    ({ v: CLASSIFIER_VERSION, ruleSeverity, count, seen, unseen, benign, effectiveCount, samples, ...o });
+    ({ v: CLASSIFIER_VERSION, ruleSeverity, count, seen, unseen, benign, effectiveCount, samples, ...(adjust ? { suppressed, qualityRules } : {}), ...o });
 
   if (count === 0) return out({ class: 'UNKNOWN', severity: null, basis: 'rule', matched: null, fingerprint: null, reasons: ['no_events'] });
   if (seen === 0) {
@@ -307,19 +336,26 @@ export function classifyEvents(rule: EventRuleView, report: { count: number; sam
     return out({ class: 'UNKNOWN', severity: ruleSeverity, basis: 'rule', matched: null, fingerprint: null, reasons });
   }
   if (benign) reasons.push(`benign_seen:${benign}`);
+  if (suppressed) reasons.push(`rule_suppressed:${suppressed}`);
   if (effectiveCount === 0) {
+    // Nothing left to raise. When a rule took any of it out, the rule decided.
+    const r = samples.find((d) => d.ruleEffect === 'suppressed');
+    if (r) return out({ class: r.class, severity: null, basis: 'quality_rule', matched: r.qualityRule!, fingerprint: r.fingerprint, reasons });
     const d = samples[0];
     return out({ class: 'BENIGN', severity: null, basis: 'known_benign', matched: d.matched, fingerprint: d.fingerprint, reasons });
   }
-  const actionable = samples.filter((d) => d.class !== 'BENIGN');
+  const actionable = samples.filter((d) => d.class !== 'BENIGN' && d.ruleEffect !== 'suppressed');
+  // A rule's cap only ever lowers an event's severity.
+  const sevAdj = (d: SampleDecision): Sev => (d.ruleCap ? minSev(sevOf(d, ruleSeverity), d.ruleCap) : sevOf(d, ruleSeverity));
   // The most severe event seen decides; between equals, the newest.
   let pick = actionable[0] ?? samples[0];
-  let sev: Sev = actionable.length ? sevOf(pick, ruleSeverity) : 'INFO';
-  for (const d of actionable.slice(1)) { const s2 = sevOf(d, ruleSeverity); if (RANK[s2] > RANK[sev]) { pick = d; sev = s2; } }
+  let sev: Sev = actionable.length ? sevAdj(pick) : 'INFO';
+  for (const d of actionable.slice(1)) { const s2 = sevAdj(d); if (RANK[s2] > RANK[sev]) { pick = d; sev = s2; } }
   let cls: AlertClass = actionable.length ? pick.class : 'UNKNOWN';
-  let basis: Basis = actionable.length ? pick.basis : 'partial';
+  let basis: Basis = actionable.length ? (pick.ruleCap && RANK[sevAdj(pick)] < RANK[sevOf(pick, ruleSeverity)] ? 'quality_rule' : pick.basis) : 'partial';
+  if (basis === 'quality_rule') reasons.push(`rule_capped:${pick.qualityRule}`);
   // Recurrence: a warning-class storage event, many times in one report.
-  if (cls === 'WARNING' && basis === 'known_event' && effectiveCount >= RECURRENCE_ESCALATE && actionable.every((d) => d.matched === pick.matched)) {
+  if (cls === 'WARNING' && basis === 'known_event' && !pick.ruleCap && effectiveCount >= RECURRENCE_ESCALATE && actionable.every((d) => d.matched === pick.matched)) {
     const up = minSev('CRITICAL', ruleSeverity);
     if (RANK[up] > RANK[sev]) { sev = up; cls = 'CRITICAL'; reasons.push(`recurring:${effectiveCount}`); }
   }

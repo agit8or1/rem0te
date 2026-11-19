@@ -935,6 +935,44 @@ export const monitoringApi = {
   removeTicketPolicy: (scope: 'global' | 'business', businessId?: string | null) => api.delete('/monitoring/ticket-policy', { params: { scope, ...(businessId ? { businessId } : {}) } }),
 };
 
+// False positives and alert quality rules (0.67). Reporting never changes a
+// monitor or a rule. A rule applies only once tested (simulate) and approved;
+// approving may answer STEP_UP_REQUIRED (monitoring.qualityrule), which the
+// interceptor answers. Reject and rollback never ask.
+export const FP_REASONS = [
+  ['known_harmless', 'Known harmless event'], ['incorrect_severity', 'Incorrect severity'], ['duplicate', 'Duplicate alert'],
+  ['expected_activity', 'Expected activity'], ['incorrect_threshold', 'Incorrect threshold'], ['rule_too_broad', 'Monitoring rule too broad'],
+  ['incorrect_correlation', 'Incorrect correlation'], ['other', 'Other'],
+] as const;
+export type FpReason = (typeof FP_REASONS)[number][0];
+export type QualityScope = { kind: 'endpoint' | 'group' | 'business' | 'monitor' | 'os' | 'platform'; businessId?: string; endpointId?: string; groupId?: string; monitorRuleId?: string; osFamily?: string };
+export type QualityMatch = { ruleKey: string; fingerprint?: string; provider?: string; eventId?: number; levels?: number[]; statusCode?: string; component?: string };
+export type QualityBehaviour = { kind: 'suppress' } | { kind: 'downgrade'; severity: 'WARNING' | 'INFO' } | { kind: 'require_count'; minCount: number } | { kind: 'require_repeats'; reports: number };
+export type QualityDraft = {
+  name: string; description: string; justification: string; scope: QualityScope; match: QualityMatch; behaviour: QualityBehaviour;
+  temporary: boolean; expiresAt?: string; reviewAt?: string; allowBroad?: boolean; recommendationId?: string; supersedesId?: string;
+};
+export type QualityFilters = { businessId?: string; endpointId?: string; monitor?: string; severity?: string; reason?: string; status?: string; reportedBy?: string; from?: string; to?: string; before?: string; limit?: number };
+const qp = (q: Record<string, unknown> = {}) => ({ params: Object.fromEntries(Object.entries(q).filter(([, v]) => v !== undefined && v !== null && v !== '')) });
+export const qualityApi = {
+  fpContext: (alertId: string) => api.get(`/monitoring/alerts/${alertId}/false-positive`),
+  report: (alertId: string, data: { reason: FpReason; comment?: string; recommendPrevent: boolean; resolve: boolean }) => api.post(`/monitoring/alerts/${alertId}/false-positive`, data),
+  summary: (q: QualityFilters) => api.get('/monitoring/quality/summary', qp(q)),
+  reports: (q: QualityFilters) => api.get('/monitoring/quality/reports', qp(q)),
+  recommendations: (q: QualityFilters) => api.get('/monitoring/quality/recommendations', qp(q)),
+  dismiss: (id: string, note: string) => api.post(`/monitoring/quality/recommendations/${id}/dismiss`, { note }),
+  preview: (id: string) => api.get(`/monitoring/quality/recommendations/${id}/preview`),
+  checks: (q: QualityFilters) => api.get('/monitoring/quality/checks', qp(q)),
+  rules: (q: { businessId?: string; status?: string; monitor?: string }) => api.get('/monitoring/quality/rules', qp(q)),
+  rule: (id: string) => api.get(`/monitoring/quality/rules/${id}`),
+  create: (d: QualityDraft) => api.post('/monitoring/quality/rules', d),
+  edit: (id: string, d: Partial<QualityDraft> & { revision: number }) => api.patch(`/monitoring/quality/rules/${id}`, d),
+  simulate: (id: string) => api.post(`/monitoring/quality/rules/${id}/simulate`),
+  approve: (id: string, revision: number, acceptDangerous: boolean) => api.post(`/monitoring/quality/rules/${id}/approve`, { revision, acceptDangerous }),
+  reject: (id: string, note: string) => api.post(`/monitoring/quality/rules/${id}/reject`, { note }),
+  rollback: (id: string, note: string) => api.post(`/monitoring/quality/rules/${id}/rollback`, { note }),
+};
+
 // Global search (0.33): one route, grouped results. A group the caller may
 // not use is null (never an empty list). See docs/technician-guide.md.
 export type SearchComputerField = 'hostname' | 'rustdeskId' | 'serialNumber' | 'loggedOnUser' | 'ipAddress' | 'privateIp' | 'alias';

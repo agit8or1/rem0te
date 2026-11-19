@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Network, Settings2, Siren } from 'lucide-react';
+import { BadgeCheck, CheckCircle2, Network, Settings2, Siren } from 'lucide-react';
 import { monitoringApi } from '@/lib/api-client';
 import { usePermissions } from '@/lib/auth';
 import { PageHeader } from '@/components/common/page-header';
@@ -78,9 +78,12 @@ export default function AlertsPage() {
       <PageHeader
         title="Alerts"
         description="Problems the monitors found on your computers. Repeats are counted on one alert; a site outage gathers the offline computers behind it."
-        actions={configure ? (
-          <Button variant="outline" asChild><Link href="/settings/monitoring"><Settings2 className="mr-1 h-4 w-4" />Monitors and notifications</Link></Button>
-        ) : undefined}
+        actions={(
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" asChild><Link href="/alerts/quality"><BadgeCheck className="mr-1 h-4 w-4" />False positives &amp; rules</Link></Button>
+            {configure && <Button variant="outline" asChild><Link href="/settings/monitoring"><Settings2 className="mr-1 h-4 w-4" />Monitors and notifications</Link></Button>}
+          </div>
+        )}
       />
 
       {summary?.visible && (
