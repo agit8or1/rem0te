@@ -134,6 +134,7 @@ enum ActivityAction {
   MONITOR_NOTIFY_POLICY_CHANGED
   MONITOR_ALERT_ACKNOWLEDGED
   MONITOR_ALERT_RESOLVED
+  MONITOR_ALERT_RECLASSIFIED
   MONITOR_ALERT_TICKET_LINKED
   LOGIN_SUCCESS
   LOGIN_FAILURE
@@ -871,6 +872,8 @@ model Endpoint {
   monitorRules      MonitorRule[]
   monitorAlerts     MonitorAlert[]
   monitorStates     EndpointMonitorState[]
+  /// 0.66: event fingerprints seen from this computer's event monitors.
+  eventFingerprints MonitorEventFingerprint[]
   changes           EndpointChange[]
   metricSamples     EndpointMetricSample[]
   metricHourly      EndpointMetricHourly[]
@@ -3299,8 +3302,17 @@ model MonitorAlert {
   events           MonitorAlertEvent[]
   /// 0.55: the automatic PSA ticket, at most one per alert (alertId is unique).
   autoTicket       MonitorAlertTicket?
+  /// 0.66: the classifier's decision (monitoring/classify.ts Classification)
+  /// and the version that made it. Null on an alert raised before 0.66 until
+  /// AlertQualityService reclassifies it (event alerts) or for ever (the
+  /// explanation derives one on read for threshold monitors).
+  classification    Json?
+  classifierVersion Int?
+  /// 0.66: the deciding event's fingerprint (event monitors only): "similar alerts".
+  fingerprint       String?
 
   @@index([customerId, state])
+  @@index([fingerprint, lastSeenAt])
   @@index([endpointId, state])
   @@index([siteId, kind, state])
   @@index([state, nextCheckAt])
@@ -3359,6 +3371,41 @@ model MonitorNotifyPolicy {
   ticketing   Json
   updatedById String
   updatedAt   DateTime @updatedAt
+}
+
+/// 0.66: one row per computer, event monitor and event fingerprint
+/// (monitoring/classify.ts fingerprintOf) — every event the agent sent,
+/// including the ones classified harmless and never raised, with the newest
+/// raw sample. Bounded by what is distinct, not by how often it happens.
+model MonitorEventFingerprint {
+  id                String   @id @default(cuid())
+  endpointId        String
+  endpoint          Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  customerId        String?
+  tenantId          String?
+  ruleKey           String
+  fingerprint       String
+  log               String
+  provider          String?
+  eventId           Int?
+  level             Int?
+  statusCode        String?
+  component         String?
+  /// classify.ts ALERT_CLASSES (CHECK in 0085), and how it was reached (BASES).
+  class             String
+  basis             String
+  matched           String?
+  classifierVersion Int
+  /// The newest raw event: eventId, level, provider, message (300 characters), at.
+  sample            Json
+  firstSeenAt       DateTime @default(now())
+  lastSeenAt        DateTime @default(now())
+  seen              Int      @default(1)
+  lastAlertId       String?
+
+  @@unique([endpointId, ruleKey, fingerprint])
+  @@index([fingerprint, lastSeenAt])
+  @@index([customerId, lastSeenAt])
 }
 
 /// Per computer and monitor key: the counters a rule needs between samples.

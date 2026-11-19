@@ -1147,6 +1147,36 @@ async function agentSilentUi(page, f, label) {
   await cleanCheck(page, `${label} agent silent`);
 }
 
+/**
+ * 0.66: an alert explains itself. The DS-HOME1 fixture: the five sections, the
+ * honest "cannot be ruled out", the row's "partly checked" badge, the raw
+ * event, the monitor rule and similar alerts — no console error, no side scroll.
+ */
+async function alertExplanation(page, f, vp, label) {
+  const al = f.c.dsAlert;
+  await go(page, `/alerts?alert=${al.id}`);
+  const box = page.getByTestId('alert-explanation').first();
+  await box.waitFor({ timeout: 20_000 }).catch(() => {});
+  const t = await box.innerText().catch(() => '');
+  check(['What happened?', 'Why was this alert generated?', 'How serious is it?', 'Recommended action', 'Classification details'].every((h) => t.includes(h))
+    && /shadow copy/i.test(t) && /cannot be ruled out/.test(t) && /Partly seen/.test(t),
+    `${label}: the alert explains itself — what happened, why, how serious, what to do, and how sure Rem0te is`, t.replace(/\s+/g, ' ').slice(0, 400));
+  const badge = await page.locator('[data-testid="alerts-list"] [data-testid="alert-class"]').first().innerText().catch(() => '');
+  check(/partly checked/.test(badge), `${label}: the alert row says it was only partly checked`, badge);
+  const views = page.getByTestId('alert-views').first();
+  await views.getByRole('button', { name: 'View raw event' }).click();
+  const raw = await page.getByTestId('alert-raw').first().innerText().catch(() => '');
+  check(/HarddiskVolumeShadowCopy59/.test(raw) && /0xC00000A2/.test(raw), `${label}: View raw event shows the event as the agent sent it`, raw.slice(0, 200));
+  await views.getByRole('button', { name: 'View matching monitor rule' }).click();
+  const rule = await page.getByTestId('alert-rule').first().innerText().catch(() => '');
+  check(/disk-errors/.test(rule) && /"levels"/.test(rule), `${label}: View matching monitor rule names the monitor and its parameters`, rule.slice(0, 200));
+  await views.getByRole('button', { name: /View similar alerts/ }).click();
+  const sim = await page.getByTestId('alert-similar').first().innerText().catch(() => '');
+  check(/No other alert you can see has the same event fingerprint/.test(sim), `${label}: View similar alerts says when there are none`, sim.slice(0, 200));
+  if (vp === 'phone') await noSideScroll(page, `${label} alert explanation`);
+  await cleanCheck(page, `${label} alert explanation`);
+}
+
 // ── 0.36 ────────────────────────────────────────────────────────────────────
 
 const FILL = { online: 'rgb(16, 185, 129)', agent_silent: 'rgb(245, 158, 11)', offline: 'rgb(100, 116, 139)' }; // emerald-500, amber-500, slate-500
@@ -1439,6 +1469,7 @@ async function combo(browser, f, vp, theme) {
     await devicePageGroups(page, f, vp, label);
     await filtersSheet(page, vp, label);
     await agentSilentUi(page, f, label);
+    await alertExplanation(page, f, vp, label);
     if (vp === 'desktop') await mapMarkers(page, label);
     await savedViewAndBulk(page, f, vp, label);
     await palette(page, f, vp, label);
@@ -1568,13 +1599,31 @@ async function seed035(f) {
     status: 'ACTIVE', isOnline: true, isManaged: true, accessMode: 'COMPANY_WIDE', lastSeenAt: new Date(), deviceClass: 'WORKSTATION', agentVersion: '0.19.0', ipAddress: '10.20.0.9',
   } });
   await prisma.rustdeskNode.create({ data: { tenantId: tenant.id, endpointId: upg.id, rustdeskId: String(100000000 + ((Math.random() * 899999999) | 0)), agentSecretHash: sha256(randomBytes(24).toString('hex')) } });
+  // 0.66: an event alert as DS-HOME1's was after reclassification — the
+  // known-harmless shadow-copy event, one of two counted events unseen — on a
+  // computer of its own in Birch, under a monitor on that computer only.
+  const cl = apiRequire(path.join(API_DIR, 'dist/monitoring/classify.js'));
+  const eng = apiRequire(path.join(API_DIR, 'dist/monitoring/engine.js'));
+  const ds = await prisma.endpoint.create({ data: {
+    tenantId: tenant.id, customerId: f.B.id, name: `${TAG}-DSHOME1`, hostname: `${TAG.toLowerCase()}-dshome1.corp.example.com`, platform: 'Windows', osVersion: 'Windows 11 Pro',
+    status: 'ACTIVE', isOnline: true, isManaged: true, accessMode: 'COMPANY_WIDE', lastSeenAt: new Date(), deviceClass: 'WORKSTATION',
+  } });
+  const diskRule = await prisma.monitorRule.create({ data: { scopeKey: `e:${ds.id}`, customerId: f.B.id, endpointId: ds.id, key: 'disk-errors', kind: 'EVENT_MATCH', name: 'Disk errors in the System log', severity: 'CRITICAL', params: eng.DISK_ERRORS_PARAMS, createdById: admin.id } });
+  const sample = { eventId: 11, level: 4, provider: 'Microsoft-Windows-Kernel-General', message: 'TxR init phase for hive \\??\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy59\\Windows\\System32\\config\\DRIVERS (TM: {00000000-0000-4000-8000-0000000000a5}, RM: {00000000-0000-4000-8000-0000000000a4}) finished with result=0xC00000A2 (Internal code=7).' };
+  const decision = cl.classifyEvents({ severity: 'CRITICAL', params: eng.DISK_ERRORS_PARAMS }, { count: 2, samples: [sample] });
+  const dsAlert = await prisma.monitorAlert.create({ data: {
+    tenantId: tenant.id, customerId: f.B.id, endpointId: ds.id, ruleId: diskRule.id, ruleKey: 'disk-errors', kind: 'EVENT_MATCH', dedupKey: `disk-errors:${ds.id}`,
+    severity: decision.severity, title: `${TAG}-DSHOME1: 2 matching events in System`, detail: { log: 'System', count: 2, sample, samples: [sample], newestAt: new Date().toISOString(), threshold: 1 },
+    classification: decision, classifierVersion: decision.v, fingerprint: decision.fingerprint,
+    events: { create: [{ type: 'raised', detail: { rule: 'disk-errors' } }, { type: 'reclassified', detail: { from: 'CRITICAL', to: 'WARNING', class: 'UNKNOWN', basis: 'partial' } }] },
+  } });
   // The migration script needs an address to name: with no https public
   // address here (PUBLIC_API_URL is this suite's http web), the relay host.
   const tset = await prisma.tenantSettings.findFirst({ orderBy: { createdAt: 'asc' } });
   if (tset && !tset.rustdeskRelayHost) { relayBefore.row = { id: tset.id, value: tset.rustdeskRelayHost }; await prisma.tenantSettings.update({ where: { id: tset.id }, data: { rustdeskRelayHost: 'relay.example.com' } }); }
   // The outbound-email singleton is global: remember it to put it back.
   smtpBefore.row = await prisma.smtpSettings.findUnique({ where: { id: 'singleton' } });
-  return { chat: { id: chat.id, rid, secret, hostname: chat.hostname, platform: 'Windows' }, unproposed, listed, recipient, upg };
+  return { chat: { id: chat.id, rid, secret, hostname: chat.hostname, platform: 'Windows' }, unproposed, listed, recipient, upg, dsAlert };
 }
 
 async function cleanup035() {

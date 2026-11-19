@@ -14,6 +14,7 @@ import { EmailService } from '../email/email.service';
 import { alertMail } from '../email/mail-content';
 import { PublicUrlService } from '../platform/public-url.service';
 import { GroupMembershipService } from '../group-policy/membership.service';
+import { classifyEvents, classifyThreshold, worse, type Classification } from './classify';
 
 /**
  * Monitoring (v0.29): the evaluator, the sweep and the notifier.
@@ -154,8 +155,17 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
       } else if (r.kind === 'EVENT_MATCH') {
         const ev = report.events.find((e) => e.key === r.key);
         if (!ev) continue;
-        const v = evaluateEvents(r, ev, ep.name, states.get(r.key) ?? EMPTY_STATE, now);
-        await this.apply(ep, r, v, now, { repeat: true, checkedAt: ev.checkedAt });
+        // 0.66: classify before anything is raised (classify.ts). Events that
+        // match a known-harmless pattern are taken out of the count the
+        // threshold sees, and recorded, never dropped.
+        const cls = ev.count > 0 ? classifyEvents({ severity: r.severity, params: r.params as Record<string, unknown> }, { count: ev.count, samples: ev.samples }) : null;
+        if (cls) await this.recordFingerprints(ep, r.key, String((r.params as { log?: unknown }).log ?? ''), ev.samples, cls, now);
+        const v = evaluateEvents(r, ev, ep.name, states.get(r.key) ?? EMPTY_STATE, now, cls ? cls.effectiveCount : 0);
+        const alertId = await this.apply(ep, r, v, now, { repeat: true, checkedAt: ev.checkedAt, cls });
+        if (alertId && cls) {
+          const fps = cls.samples.filter((d) => d.class !== 'BENIGN').map((d) => d.fingerprint);
+          if (fps.length) await this.prisma.monitorEventFingerprint.updateMany({ where: { endpointId: ep.id, ruleKey: r.key, fingerprint: { in: fps } }, data: { lastAlertId: alertId } });
+        }
       }
     }
     return { accepted: true, services: report.services.length, events: report.events.length };
@@ -198,21 +208,62 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
     await this.prisma.endpointMonitorState.upsert({ where: { endpointId_ruleKey: { endpointId, ruleKey } }, create: { endpointId, ruleKey, ...data }, update: data });
   }
 
-  private async apply(ep: Ep, rule: RuleLike & { id: string }, v: Verdict, now: Date, o: { repeat: boolean; checkedAt?: string; saveState?: boolean }) {
-    if (v.verdict === 'skip') return;
+  private async apply(ep: Ep, rule: RuleLike & { id: string }, v: Verdict, now: Date, o: { repeat: boolean; checkedAt?: string; saveState?: boolean; cls?: Classification | null }): Promise<string | null> {
+    if (v.verdict === 'skip') return null;
     if (o.saveState !== false) await this.saveState(ep.id, rule.key, v.state, o.checkedAt);
-    if (v.verdict === 'breach') await this.raise(ep, rule, v.title, v.detail, now, o.repeat);
+    if (v.verdict === 'breach') return this.raise(ep, rule, v.title, v.detail, now, o.repeat, undefined, o.cls ?? null);
     else if (v.verdict === 'ok' && v.clear) await this.resolveOpen(dedupKeyOf(rule.key, ep.id), null, 'Cleared: the monitor reads normal again.', now);
+    return null;
+  }
+
+  /**
+   * 0.66: every event the agent sent, one row per computer, monitor and
+   * fingerprint — harmless ones included — with the newest raw event. At most
+   * SAMPLES_MAX upserts per report with matches; nothing when there were none.
+   */
+  private async recordFingerprints(ep: Ep, ruleKey: string, log: string, samples: { eventId: number | null; level: number | null; provider: string | null; message: string | null; at?: string | null }[], cls: Classification, now: Date) {
+    const done = new Set<string>();
+    for (let i = 0; i < cls.samples.length; i++) {
+      const d = cls.samples[i];
+      if (done.has(d.fingerprint)) continue;
+      done.add(d.fingerprint);
+      const raw = samples[i] ?? {};
+      const small = (n: number | null) => (typeof n === 'number' && n >= 0 && n <= 2_147_483_647 ? n : null);
+      const data = {
+        class: d.class, basis: d.basis, matched: d.matched, classifierVersion: cls.v, sample: raw as Prisma.InputJsonValue, lastSeenAt: now,
+        customerId: ep.customerId, tenantId: ep.tenantId,
+      };
+      try {
+        await this.prisma.monitorEventFingerprint.upsert({
+          where: { endpointId_ruleKey_fingerprint: { endpointId: ep.id, ruleKey, fingerprint: d.fingerprint } },
+          create: { endpointId: ep.id, ruleKey, fingerprint: d.fingerprint, log, provider: d.provider?.slice(0, 128) ?? null, eventId: small(d.eventId), level: small(d.level), statusCode: d.statusCode, component: d.component, firstSeenAt: now, ...data },
+          update: { ...data, seen: { increment: 1 } },
+        });
+      } catch (e) {
+        // Two reports at once can both try the create; the second is a repeat.
+        if ((e as { code?: string }).code !== 'P2002') throw e;
+      }
+    }
   }
 
   // ── Alert lifecycle ───────────────────────────────────────────────────────
 
   /** `dedupKey` is the rule and computer, or (0.55, DRIVE_FREE) the rule, computer and drive. */
-  async raise(ep: Ep, rule: RuleLike & { id: string }, title: string, detail: Record<string, unknown>, now: Date, repeat: boolean, dedupKey = dedupKeyOf(rule.key, ep.id)) {
+  async raise(ep: Ep, rule: RuleLike & { id: string }, title: string, detail: Record<string, unknown>, now: Date, repeat: boolean, dedupKey = dedupKeyOf(rule.key, ep.id), cls: Classification | null = null) {
+    // 0.66: an event monitor's severity is the classifier's (never above the
+    // monitor's); a threshold monitor's is the monitor's own.
+    const decided = cls ?? classifyThreshold(rule.severity);
+    const severity = (decided.severity ?? rule.severity) as Severity;
     const bump = async (a: MonitorAlert) => {
+      // An open event alert keeps the worst it has seen, and the decision
+      // that made it so; a threshold alert follows its monitor.
+      const keep = cls && SEVERITY_RANK[a.severity as Severity] > SEVERITY_RANK[severity];
       await this.prisma.monitorAlert.update({
         where: { id: a.id },
-        data: { lastSeenAt: now, title: title.slice(0, 300), detail: detail as Prisma.InputJsonValue, severity: rule.severity, ruleId: rule.id, ...(repeat ? { occurrences: { increment: 1 } } : {}) },
+        data: {
+          lastSeenAt: now, title: title.slice(0, 300), detail: detail as Prisma.InputJsonValue, ruleId: rule.id, ...(repeat ? { occurrences: { increment: 1 } } : {}),
+          ...(keep ? {} : { severity: cls ? worse(a.severity as Severity, severity) : severity, classification: decided as unknown as Prisma.InputJsonValue, classifierVersion: decided.v, fingerprint: decided.fingerprint }),
+        },
       });
     };
     const open = await this.prisma.monitorAlert.findFirst({ where: { dedupKey, state: { not: 'RESOLVED' } } });
@@ -222,9 +273,10 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
       const a = await this.prisma.monitorAlert.create({
         data: {
           tenantId: ep.tenantId, customerId: ep.customerId, siteId: ep.siteId, endpointId: ep.id, ruleId: rule.id, ruleKey: rule.key, kind: rule.kind,
-          dedupKey, severity: rule.severity, title: title.slice(0, 300), detail: detail as Prisma.InputJsonValue,
+          dedupKey, severity, title: title.slice(0, 300), detail: detail as Prisma.InputJsonValue,
+          classification: decided as unknown as Prisma.InputJsonValue, classifierVersion: decided.v, fingerprint: decided.fingerprint,
           firstSeenAt: now, lastSeenAt: now, notifyFrom, nextCheckAt: notifyFrom,
-          events: { create: { type: 'raised', detail: { rule: rule.key, inheritedFrom: (rule as { inheritedFrom?: string }).inheritedFrom ?? null } } },
+          events: { create: { type: 'raised', detail: { rule: rule.key, inheritedFrom: (rule as { inheritedFrom?: string }).inheritedFrom ?? null, class: decided.class, basis: decided.basis, ...(decided.matched ? { matched: decided.matched } : {}) } } },
         },
       });
       return a.id;

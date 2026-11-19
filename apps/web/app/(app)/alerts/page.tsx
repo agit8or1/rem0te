@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { apiError } from '@/components/security-controls/shared';
-import { AlertDetail, type AlertRow, AutoTicketBadge, SeverityBadge, StateBadge, type Summary } from '@/components/monitoring/alerts';
+import { AlertDetail, type AlertRow, AutoTicketBadge, ClassBadge, SeverityBadge, StateBadge, type Summary } from '@/components/monitoring/alerts';
 
 /**
  * Alerts (0.29).
@@ -34,6 +34,8 @@ export default function AlertsPage() {
   const [severity, setSeverityRaw] = useState('');
   const [open, setOpen] = useState<string | null>(null);
   const [linked, setLinked] = useState<string | null>(null);
+  // 0.66: ?fingerprint=… lists the alerts with one event fingerprint ("View similar alerts").
+  const [fingerprint, setFingerprint] = useState<string | null>(null);
   // The filters live in the URL too, so the dashboard's "Critical alerts" and
   // any shared link open the list already filtered. Unknown values are ignored.
   useEffect(() => {
@@ -44,6 +46,8 @@ export default function AlertsPage() {
     // ?alert=<id> (0.34: the link in an alert email) opens that alert.
     const al = q.get('alert');
     if (al && /^[A-Za-z0-9_-]{8,64}$/.test(al)) { setLinked(al); setOpen(al); }
+    const fp = q.get('fingerprint');
+    if (fp && /^[0-9a-f]{32}$/.test(fp)) setFingerprint(fp);
   }, []);
   function syncUrl(st: string, sv: string) {
     const q = new URLSearchParams(window.location.search);
@@ -61,8 +65,8 @@ export default function AlertsPage() {
     enabled: !!user, refetchInterval: 30_000,
   });
   const { data, isLoading, error } = useQuery<{ alerts: AlertRow[]; next: string | null }>({
-    queryKey: ['alerts', state, severity],
-    queryFn: () => monitoringApi.alerts({ state, severity: severity || undefined, limit: 100 }).then((r) => r.data.data),
+    queryKey: ['alerts', state, severity, fingerprint],
+    queryFn: () => monitoringApi.alerts({ state, severity: severity || undefined, fingerprint: fingerprint ?? undefined, limit: 100 }).then((r) => r.data.data),
     enabled: !!user, refetchInterval: 30_000, retry: false,
   });
 
@@ -111,6 +115,13 @@ export default function AlertsPage() {
         </div>
       </div>
 
+      {fingerprint && (
+        <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground" data-testid="alerts-fingerprint">
+          Showing alerts with one event fingerprint (<code className="text-xs">{fingerprint.slice(0, 12)}…</code>).
+          <Button size="sm" variant="ghost" onClick={() => { setFingerprint(null); const q = new URLSearchParams(window.location.search); q.delete('fingerprint'); const qs = q.toString(); window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`); }}>Show all</Button>
+        </p>
+      )}
+
       {linked && data && !data.alerts.some((a) => a.id === linked) && (
         <Card data-testid="alerts-linked">
           <CardContent className="p-0 text-sm">
@@ -133,6 +144,7 @@ export default function AlertsPage() {
                 {a.kind === 'SITE_OUTAGE' ? <Network className="h-4 w-4 text-red-600" /> : <Siren className="h-4 w-4 text-muted-foreground" />}
                 <SeverityBadge s={a.severity} />
                 <span className="font-medium">{a.title}</span>
+                <ClassBadge c={a.classification} />
                 <StateBadge a={a} />
                 {a.occurrences > 1 && <Badge variant="outline">×{a.occurrences}</Badge>}
                 {a.parentId && <Badge variant="outline">in site outage</Badge>}

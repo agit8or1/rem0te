@@ -166,6 +166,13 @@ jobs:
       # block executed against stubbed Get-Service / Get-WinEvent.
       - name: Monitoring tests
         run: node apps/api/scripts/unit-monitoring.mjs
+      # 0.66: alert classification — the exact DS-HOME1 event and other
+      # shadow-copy numbers, every condition of the known-benign pattern,
+      # genuine disk, controller, SMART and NTFS events, informational events,
+      # backup and Security-log monitors never lowered, fingerprints, the
+      # corrected recommended monitor and the plain-English explanation.
+      - name: Alert classification tests
+        run: node apps/api/scripts/unit-alert-classification.mjs
 
       # Diagnostics catalog (0.31): the closed catalog, result sanitising,
       # redaction and the size cap against the compiled module, the agent's

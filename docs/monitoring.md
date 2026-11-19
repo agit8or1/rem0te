@@ -58,10 +58,15 @@ critical) and parameters.
 
 An event-log monitor must name at least one of IDs, levels or provider — a
 monitor on every event in a log is a flood, not a monitor. The agent asks
-for at most 100 events per query and sends one sample, truncated.
+for at most 100 events per query and sends the count and the newest event
+(its ID, level, provider and the first 300 characters of its message); from
+0.66 it also sends the five newest, so each can be classified (see *Alert
+classification* below). An agent older than 0.66 keeps working with one.
 
 **Add recommended** creates a starter set — offline, disk, CPU, memory,
-restart pending, disk errors (System log IDs 7, 11, 51, 153), from 0.36.1
+restart pending, disk errors (System log IDs 7, 11, 51, 52, 55 and 153 at
+levels Critical, Error and Warning; before 0.66 IDs 7, 11, 51 and 153 at any
+level — see below), from 0.36.1
 agent silent (60 minutes, *warning*), and from 0.55 other fixed drives
 (10 %, C: excepted), security updates outstanding (30 days) and failed update
 installs (7 days), all *warning* — as ordinary monitors you then adjust.
@@ -256,6 +261,112 @@ computer's page. From 0.31 installed software has its own **Software** tab.
 3. Monitors in effect, where each came from, and what the agent last reported for services and event queries.
 4. Changes between inventories. Installed software is on the **Software** tab (`?tab=software`) from 0.31.
 
+## Alert classification (0.66)
+
+Every event an event-log monitor matches is judged before anything is raised,
+by one deterministic, versioned classifier (`apps/api/src/monitoring/classify.ts`).
+It never needs AI, and it gives the same answer for the same event every time.
+
+| Class | Means | Alert |
+|---|---|---|
+| Critical | a catalogued event that strongly indicates a failure (disk bad block, controller error, the disk's own SMART prediction, NTFS corruption) | critical |
+| Warning | a catalogued event worth investigating (paging error, I/O retried, a device reset) | warning; critical when it recurs 5 or more times in one report |
+| Informational | Windows logged it as Information or Verbose, and the monitor did not ask for that level | info |
+| Benign | a **known harmless pattern**, matched on every structured field | none: the event is recorded, not raised |
+| Unknown | Rem0te does not know the event | the monitor's own severity |
+
+The rules that keep this safe:
+
+- **Never above the monitor.** The severity you set on a monitor is the ceiling.
+  The classifier can lower an alert only on positive evidence: a known-harmless
+  pattern, a catalogued event, or an Information/Verbose event under a monitor
+  that did not ask for that level.
+- **An event Rem0te does not know keeps the monitor's severity.** Your own
+  monitors (a backup product's failure event, an application's error) are
+  never lowered.
+- **The Security log is never lowered by level**, and neither is level 0
+  (LogAlways), which is what audit events use.
+- **Counted but not seen.** An agent older than 0.66 sends only the newest of
+  the matching events. When the agent counted more than it sent, the rest
+  cannot be called harmless, so the alert stays at least *warning*.
+- **A harmless event cannot hide a real one.** A report holding a harmless
+  event and a disk error raises the disk error; the harmless one is only taken
+  out of the count the monitor's threshold sees.
+- **Known-harmless patterns are narrow.** Each names the log, provider, event
+  ID, level (Information or Verbose only), an 8-digit status code and the
+  affected component, and every one of them must match. The status code and
+  component are read from the device path and the `0x…` code in the message,
+  which Windows does not translate — never from words in the message.
+
+### The first known-harmless pattern: TxR inside a shadow copy
+
+`Microsoft-Windows-Kernel-General` event **11**, level **4** (Information),
+status **0xC00000A2** (STATUS_MEDIA_WRITE_PROTECTED), on a
+`\Device\HarddiskVolumeShadowCopy<n>` path: *"TxR init phase for hive …
+finished with result=0xC00000A2"*. Windows tried to start the transactional
+registry for a hive inside a Volume Shadow Copy, which is a read-only snapshot.
+Backup and System Restore software causes it. It is not a disk error. Any
+shadow-copy number matches; another provider, level, status code or component
+does not. **Event ID 11 is not suppressed**: `disk` 11 and every storage
+controller driver's own 11 (atapi, iaStor…, storahci, stornvme, LSI, megasas…)
+are critical.
+
+### Why the disk-errors monitor changed
+
+Before 0.66 the recommended *disk errors* monitor watched IDs 7, 11, 51 and
+153 in the System log **from any provider at any level**. On 2026-11-18 it
+raised a critical disk alert on DS-HOME1 for the TxR event above. From 0.66 it
+asks the agent only for levels Critical, Error and Warning (the genuine disk
+events are Error or Warning), and adds 52 (the disk's SMART failure
+prediction) and 55 (NTFS corruption). It deliberately names no provider:
+"controller error" (11) is logged by each storage controller driver under its
+own name, and naming only `disk` would have dropped them. The classifier then
+judges each event by provider.
+
+On upgrade, the API corrects every stored `disk-errors` monitor whose
+parameters are still exactly the old recommended ones, and records it in the
+audit log (*Monitor changed*, `op: corrected`, before and after). A
+`disk-errors` monitor whose parameters someone changed is left alone — review
+it under Settings → Monitoring.
+
+Open event alerts raised before 0.66 are classified again on start from the
+event they stored. An alert's severity moves to the classifier's; one whose
+every counted event was a known-harmless pattern is resolved by the monitor
+with a note. Each change is in the alert's history (*Reclassified*) and the
+audit log. Nothing is deleted.
+
+### What is not monitored
+
+Rem0te reads only what the agent's event-log monitors and inventory report.
+There is **no SMART polling** (only the disk's own event 52, if the monitor
+asks for it), **no backup-product integration** (a backup failure is
+monitored only if you add an event-log monitor for that product's event), and
+**no RAID-controller health beyond the Windows event log**. One event is never
+treated as proof that hardware is failing; the explanation says so.
+
+### Event fingerprints
+
+Every event the agent sends gets a fingerprint: its log, provider, event ID,
+level, status code and component, and its message with what varies taken out
+(shadow-copy numbers, GUIDs, dates and times, process IDs, temporary paths,
+user-profile names, block addresses and long hexadecimal values). Status codes,
+disk numbers and internal codes stay. Each computer, monitor and fingerprint is
+one row (*MonitorEventFingerprint*), counted every time it is reported, with
+the newest raw event — including the harmless events that never became an
+alert, so nothing reported is lost. *View similar alerts* on an alert lists the
+alerts with the same fingerprint that you can see.
+
+### What an alert says
+
+Every alert has a plain-English explanation: **What happened?**, **Why was
+this alert generated?** (the monitor, what it watches, and how the severity was
+decided), **How serious is it?** (honest about what one event can and cannot
+show), **Recommended action**, and **Classification details** (a known pattern,
+a catalogued event, the event level, or "unverified"). Under it: *View raw
+event*, *View similar alerts* and *View matching monitor rule*. The alert list
+shows a small badge for an event alert's class (*known failure*, *known
+warning*, *informational*, *unverified*, *partly checked*).
+
 ## Alerts
 
 There is **one alert per problem**, not per occurrence: while an alert is
@@ -375,5 +486,14 @@ skipping system components and updates, up to 500 entries. Agents older than
   exists only where someone added it — with *Add recommended* (0.36.1) or
   under New monitor. The Offline monitor does not fire for
   it, because RustDesk still reaches the computer.
+- **A disk-errors alert that is not about a disk** — open it and read *Classification
+  details*. *Unverified* means Rem0te does not know that provider's event: the
+  alert has the monitor's severity. If the event is harmless, resolve the alert
+  and narrow the monitor (levels or a provider). A `disk-errors` monitor someone
+  edited before 0.66 still has its old parameters — compare it with the
+  recommended ones above.
+- **An alert says "partly checked"** — the agent counted more matching events
+  than it sent (agents older than 0.66 send one). Look in the computer's event
+  log at the time of the alert for the others.
 - **Forty offline alerts for one site** — the site needs at least three
   computers assigned to it for outage grouping to apply.

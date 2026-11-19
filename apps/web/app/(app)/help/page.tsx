@@ -949,6 +949,28 @@ const SECTIONS: Section[] = [
           computer&apos;s Monitoring tab says where each monitor came from and what it beat. See{' '}
           <Link href="/docs/group-policies" className="underline text-foreground">Device-group policies</Link>.
         </p>
+        <p className="font-medium text-foreground">How Rem0te judges an event (0.66)</p>
+        <p>
+          Every event an event-log monitor matches is classified before anything is raised: <em>known failure</em> (a disk bad
+          block, a controller error, the disk&apos;s own SMART prediction, NTFS corruption), <em>known warning</em>,{' '}
+          <em>informational</em> (Windows logged it as Information), <em>known harmless</em> (never raised, only recorded) or{' '}
+          <em>unverified</em> (Rem0te does not know it, so the monitor&apos;s own severity stands). Nothing is raised above the
+          severity you set on the monitor, the Security log is never lowered, and a harmless event cannot hide a real one sent
+          with it. The first known-harmless pattern is Kernel-General event 11 at Information level with status 0xC00000A2
+          for a registry hive inside a read-only shadow copy; disk and storage controller event 11 still alert. The
+          recommended <em>disk errors</em> monitor now asks only for Critical, Error and Warning events, and adds 52 (SMART)
+          and 55 (NTFS). On upgrade, a disk-errors monitor still exactly as recommended is corrected and audited; one someone
+          edited is left alone.
+        </p>
+        <p>
+          Open an alert for <strong className="text-foreground">What happened?</strong>,{' '}
+          <strong className="text-foreground">Why was this alert generated?</strong>,{' '}
+          <strong className="text-foreground">How serious is it?</strong>, a recommended action and how sure Rem0te is, then{' '}
+          <em>View raw event</em>, <em>View similar alerts</em> (the same event fingerprint) and <em>View matching monitor rule</em>.
+          Rem0te has no SMART polling and no backup-product integration: a backup failure is watched only by an event-log
+          monitor you add. See{' '}
+          <Link href="/docs/monitoring" className="underline text-foreground">Monitoring and alerts</Link>.
+        </p>
         <p className="font-medium text-foreground">One alert per problem</p>
         <p>
           A repeat raises the count on the open alert instead of making another. When three or more

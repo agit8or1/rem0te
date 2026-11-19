@@ -906,7 +906,7 @@ export type NotifyDestination = { label: string; url: string } | { label: string
 const bq = (businessId?: string | null) => ({ params: businessId ? { businessId } : {} });
 export const monitoringApi = {
   summary: (businessId?: string | null) => api.get('/monitoring/summary', bq(businessId)),
-  alerts: (q: { state?: string; severity?: string; endpointId?: string; kind?: string; before?: string; limit?: number; businessId?: string | null }) => {
+  alerts: (q: { state?: string; severity?: string; endpointId?: string; kind?: string; fingerprint?: string; before?: string; limit?: number; businessId?: string | null }) => {
     const params: Record<string, string | number> = {};
     for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== null && v !== '') params[k] = v as string | number;
     return api.get('/monitoring/alerts', { params });
