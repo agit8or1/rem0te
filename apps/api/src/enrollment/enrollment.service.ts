@@ -1,5 +1,6 @@
 import { ActionsService } from '../actions/actions.service';
 import { HEARTBEAT_STALE_MS } from '../common/connectivity';
+import { MsaService } from '../msa/msa.service';
 import { carriesLiveSample, DUAL_AUDIT_EVERY_MS, heartbeatKind, heartbeatMayAct, isInstallerCheckIn, type HeartbeatKind } from '../common/agent-identity';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { AgentMigrationService } from '../update-trust/agent-migration.service';
@@ -74,6 +75,7 @@ export class EnrollmentService {
     private readonly agentMigration: AgentMigrationService,
     private readonly chat: ChatService,
     private readonly agentAuto: AgentAutoUpdateService,
+    private readonly msa: MsaService,
   ) {
     const rawKey = this.config.get<string>('ENCRYPTION_KEY');
     if (!rawKey || !/^[0-9a-fA-F]{64}$/.test(rawKey) || rawKey.toLowerCase() === '0'.repeat(64)) {
@@ -738,6 +740,7 @@ export class EnrollmentService {
     patchPosture?: Record<string, unknown>; agentChat?: number;
     agentTray?: number; trayKeyId?: string;
     agentUpdateCheckedAt?: string; agentUpdateResult?: string;
+    rustdeskPreflight?: unknown;
   }, remoteIp?: string) {
     // Names and versions as text, never control codes (0.32) — see device-text.ts.
     dto = withDeviceText(dto);
@@ -1275,6 +1278,21 @@ export class EnrollmentService {
       }
     }
 
+    // Managed Secure Access readiness (0.69, §80): the signed agent's
+    // read-only RustDesk preflight. Only an authenticated heartbeat on the
+    // signed channel that may act — never a standard heartbeat, an
+    // installer's check-in or a leftover report (those returned above), never
+    // a pooled computer (returned above). A block that does not parse is
+    // dropped and acknowledged with null; it never fails the heartbeat.
+    let rustdeskPreflightAck: string | null = null;
+    if (authenticated && mayAct && kind === 'signed' && dto.rustdeskPreflight !== undefined) {
+      try {
+        rustdeskPreflightAck = await this.msa.recordPreflight(node.endpointId, dto.rustdeskPreflight, dto.agentVersion, now);
+      } catch (e) {
+        this.logger.warn(`Readiness step failed for endpoint ${node.endpointId}: ${String(e)}`);
+      }
+    }
+
     // Chat (0.34): whether a conversation is open, so the signed agent starts
     // its chat host. A flag only — no names, no text: the host fetches those
     // over /enrollment/chat/poll with the device secret. Asked only of an
@@ -1311,6 +1329,7 @@ export class EnrollmentService {
       actionAcks,
       patchPostureAck,
       patchScan,
+      ...(rustdeskPreflightAck ? { rustdeskPreflightAck } : {}),
       monitor,
       diagnostics,
       chat,

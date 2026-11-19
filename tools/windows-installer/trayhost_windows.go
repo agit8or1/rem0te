@@ -197,7 +197,7 @@ func chatIdentity(p agent.Paths) (string, string, error) {
 	if err := json.Unmarshal(raw, &st); err != nil || len(st.AgentSecret) < 16 {
 		return "", "", errors.New("heartbeat.dat carries no device secret")
 	}
-	rd := filepath.Join(os.Getenv("ProgramFiles"), "RustDesk", "rustdesk.exe")
+	rd := installedRustdeskExe()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	outb, err := exec.CommandContext(ctx, rd, "--get-id").Output()

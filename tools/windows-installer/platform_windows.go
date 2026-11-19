@@ -151,7 +151,7 @@ var verRE = regexp.MustCompile(`([0-9]+\.[0-9]+\.[0-9]+)`)
 // RustdeskVersion reads FileVersion through PowerShell, the same way the
 // heartbeat does, so the two never disagree about what is installed.
 func (w *winPlatform) RustdeskVersion() string {
-	exe := filepath.Join(os.Getenv("ProgramFiles"), "RustDesk", "rustdesk.exe")
+	exe := installedRustdeskExe()
 	if _, err := os.Stat(exe); err != nil {
 		return ""
 	}

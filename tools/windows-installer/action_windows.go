@@ -227,7 +227,7 @@ func (w *winActions) DeviceIdentity() (string, string, error) {
 	if err := json.Unmarshal(raw, &st); err != nil || st.AgentSecret == "" {
 		return "", "", errors.New("heartbeat.dat carries no device secret")
 	}
-	exe := filepath.Join(os.Getenv("ProgramFiles"), "RustDesk", "rustdesk.exe")
+	exe := installedRustdeskExe()
 	outb, err := exec.Command(exe, "--get-id").Output()
 	if err != nil {
 		return "", "", fmt.Errorf("rustdesk --get-id: %w", err)

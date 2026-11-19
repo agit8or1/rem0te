@@ -103,6 +103,7 @@ refuses on its own).
 | Remote access (RustDesk launch, presets, grants) | Yes | Yes | Yes | Yes | **portal only** | Fleet (109 sessions) | In use, with the limits below |
 | Password rotation, reinstall, RustDesk update | Yes | Yes | No | No | portal stages, agent applies | Fleet | In use |
 | View-only, consent, clipboard, file transfer, ending a session | No | No | No | No | portal refusal only | API (enforcement simulated) | **Not enforceable today** (below) |
+| Managed Secure Access readiness (0.69): RustDesk preflight, readiness state | No (Unsupported) | Yes | No (Unsupported) | No (Unsupported) | agent reads, portal decides; **changes nothing** | Lab (preflight, Windows Server, as SYSTEM); API | Readiness only; no computer can be Managed. Not yet seen on the fleet |
 | Chat, tray, self-help | Yes (3 read-only tools) | Yes | No | No | portal + pipe DACL | Fleet (2 tools, 2 chats) | Partly proven; chat files, elevated self-help unverified |
 | Support request → PSA ticket | Yes | Yes | No | No | portal | API (stub PSA) | Unverified: no real PSA called |
 | Agent auto-update, migration to signed | Yes | Yes | No | No | portal; Sgn verifies signatures | Fleet | In use; first real migrations failed (0.37.3 BOM) before this worked |
@@ -201,6 +202,12 @@ Without it, everything after it builds on unproven ground.
 
 Designed in [managed-secure-access.md](managed-secure-access.md). Build behind
 a feature flag, every computer staying in today's mode until an admin moves it.
+
+**Step 2 is built (0.69):** the signed agent's read-only RustDesk preflight and
+each computer's readiness state (Unsupported, Upgrade available, Compatible,
+Unknown) on the device page and *Devices → Remote access readiness*. It changes
+nothing on any computer; nothing can be Managed yet
+([managed-secure-access.md §3.9](managed-secure-access.md#39-readiness-reporting-built-069)).
 
 - **Ephemeral credentials:** the signed agent sets a fresh one-time password
   for each portal-authorised session and clears it at session end or expiry,

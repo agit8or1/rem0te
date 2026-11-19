@@ -1038,6 +1038,13 @@ export const agentAutoUpdateApi = {
 // automatic migration's controls (Platform Admin). Turning it on, shortening
 // the soak, resuming and restarting need fresh authentication (the
 // interceptor prompts and retries); turning it off does not.
+// Managed Secure Access readiness (0.69): read-only, computers:view, only
+// visible computers. Nothing here changes a computer.
+export const msaApi = {
+  fleet: (params?: { businessId?: string; state?: string }) => api.get('/msa/readiness', { params }),
+  forEndpoint: (endpointId: string) => api.get(`/msa/readiness/${endpointId}`),
+};
+
 export const agentSigningApi = {
   overview: (businessId?: string) => api.get('/agent-signing/overview', { params: businessId ? { businessId } : undefined }),
   putAuto: (body: { mode?: 'off' | 'canary_then_all'; soakMinutes?: number }) => api.put('/admin/agent-auto-migration', body),

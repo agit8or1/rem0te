@@ -181,6 +181,13 @@ jobs:
       - name: Alert quality rule tests
         run: node apps/api/scripts/unit-alert-quality-rules.mjs
 
+      # Managed Secure Access readiness (0.69): the heartbeat block's parser
+      # (closed keys and values, cli agreeing with the keys, nothing that is
+      # not the installed exe) and the readiness decision — every rule, and
+      # 622,080 combinations of facts with no managed state among them.
+      - name: MSA readiness tests
+        run: node apps/api/scripts/unit-msa-readiness.mjs
+
       # Diagnostics catalog (0.31): the closed catalog, result sanitising,
       # redaction and the size cap against the compiled module, the agent's
       # dispatch switch against the catalog — and, with the runner's pwsh, both

@@ -47,7 +47,7 @@ function SummaryCard({ title, icon, aside, children, testId }: {
 type Activity = { at: string; kind: string; text: string; detail?: string };
 
 export function DeviceOverviewTab({
-  endpointId, ep, mon, patches, sessions, onOpenTab, showAlertsAndPatches, adminExtras, agentCard,
+  endpointId, ep, mon, patches, sessions, onOpenTab, showAlertsAndPatches, adminExtras, agentCard, msaCard,
 }: {
   endpointId: string;
   ep: Record<string, unknown>;
@@ -59,6 +59,8 @@ export function DeviceOverviewTab({
   adminExtras?: React.ReactNode;
   /** The Agent card (0.34): type, version, update and upgrade. */
   agentCard?: React.ReactNode;
+  /** Managed Secure Access readiness (0.69): read-only, under the summary cards. */
+  msaCard?: React.ReactNode;
 }) {
   const customer = ep.customer as { id: string; name: string } | null;
   const site = ep.site as { id: string; name: string } | null;
@@ -166,6 +168,8 @@ export function DeviceOverviewTab({
 
         <OverviewNotes endpointId={endpointId} onOpenHistory={() => onOpenTab('history')} />
       </div>
+
+      {msaCard}
 
       <EndpointSpecs endpointId={endpointId} endpoint={ep} onOpenPatches={showAlertsAndPatches ? () => onOpenTab('patches') : undefined} />
       {adminExtras}

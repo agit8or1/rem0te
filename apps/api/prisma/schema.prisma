@@ -886,6 +886,8 @@ model Endpoint {
   monitorStates     EndpointMonitorState[]
   /// 0.66: event fingerprints seen from this computer's event monitors.
   eventFingerprints MonitorEventFingerprint[]
+  /// 0.69: the signed agent's read-only RustDesk preflight (Managed Secure Access readiness).
+  rustdeskPreflight RustdeskPreflight?
   /// 0.67: false-positive reports about this computer's alerts, and rules scoped to it.
   falsePositiveReports AlertFalsePositiveReport[]
   alertQualityRules    AlertQualityRule[]
@@ -4753,4 +4755,32 @@ model AlertQualityRuleEvent {
   createdAt DateTime         @default(now())
 
   @@index([ruleId, createdAt])
+}
+
+/// 0.69: the signed agent's last read-only RustDesk preflight, for Managed
+/// Secure Access readiness (msa/preflight.ts, msa/readiness.ts). One row per
+/// computer, written only from an authenticated signed heartbeat
+/// (EnrollmentService → MsaService.recordPreflight). Facts only: whether the
+/// installed rustdesk.exe answered `--option <key>` reads, never a value.
+model RustdeskPreflight {
+  endpointId   String   @id
+  endpoint     Endpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  /// When the agent ran it (the computer's clock, bounded on receipt).
+  checkedAt    DateTime
+  receivedAt   DateTime @default(now())
+  schema       String
+  installed    Boolean
+  expectedPath Boolean
+  version      String?
+  build        String
+  service      String
+  cli          String
+  /// { "<key>": "ok" | "unparsed" | "timeout" | "error" } for PREFLIGHT_KEYS only.
+  keys         Json
+  keysOk       Int
+  durationMs   Int
+  /// The signed agent version that reported it.
+  agentVersion String?
+
+  @@index([checkedAt])
 }

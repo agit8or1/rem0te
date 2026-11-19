@@ -62,6 +62,38 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'remote-access-readiness',
+    title: 'Remote Access Readiness (Managed Secure Access)',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          <strong className="text-foreground">Readiness only — Managed Secure Access is not available yet; nothing has
+          changed on any computer.</strong> Managed Secure Access is a planned way of connecting in which the signed agent
+          applies a short-lived, per-session RustDesk password and settings, and reads them back, instead of a standing
+          permanent password. Today every computer still connects exactly as before.
+        </p>
+        <p>
+          What exists now (0.69) is a check. Every 6 hours, or when RustDesk changes, the signed Windows agent reads the
+          installed RustDesk: where it is installed, its version and build, whether its service is running, and whether
+          its command line answers eleven read-only questions about its settings. It never changes a setting, never sets
+          a password and never touches a session.
+        </p>
+        <ul className="list-disc pl-5 space-y-1.5">
+          <li><strong className="text-foreground">Compatible</strong>: could be managed later. It is not managed now.</li>
+          <li><strong className="text-foreground">Upgrade available</strong>: would be compatible after the signed agent or RustDesk is updated. RustDesk older than 1.4.1 is &ldquo;not lab-tested&rdquo;, not known to be broken.</li>
+          <li><strong className="text-foreground">Unsupported</strong>: Linux, macOS, the standard agent, or a Sciter build of RustDesk.</li>
+          <li><strong className="text-foreground">Unknown</strong>: no current report (offline, not reported yet, over 7 days old, or a check did not answer).</li>
+        </ul>
+        <p>
+          Each computer&apos;s state is on its page (Overview), and every computer&apos;s on{' '}
+          <Link href="/endpoints/remote-readiness" className="underline text-foreground">Devices → Remote access readiness</Link>.
+          Reports appear once a computer&apos;s signed agent has updated to 0.69 under the usual automatic update policy.
+          More: <Link href="/docs/managed-secure-access" className="underline text-foreground">Managed Secure Access</Link>.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'server-setup',
     title: 'Setting Up the RustDesk Server',
     content: (

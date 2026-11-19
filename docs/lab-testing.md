@@ -75,6 +75,27 @@ it is what shows the live check above can tell an accepted change from a refused
 A refusal by RustDesk is a result, not an error: the job stays green whatever RustDesk refused. It goes red
 only when the lab itself broke — RustDesk did not install, or a probe produced no result.
 
+### The agent's RustDesk preflight (0.69, in the same RustDesk jobs)
+
+After the probe, on every release the lab installs (1.4.1, 1.4.6, 1.4.7, 1.4.9, 1.5.3; not 1.3.9, which is never
+installed), the RustDesk job builds the real `rem0te-agent.exe` and runs `TestLabRustdeskPreflight` (tagged
+`windows && labwindows`, gated by `REM0TE_LAB=1` and `REM0TE_LAB_RUSTDESK=<version>`). The preflight only reads —
+`rustdesk.exe --option <key>` with no value for the eleven Managed Secure Access keys, the service's configuration
+and state with query rights, the exe's version resource and two file names beside it — so running it after the
+probe changes nothing.
+
+- **`admin`**: the preflight in the test process, as the runner's elevated administrator.
+- **`system`**: the real agent's `rustdesk-preflight` subcommand as SYSTEM in session 0, from a scheduled task, with
+  no `--force`. It waits for `C:\ProgramData\Rem0te\msa\preflight.json`, then starts the task again and checks
+  the file is not rewritten: the 6-hour rate limit holds.
+
+Both require: installed, the service running that same exe (RustDesk writes the service's path as
+`"C:\Program Files\RustDesk\RustDesk.exe" --service`, in mixed case; the comparison ignores case), service
+running, build `flutter`, a version beginning with the release (`1.4.7+65`), and all eleven reads answered. Ids:
+`agent/rustdesk-preflight/<version>/admin` and `…/system`. The Flutter/Sciter check is a heuristic
+(`flutter_windows.dll` or `sciter.dll` beside the exe): the lab can confirm only the Flutter half, since every
+official x64 build is Flutter.
+
 ### The agent's Windows code (`agent-lab-windows (agent Go tests)`)
 
 Go tests tagged `windows && labwindows` — never built by `go test ./...` — and skipped again unless

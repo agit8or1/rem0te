@@ -24,6 +24,7 @@ import { DeviceChatTab } from '@/components/endpoints/workspace/chat-tab';
 import { OPEN_CHAT_EVENT } from '@/components/chat/chat-inbox';
 import { DiagnosticsPanel } from '@/components/endpoints/workspace/diagnostics-panel';
 import { AgentCard } from '@/components/endpoints/workspace/agent-card';
+import { MsaReadinessCard } from '@/components/endpoints/msa-readiness';
 import { UPGRADE_LABEL, upgradeView, useAgentActions } from '@/components/endpoints/workspace/agent-actions';
 import type { AccessReview } from '@/components/endpoints/workspace/access-review-panel';
 import { acceptsQueuedWork, agentType, parseTab, reportsInventory, reportsWindowsDetail, TAB_LABEL, type WorkspaceTab } from '@/components/endpoints/workspace/device-model';
@@ -267,6 +268,7 @@ export default function EndpointDetailPage() {
             onOpenTab={setTab}
             showAlertsAndPatches={canView}
             agentCard={canView ? <AgentCard endpointId={id} canEdit={canEdit} alerts={mon.data?.alerts} /> : undefined}
+            msaCard={canView ? <MsaReadinessCard endpointId={id} /> : undefined}
             // Staged-update history (Platform Admin only, like rollouts).
             adminExtras={isPlatformAdmin ? <EndpointUpdateHistory endpointId={id} /> : undefined}
           />

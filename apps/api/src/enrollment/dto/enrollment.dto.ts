@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsIP, IsISO8601, IsObject, IsOptional, IsString, Length, Matches, Max, MaxLength, Min, ArrayMaxSize } from 'class-validator';
+import { Allow, IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsIP, IsISO8601, IsObject, IsOptional, IsString, Length, Matches, Max, MaxLength, Min, ArrayMaxSize } from 'class-validator';
 
 export enum EndpointAccessMode {
   ASSIGNED_USERS = 'ASSIGNED_USERS',
@@ -151,6 +151,13 @@ export class HeartbeatDto {
   // otherwise answers `tray.pair` so the heartbeat pairs again.
   @IsOptional() @IsInt() @Min(1) @Max(99) agentTray?: number;
   @IsOptional() @IsString() @Matches(/^[a-z0-9]{24}$/) trayKeyId?: string;
+
+  // Managed Secure Access readiness (0.69): the signed agent's read-only
+  // RustDesk preflight. @Allow, not @IsObject: a malformed block, or one from
+  // a newer agent, must never fail the heartbeat. MsaService.recordPreflight
+  // parses it (msa/preflight.ts) and drops whatever does not parse, and it is
+  // read only from an authenticated signed heartbeat that may act (§80).
+  @Allow() rustdeskPreflight?: unknown;
 }
 
 /**

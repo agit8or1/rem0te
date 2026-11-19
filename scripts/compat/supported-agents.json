@@ -2,7 +2,8 @@
   "_doc": "docs/compatibility.md. Released signed agents the server under test must still work with. Removing a version is a support decision: move it to `retired` with the date and the reason, never just delete it.",
   "signedAgents": [
     { "tag": "v0.64.0", "why": "running on production computers (2026-11-19)" },
-    { "tag": "v0.67.0", "why": "the previous release" }
+    { "tag": "v0.67.0", "why": "the previous minor release before 0.68" },
+    { "tag": "v0.68.3", "why": "the previous release (0.69 adds the RustDesk preflight; 0.68.3 sends none)" }
   ],
   "suites": ["presets", "approved-action", "staged-patching", "maintenance-actions", "patch-policies", "service-process"],
   "knownIncompatible": [],

@@ -5,6 +5,122 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.69.0] — 2026-11-19 · *Preflight*
+
+**Managed Secure Access, build step 2: the signed agent checks the installed RustDesk, read-only, and the console
+shows each computer's readiness. Readiness only — Managed Secure Access is not available yet; nothing changes on any
+computer.** No setting, password or session is touched, no computer becomes Managed, and every computer connects
+exactly as it did in 0.68. The design is `docs/managed-secure-access.md`; this release is its §3.9.
+
+### Why
+
+The 0.68.3 Windows lab answered the go/no-go question — a SYSTEM process can change a running RustDesk 1.4.1–1.5.3
+through its own command line, but 1.4.7+ refuses a copy outside the install folder. Before anything is changed on a
+real computer, the portal has to know which computers could take Managed Secure Access at all: which run the signed
+agent, which RustDesk, installed where, run by which service, and whether its command line answers as SYSTEM there.
+Until now the portal knew only the RustDesk version the heartbeat reports, and nothing about the rest.
+
+### The agent: `rem0te-agent.exe rustdesk-preflight` (`tools/windows-installer`)
+
+- **What it reads.** Whether `%ProgramFiles%\RustDesk\rustdesk.exe` exists as a regular file (a reparse point is
+  refused); whether the RustDesk service runs that same file (the service is opened with `SERVICE_QUERY_CONFIG |
+  SERVICE_QUERY_STATUS` only, never `mgr.OpenService`'s all-access); the exe's FileVersion from its version
+  resource (`1.4.7+65`, strict charset — no PowerShell, nothing run); Flutter or Sciter, by `flutter_windows.dll`
+  or `sciter.dll` beside the exe (**a heuristic**); the service state; and, only when the exe is installed and is
+  the one the service runs, `rustdesk.exe --option <key>` for each of the eleven keys Managed Secure Access will
+  set — a read, with no value.
+- **How it runs them.** One exec site (`preflightRunner.Read` in `rustdesk_preflight_windows.go`): the installed
+  exe by its absolute path, `msa.ReadArgs(key)` — exactly `{"--option", key}` for a key on the closed list, nil
+  otherwise — as an argument array with no shell and no window, 15 s per read, 3 minutes in all, at most 4 KB of
+  output kept. Nothing in the preflight names `--password`.
+- **What it reports.** `rem0te-rustdesk-preflight/1`: `installed`, `expectedPath` (a boolean — **not the path**,
+  because a RustDesk installed elsewhere usually sits under a user's profile and the path would carry their name),
+  `version`, `build`, `service`, `cli` (`ok` / `partial` / `failed` / `not_run`) and per key `ok` / `unparsed` /
+  `timeout` / `error`. **Never a setting's value.** A read is `ok` when it exits 0 with one line matching
+  `^[A-Za-z0-9_.:-]{0,64}$` (an unset option prints nothing; the lab saw exactly that).
+- **How often.** The signed heartbeat starts it detached at most every 30 minutes (`msa\preflight.started`). It
+  runs for real at most every 6 hours, or sooner when the exe's version, size or modification time changed, or the
+  last run is dated more than 10 minutes in the future (`msa.ShouldRun`; the fingerprint is kept in
+  `msa\preflight.state.json` and never sent). A lock stops two at once. The heartbeat sends `msa\preflight.json` as
+  `rustdeskPreflight` until the portal answers `rustdeskPreflightAck` with its `checkedAt`, as it does the patch
+  posture. The subcommand takes no path: only `--force`, which the heartbeat never passes.
+- The three existing `rustdesk.exe` paths (`--get-id` in the action and tray host, the version read) now share
+  `installedRustdeskExe()`; an empty `%ProgramFiles%` falls back to `C:\Program Files`.
+
+### The portal
+
+- **Accepted only from an authenticated heartbeat on the signed channel that may act** (§64), after the
+  not-may-act and pooled-computer returns: never a standard heartbeat, the install script's own check-in, a leftover
+  standard heartbeat on a signed computer, or an unassigned computer. The DTO only `@Allow`s the field;
+  `msa/preflight.ts` parses it with a strict zod schema (closed keys and values, `cli` agreeing with the keys,
+  nothing run unless installed and run by the service, `checkedAt` no more than 10 minutes ahead). Anything else is
+  dropped and the heartbeat answers as usual — an older or newer agent is never refused. An agent that sends no
+  block gets exactly the 0.68 answer, with no new key.
+- **Stored** in `RustdeskPreflight` (migration 0087), one row per computer, newest report wins, with CHECKs on the
+  schema, version, build, service, cli, counts, and `not_run` meaning nothing answered.
+- **One pure function decides the state**, `msa/readiness.ts`, in order: platform unknown → Unknown; Linux or macOS
+  → Unsupported; the standard agent → Unsupported; not reporting now → Unknown; a signed agent older than 0.69.0 →
+  Upgrade available; no report, or one over 7 days old → Unknown; RustDesk not in Program Files, no service, or a
+  service running another copy → Upgrade available; Sciter → Unsupported; build or version unreadable → Unknown;
+  RustDesk older than 1.4.1 → Upgrade available, worded "not lab-tested — not known to be broken"; newer than 1.5.3
+  → Unknown until the lab covers it; service not running or any read unanswered → Unknown; otherwise Compatible,
+  saying whether that exact release was in the lab. `managed`, `managed_verified` and `enforcement_failure` exist in
+  the type and **nothing can produce them**; every answer carries `verified: false`.
+- **Routes**: `GET /msa/readiness` (counts per state and the list; `?state=` filters) and
+  `GET /msa/readiness/:endpointId`, both View computers, reading computers only through `endpointVisibilityWhere`
+  (the per-computer one through `assertEndpointInScope` as well). No route writes anything.
+
+### The console
+
+- The device page's Overview has a **Secure remote access readiness** card: "Readiness only — Managed Secure Access
+  is not available yet; nothing has changed on this computer." first, then the state, its reasons and the facts.
+- **Devices → Remote access readiness** (`/endpoints/remote-readiness`): four counts that filter the list, every
+  visible computer with its state and first reason, and the lab-tested releases. Read-only; both themes; 375 px.
+- `/help` has a *Remote Access Readiness* section.
+
+### Security invariants (§80)
+
+The preflight's argv only through `ReadArgs`, the same eleven keys on the agent and the portal, no `--password`,
+only the preflight naming `--option`; one exec site, the installed exe by absolute path, no shell; it runs only when
+installed and run by the service; query-only service access; no path from the heartbeat; the portal's one
+`recordPreflight` call behind `authenticated && mayAct && kind === 'signed'`, after the early returns; only
+`MsaService` writes the table; `readiness.ts` pure, with no managed state reachable and `verified: false`; the routes
+GET-only under View computers through `endpointVisibilityWhere`; 0087's CHECKs; the suites wired.
+
+### Tests
+
+- `unit-msa-readiness.mjs` (CI): the parser against 33 malformed blocks and versions (a path, a value, an unknown key, a bad
+  version, a future date, `cli` disagreeing with the keys, …), the agent's `msa.Keys` and the lab probe's key list
+  compared with the portal's, every state rule, and 622,080 combinations of facts with no managed state and nothing
+  verified.
+- `e2e-msa-readiness.mjs` (port 3941, `run-e2e.sh`): a signed heartbeat stores and is acknowledged; newer replaces,
+  older and repeated do not; standard, unauthenticated, no-secret, installer check-in, leftover-standard and pooled
+  heartbeats store nothing; fourteen malformed blocks each get the ordinary answer; an old 0.68.3 signed agent is
+  unaffected and reads Upgrade available; the fleet route and the per-computer route respect business, a Business
+  User's grant and View computers; the database refuses a `not_run` row claiming answered reads. 51 checks.
+- Go: `internal/msa` (portable, with a fake runner: timeouts, garbage, oversized and non-zero answers, partial and
+  full, `ShouldRun`, and that the package never names `--password`).
+- `e2e-ui.mjs`: the card (Compatible and Unsupported) and the fleet page at both widths and in both themes,
+  filtering by a count.
+- **Windows lab**: `TestLabRustdeskPreflight` runs after the probe on each installed release (1.4.1, 1.4.6, 1.4.7,
+  1.4.9, 1.5.3) — in the test process as the administrator, and as SYSTEM through the real `rem0te-agent.exe` from
+  a scheduled task, checking the 6-hour limit holds on a second start. Evidence ids
+  `agent/rustdesk-preflight/<version>/{admin,system}`.
+
+### What it does not do, and what is unverified
+
+- **Nothing is enforced, applied or changed.** No session grant, no password, no setting, no mode change; there is
+  no route or button that could. Compatible means only "could be managed later".
+- The preflight has run only on **Windows Server 2025** in the lab — not on a Windows 10 or 11 desktop, not with
+  someone signed in, not on any fleet computer. The Sciter half of the build check has never seen a Sciter build.
+  RustDesk 1.3.9 and older were not lab-tested, so they read "Upgrade available — not lab-tested".
+- **Reports appear only after a computer's signed agent updates to 0.69.** This release publishes a new signed agent
+  at deploy; computers take it through the existing, unchanged automatic update policy. Until then every signed
+  computer reads "Upgrade available: the signed agent is too old to check RustDesk".
+- Development-only dependency bumps since 0.68.3: none.
+
+---
+
 ## [0.68.3] — 2026-11-19 · *Nametag*
 
 **A Windows lab: a new, non-required workflow runs RustDesk's command line as SYSTEM, and the agent's own Windows

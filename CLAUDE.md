@@ -1552,6 +1552,39 @@ webhook and SMTP, `MONITOR_SWEEP` on, in `run-e2e.sh`); unit:
 `unit-alert-quality-rules.mjs` (in CI); `e2e-ui.mjs` drives the dialog and
 the page.
 
+§80 (0.69) is Managed Secure Access readiness: build step 2 of
+`docs/managed-secure-access.md`, **read-only**. Nothing changes on any
+computer and nothing can be Managed.
+
+- **The agent only reads.** `rem0te-agent.exe rustdesk-preflight` builds its
+  argv only through `msa.ReadArgs` — exactly `{"--option", key}` for the
+  eleven keys of `msa.Keys`, the same list as the portal's `PREFLIGHT_KEYS` —
+  and nothing in the preflight names `--password`. Only the preflight names
+  `--option`.
+- **One exec site** (`preflightRunner.Read`): the installed
+  `%ProgramFiles%\RustDesk\rustdesk.exe` (`installedRustdeskExe()`) by
+  absolute path, an argument array, no shell, no window, output capped. It
+  runs only when that file is installed (no reparse point) and is what the
+  RustDesk service runs; the service is opened with query rights only. The
+  subcommand takes no path (only `--force`, never from the heartbeat).
+- **The portal** accepts `rustdeskPreflight` only in the heartbeat's one
+  `msa.recordPreflight` call, behind `authenticated && mayAct && kind ===
+  'signed'` and after the not-may-act and pooled returns (§64, §70). The DTO
+  only `@Allow`s it; a strict zod parse drops anything else and never fails
+  the heartbeat. Only `MsaService` writes `RustdeskPreflight` (0087's CHECKs).
+- **`msa/readiness.ts`** is pure (two pure imports) and returns only
+  `PRODUCIBLE_STATES`; `managed`, `managed_verified` and
+  `enforcement_failure` are in the type and unreachable, and every answer is
+  `verified: false`. RustDesk below 1.4.1 is "not lab-tested", never "broken".
+- **Routes** are two GETs under `computers:view`, reading computers only
+  through `endpointVisibilityWhere`.
+
+Behavioural proof: `e2e-msa-readiness.mjs` (port 3941, in `run-e2e.sh`);
+unit: `unit-msa-readiness.mjs` (in CI) and the Go `internal/msa` tests; lab:
+`TestLabRustdeskPreflight` in the Windows lab's RustDesk jobs (as the
+administrator, and as SYSTEM through the real agent). **It has run only on
+Windows Server in the lab**, never on a desktop or the fleet.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs
