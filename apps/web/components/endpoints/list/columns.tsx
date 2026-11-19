@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { Apple, Monitor, Terminal, HelpCircle, ExternalLink } from 'lucide-react';
 import { supportInfo, WARRANTY_STATE_LABEL } from '@/lib/hardware-support';
 import { Badge } from '@/components/ui/badge';
+import { ClearAlertsButton } from '@/components/monitoring/clear-alerts';
 import { cn } from '@/lib/utils';
 import type { DeviceRow, SortKey } from './types';
 
@@ -255,5 +256,15 @@ export function healthOf(r: Pick<DeviceRow, 'alerts' | 'connectivity' | 'isOnlin
 function HealthCell({ r, now }: { r: DeviceRow; now?: number }) {
   const h = healthOf(r, now);
   if (!h) return <span className="text-muted-foreground" title="Seeing alerts needs the monitoring:alerts permission">—</span>;
-  return <Badge variant={h.variant} title={h.title} data-health={h.label.toLowerCase()} className="whitespace-nowrap">{h.label}</Badge>;
+  // Clickable (0.70): the label opens the computer's Monitoring tab, where
+  // the alerts behind it, or the reason it is Unknown, are listed.
+  return (
+    <span className="inline-flex items-center gap-2 whitespace-nowrap">
+    <Link href={`/endpoints/${r.id}?tab=monitoring`} className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      aria-label={`${h.label}: ${h.title}. Open ${r.name}'s monitoring`} data-testid="health-link">
+      <Badge variant={h.variant} title={`${h.title}. Click to see this computer's monitoring.`} data-health={h.label.toLowerCase()} className="whitespace-nowrap cursor-pointer hover:opacity-80">{h.label}</Badge>
+    </Link>
+    {(h.label === 'Warning' || h.label === 'Issues') && <ClearAlertsButton endpointId={r.id} name={r.name} count={r.alerts!.open} />}
+    </span>
+  );
 }
