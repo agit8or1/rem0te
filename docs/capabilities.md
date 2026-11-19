@@ -1,5 +1,7 @@
 # What each agent can do
 
+> **0.68.1:** [Readiness and evidence](readiness.md) is the current, evidence-graded view of what works where, including what has run on the production fleet. Where this page disagrees with it, it is right and this page is being corrected.
+
 Rem0te started as a RustDesk portal and now does part of an RMM's job: monitoring, inventory, read-only patch
 reporting, approved patch deployment and ClientSt0r ticket integration. Which of it works on a computer depends on
 **what is installed there**, and some of it needs configuration on the server first. This page says which, and how
