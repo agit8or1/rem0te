@@ -1,5 +1,7 @@
 # Security model: who can reach a computer, and what you will have afterwards
 
+> **0.68.1:** the remote-access limits below are what [Managed Secure Access](managed-secure-access.md) is designed to close, with enforcement on the computer through RustDesk's own settings. It is a design: nothing below has changed yet.
+
 This page is for the MSP owner who needs to answer two questions about a customer's PC:
 
 1. **Which technician can reach it?**

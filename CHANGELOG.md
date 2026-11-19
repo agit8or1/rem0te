@@ -5,6 +5,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.68.1] — 2026-11-19 · *Nametag*
+
+**Documentation: an evidence-graded readiness report, and the design for Managed Secure Access. No code
+changes.**
+
+### New: Readiness and evidence (`docs/readiness.md`)
+
+Every feature, on each kind of computer, with who enforces it and the strongest evidence that it works,
+graded **Lab** (a controlled test on a disposable real machine: nothing yet), **Fleet** (seen working on the
+production computers), **Runner** (Go tests on GitHub's Windows and macOS runners), **Sim** (the agent's real
+decision code against `rem0te-action-sim`), **pwsh**, **API**, **Unit** or **None**.
+
+The fleet evidence was read from the production database (read-only): 430 inventory passes, 218 update
+scans, 13 diagnostics runs, one signed `windows.update.install` (restart still pending), one
+`windows.software.remove`, 10 signed agent self-updates, 9 migrations to the signed agent, 109 completed
+remote sessions. That corrects pages that said the signed agent's patching, removal, monitoring and
+migration had "never run on real Windows". It also lists what has never run on any real computer: restart
+scheduling and restart windows, scripts under Windows PowerShell 5.1, service control and End process,
+software install, containment, the `.msi`, the ClientSt0r integration against the real ClientSt0r, and
+everything on Linux and macOS beyond reading.
+
+It records where other pages are stale (`rmm-gap-analysis.md` still describes a two-action catalog;
+`security-model.md` and `integration-clientst0r.md` say Rem0te has no AI provider endpoint, reversed in
+0.48), the roadmap in dependency order, and the first compatibility result: the v0.64.0 signed agent, built
+from its tag, passed 611 checks across six suites against the current server.
+
+### New: Managed Secure Access design (`docs/managed-secure-access.md`)
+
+An audit of remote access today (what the portal enforces, what nobody enforces), what unmodified RustDesk
+enforces on the computer itself (from RustDesk's source: view-only, keyboard, clipboard, file transfer,
+consent that a password cannot bypass, the password in use, idle disconnect, closing every session), and a
+design that keeps Select → Connect → Work: short-lived signed session grants, a fresh password per session
+applied by the signed agent with every setting read back, an unknown password between sessions so an old
+one is not a bypass, revocation, session evidence, and per-computer cutover that a Platform Admin approves
+and can roll back. It says what it cannot do (authenticate the technician inside RustDesk, stop recording
+on the technician's side, lock settings against a local administrator) and what must be proved on real
+Windows first.
+
+**Nothing changes on any computer.** `capabilities.md` and `security-model.md` now point to the two pages.
+
+---
+
 ## [0.68.0] — 2026-11-19 · *Nametag*
 
 **A new computer's first inventory arrives within seconds of the installer finishing, and the device page lets
