@@ -49,6 +49,7 @@ const ORDER = [
   ['support-requests.md', 'Support requests', 'Connecting and clients', 'The customer support link, the status page and the technician queue.'],
   ['capabilities.md', 'What each agent can do', 'Computers and monitoring', 'Capabilities by agent type, what needs configuring, and what has been tested on real Windows.'],
   ['readiness.md', 'Readiness and evidence', 'Computers and monitoring', 'Feature by feature: what works on which computers, who enforces it, and what evidence there is that it works on a real machine.'],
+  ['lab-testing.md', 'Windows lab testing', 'Computers and monitoring', 'What the Windows lab job runs on a disposable GitHub runner, how to read its evidence, and what it cannot prove.'],
   ['inventory.md', 'Inventory and event logs', 'Computers and monitoring', 'Specs, installed software, change history, pending updates and event-log slices.'],
   ['diagnostics.md', 'One-click diagnostics', 'Computers and monitoring', 'Read-only checks a technician runs with one click: disk, services, errors, network, DNS, updates, restart.'],
   ['monitoring.md', 'Monitoring and alerts', 'Computers and monitoring', 'Monitors, inheritance, alerts, site outages, maintenance windows and escalation.'],

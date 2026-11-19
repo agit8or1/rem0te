@@ -5,6 +5,92 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.68.3] — 2026-11-19 · *Nametag*
+
+**A Windows lab: a new, non-required workflow runs RustDesk's command line as SYSTEM, and the agent's own Windows
+code, on a disposable GitHub Windows runner, and uploads what it found as `lab-evidence-windows`.**
+
+Until now the agent's Windows code — service control, ending processes, removing programs, running scripts
+under Windows PowerShell 5.1, the Windows Update scan — had been tested only against `rem0te-action-sim`, and
+whether a SYSTEM process can still change a running RustDesk's settings after 1.4.7 restricted its IPC pipe was
+an open question. The `Windows lab` workflow (`.github/workflows/lab-windows.yml`) answers both on
+`windows-latest` (Windows Server 2025 Datacenter 10.0.26100) on every pull request, every push to `main` and by
+hand. It is **not** a required check, and changes nothing the agent, the portal or the signer does. The page
+is `docs/lab-testing.md`.
+
+### RustDesk as SYSTEM (`tools/lab/windows/`)
+
+One fresh runner per release: 1.3.9, 1.4.1, 1.4.6, 1.4.7, 1.4.9, 1.5.3. Each official installer is checked
+against the SHA-256 GitHub's release API publishes, installed with `--silent-install`, kept off rustdesk.com
+(hosts file, outbound firewall rules, a seeded `127.0.0.1` configuration), and probed from a scheduled task
+as SYSTEM in session 0 and then as the elevated administrator. For eleven options (`access-mode`,
+`enable-keyboard`, `enable-clipboard`, `enable-file-transfer`, `enable-audio`, `enable-tunnel`,
+`enable-remote-restart`, `approve-mode`, `verification-method`, `allow-auto-disconnect`,
+`auto-disconnect-timeout`) the probe sets a value, reads it back, reads again after 5 s and after a service
+restart, and sets a second value. It sets a random permanent password with `--password` and records only
+whether the stored line changed (by a truncated hash; the password is never written down). It turns
+`stop-service` on and off.
+
+A readback could agree while the running server never heard of a change — RustDesk's command line falls back
+to writing its own process's configuration when the pipe refuses it, and for SYSTEM that is the file the
+service reads. So the probe also checks something only the running server does: `direct-server` `Y` opens a
+listener on 21118, `stop-service` `Y` closes it, `N` reopens it. And as a negative control it repeats the
+`direct-server` step from a copy of the install in another directory.
+
+What it found:
+
+- **1.4.1, 1.4.6, 1.4.7, 1.4.9, 1.5.3, as SYSTEM and as administrator: everything worked.** All eleven options
+  read back, held 5 s and across a service restart, and took a second value; `--password` exited 0 (`Done!`)
+  and changed the LocalService profile's password line; the running server opened and closed its listener
+  within about 1.3 s for `direct-server` and `stop-service`, with the service itself still running.
+- **The 1.4.7 restriction is about the executable's path, not the account.** The copied exe reached the
+  running server on 1.4.1 and 1.4.6 and was refused on 1.4.7, 1.4.9 and 1.5.3 — as SYSTEM too. Refused, it
+  still exited 0, and as SYSTEM still wrote the LocalService file, so its change would take effect only at the
+  next service start. The agent must keep calling the installed `rustdesk.exe`. In the evidence the control's
+  row is `fail` when the copy was refused; on 1.4.7 and later that is the expected answer.
+- **1.3.9 was not tested.** GitHub has no digest for its assets (it began recording them in 2025; 1.4.1 is the
+  oldest release with one), so it is recorded as "unverified download" and never downloaded.
+- No connection from `rustdesk.exe` left the runner, and no firewall drop named it.
+
+### The agent's Windows code (`lab_windows_test.go`, `internal/action/lab_windows_test.go`)
+
+Go tests built only with `-tags labwindows` and skipped unless `REM0TE_LAB=1`, driving the real Windows
+implementations through `action.Run` with a signed envelope. All of them passed:
+
+- **Service control** on a throwaway service registered with the real SCM: start, restart, stop, every start
+  type including delayed, start refused while disabled, a start-type change leaving binary path, account,
+  display name and error control untouched; `EventLog`/`eventlog`, RustDesk's stop, an unknown name and a
+  driver refused. Windows reports `Tcpip` as a boot-start driver.
+- **Ending a process**: refused with the wrong creation time (PID reuse), the handle-level check refusing a
+  time 5 ms off, ended with the right one, a tree of two, `svchost` refused.
+- **Program removal**: a `QuietUninstallString`, `cmd.exe` refused and not run, a renamed program and RustDesk
+  refused, the 32-bit view, an MSI built with WiX 3.14 and removed by `msiexec /x`, and an Inno Setup 6
+  program removed both by its quiet string and, with that deleted, by the recognised Inno form. This is the
+  first time any removal form has run on Windows.
+- **Scripts under Windows PowerShell 5.1**: arguments as data, the wrapper never evaluating them, the job
+  object killing a child `powershell.exe` at the timeout (none survived), the memory limit refusing 700 MB
+  under 300 MB while the same script allocates under 2 GB, and the output cap with redaction.
+- **The Windows Update scan, offline**: `wua.ps1` fails cleanly with `0x80240438` and no updates, and the
+  WSUS policy is read as the update manager.
+
+**Disclosure: two runs while this lab was built contacted Microsoft Update.** The lab is meant to reach only
+GitHub and localhost. Run 44558113775 stopped and disabled `wuauserv` before scanning; Windows started it again
+and the scan returned three updates and two history entries. Run 44558875892 added service firewall rules and
+hosts entries; the scan still returned one update. Both were throwaway GitHub runners, nothing was installed,
+and the scan is read-only. Only pointing Windows Update by policy at a WSUS server on `127.0.0.1:8530` that does
+not exist kept it off the network; the test now does that first and fails if any update is offered. The
+finding that Windows turns a disabled `wuauserv` back on (*Manual*, running) during a scan is recorded on every
+run.
+
+### What it does not prove
+
+Windows Server, not Windows 10 or 11; no one signed in at the console; no RustDesk connection made, so only
+`direct-server` and `stop-service` are shown to reach the running server, not that a session obeys the other
+options; no online update scan; the signed agent itself is not installed — the tests run the same code in a
+test binary.
+
+---
+
 ## [0.68.2] — 2026-11-19 · *Nametag*
 
 **Every pull request now tests the server against older released signed agents, built from their release

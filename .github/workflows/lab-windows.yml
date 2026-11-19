@@ -1,0 +1,129 @@
+name: Windows lab
+
+# 0.68.3: the agent's Windows code, and RustDesk's command line, on a real
+# Windows computer. GitHub's windows-latest runner is a disposable Windows
+# Server VM with administrator rights; every job here changes it freely
+# (installs RustDesk, creates and deletes a service, ends processes, removes
+# programs, disables Windows Update) and it is thrown away afterwards.
+#
+# NOT a required check. A red run is a finding about Windows or RustDesk, or a
+# broken lab; either way it never blocks a merge. Nothing here has keys or
+# signs anything (§56), and nothing contacts any host but GitHub (the RustDesk
+# release API and download) and localhost. docs/lab-testing.md says what it
+# proves and what it cannot.
+#
+# The one artifact, lab-evidence-windows, holds lab-evidence.json (every
+# result, with the Windows build it ran on) and summary.md.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: lab-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Part 1: can a SYSTEM process change an installed RustDesk's settings live
+  # with `rustdesk.exe --option`, set its password with `--password`, and
+  # toggle `stop-service`? One fresh runner per release: before and after
+  # 1.4.7, which restricted RustDesk's local IPC pipe.
+  agent-lab-windows-rustdesk:
+    name: agent-lab-windows (RustDesk ${{ matrix.version }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # 1.3.9 has no digest on GitHub and is recorded as an unverified
+        # download, not installed. 1.4.1 is the oldest release with one.
+        version: ['1.3.9', '1.4.1', '1.4.6', '1.4.7', '1.4.9', '1.5.3']
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: RustDesk ${{ matrix.version }} as SYSTEM and as administrator
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          & "$env:GITHUB_WORKSPACE\tools\lab\windows\rustdesk-lab.ps1" -Version '${{ matrix.version }}' -Part "$env:RUNNER_TEMP\lab-part\rustdesk-${{ matrix.version }}.json"
+          exit $LASTEXITCODE
+      - name: Keep the part
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lab-part-rustdesk-${{ matrix.version }}
+          path: ${{ runner.temp }}/lab-part/
+          if-no-files-found: warn
+          retention-days: 30
+
+  # Part 2: the agent's own Windows code against the real operating system.
+  # Tests tagged `windows && labwindows`, gated again by REM0TE_LAB=1.
+  agent-lab-windows-go:
+    name: agent-lab-windows (agent Go tests)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: tools/windows-installer/go.mod
+          cache-dependency-path: tools/windows-installer/go.sum
+      - name: Which Windows, and which tools
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\lab-part" | Out-Null
+          $os = Get-CimInstance Win32_OperatingSystem
+          $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+          $o = [ordered]@{ caption = $os.Caption; version = $os.Version; build = $os.BuildNumber; ubr = $cv.UBR; productType = $os.ProductType }
+          [IO.File]::WriteAllText("$env:RUNNER_TEMP\lab-part\go-os.json", ($o | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
+          $o | Format-List
+          "WIX=$env:WIX"
+          foreach ($t in 'wix.exe', 'candle.exe', 'light.exe') { $c = Get-Command $t -ErrorAction SilentlyContinue; "$t -> $(if ($c) { $c.Source } else { 'not on PATH' })" }
+          Get-ChildItem 'C:\Program Files (x86)' -Filter 'WiX*' -ErrorAction SilentlyContinue | ForEach-Object { "found $($_.FullName)" }
+          Get-Service wuauserv, BITS | Format-Table Name, Status, StartType
+      - name: Agent lab tests
+        working-directory: tools/windows-installer
+        env:
+          REM0TE_LAB: '1'
+          REM0TE_LAB_EVIDENCE: ${{ runner.temp }}\lab-part\go-evidence.jsonl
+        run: go test -tags labwindows -count=1 -v -timeout 35m -run '^TestLab' . ./internal/action/
+      - name: Keep the part
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lab-part-go
+          path: ${{ runner.temp }}/lab-part/
+          if-no-files-found: warn
+          retention-days: 30
+
+  # The evidence: every part merged into one file, and a summary on the run.
+  agent-lab-windows:
+    needs: [agent-lab-windows-rustdesk, agent-lab-windows-go]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: lab-part-*
+          path: parts
+      - name: Merge
+        run: |
+          node tools/lab/merge-evidence.mjs parts evidence || echo "MERGE_FAILED=1" >> "$GITHUB_ENV"
+          cat evidence/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lab-evidence-windows
+          path: evidence/
+          retention-days: 90
+      - name: Verdict
+        run: |
+          echo "rustdesk: ${{ needs.agent-lab-windows-rustdesk.result }}, go: ${{ needs.agent-lab-windows-go.result }}, merge failed: ${MERGE_FAILED:-0}"
+          test "${{ needs.agent-lab-windows-rustdesk.result }}" = success
+          test "${{ needs.agent-lab-windows-go.result }}" = success
+          test "${MERGE_FAILED:-0}" = 0
