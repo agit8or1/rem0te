@@ -1,4 +1,5 @@
 'use client';
+import { shownAgentVersion, type AgentVersionView } from '@/lib/agent-version';
 
 import * as React from 'react';
 import Link from 'next/link';
@@ -31,7 +32,7 @@ import { ago } from '@/components/endpoints/workspace/device-model';
 type Kind = 'standard' | 'migrating' | 'signed' | 'held' | 'not_eligible';
 interface Row {
   id: string; name: string; business: { id: string; name: string } | null; kind: Kind; text: string; hold: string | null;
-  online: boolean; lastSeenAt: string | null; agentVersion: string | null; onPublishedBuild: boolean | null; automatic: boolean | null;
+  online: boolean; lastSeenAt: string | null; agentVersion: string | null; versionView?: AgentVersionView; onPublishedBuild: boolean | null; automatic: boolean | null;
 }
 interface Rollout {
   id: string; state: 'choosing_canary' | 'canary' | 'soaking' | 'rolling' | 'halted'; text: string; targetSha256: string; targetVersion: string | null;
@@ -317,7 +318,7 @@ export default function FullAgentPage() {
                             <li key={r.id} className="flex flex-wrap items-start gap-x-3 gap-y-1 p-2" data-kind={r.kind}>
                               <div className="min-w-0 flex-1 basis-48">
                                 <Link href={`/endpoints/${r.id}`} className="font-medium hover:underline break-all">{r.name}</Link>
-                                <p className="text-muted-foreground">{r.business?.name ?? '—'}{r.agentVersion ? ` · ${r.agentVersion}` : ''}{r.lastSeenAt ? ` · seen ${ago(r.lastSeenAt)}` : ''}</p>
+                                <p className="text-muted-foreground">{r.business?.name ?? '—'}{shownAgentVersion(r.versionView, r.agentVersion) ? ` · ${shownAgentVersion(r.versionView, r.agentVersion)}` : ''}{r.lastSeenAt ? ` · seen ${ago(r.lastSeenAt)}` : ''}</p>
                               </div>
                               <div className="min-w-0 flex-1 basis-56">
                                 <Badge variant={r.kind === 'signed' ? 'secondary' : 'outline'}>{KIND_LABEL[r.kind]}</Badge>

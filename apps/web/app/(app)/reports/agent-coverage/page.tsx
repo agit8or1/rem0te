@@ -1,4 +1,5 @@
 'use client';
+import { agentVersionTitle, shownAgentVersion, type AgentVersionView } from '@/lib/agent-version';
 
 import Link from 'next/link';
 import { PageHeader } from '@/components/common/page-header';
@@ -14,13 +15,14 @@ import {
  * and non-Windows devices that have never sent inventory.
  */
 interface Summary { total: number; signed: number; standard: number; none: number; noDeviceSecret: number; silent: number; nonWindowsNoInventory: number }
-interface Row { device: Ref; business: Ref | null; site: Ref | null; platform: string | null; agent: { type: string; version: string | null }; secret: string; lastSeenAt: string | null; isOnline: boolean; inventoryAt: string | null }
+interface Row { device: Ref; business: Ref | null; site: Ref | null; platform: string | null; agent: { type: string; version: string | null; versionView?: AgentVersionView }; secret: string; lastSeenAt: string | null; isOnline: boolean; inventoryAt: string | null }
 interface List { total: number; rows: Row[] }
 interface Data {
   generatedAt: string; silentDays: number;
   definitions: { agent: string; deviceSecret: string; silent: string; nonWindowsNoInventory: string };
   totals: Summary;
-  versions: { type: string; version: string | null; count: number }[];
+  /** 0.70.1: grouped by the version shown; `recorded` lists the labels the computers last recorded. */
+  versions: { type: string; version: string | null; current?: boolean | null; recorded?: string[]; count: number }[];
   bySite: (Summary & { business: Ref | null; site: Ref | null })[];
   noDeviceSecret: List; silent: List; nonWindowsNoInventory: List;
   facets: Facets;
@@ -35,7 +37,7 @@ function DeviceTable({ list, empty, extra }: { list: List; empty: string; extra:
       <Table head={['Device', 'Business · site', 'Platform', 'Agent', extra.head]} empty={empty}
         rows={list.rows.map((r) => [
           <Link key="d" href={`/endpoints/${r.device.id}`} className="font-medium hover:underline">{r.device.name}</Link>,
-          where(r.business, r.site), r.platform ?? 'Not reported', `${AGENT[r.agent.type] ?? r.agent.type}${r.agent.version ? ` ${r.agent.version}` : ''}`, extra.cell(r),
+          where(r.business, r.site), r.platform ?? 'Not reported', <span key="a" title={agentVersionTitle(r.agent.versionView)}>{`${AGENT[r.agent.type] ?? r.agent.type}${shownAgentVersion(r.agent.versionView, r.agent.version) ? ` ${shownAgentVersion(r.agent.versionView, r.agent.version)}` : ''}`}</span>, extra.cell(r),
         ])} />
       {list.total > list.rows.length && <p className="text-xs text-muted-foreground">Showing {list.rows.length} of {list.total}; the export has every device.</p>}
     </>
@@ -72,8 +74,13 @@ export default function AgentCoveragePage() {
                 <p>Read from each device&apos;s current record, which data retention never removes, so there is no window. <Generated at={data.generatedAt} />.</p>
               </Definition>
               <Section title="Agent type and version">
-                <Table head={['Agent', 'Version', 'Devices']} empty="No devices."
-                  rows={data.versions.map((v) => [AGENT[v.type] ?? v.type, v.version ?? '—', v.count])} />
+                <Table head={['Agent', 'Version', 'Current', 'Devices']} empty="No devices."
+                  rows={data.versions.map((v) => [
+                    AGENT[v.type] ?? v.type,
+                    <span key="v">{v.version ?? '—'}{v.current === true && v.recorded?.some((x) => x !== v.version) ? <span className="text-muted-foreground"> (recorded as {v.recorded.join(', ')}; the same agent)</span> : null}</span>,
+                    v.current === true ? 'Yes' : v.current === false ? 'Update due' : '—',
+                    v.count,
+                  ])} />
               </Section>
               <Section title="By site">
                 <Table head={['Business · site', 'Devices', 'Signed', 'Standard', 'No agent', 'No secret', `Silent ${data.silentDays} d`, 'Non-Windows, no inventory']} empty="No sites."

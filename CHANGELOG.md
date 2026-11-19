@@ -5,6 +5,88 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.70.1] — 2026-11-19 · *Slate*
+
+**The console shows a signed agent's version truthfully: a computer running the published agent binary is shown
+as current, at the published release, whatever release label it last recorded. Display only — automatic agent
+updates, the heartbeat and the agent are unchanged.**
+
+### The symptom
+
+On production, after 0.68.3 was deployed, the four signed computers' Agent cards and the device list read
+0.64.0, 0.67.0, 0.67.0 and 0.68.0, and none of them was being updated. It looked as if automatic agent updates
+had stopped working.
+
+### Why
+
+They had not. The signed agent (`windows/rem0te-agent.exe`) is built reproducibly and does not embed a version, so
+a release that changes nothing in the agent publishes **the same bytes** under a new label; only the targets
+metadata's `custom.version` moves. The binary was byte-identical from 0.63.0 through 0.68.3. Automatic update
+(`agent-auto-update/schedule.ts`, `isBehind`) compares the computer's reported `agentSha256` with the published
+target's, so all four were correctly treated as current and nothing was dispatched. But every page showed
+`Endpoint.agentVersion`, the release label the computer recorded at its last once-a-day update check — and a
+computer whose check finds it already runs the published binary installs nothing and records no new label. The
+version on screen was a fact about when each computer last installed something, not about what it runs.
+
+### What changed
+
+- **One rule**, `apps/api/src/common/agent-version-view.ts` (pure; it imports only the §64 identity rule):
+  `agentVersionView(facts, served)` returns `{ label, recorded, current, reason, detail }`.
+  - Signed (by `runsSignedAgent`, sticky when `signedSeenAt` is known) and the reported hash equals the published
+    target's: `current: true`, `reason: 'same_build'`, and the label is the published release (the target's
+    `custom.version`, when it is a dotted number) — "Runs the published agent (0.69.0). It last recorded 0.67.0 at
+    its daily update check; the agent binary has not changed since, so it is the same agent."
+  - Signed on another hash: `current: false`, `'different_build'`, the recorded label, "an update is due".
+  - No published target, no reported hash, or a standard, Linux or macOS agent: the recorded label and
+    `current: null`, exactly as before.
+  This is the same comparison `isBehind` makes for the signed channel; the unit suite checks that they agree.
+- `UpdateTrustService.servedAgent()` reads the agent target's sha256 and `custom.version`;
+  `agentVersionOf(facts)` applies the rule against it.
+- **Every place the console shows an agent version** now shows `label`, with the recorded label kept as detail.
+  The raw `agentVersion` stays in every response, unchanged; the derived view is added beside it:
+  - the device page header and record (`GET /endpoints/:id` → `agentVersionView`);
+  - the Agent card (`GET /endpoints/:id/agent` → `versionView`; Version shows "installed as 0.67.0; the same
+    agent" under it, and Current's text names the published release);
+  - the Updates card on Overview (`GET /endpoints/:id/inventory` → `agent.versionView`);
+  - the device list's Agent column (`agent.versionView`; a signed agent on another build says *update due*). The
+    list's *Agent outdated* filter was already by hash and is unchanged, and the Agent sort is by type;
+  - the device list CSV: *Agent version* is now the version shown, followed by two new columns, *Agent version
+    recorded* (the stored label) and *Agent current* (yes / no / empty);
+  - the agent coverage report: rows carry `agent.versionView`; the *Agent type and version* table groups by the
+    version shown, with a *Current* column and the recorded labels listed (`versions[].current`,
+    `versions[].recorded`); its CSV has the same three columns as the device list's;
+  - the Full agent page (`GET /agent-signing/overview` rows → `versionView`; "Signed agent, on the published
+    build (0.69.0)");
+  - Agent migrations (`GET /agent-migrations` rows), Update signing's computer list (`GET /admin/update-trust`, `inventory`),
+    Client updates' failing list (and `served.signedVersion`, with a sentence that a signed agent on the published
+    build is current whatever label it recorded), Remote readiness, the unassigned pool and Add device.
+- **Remote readiness** (0.69's "too old to check RustDesk") now compares the version shown rather than the stale
+  label, so a signed computer on the published 0.69 build is not called too old because its label still says 0.68.
+  Every other readiness rule is unchanged.
+
+### What did not change
+
+`isBehind`, `decide`, `targetFor`, the heartbeat's writes, `Endpoint.agentVersion` itself, the auto-migration
+canary and the agent. `unit-agent-version-view.mjs` asserts `isBehind`'s answers, that `schedule.ts` does not use
+the display rule, and that `decide({…})` is never handed a view; `unit-agent-auto-update.mjs` passes unchanged.
+
+### Tests
+
+- Unit: `apps/api/scripts/unit-agent-version-view.mjs` (new, in CI): same hash, different hash, no published
+  target, no reported hash, standard / Linux / macOS, the sticky signed rule, a malformed or absent
+  `custom.version`, `servedAgent()` against a scratch repository, and agreement with `isBehind`.
+- Behavioural: `e2e-agent-upgrade.mjs` gains *Version shown*: the same agent bytes published as 0.68.0 and then
+  again as 0.69.0 (the reproducible-build case); a computer that recorded 0.68.0 on them is shown as 0.69.0 and
+  current on the Agent card, the device record, the Updates card, the device list and both CSVs, the agent
+  coverage report and the Full agent page, while its stored label stays 0.68.0; a signed computer on another build
+  is not current; standard and Linux agents are unchanged; with nothing published the label is the recorded one;
+  and the heartbeat still asks the current computer for nothing.
+
+Docs: `docs/updates.md` (*Which version the console shows for a signed agent*), `docs/troubleshooting.md` (*A
+signed computer shows an old agent version and never updates*), `docs/capabilities.md` and the in-app `/help`.
+
+---
+
 ## [0.70.0] — 2026-11-19 · *Slate*
 
 **Health labels open the computer's monitoring, and a computer's alerts can be cleared until the next
@@ -45,6 +127,7 @@ label links to its Monitoring tab and that Clear appears beside exactly the Warn
 
 ---
 
+||||||| parent of cb261e1 (v0.69.1: show a signed agent's version truthfully)
 ## [0.69.0] — 2026-11-19 · *Preflight*
 
 **Managed Secure Access, build step 2: the signed agent checks the installed RustDesk, read-only, and the console

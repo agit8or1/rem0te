@@ -3,6 +3,8 @@ import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { runsSignedAgent } from '../common/agent-identity';
+import type { ServedAgentBuild } from '../common/agent-version-view';
+import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { parsePreflight, PREFLIGHT_KEYS } from './preflight';
 import {
   decideReadiness, LAB_TESTED_MAX, LAB_TESTED_MIN, LAB_TESTED_RUSTDESK, MIN_REPORTING_AGENT, PRODUCIBLE_STATES,
@@ -14,7 +16,7 @@ export const FLEET_MAX = 5000;
 const AGENT_VERSION_RE = /^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$/;
 
 const READ_SELECT = {
-  id: true, name: true, hostname: true, platform: true, agentVersion: true, updateChannel: true, signedSeenAt: true,
+  id: true, name: true, hostname: true, platform: true, agentVersion: true, updateChannel: true, signedSeenAt: true, agentSha256: true,
   isOnline: true, lastSeenAt: true, customer: { select: { id: true, name: true } },
   rustdeskPreflight: { select: { checkedAt: true, installed: true, expectedPath: true, version: true, build: true, service: true, cli: true, keysOk: true, keys: true } },
 } satisfies Prisma.EndpointSelect;
@@ -35,6 +37,7 @@ export class MsaService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly acl: AccessControlService,
+    private readonly updateTrust: UpdateTrustService,
   ) {}
 
   /**
@@ -68,11 +71,14 @@ export class MsaService {
     return p.checkedAt;
   }
 
-  private decide(r: ReadRow, now: number): Readiness {
+  private decide(r: ReadRow, now: number, served: ServedAgentBuild | null): Readiness {
     return decideReadiness({
       platform: r.platform,
       signedAgent: runsSignedAgent({ updateChannel: r.updateChannel, signedSeenAt: r.signedSeenAt }, new Date(now)),
-      agentVersion: r.agentVersion,
+      // 0.70.1: the version the console shows. A signed agent on the published
+      // build is that release whatever label it last recorded, so it is not
+      // called "too old to check RustDesk" for a stale label.
+      agentVersion: this.updateTrust.agentVersionOf(r, served).label,
       isOnline: r.isOnline,
       lastSeenAt: r.lastSeenAt,
       preflight: r.rustdeskPreflight,
@@ -87,7 +93,7 @@ export class MsaService {
     const pf = r.rustdeskPreflight;
     return {
       endpointId: r.id,
-      readiness: this.decide(r, now),
+      readiness: this.decide(r, now, this.updateTrust.servedAgent()),
       preflight: pf ? {
         checkedAt: pf.checkedAt.toISOString(), installed: pf.installed, expectedPath: pf.expectedPath, version: pf.version,
         build: pf.build, service: pf.service, cli: pf.cli, keysOk: pf.keysOk, keysTotal: PREFLIGHT_KEYS.length,
@@ -112,11 +118,13 @@ export class MsaService {
     });
     const truncated = rows.length > FLEET_MAX;
     const counts = Object.fromEntries(PRODUCIBLE_STATES.map((s) => [s, 0])) as Record<ProducibleState, number>;
+    const served = this.updateTrust.servedAgent();
     const computers = rows.slice(0, FLEET_MAX).map((r) => {
-      const d = this.decide(r, now);
+      const d = this.decide(r, now, served);
       counts[d.state]++;
       return {
         id: r.id, name: r.name, hostname: r.hostname, platform: r.platform, agentVersion: r.agentVersion,
+        versionView: this.updateTrust.agentVersionOf(r, served),
         business: r.customer ? { id: r.customer.id, name: r.customer.name } : null,
         state: d.state, label: d.label, reasons: d.reasons, rustdeskVersion: d.rustdeskVersion, checkedAt: d.checkedAt, labTested: d.labTested,
       };

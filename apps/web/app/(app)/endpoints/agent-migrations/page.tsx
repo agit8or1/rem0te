@@ -1,4 +1,5 @@
 'use client';
+import { agentVersionTitle, shownAgentVersion, type AgentVersionView } from '@/lib/agent-version';
 
 import * as React from 'react';
 import Link from 'next/link';
@@ -23,7 +24,7 @@ import { connectivityHint, connectivityLabel, connectivityOf } from '@/lib/conne
 type State = 'pending' | 'held' | 'dispatched' | 'downloaded' | 'not_confirmed' | 'completed' | 'cancelled';
 interface Row {
   id: string; endpointId: string; name: string; business: { id: string; name: string } | null; online: boolean; lastSeenAt: string | null;
-  agentVersion: string | null; channel: 'signed' | 'standard'; lastUpdate: { checkedAt: string; result: string | null } | null;
+  agentVersion: string | null; versionView?: AgentVersionView; channel: 'signed' | 'standard'; lastUpdate: { checkedAt: string; result: string | null } | null;
   state: State; text: string; reason: string; requestedAt: string; dispatchedAt: string | null; dispatchCount: number;
   fetchedAt: string | null; completedAt: string | null; cancelledAt: string | null;
 }
@@ -107,7 +108,7 @@ export default function AgentMigrationsPage() {
                         <p className="mt-1 text-xs text-muted-foreground">{r.text}</p>
                         {r.dispatchCount > 0 && <p className="text-xs text-muted-foreground">Handed out {r.dispatchCount}×{r.fetchedAt ? `, downloaded ${ago(r.fetchedAt)}` : ''}</p>}
                       </td>
-                      <td className="px-3 py-2">{r.channel === 'signed' ? 'Signed' : 'Standard'}{r.agentVersion ? ` ${r.agentVersion}` : ''}</td>
+                      <td className="px-3 py-2" title={agentVersionTitle(r.versionView)}>{r.channel === 'signed' ? 'Signed' : 'Standard'}{shownAgentVersion(r.versionView, r.agentVersion) ? ` ${shownAgentVersion(r.versionView, r.agentVersion)}` : ''}</td>
                       <td className="px-3 py-2 max-w-[18rem] text-xs">{r.lastUpdate ? <span title={formatDate(r.lastUpdate.checkedAt)}>{r.lastUpdate.result || '—'} · {ago(r.lastUpdate.checkedAt)}</span> : <span className="text-muted-foreground">Not reported</span>}</td>
                       <td className="px-3 py-2 text-xs">
                         <span title={formatDate(r.requestedAt)}>{ago(r.requestedAt)}</span>

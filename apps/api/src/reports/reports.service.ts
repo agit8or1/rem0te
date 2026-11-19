@@ -7,6 +7,7 @@ import { CAP } from '../rbac/capabilities';
 import { MonitoringAdminService } from '../monitoring/monitoring-admin.service';
 import { effectiveRules, scopesFor, type RuleLike } from '../monitoring/engine';
 import { GroupMembershipService } from '../group-policy/membership.service';
+import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { STALE_AFTER_MS } from '../patching/summary';
 import { deviceCompliance, tally, PATCH_COMPLIANCE_DEFINITION, PATCH_INVENTORY_SELECT, type DeviceCompliance } from '../patching/compliance';
 import { csvCell, EXPORT_MAX_ROWS } from '../endpoints/endpoint-list.service';
@@ -121,6 +122,7 @@ export class ReportsService {
     private readonly audit: AuditService,
     private readonly monitoring: MonitoringAdminService,
     private readonly groups: GroupMembershipService,
+    private readonly updateTrust: UpdateTrustService,
   ) {}
 
   // ── Scope ─────────────────────────────────────────────────────────────────
@@ -246,17 +248,19 @@ export class ReportsService {
       where: this.devicesWhere(actor, q),
       select: {
         id: true, name: true, hostname: true, platform: true, isOnline: true, lastSeenAt: true, createdAt: true,
-        agentVersion: true, updateChannel: true,
+        agentVersion: true, updateChannel: true, agentSha256: true, signedSeenAt: true,
         customer: { select: { id: true, name: true } }, site: { select: { id: true, name: true } },
         // Whether a secret is bound — never the hash itself.
         rustdeskNode: { select: { agentSecretHash: true } },
         inventory: { select: { collectedAt: true } },
       },
     });
+    const served = this.updateTrust.servedAgent();
     return eps.map((e) => ({
       device: { id: e.id, name: label(e) }, business: e.customer as Ref | null, site: e.site as Ref | null,
       platform: e.platform, windows: isWindows(e.platform), isOnline: e.isOnline, lastSeenAt: e.lastSeenAt,
-      agent: { type: agentType(e), version: e.agentVersion },
+      // `version` is the recorded label; `versionView` is what the console shows (0.70.1).
+      agent: { type: agentType(e), version: e.agentVersion, versionView: this.updateTrust.agentVersionOf(e, served) },
       secret: !e.rustdeskNode ? 'no_rustdesk_record' as const : e.rustdeskNode.agentSecretHash ? 'bound' as const : 'none' as const,
       inventoryAt: e.inventory?.collectedAt ?? null,
     }));
@@ -280,12 +284,18 @@ export class ReportsService {
       silent: l.filter(silent).length,
       nonWindowsNoInventory: l.filter(nonWinNoInv).length,
     });
-    const versions = new Map<string, { type: string; version: string | null; count: number }>();
+    // 0.70.1: grouped by the version the console shows, so a signed fleet on
+    // the published build is one row however many release labels it last
+    // recorded; `recorded` lists those labels.
+    const versions = new Map<string, { type: string; version: string | null; current: boolean | null; recorded: string[]; count: number }>();
     for (const r of rows) {
-      const k = `${r.agent.type}|${r.agent.version ?? ''}`;
-      const v = versions.get(k) ?? { type: r.agent.type, version: r.agent.version, count: 0 };
+      const shown = r.agent.versionView.label;
+      const k = `${r.agent.type}|${shown ?? ''}|${r.agent.versionView.current}`;
+      const v = versions.get(k) ?? { type: r.agent.type, version: shown, current: r.agent.versionView.current, recorded: [], count: 0 };
+      if (r.agent.version && !v.recorded.includes(r.agent.version)) v.recorded.push(r.agent.version);
       v.count++; versions.set(k, v);
     }
+    for (const v of versions.values()) v.recorded.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
     const TYPE_ORDER: Record<string, number> = { signed: 0, standard: 1, none: 2 };
     const sites = new Map<string, Row[]>();
     for (const r of rows) { const k = `${r.business?.id ?? ''}|${r.site?.id ?? ''}`; const l = sites.get(k) ?? []; l.push(r); sites.set(k, l); }
@@ -303,7 +313,7 @@ export class ReportsService {
       ...head,
       silentDays: q.silentDays,
       definitions: {
-        agent: 'Signed: the agent reports the signed update channel. Standard: it reports an agent version on the standard channel. None: no agent has ever reported a version (RustDesk only, or never checked in).',
+        agent: 'Signed: the agent reports the signed update channel. Standard: it reports an agent version on the standard channel. None: no agent has ever reported a version (RustDesk only, or never checked in). A signed agent running the published build is shown at the published release, whatever release label it last recorded: releases that do not change the agent publish the same binary.',
         deviceSecret: 'A device secret is bound when the agent\'s installer registered one and the server stored it. Without one, a heartbeat is accepted as "online" but nothing it reports is written.',
         silent: `Not heard from: no heartbeat in the last ${q.silentDays} day${q.silentDays === 1 ? '' : 's'}, or never.`,
         nonWindowsNoInventory: 'Not Windows (or no platform reported) and no inventory pass ever received. The read-only Linux (0.32) and macOS (0.33) agents send one; these are computers installed before their agent existed, or a Mac installed without sudo.',
@@ -677,9 +687,9 @@ export class ReportsService {
       const silentBefore = now.getTime() - q.silentDays * 86_400_000;
       const rows = (await this.agentRows(actor, q))
         .sort((a, b) => byName(a.business, b.business) || byName(a.site, b.site) || a.device.name.localeCompare(b.device.name));
-      header = ['Business', 'Site', 'Device', 'Platform', 'Agent', 'Agent version', 'Device secret', `Not heard from in ${q.silentDays} days`, 'Last seen (UTC)', 'Inventory received (UTC)'];
+      header = ['Business', 'Site', 'Device', 'Platform', 'Agent', 'Agent version', 'Agent version recorded', 'Agent current', 'Device secret', `Not heard from in ${q.silentDays} days`, 'Last seen (UTC)', 'Inventory received (UTC)'];
       lines = rows.map((r) => [
-        r.business?.name ?? '', r.site?.name ?? '', r.device.name, r.platform ?? '', r.agent.type, r.agent.version ?? '',
+        r.business?.name ?? '', r.site?.name ?? '', r.device.name, r.platform ?? '', r.agent.type, r.agent.versionView.label ?? '', r.agent.version ?? '', yn(r.agent.versionView.current),
         r.secret === 'bound' ? 'bound' : r.secret === 'none' ? 'none' : 'no RustDesk record',
         yn(!r.lastSeenAt || r.lastSeenAt.getTime() < silentBefore), iso(r.lastSeenAt) ?? '', iso(r.inventoryAt) ?? '',
       ]);

@@ -1,4 +1,5 @@
 'use client';
+import { agentVersionTitle, shownAgentVersion, type AgentVersionView } from '@/lib/agent-version';
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -69,7 +70,10 @@ export interface InventoryPayload {
   // The Rem0te agent, as distinct from the RustDesk client: this is the one
   // that decides whether the machine can collect anything at all.
   agent: {
+    /** The recorded label. */
     version: string | null;
+    /** What to show (0.70.1); absent from an older API. */
+    versionView?: AgentVersionView | null;
     server: string;
     /** The version the agent contract actually requires — not the server's. */
     required: string;
@@ -253,9 +257,9 @@ function UpdatesCard({ data, platform, onOpenPatches, endpointId }: { data: Inve
           confusing them wastes time, so each is named rather than merged. */}
       <div className="min-w-0 pt-2.5 border-t space-y-2.5 lg:pt-0 lg:border-t-0 lg:border-l lg:pl-8">
         <Row label="Rem0te agent">
-          {data.agent.version ? (
+          {shownAgentVersion(data.agent.versionView, data.agent.version) ? (
             <>
-              <span className="font-mono text-xs">v{data.agent.version}</span>
+              <span className="font-mono text-xs" title={agentVersionTitle(data.agent.versionView)}>v{shownAgentVersion(data.agent.versionView, data.agent.version)}</span>
               {/* Only when it actually falls short of what the server asks of
                   it. An agent behind the platform version but at or above the
                   contract needs nothing, and saying otherwise sends people

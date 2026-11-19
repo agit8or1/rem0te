@@ -286,7 +286,7 @@ export class EnrollmentService {
         where: { AND: [this.acl.endpointVisibilityWhere(actor, record.customerId), { id: record.endpointId }] },
         select: {
           id: true, name: true, hostname: true, platform: true, osVersion: true, status: true,
-          isOnline: true, lastSeenAt: true, createdAt: true, agentVersion: true, updateChannel: true,
+          isOnline: true, lastSeenAt: true, createdAt: true, agentVersion: true, updateChannel: true, agentSha256: true, signedSeenAt: true,
           customerId: true, customer: { select: { id: true, name: true } },
           site: { select: { id: true, name: true } },
           rustdeskNode: { select: { agentSecretHash: true, agentSecretSetAt: true, lastSeenAt: true } },
@@ -305,9 +305,11 @@ export class EnrollmentService {
         : null;
       if (ep) {
         deviceVisible = true;
-        const { rustdeskNode: node, inventory: inv, ...rest } = ep;
+        const { rustdeskNode: node, inventory: inv, agentSha256: _sha, signedSeenAt: _seen, ...rest } = ep;
         device = {
           ...rest,
+          // 0.70.1: what the page shows; agentVersion stays the recorded label.
+          agentVersionView: this.updateTrust.agentVersionOf(ep),
           // Same three-way classification as the device list.
           agentType: ep.updateChannel === 'signed' ? 'signed' : ep.agentVersion ? 'standard' : 'none',
           agentBound: !!node?.agentSecretHash,

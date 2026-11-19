@@ -168,6 +168,8 @@ const GEOIP_FILE = writeCityMmdb(path.join(GEO_DIR, 'fixture-city.mmdb'),
 // offline release tool, for "Upgrade to full agent" to be offered. Its
 // timestamp is kept aside (`.off`) except while signedRelease(true) — then the
 // API, which reads the repository from disk on every request, sees a release.
+/** The release label the suite's signed agent target is published under (0.70.1). */
+const SIGNED_AGENT_LABEL = '0.70.1';
 const SIGNED = (() => {
   const bin = process.env.RELEASE_BIN;
   if (!bin) return null;
@@ -182,10 +184,12 @@ const SIGNED = (() => {
   const agent = Buffer.concat([Buffer.from('MZ fake signed agent for the UI suite '), randomBytes(64), Buffer.from('REM0TE_INST_URL:'), Buffer.alloc(240)]);
   writeFileSync(path.join(files, 'rem0te-agent.exe'), agent);
   rel('release', '-repo', repo, '-targets-key', path.join(keys, 'targets.pem'), '-snapshot-key', path.join(keys, 'snapshot.pem'), '-timestamp-key', path.join(keys, 'timestamp.pem'),
-    '-add', `windows/install.ps1=${path.join(files, 'install.ps1')}`, '-add', `windows/rem0te-agent.exe=${path.join(files, 'rem0te-agent.exe')}`);
+    '-add', `windows/install.ps1=${path.join(files, 'install.ps1')}`, '-add', `windows/rem0te-agent.exe=${path.join(files, 'rem0te-agent.exe')}`,
+    // 0.70.1: the release label the console shows for a signed agent on this build.
+    '-custom', `windows/rem0te-agent.exe=${JSON.stringify({ version: SIGNED_AGENT_LABEL })}`);
   const ts = path.join(repo, 'metadata', 'timestamp.json');
   renameSync(ts, `${ts}.off`);
-  return { work, repo, ts };
+  return { work, repo, ts, agentSha256: createHash('sha256').update(agent).digest('hex') };
 })();
 function signedRelease(on) {
   if (!SIGNED) return false;
@@ -2243,6 +2247,30 @@ async function headerAgentUpgrade(page, f, vp, theme, label) {
     `${label}: a signed agent shows "Full agent" and Check for update now, and no upgrade button`);
   await fits('signed agent');
   await cleanCheck(page, `${label} header signed agent`);
+  // 0.70.1: the same signed computer, reporting the published build while its
+  // recorded label is still 0.34.0 (releases that change nothing in the agent
+  // publish the same binary): the Agent card shows the published release,
+  // current, with the recorded label under it.
+  if (SIGNED && signedRelease(true)) {
+    const prev = await prisma.endpoint.findUnique({ where: { id: f.c.chat.id }, select: { agentSha256: true, agentVersion: true } });
+    const prevSha = prev?.agentSha256 ?? null;
+    const recorded = prev?.agentVersion ?? '0.34.0';
+    try {
+      await prisma.endpoint.update({ where: { id: f.c.chat.id }, data: { agentSha256: SIGNED.agentSha256 } });
+      await go(page, `/endpoints/${f.c.chat.id}`);
+      const ver = page.locator('[data-testid="agent-card"] [data-testid="agent-card-version"]');
+      await page.waitForFunction((v) => (document.querySelector('[data-testid="agent-card-version"]')?.textContent ?? '').includes(v), SIGNED_AGENT_LABEL, { timeout: 15_000 }).catch(() => {});
+      const vt = await ver.innerText().catch(() => '');
+      const ct = await page.locator('[data-testid="agent-card"]').innerText().catch(() => '');
+      check(vt.includes(SIGNED_AGENT_LABEL) && vt.includes(`installed as ${recorded}; the same agent`) && /Current/.test(ct),
+        `${label}: a signed agent on the published build shows ${SIGNED_AGENT_LABEL} and Current, "installed as ${recorded}; the same agent"`, vt);
+      if (vp === 'phone') await noSideScroll(page, `${label} Agent card version`);
+      await cleanCheck(page, `${label} Agent card published build`);
+    } finally {
+      await prisma.endpoint.update({ where: { id: f.c.chat.id }, data: { agentSha256: prevSha } });
+      signedRelease(false);
+    }
+  }
   // Linux: the command, no upgrade.
   await go(page, `/endpoints/${f.linux.id}`);
   await hdr.getByTestId('header-agent-command').waitFor({ timeout: 15_000 }).catch(() => {});

@@ -1,4 +1,5 @@
 'use client';
+import { shownAgentVersion, type AgentVersionView } from '@/lib/agent-version';
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
@@ -68,7 +69,7 @@ type Status = {
   deviceVisible: boolean;
   device: null | {
     id: string; name: string; hostname: string | null; platform: string | null; osVersion: string | null; status: string;
-    isOnline: boolean; lastSeenAt: string | null; createdAt: string; agentVersion: string | null; updateChannel: string | null;
+    isOnline: boolean; lastSeenAt: string | null; createdAt: string; agentVersion: string | null; agentVersionView?: AgentVersionView; updateChannel: string | null;
     customerId: string | null; customer: { id: string; name: string } | null; site: { id: string; name: string } | null;
     agentType: 'signed' | 'standard' | 'none'; agentBound: boolean; agentBoundAt: string | null;
     inventoryCollectedAt: string | null; liveSampledAt: string | null; updatesCheckedAt: string | null; osCaption: string | null;
@@ -612,7 +613,7 @@ export function AddDeviceFlow() {
               <>
                 <HealthRow testId="health-agent" ok={device.agentType !== 'none'} waiting={device.agentType === 'none'}
                   label={device.agentType === 'none' ? 'Agent' : (agent?.label ?? 'Agent')}
-                  detail={device.agentType === 'none' ? 'waiting for its first heartbeat (every 3 minutes)' : `version ${device.agentVersion ?? 'unknown'}`} />
+                  detail={device.agentType === 'none' ? 'waiting for its first heartbeat (every 3 minutes)' : `version ${shownAgentVersion(device.agentVersionView, device.agentVersion) ?? 'unknown'}`} />
                 <HealthRow testId="health-identity" ok={device.agentBound} label="Device identity"
                   detail={device.agentBound ? `bound ${ago(device.agentBoundAt)}` : 'not bound — the installer did not send a device secret, so nothing it reports is trusted'} />
                 <HealthRow testId="health-inventory" ok={!!device.inventoryCollectedAt} waiting={!device.inventoryCollectedAt && !inventoryDetail(device).failed}

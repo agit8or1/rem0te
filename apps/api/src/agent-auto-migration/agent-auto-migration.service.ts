@@ -1,3 +1,4 @@
+import type { AgentVersionView } from '../common/agent-version-view';
 import { BadRequestException, ConflictException, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -398,6 +399,7 @@ export class AgentAutoMigrationService implements OnModuleInit, OnModuleDestroy 
   async overview(actor: ActorContext, businessId: string | null, now = new Date()) {
     const status = this.updateTrust.status(now);
     const pub = this.published();
+    const servedAgent = pub.agent ? { sha256: pub.agent.sha256, version: pub.agent.version } : null;
     const portalVersion = servedAgentVersion();
     const g = await this.gateNow();
     const ts = status.roles?.timestamp ?? null;
@@ -450,11 +452,13 @@ export class AgentAutoMigrationService implements OnModuleInit, OnModuleDestroy 
     let signedOnBuild = 0;
     const rows: {
       id: string; name: string; business: { id: string; name: string } | null; kind: Kind; text: string; hold: HoldCode | null;
-      online: boolean; lastSeenAt: Date | null; agentVersion: string | null; onPublishedBuild: boolean | null; automatic: boolean | null;
+      online: boolean; lastSeenAt: Date | null; agentVersion: string | null; versionView: AgentVersionView; onPublishedBuild: boolean | null; automatic: boolean | null;
     }[] = [];
     for (const e of eps) {
       const os = readOnlyAgentOs(e.platform);
-      const base = { id: e.id, name: e.hostname ?? e.name, business: e.customer, online: e.isOnline, lastSeenAt: e.lastSeenAt, agentVersion: e.agentVersion };
+      const base = { id: e.id, name: e.hostname ?? e.name, business: e.customer, online: e.isOnline, lastSeenAt: e.lastSeenAt, agentVersion: e.agentVersion,
+        // 0.70.1: what the page shows; agentVersion stays the recorded label.
+        versionView: this.updateTrust.agentVersionOf(e, servedAgent) };
       const m = latest.get(e.id) ?? null;
       let kind: Kind; let text: string; let hold: HoldCode | null = null; let onPub: boolean | null = null;
       if (os || !isWindows(e.platform)) {
@@ -465,7 +469,7 @@ export class AgentAutoMigrationService implements OnModuleInit, OnModuleDestroy 
         kind = 'signed';
         onPub = pub.agent ? e.agentSha256 === pub.agent.sha256 : null;
         if (onPub) signedOnBuild++;
-        text = onPub ? 'Signed agent, on the published build.' : pub.agent ? 'Signed agent, on another build; it updates itself.' : 'Signed agent.';
+        text = onPub ? `Signed agent, on the published build${pub.agent?.version ? ` (${pub.agent.version})` : ''}.` : pub.agent ? 'Signed agent, on another build; it updates itself.' : 'Signed agent.';
       } else if (m && !m.completedAt && !m.cancelledAt) {
         kind = 'migrating';
         text = `${m.automatic ? 'Automatic' : 'Requested'}: ${migrationState(m, now.getTime()).text}`;

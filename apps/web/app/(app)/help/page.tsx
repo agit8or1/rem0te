@@ -862,6 +862,16 @@ const SECTIONS: Section[] = [
           <em>Agent outdated</em> filter shows every computer still behind. More in{' '}
           <Link href="/docs/updates#the-rem0te-agent-automatic-updates-036" className="underline">Updates</Link>.
         </p>
+        <p className="font-medium text-foreground">Which version a signed agent shows (0.70.1)</p>
+        <p>
+          A signed computer is current when it runs the published agent binary, whatever release label it last
+          recorded. Releases that change nothing in the agent publish the same binary under a new label, and a
+          computer that already runs it records nothing new, so before 0.70.1 a fully current fleet could read
+          0.64.0, 0.67.0 and 0.68.0. The console now shows such a computer at the published release, with
+          &ldquo;installed as &hellip;; the same agent&rdquo; on its Agent card. A signed computer on another binary
+          shows its own label and <em>update due</em>. Automatic updates were always decided by the binary, and
+          are unchanged.
+        </p>
         <p className="font-medium text-foreground">Turning automatic agent updates on or off for one computer or one business (0.46)</p>
         <p>
           <strong>It is on by default.</strong> If nothing is set anywhere, every computer updates its agent. To change

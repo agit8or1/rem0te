@@ -226,6 +226,12 @@ jobs:
       - name: Agent identity tests
         run: node apps/api/scripts/unit-agent-identity.mjs
 
+      # What the console shows as an agent's version (0.69.1): a signed agent
+      # on the published build shows the published release, whatever label it
+      # last recorded; and automatic update's isBehind / decide are unchanged.
+      - name: Agent version display tests
+        run: node apps/api/scripts/unit-agent-version-view.mjs
+
       # Automatic migration to the signed agent (0.37): settings and what
       # widens, the gate, the canary/soak state machine (confirmed only on the
       # published build; halted on a failure, a cancel, a missing computer or

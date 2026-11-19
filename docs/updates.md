@@ -254,6 +254,27 @@ changed in it — the price of an exact answer to "is this the agent this server
 would install?". Each attempt downloads the RustDesk client again (≈ 40 MB),
 which is what the pace below is for.
 
+**Which version the console shows for a signed agent (0.70.1).** The signed
+agent is built reproducibly and carries no version of its own, so a release
+that changes nothing in the agent publishes **the same binary** under a new
+release label: `windows/rem0te-agent.exe` was byte-identical from 0.63.0
+through 0.68.3. A computer records a release label only at its once-a-day
+update check, and when the binary it would install is the one it already
+runs, nothing moves that label. So a signed computer is **current when it
+runs the published agent binary, whatever release label it last recorded**,
+and the console shows it at the published release (the `custom.version` the
+release recorded in the signed targets), with the recorded label as detail —
+"0.69.0 · installed as 0.67.0; the same agent". A signed computer on another
+binary shows its recorded label and *update due*. A standard, Linux or macOS
+agent, a signed agent that has not reported its build, and any computer when
+no signed agent is published, show the recorded label exactly as before. This
+is display only: automatic updates still compare the reported build with the
+published one (above), and nothing about when or whether a computer is asked
+changed. The stored `agentVersion` is unchanged; the API adds `versionView`
+(`agentVersionView` on the device record) beside it, and the device list and
+agent coverage CSVs carry *Agent version* (shown), *Agent version recorded*
+and *Agent current*. The rule is `apps/api/src/common/agent-version-view.ts`.
+
 **How it is asked.** The heartbeat response carries the flag that agent already
 acts on — nothing new has to be installed first:
 
