@@ -1,4 +1,5 @@
 'use client';
+import { shownAgentVersion, type AgentVersionView } from '@/lib/agent-version';
 
 import Link from 'next/link';
 import {
@@ -134,10 +135,14 @@ function attentionItems(
       });
     }
   }
-  const version = typeof ep.agentVersion === 'string' && ep.agentVersion ? `v${ep.agentVersion}` : undefined;
+  // 0.70.1: a signed agent on the published build shows the published release, whatever label it last recorded.
+  const view = ep.agentVersionView as AgentVersionView | undefined;
+  const shown = shownAgentVersion(view, typeof ep.agentVersion === 'string' ? ep.agentVersion : null);
+  const version = shown ? `v${shown}` : undefined;
   items.push({
     key: 'agent', tone: 'info', icon: agent.kind === 'signed' ? ShieldCheck : agent.kind === 'rustdesk-only' ? PowerOff : Cpu,
-    label: agent.label, detail: agent.kind === 'rustdesk-only' ? undefined : version, href: '/docs/capabilities', title: agent.explanation,
+    label: agent.label, detail: agent.kind === 'rustdesk-only' ? undefined : version, href: '/docs/capabilities',
+    title: view?.detail ? `${agent.explanation} ${view.detail}` : agent.explanation,
   });
   return items;
 }

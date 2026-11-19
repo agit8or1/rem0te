@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import type { ActorContext } from '../rbac/access-control.service';
 import { TrustChangeService } from '../security-controls/trust-change.service';
+import { agentVersionView, servedVersionOf, type AgentVersionFacts, type AgentVersionView, type ServedAgentBuild } from '../common/agent-version-view';
 
 /**
  * The portal's side of the signed update chain: a read-only mirror.
@@ -154,6 +155,24 @@ export class UpdateTrustService {
   }
 
   agentTarget() { return this.targetFile(AGENT_TARGET); }
+
+  /**
+   * The published signed agent for display (0.70.1): its sha256 and the
+   * release label the publish recorded in `custom.version`. The binary is
+   * reproducible and carries no version, so several releases can publish the
+   * same bytes; this label is the newest release that did.
+   */
+  servedAgent(): ServedAgentBuild | null {
+    const t = this.agentTarget();
+    if (!t) return null;
+    const custom = (this.loadServed()?.targets?.signed.targets as Record<string, TargetEntry> | undefined)?.[AGENT_TARGET]?.custom;
+    return { sha256: t.sha256, version: servedVersionOf(custom) };
+  }
+
+  /** agentVersionView against the published signed agent — what the console shows as a computer's agent version. */
+  agentVersionOf(f: AgentVersionFacts, served: ServedAgentBuild | null = this.servedAgent()): AgentVersionView {
+    return agentVersionView(f, served);
+  }
   trayTarget() { return this.targetFile(TRAY_TARGET); }
 
   /** Signed RustDesk builds, newest first, from targets custom metadata or name. */
@@ -219,7 +238,7 @@ export class UpdateTrustService {
     const rootV = served.roles?.root.version ?? null;
     const rows = await this.prisma.endpoint.findMany({
       where: { platform: { equals: 'Windows', mode: 'insensitive' } },
-      select: { id: true, hostname: true, name: true, agentVersion: true, updateChannel: true, trustRootVersion: true, targetsVersion: true, trustReportedAt: true, lastSeenAt: true, isOnline: true, tenantId: true, customer: { select: { id: true, name: true } } },
+      select: { id: true, hostname: true, name: true, agentVersion: true, updateChannel: true, agentSha256: true, signedSeenAt: true, trustRootVersion: true, targetsVersion: true, trustReportedAt: true, lastSeenAt: true, isOnline: true, tenantId: true, customer: { select: { id: true, name: true } } },
       orderBy: { lastSeenAt: 'desc' },
       take: 2000,
     });
@@ -232,9 +251,10 @@ export class UpdateTrustService {
         if (rootV && (r.trustRootVersion ?? 0) < rootV) { counts.signedBehindRoot++; behind.push(r); }
       } else { counts.legacy++; legacy.push(r); }
     }
+    const servedAgent = this.servedAgent();
     const shape = (r: (typeof rows)[number]) => ({
       id: r.id, hostname: r.hostname ?? r.name, business: r.customer ? { id: r.customer.id, name: r.customer.name } : null,
-      agentVersion: r.agentVersion, channel: r.updateChannel ?? 'legacy', trustRootVersion: r.trustRootVersion, targetsVersion: r.targetsVersion,
+      agentVersion: r.agentVersion, versionView: this.agentVersionOf(r, servedAgent), channel: r.updateChannel ?? 'legacy', trustRootVersion: r.trustRootVersion, targetsVersion: r.targetsVersion,
       reportedAt: r.trustReportedAt, lastSeenAt: r.lastSeenAt, online: r.isOnline,
     });
     return { counts, currentRootVersion: rootV, legacy: legacy.slice(0, 500).map(shape), behindRoot: behind.slice(0, 500).map(shape) };

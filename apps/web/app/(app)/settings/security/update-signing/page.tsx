@@ -1,4 +1,5 @@
 'use client';
+import { agentVersionTitle, shownAgentVersion, type AgentVersionView } from '@/lib/agent-version';
 
 import { useState } from 'react';
 import Link from 'next/link';
@@ -25,7 +26,7 @@ import { useAsks } from '@/lib/confirm-policy';
 
 type Role = { version: number; expires: string };
 type Agent = {
-  id: string; hostname: string | null; business: { id: string; name: string } | null; agentVersion: string | null;
+  id: string; hostname: string | null; business: { id: string; name: string } | null; agentVersion: string | null; versionView?: AgentVersionView;
   channel: string; trustRootVersion: number | null; targetsVersion: number | null; reportedAt: string | null; lastSeenAt: string | null; online: boolean;
 };
 type Status = {
@@ -195,7 +196,7 @@ export default function UpdateSigningPage() {
                         <tr key={a.id} className="border-t">
                           <td className="py-1 pr-3"><Link className="underline" href={`/endpoints/${a.id}`}>{a.hostname ?? a.id}</Link></td>
                           <td className="pr-3">{a.business?.name ?? '—'}</td>
-                          <td className="pr-3">{a.agentVersion ?? '—'}</td>
+                          <td className="pr-3" title={agentVersionTitle(a.versionView)}>{shownAgentVersion(a.versionView, a.agentVersion) ?? '—'}</td>
                           <td>{fmt(a.lastSeenAt)}</td>
                         </tr>
                       ))}

@@ -1,4 +1,5 @@
 'use client';
+import { agentVersionTitle, shownAgentVersion } from '@/lib/agent-version';
 
 import * as React from 'react';
 import { CONNECTIVITY_DOT, CONNECTIVITY_TEXT, connectivityFrom, connectivityHint, connectivityLabel } from '@/lib/connectivity';
@@ -135,10 +136,13 @@ export const COLUMNS: ColumnDef[] = [
     id: 'agent', label: 'Agent', defaultOn: true, sort: 'agent', hideBelow: 'agent',
     // The last heartbeat is the Last seen column; this one says which agent sent it.
     cell: (r, c) => (
-      <div className="text-xs whitespace-nowrap" title={r.agent.lastHeartbeatAt ? `Last heartbeat ${new Date(r.agent.lastHeartbeatAt).toLocaleString()}` : 'No heartbeat yet'}>
+      <div className="text-xs whitespace-nowrap" data-agent-current={r.agent.versionView?.current === true ? 'yes' : r.agent.versionView?.current === false ? 'no' : undefined}
+        title={[r.agent.lastHeartbeatAt ? `Last heartbeat ${new Date(r.agent.lastHeartbeatAt).toLocaleString()}` : 'No heartbeat yet', agentVersionTitle(r.agent.versionView)].filter(Boolean).join('. ')}>
         <span>{r.agent.type === 'signed' ? 'Signed' : r.agent.type === 'standard' ? (/^linux/i.test(r.platform ?? '') ? 'Standard (Linux)' : /^(macos|mac|darwin|osx)\b/i.test(r.platform ?? '') ? 'Standard (macOS)' : 'Standard') : 'No agent report'}</span>
         <p className={cn('text-muted-foreground', connectivityFrom(r, c.now) !== 'online' && 'opacity-60')}>
-          {r.agent.version ?? 'version unknown'}{connectivityFrom(r, c.now) === 'online' ? '' : ` · ${ago(r.agent.lastHeartbeatAt, c.now)}`}
+          {shownAgentVersion(r.agent.versionView, r.agent.version) ?? 'version unknown'}
+          {r.agent.versionView?.current === false && <span className="text-amber-700 dark:text-amber-400"> · update due</span>}
+          {connectivityFrom(r, c.now) === 'online' ? '' : ` · ${ago(r.agent.lastHeartbeatAt, c.now)}`}
         </p>
       </div>
     ),

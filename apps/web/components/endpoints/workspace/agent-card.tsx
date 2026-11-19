@@ -1,4 +1,5 @@
 'use client';
+import { shownAgentVersion } from '@/lib/agent-version';
 
 import Link from 'next/link';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -216,7 +217,14 @@ export function AgentCard({ endpointId, canEdit, alerts }: { endpointId: string;
               </div>
             )}
             <Row label="Type"><Badge variant="secondary">{KIND_LABEL[a.kind]}</Badge></Row>
-            <Row label="Version">{a.version ?? '—'}</Row>
+            <Row label="Version">
+              <span className="inline-flex flex-col items-end gap-0.5" data-testid="agent-card-version">
+                <span>{shownAgentVersion(a.versionView, a.version) ?? '—'}</span>
+                {a.versionView?.reason === 'same_build' && a.versionView.recorded && a.versionView.recorded !== a.versionView.label && (
+                  <span className="text-xs text-muted-foreground">installed as {a.versionView.recorded}; the same agent</span>
+                )}
+              </span>
+            </Row>
             <Row label="Current">
               <span className="inline-flex flex-col items-end gap-0.5">
                 <Badge variant={a.current.state === 'current' ? 'secondary' : 'outline'} className={a.current.state === 'behind' ? 'border-amber-500 text-amber-700 dark:text-amber-400' : ''}>

@@ -270,6 +270,26 @@ fires for it, because the computer is still reachable.
 
 ---
 
+## A signed computer shows an old agent version and never updates
+
+Before 0.70.1 the console showed the release label a signed computer recorded
+at its last once-a-day update check. The signed agent is built reproducibly
+and carries no version, so releases that do not change it publish the same
+binary under a new label (it was byte-identical from 0.63.0 through 0.68.3),
+and a computer already running that binary records nothing new. A fleet that
+was entirely current looked like 0.64.0, 0.67.0 and 0.68.0, and automatic
+updates rightly did nothing: they compare the binary's hash with the published
+one, not the label.
+
+From 0.70.1 a signed computer on the published binary shows the published
+release and *Current*, with "installed as …; the same agent" under it on the
+Agent card. If one still shows an older version **and** *update due* (or
+*Behind* on the Agent card), it really runs another binary: see its Agent
+card's *Automatic updates* block for why it has not been asked yet, or click
+*Check for update now*. See [updates.md](updates.md).
+
+---
+
 ## Reinstalling the agent on a computer that is already in Rem0te
 
 **Update agent** and **Reinstall agent at next check-in** both work through the

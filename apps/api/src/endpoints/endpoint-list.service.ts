@@ -36,6 +36,7 @@ import { STALE_AFTER_MS as PATCH_STALE_AFTER_MS } from '../patching/summary';
 
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { servedAgentVersion } from '../common/served-version';
+import { agentVersionView, type AgentVersionFacts, type AgentVersionView, type ServedAgentBuild } from '../common/agent-version-view';
 import { versionParts, type ListFilters, type ListQuery, type SortKey } from './list-query';
 import { likeEscape } from '../common/like';
 import { groupsCell } from '../device-views/rules';
@@ -57,7 +58,7 @@ type AlertAccess = { visible: false } | { visible: true; endpointIds: string[] |
 interface SqlRow {
   id: string; name: string; hostname: string | null; platform: string | null; osVersion: string | null;
   status: string; isOnline: boolean; lastSeenAt: Date | null; accessMode: string; deviceClass: string;
-  agentVersion: string | null; updateChannel: string | null;
+  agentVersion: string | null; updateChannel: string | null; agentSha256: string | null;
   customerId: string | null; customerName: string | null; siteId: string | null; siteName: string | null;
   groups: { id: string; name: string; kind?: 'static' | 'rule' }[] | null;
   osCaption: string | null; loggedOnUser: string | null; liveSampledAt: Date | null;
@@ -306,7 +307,7 @@ export class EndpointListService {
     if (q.groupRule?.rule) conds.push(...this.derivedConds(q.groupRule.rule));
     return this.prisma.$queryRaw<SqlRow[]>`
       SELECT e.id, e.name, e.hostname, e.platform, e."osVersion", e.status::text AS status, e."isOnline", e."lastSeenAt",
-             e."accessMode"::text AS "accessMode", e."deviceClass"::text AS "deviceClass", e."agentVersion", e."updateChannel",
+             e."accessMode"::text AS "accessMode", e."deviceClass"::text AS "deviceClass", e."agentVersion", e."updateChannel", e."agentSha256",
              e."customerId", c.name AS "customerName", e."siteId", s.name AS "siteName",
              gm.groups,
              i."osCaption", i."loggedOnUser", i."liveSampledAt", i."cpuLoadPercent", i."memoryTotalMb", i."memoryFreeMb",
@@ -455,7 +456,12 @@ export class EndpointListService {
       .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.id.localeCompare(b.id));
   }
 
-  private rowView(r: SqlRow, alerts: AlertAccess, now: number) {
+  /** What the console shows as this computer's agent version (common/agent-version-view.ts). Display only. */
+  agentVersionOf(f: AgentVersionFacts): AgentVersionView {
+    return this.updateTrust.agentVersionOf(f);
+  }
+
+  private rowView(r: SqlRow, alerts: AlertAccess, now: number, served: ServedAgentBuild | null) {
     const seesAlerts = alerts.visible && (alerts.endpointIds === null || alerts.endpointIds.includes(r.id));
     const sampled = r.liveSampledAt ? new Date(r.liveSampledAt) : null;
     const patchAt = r.patchAt ? new Date(r.patchAt) : null;
@@ -473,7 +479,11 @@ export class EndpointListService {
       groups: r.groups ?? [],
       agent: {
         type: r.updateChannel === 'signed' ? 'signed' : r.agentVersion ? 'standard' : 'none',
+        // The recorded label, unchanged; `versionView` is what the console
+        // shows (0.70.1): a signed agent on the published build shows the
+        // published release, whatever label it last recorded.
         version: r.agentVersion,
+        versionView: agentVersionView(r, served, new Date(now)),
         lastHeartbeatAt: r.lastSeenAt,
       },
       // Exposed to exactly the callers who could already read it on the
@@ -529,8 +539,9 @@ export class EndpointListService {
     // set with this status, which contains every row of this page.
     rows = await this.withRuleGroups(actor, rows, q.status, rules);
     const now = Date.now();
+    const served = this.updateTrust.servedAgent();
     return {
-      rows: rows.map((r) => this.rowView(r, alerts, now)),
+      rows: rows.map((r) => this.rowView(r, alerts, now, served)),
       total, page, pageSize: q.pageSize, pages: Math.max(1, Math.ceil(total / q.pageSize)),
       sort: q.sort, dir: q.dir,
       alertsVisible: alerts.visible,
@@ -596,10 +607,11 @@ export class EndpointListService {
     }
     rows = await this.withRuleGroups(actor, rows, q.status);
     const now = Date.now();
-    const views = rows.map((r) => this.rowView(r, alerts, now));
+    const served = this.updateTrust.servedAgent();
+    const views = rows.map((r) => this.rowView(r, alerts, now, served));
     const header = [
       'Name', 'Hostname', 'Business', 'Site', 'Groups', 'OS', 'Status', 'Online', 'Connectivity', 'Last seen (UTC)',
-      'Agent', 'Agent version', 'Logged-in user',
+      'Agent', 'Agent version', 'Agent version recorded', 'Agent current', 'Logged-in user',
       'CPU %', 'Memory used %', 'Disk used %', 'Resources sampled (UTC)', 'Resources stale',
       'Pending updates', 'Restart pending', 'Update scan source', 'Update scan (UTC)', 'Update scan stale',
       'Warranty', 'Warranty ends (UTC)',
@@ -609,7 +621,7 @@ export class EndpointListService {
     const yn = (b: boolean | null | undefined) => (b === null || b === undefined ? '' : b ? 'yes' : 'no');
     const lines = [header, ...views.map((v) => [
       v.name, v.hostname ?? '', v.business?.name ?? '', v.site?.name ?? '', groupsCell(v.groups), v.os ?? v.platform ?? '', v.status, yn(v.isOnline), CONNECTIVITY_CSV[v.connectivity], iso(v.lastSeenAt),
-      v.agent.type, v.agent.version ?? '', v.loggedOnUser ?? '',
+      v.agent.type, v.agent.versionView.label ?? '', v.agent.version ?? '', yn(v.agent.versionView.current), v.loggedOnUser ?? '',
       v.resources?.cpuPercent ?? '', v.resources?.memoryUsedPercent ?? '', v.resources?.diskUsedPercent ?? '', iso(v.resources?.sampledAt), yn(v.resources?.stale),
       v.patches.pendingCount ?? '', yn(v.patches.rebootPending), v.patches.source, iso(v.patches.checkedAt), yn(v.patches.stale),
       WARRANTY_STATE_LABEL[v.warranty.state], iso(v.warranty.endsAt),

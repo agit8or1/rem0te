@@ -1,3 +1,5 @@
+import type { AgentVersionView } from '@/lib/agent-version';
+
 /**
  * The device list's wire types — GET /endpoints/list (0.31). Mirrors
  * apps/api/src/endpoints/endpoint-list.service.ts.
@@ -65,7 +67,8 @@ export interface DeviceRow {
   site: { id: string; name: string | null } | null;
   /** Every group the computer is in (0.34: any number of its business's groups), by name. A rule group's membership is computed now. */
   groups: { id: string; name: string; kind?: 'static' | 'rule' }[];
-  agent: { type: 'signed' | 'standard' | 'none'; version: string | null; lastHeartbeatAt: string | null };
+  /** `version` is the recorded label; `versionView` (0.70.1) is what to show. */
+  agent: { type: 'signed' | 'standard' | 'none'; version: string | null; versionView?: AgentVersionView; lastHeartbeatAt: string | null };
   loggedOnUser: string | null;
   resources: {
     sampledAt: string; stale: boolean;

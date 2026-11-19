@@ -1,3 +1,4 @@
+import type { AgentVersionView } from '@/lib/agent-version';
 import axios from 'axios';
 import type { PolicyWindowInput } from './patching';
 
@@ -466,7 +467,7 @@ export interface PooledComputer {
   id: string; name: string; hostname: string | null; platform: string | null; osVersion: string | null;
   ipAddress: string | null; sourceIp: string | null; arrivedVia: 'heartbeat' | 'install_script' | 'deployment_key' | null;
   deploymentKeyId: string | null; createdAt: string; lastSeenAt: string | null; isOnline: boolean; status: string;
-  agentVersion: string | null; updateChannel: string | null; macAddress: string | null; serialNumber: string | null;
+  agentVersion: string | null; agentVersionView?: AgentVersionView; updateChannel: string | null; macAddress: string | null; serialNumber: string | null;
   rustdeskId: string | null; rustdeskVersion: string | null; nodeLastSeenAt: string | null; agentBound: boolean;
   inventory: {
     manufacturer: string | null; model: string | null; serialNumber: string | null; chassisType: string | null; osCaption: string | null;
@@ -1025,10 +1026,11 @@ export const clientUpdatesApi = {
 // Admin only; a change needs fresh authentication (the step-up dialog).
 export type AgentAutoUpdateSettings = {
   enabled: boolean; perHour: number; maxAttempts: number; processOn: boolean;
-  served: { version: string; signedSha256: string | null };
+  /** signedVersion (0.70.1): the release label the published signed agent was last published under. */
+  served: { version: string; signedSha256: string | null; signedVersion?: string | null };
   pace: { usedLastHour: number; perHour: number };
   lastDay: { started: number; updated: number; open: number; superseded: number };
-  failing: { count: number; computers: { id: string; name: string; business: { id: string; name: string } | null; agentVersion: string | null; attempts: number; lastAt: string | null }[] };
+  failing: { count: number; computers: { id: string; name: string; business: { id: string; name: string } | null; agentVersion: string | null; versionView?: AgentVersionView; attempts: number; lastAt: string | null }[] };
 };
 export const agentAutoUpdateApi = {
   get: () => api.get<{ data: AgentAutoUpdateSettings }>('/admin/agent-auto-update'),

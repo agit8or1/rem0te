@@ -258,7 +258,10 @@ export class EndpointsService {
     const { groupMemberships, ...rest } = endpoint;
     const groups = await this.deviceList.groupsOfComputer(actor, { id: endpoint.id, customerId: endpoint.customerId }, groupMemberships.map((m) => m.group));
     // 0.35: reachable is not reporting — see common/connectivity.ts.
-    return this.stripSecrets({ ...rest, groups, connectivity: connectivityOf(endpoint.isOnline, endpoint.lastSeenAt) });
+    // 0.70.1: `agentVersion` stays the recorded label; `agentVersionView` is
+    // what the page shows (a signed agent on the published build shows the
+    // published release).
+    return this.stripSecrets({ ...rest, groups, connectivity: connectivityOf(endpoint.isOnline, endpoint.lastSeenAt), agentVersionView: this.deviceList.agentVersionOf(endpoint) });
   }
 
   // ── Writes ────────────────────────────────────────────────────────────────
@@ -1282,7 +1285,7 @@ export class EndpointsService {
 
     const [inventory, endpointRow, node, commands] = await Promise.all([
       this.inventory.get(id),
-      this.prisma.endpoint.findUnique({ where: { id }, select: { agentVersion: true } }),
+      this.prisma.endpoint.findUnique({ where: { id }, select: { agentVersion: true, updateChannel: true, agentSha256: true, signedSeenAt: true } }),
       this.prisma.rustdeskNode.findUnique({
         where: { endpointId: id },
         select: {
@@ -1322,6 +1325,8 @@ export class EndpointsService {
       // than asking someone to compare two strings.
       agent: {
         version: endpointRow?.agentVersion ?? null,
+        // 0.70.1: what to show (see common/agent-version-view.ts); `version` stays the recorded label.
+        versionView: endpointRow ? this.deviceList.agentVersionOf(endpointRow) : null,
         server: this.platformVersion(),
         required: AGENT_CONTRACT_VERSION,
         outdated: !agentMeetsContract(endpointRow?.agentVersion),

@@ -487,6 +487,96 @@ async function main() {
     r = await req('GET', `/endpoints/${wNoSecret.id}/patches`, { s: S.ownerA });
     check(/device secret/.test(r.data?.install?.fix ?? ''), 'no device secret: says that', JSON.stringify(r.data?.install));
   }
+
+  // ── The version shown (0.70.1) ─────────────────────────────────────────────
+  // Production, 2026-11-19: the signed agent's binary is reproducible and
+  // carries no version, so it was byte-identical from 0.63.0 to 0.68.3. Four
+  // computers on that build showed the labels they last recorded (0.64.0,
+  // 0.67.0, 0.67.0, 0.68.0). Here the same bytes are published as 0.68.0 and
+  // then again as 0.69.0: a computer that recorded 0.68.0 on them must be
+  // shown as 0.69.0 and current everywhere, and one on another build as
+  // behind with its own label. The stored label never changes.
+  section('Version shown: a signed agent on the published build shows the published release');
+  {
+    const same = fakeAgent('reproducible');
+    const f = path.join(files, 'agent-reproducible.exe');
+    writeFileSync(f, same);
+    const custom = (v) => ['-custom', `windows/rem0te-agent.exe=${JSON.stringify({ version: v, commit: 'c'.repeat(40) })}`];
+    rel('release', '-repo', repo, ...T(['-add', `windows/rem0te-agent.exe=${f}`, ...custom('0.68.0')]));
+    const shaSame = sha(same);
+    // wSigned last recorded 0.68.0 on these bytes; w1 (signed after its migration) is on sha2, another build.
+    await hb(wSigned, { updateChannel: 'signed', agentVersion: '0.68.0', agentSha256: shaSame });
+    let c = (await card(S.ownerA, wSigned)).data;
+    check(c.version === '0.68.0' && c.versionView?.label === '0.68.0' && c.versionView.current === true, 'published as 0.68.0: shown as 0.68.0, current', JSON.stringify(c.versionView));
+    // The next release changes nothing on the agent: the same bytes, a new label.
+    rel('release', '-repo', repo, ...T(['-add', `windows/rem0te-agent.exe=${f}`, ...custom('0.69.0')]));
+    c = (await card(S.ownerA, wSigned)).data;
+    check(c.version === '0.68.0', 'the card keeps the recorded label in `version`', JSON.stringify(c.version));
+    check(c.versionView?.label === '0.69.0' && c.versionView.recorded === '0.68.0' && c.versionView.current === true && c.versionView.reason === 'same_build',
+      'the card shows 0.69.0, current, recorded 0.68.0', JSON.stringify(c.versionView));
+    check(c.current.state === 'current' && /0\.69\.0/.test(c.current.text) && /same agent/.test(c.current.text), 'Current says it is the same agent as 0.69.0', JSON.stringify(c.current));
+    const stored = await prisma.endpoint.findUnique({ where: { id: wSigned.id }, select: { agentVersion: true } });
+    check(stored.agentVersion === '0.68.0', 'the stored agentVersion is untouched', JSON.stringify(stored));
+    const other = (await card(S.ownerA, w1)).data;
+    check(other.kind === 'signed' && other.versionView?.current === false && other.versionView.reason === 'different_build' && other.versionView.label === other.version,
+      'a signed computer on another build: not current, its own label', JSON.stringify(other.versionView));
+    const std = (await card(S.ownerA, w3)).data;
+    check(std.versionView?.reason === 'not_signed' && std.versionView.label === '0.19.0' && std.versionView.current === null, 'a standard agent: unchanged', JSON.stringify(std.versionView));
+    const linux = (await card(S.ownerA, lin)).data;
+    check(linux.versionView?.reason === 'not_signed' && linux.versionView.label === linux.version, 'a Linux agent: unchanged', JSON.stringify(linux.versionView));
+
+    // The device page, the Updates card, the device list and its CSV.
+    const det = await req('GET', `/endpoints/${wSigned.id}`, { s: S.ownerA });
+    const detail = det.body?.data ?? det.body;
+    check(detail?.agentVersion === '0.68.0' && detail?.agentVersionView?.label === '0.69.0' && detail.agentVersionView.current === true, 'device page: agentVersion recorded, agentVersionView 0.69.0', JSON.stringify({ v: detail?.agentVersion, vv: detail?.agentVersionView }));
+    const inv = await req('GET', `/endpoints/${wSigned.id}/inventory`, { s: S.ownerA });
+    const invAgent = (inv.body?.data ?? inv.body)?.agent;
+    check(invAgent?.version === '0.68.0' && invAgent?.versionView?.label === '0.69.0', 'Updates card: version recorded, versionView 0.69.0', JSON.stringify(invAgent));
+    const list = await req('GET', `/endpoints/list?search=${encodeURIComponent(TAG)}&pageSize=100`, { s: S.ownerA });
+    const rows = list.data?.rows ?? [];
+    const rs = rows.find((x) => x.id === wSigned.id), r1 = rows.find((x) => x.id === w1.id), r3 = rows.find((x) => x.id === w3.id);
+    check(rs?.agent.version === '0.68.0' && rs.agent.versionView?.label === '0.69.0' && rs.agent.versionView.current === true, 'device list: shown 0.69.0, current; version recorded', JSON.stringify(rs?.agent));
+    check(r1?.agent.versionView?.current === false, 'device list: the other build is not current', JSON.stringify(r1?.agent));
+    check(r3?.agent.versionView?.label === '0.19.0' && r3.agent.versionView.current === null, 'device list: standard unchanged', JSON.stringify(r3?.agent));
+    const outdated = await req('GET', `/endpoints/list?search=${encodeURIComponent(TAG)}&agent=outdated&pageSize=100`, { s: S.ownerA });
+    const outIds = (outdated.data?.rows ?? []).map((x) => x.id);
+    check(!outIds.includes(wSigned.id) && outIds.includes(w1.id), 'agent=outdated (unchanged, by hash): not the current one, the other build yes', JSON.stringify(outIds));
+    const csv = await req('GET', `/endpoints/list/export.csv?search=${encodeURIComponent(TAG)}`, { s: S.ownerAF });
+    // Cells are quoted; none of these contains a comma.
+    const cells = (l) => (l ?? '').split(',').map((x) => x.replace(/^"|"$/g, ''));
+    const lines = csv.text.split('\n');
+    const head = cells(lines[0]);
+    const iV = head.indexOf('Agent version'), iR = head.indexOf('Agent version recorded'), iC = head.indexOf('Agent current');
+    const line = cells(lines.find((l) => l.includes(`${TAG}-SIGNED`)));
+    check(csv.status === 200 && iV > 0 && iR === iV + 1 && iC === iV + 2 && line[iV] === '0.69.0' && line[iR] === '0.68.0' && line[iC] === 'yes',
+      'CSV: Agent version 0.69.0, Agent version recorded 0.68.0, Agent current yes', `${csv.status} ${lines[0]} | ${line.join(',')}`);
+
+    // The agent coverage report and its CSV.
+    const cov = await req('GET', `/reports/agent-coverage?businessId=${A.id}`, { s: S.ownerA });
+    const vers = (cov.body?.data ?? cov.body)?.versions ?? [];
+    const v69 = vers.find((v) => v.type === 'signed' && v.version === '0.69.0' && v.current === true);
+    check(!!v69 && v69.recorded.includes('0.68.0') && v69.count >= 1, 'agent coverage: a signed 0.69.0 row, current, recorded 0.68.0', JSON.stringify(vers));
+    check(!vers.some((v) => v.type === 'signed' && v.version === '0.68.0' && v.current === true), 'agent coverage: no current row under the stale label', JSON.stringify(vers));
+    const covCsv = await req('GET', `/reports/agent-coverage/export.csv?businessId=${A.id}`, { s: S.ownerAF });
+    const ch = cells(covCsv.text.split('\n')[0]);
+    const cl = cells(covCsv.text.split('\n').find((l) => l.toLowerCase().includes(`${TAG}-signed`.toLowerCase())));
+    check(covCsv.status === 200 && cl[ch.indexOf('Agent version')] === '0.69.0' && cl[ch.indexOf('Agent version recorded')] === '0.68.0' && cl[ch.indexOf('Agent current')] === 'yes',
+      'agent coverage CSV: both columns, clearly named', `${covCsv.status} ${covCsv.text.split('\n')[0]} | ${cl.join(',')}`);
+
+    // The Full agent page.
+    const ov = await req('GET', `/agent-signing/overview?businessId=${A.id}`, { s: S.ownerA });
+    const findRow = (o) => { if (!o || typeof o !== 'object') return null; if (o.id === wSigned.id && 'versionView' in o) return o; for (const v of Object.values(o)) { const f = findRow(v); if (f) return f; } return null; };
+    const os = findRow(ov.body?.data);
+    check(os?.agentVersion === '0.68.0' && os?.versionView?.label === '0.69.0' && os.onPublishedBuild === true, 'Full agent page: shown 0.69.0 on the published build', JSON.stringify(os ?? Object.keys(ov.body?.data ?? {})));
+
+    // A request with no published build at all: unchanged.
+    const none = await withoutRepo(() => card(S.ownerA, wSigned));
+    check(none.data?.versionView?.label === '0.68.0' && none.data.versionView.current === null && none.data.versionView.reason === 'no_published_build', 'nothing published: the recorded label, current unknown', JSON.stringify(none.data?.versionView));
+
+    // Display only: the heartbeat still hands nothing to the current one, and the other build is still asked.
+    const hs = await hb(wSigned, { updateChannel: 'signed', agentVersion: '0.68.0', agentSha256: shaSame });
+    check(!hs?.reinstallAgent, 'the current computer is not asked to update (auto-update unchanged)', JSON.stringify(hs?.reinstallAgent));
+  }
 }
 
 async function cleanup() {

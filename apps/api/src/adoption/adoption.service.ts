@@ -1,3 +1,4 @@
+import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
@@ -52,6 +53,7 @@ export class AdoptionService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly acl: AccessControlService,
+    private readonly updateTrust: UpdateTrustService,
   ) {}
 
   // ── The pool ──────────────────────────────────────────────────────────────
@@ -66,7 +68,7 @@ export class AdoptionService {
         select: {
           id: true, name: true, hostname: true, platform: true, osVersion: true, ipAddress: true, sourceIp: true,
           arrivedVia: true, deploymentKeyId: true, createdAt: true, lastSeenAt: true, isOnline: true, status: true,
-          agentVersion: true, updateChannel: true, macAddress: true, serialNumber: true,
+          agentVersion: true, updateChannel: true, agentSha256: true, signedSeenAt: true, macAddress: true, serialNumber: true,
           rustdeskNode: { select: { rustdeskId: true, lastSeenAt: true, agentSecretHash: true, version: true } },
           // Hardware and identification only. Not loggedOnUser: who is signed
           // in says nothing about whose computer it is, and is never a rule.
@@ -82,12 +84,15 @@ export class AdoptionService {
       this.prisma.adoptionMapping.findMany({ orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }] }),
     ]);
 
+    const served = this.updateTrust.servedAgent();
     const computers = eps.map((e) => {
       const facts: PoolFacts = { deploymentKeyId: e.deploymentKeyId, domain: e.inventory?.domain ?? null, sourceIp: e.sourceIp, hostname: e.hostname ?? e.name };
       const s = suggest(facts, rules as MappingRow[], e.deploymentKey ? { keyId: e.deploymentKey.id, customerId: e.deploymentKey.customerId, siteId: e.deploymentKey.siteId } : null);
-      const { rustdeskNode: node, ...rest } = e;
+      const { rustdeskNode: node, agentSha256: _sha, signedSeenAt: _seen, ...rest } = e;
       return {
         ...rest,
+        // 0.70.1: what the page shows; agentVersion stays the recorded label.
+        agentVersionView: this.updateTrust.agentVersionOf(e, served),
         rustdeskId: node?.rustdeskId ?? null,
         rustdeskVersion: node?.version ?? null,
         nodeLastSeenAt: node?.lastSeenAt ?? null,

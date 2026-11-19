@@ -116,6 +116,7 @@ export class AgentUpgradeService {
     }))!;
     const kind = this.kindOf(ep);
     const served = this.updateTrust.agentTarget();
+    const versionView = this.updateTrust.agentVersionOf(ep);
     const mode = await this.updateTrust.mode();
     const pause = await this.containment.blocking('updates', ep.customerId);
     const pauseText = pause ? pauseMessage(pause, 'updates') : null;
@@ -128,7 +129,7 @@ export class AgentUpgradeService {
     if (kind === 'signed') {
       current = !served ? { state: 'unknown', text: 'No signed release is published to compare against.' }
         : !ep.agentSha256 ? { state: 'unknown', text: 'The agent has not reported which build it runs.' }
-          : ep.agentSha256 === served.sha256 ? { state: 'current', text: 'Runs the signed build the repository publishes.' }
+          : ep.agentSha256 === served.sha256 ? { state: 'current', text: versionView.reason === 'same_build' && versionView.detail ? versionView.detail : 'Runs the signed build the repository publishes.' }
             : { state: 'behind', text: 'Not the signed build the repository publishes. It updates itself at a check-in; Check now asks it to.' };
     } else if (kind === 'rustdesk-only' || !ep.agentVersion) {
       current = { state: 'unknown', text: kind === 'rustdesk-only' ? 'RustDesk only: no Rem0te agent reports a version.' : 'The agent has not reported a version.' };
@@ -196,7 +197,11 @@ export class AgentUpgradeService {
     return {
       kind,
       platform: ep.platform,
+      // The recorded label, unchanged. `versionView` is what the card shows
+      // (0.70.1): a signed agent on the published build shows the published
+      // release, with the recorded label as detail.
       version: ep.agentVersion,
+      versionView,
       // 0.51: a standard heartbeat still reporting beside the signed agent.
       dualAgent: dualAgentWarning(ep),
       server,
@@ -299,9 +304,10 @@ export class AgentUpgradeService {
       select: {
         id: true, endpointId: true, reason: true, requestedAt: true, dispatchedAt: true, lastDispatchedAt: true, dispatchCount: true, fetchedAt: true,
         holdReason: true, holdAt: true, completedAt: true, cancelledAt: true,
-        endpoint: { select: { name: true, hostname: true, isOnline: true, lastSeenAt: true, agentVersion: true, updateChannel: true, agentUpdateCheckedAt: true, agentUpdateResult: true, customer: { select: { id: true, name: true } } } },
+        endpoint: { select: { name: true, hostname: true, isOnline: true, lastSeenAt: true, agentVersion: true, updateChannel: true, agentSha256: true, signedSeenAt: true, agentUpdateCheckedAt: true, agentUpdateResult: true, customer: { select: { id: true, name: true } } } },
       },
     });
+    const servedAgent = this.updateTrust.servedAgent();
     const counts = Object.fromEntries(MIGRATION_STATES.map((s) => [s, 0])) as Record<MigrationState, number>;
     const shaped = rows.map((r) => {
       const st = migrationState(r);
@@ -309,6 +315,7 @@ export class AgentUpgradeService {
       return {
         id: r.id, endpointId: r.endpointId, name: r.endpoint.hostname ?? r.endpoint.name, business: r.endpoint.customer,
         online: r.endpoint.isOnline, lastSeenAt: r.endpoint.lastSeenAt, agentVersion: r.endpoint.agentVersion, channel: r.endpoint.updateChannel === 'signed' ? 'signed' : 'standard',
+        versionView: this.updateTrust.agentVersionOf(r.endpoint, servedAgent),
         lastUpdate: r.endpoint.agentUpdateCheckedAt ? { checkedAt: r.endpoint.agentUpdateCheckedAt, result: r.endpoint.agentUpdateResult } : null,
         state: st.state, text: st.text, reason: r.reason, requestedAt: r.requestedAt, dispatchedAt: r.dispatchedAt, dispatchCount: r.dispatchCount,
         fetchedAt: r.fetchedAt, completedAt: r.completedAt, cancelledAt: r.cancelledAt,

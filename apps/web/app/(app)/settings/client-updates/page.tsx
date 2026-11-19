@@ -1,4 +1,5 @@
 'use client';
+import { shownAgentVersion } from '@/lib/agent-version';
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
@@ -367,7 +368,7 @@ function AgentAutoUpdateCard({ setNotice }: { setNotice: (n: { ok: boolean; text
             </label>
             <p className="text-muted-foreground">
               Standard Windows agents older than <span className="font-mono">{d.served.version}</span> re-run the installer at a check-in, as Update agent does
-              {d.served.signedSha256 ? <>; signed agents not on the published build run their own verified update</> : <>; no signed agent build is published, so signed agents are not compared</>}.
+              {d.served.signedSha256 ? <>; signed agents not on the published build{d.served.signedVersion ? <> (<span className="font-mono">{d.served.signedVersion}</span>)</> : null} run their own verified update. A signed agent on the published build is current whatever release label it last recorded: the agent binary is the same across releases that did not change it</> : <>; no signed agent build is published, so signed agents are not compared</>}.
               Linux and macOS agents are read-only and are never updated from here. Each attempt downloads the RustDesk client again (about 40 MB).
               With nothing set anywhere, every computer is updated. Turned off here, no computer is — whatever its business, site, group or own setting says.
               Precedence below this switch: a computer’s own setting (its Agent card) → device group → site → business → this default.
@@ -395,7 +396,7 @@ function AgentAutoUpdateCard({ setNotice }: { setNotice: (n: { ok: boolean; text
                 <p className="font-medium text-amber-700 dark:text-amber-400">{d.failing.count} computer{d.failing.count === 1 ? '' : 's'} failing to update automatically</p>
                 <ul className="space-y-0.5 text-xs">
                   {d.failing.computers.map((c) => (
-                    <li key={c.id}><Link href={`/endpoints/${c.id}#agent-card`} className="underline">{c.name}</Link>{c.business ? ` · ${c.business.name}` : ''} · agent {c.agentVersion ?? '—'} · {c.attempts} attempts, last {fmt(c.lastAt)}</li>
+                    <li key={c.id}><Link href={`/endpoints/${c.id}#agent-card`} className="underline">{c.name}</Link>{c.business ? ` · ${c.business.name}` : ''} · agent {shownAgentVersion(c.versionView, c.agentVersion) ?? '—'} · {c.attempts} attempts, last {fmt(c.lastAt)}</li>
                   ))}
                 </ul>
               </div>

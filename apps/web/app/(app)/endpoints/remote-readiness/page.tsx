@@ -1,4 +1,5 @@
 'use client';
+import { shownAgentVersion, type AgentVersionView } from '@/lib/agent-version';
 
 import * as React from 'react';
 import Link from 'next/link';
@@ -21,7 +22,7 @@ import { MSA_FLEET_NOTE, MsaNote, MsaStateBadge, type MsaState } from '@/compone
 
 type State = 'unsupported' | 'upgrade_available' | 'compatible' | 'unknown';
 interface Row {
-  id: string; name: string; hostname: string | null; platform: string | null; agentVersion: string | null;
+  id: string; name: string; hostname: string | null; platform: string | null; agentVersion: string | null; versionView?: AgentVersionView;
   business: { id: string; name: string } | null;
   state: State; label: string; reasons: string[]; rustdeskVersion: string | null; checkedAt: string | null; labTested: boolean | null;
 }
@@ -100,7 +101,7 @@ export default function RemoteReadinessPage() {
                           <div className="min-w-0 flex-1 basis-48">
                             <Link href={`/endpoints/${r.id}`} className="text-sm font-medium hover:underline break-all">{r.name}</Link>
                             <p className="text-muted-foreground break-words">
-                              {r.business?.name ?? 'Unassigned'}{r.agentVersion ? ` · agent ${r.agentVersion}` : ''}
+                              {r.business?.name ?? 'Unassigned'}{shownAgentVersion(r.versionView, r.agentVersion) ? ` · agent ${shownAgentVersion(r.versionView, r.agentVersion)}` : ''}
                               {r.rustdeskVersion ? ` · RustDesk ${r.rustdeskVersion}` : ''}
                             </p>
                           </div>

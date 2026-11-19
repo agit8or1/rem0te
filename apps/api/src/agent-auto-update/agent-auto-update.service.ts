@@ -428,18 +428,22 @@ export class AgentAutoUpdateService {
       this.prisma.rustdeskNode.count({ where: failingWhere }),
       this.prisma.rustdeskNode.findMany({
         where: failingWhere, take: 100, orderBy: { agentAutoLastAt: 'desc' },
-        select: { agentAutoAttempts: true, agentAutoLastAt: true, endpoint: { select: { id: true, name: true, agentVersion: true, customer: { select: { id: true, name: true } } } } },
+        select: { agentAutoAttempts: true, agentAutoLastAt: true, endpoint: { select: { id: true, name: true, agentVersion: true, updateChannel: true, agentSha256: true, signedSeenAt: true, customer: { select: { id: true, name: true } } } } },
       }),
     ]);
     const count = (o: string | null) => day.find((x) => x.outcome === o)?._count._all ?? 0;
+    // Display only (0.70.1): the release label the published signed agent was
+    // last published under, and each failing computer's version as the
+    // console shows it. Nothing here feeds decide().
+    const servedAgent = this.updateTrust.servedAgent();
     return {
       ...s,
-      served: { version: served.version, signedSha256: served.signedSha256 },
+      served: { version: served.version, signedSha256: served.signedSha256, signedVersion: servedAgent?.version ?? null },
       pace: { usedLastHour: usedHour, perHour: s.perHour },
       lastDay: { started: day.reduce((a, x) => a + x._count._all, 0), updated: count('updated'), open: count(null), superseded: count('superseded') },
       failing: {
         count: failing,
-        computers: failingRows.map((r) => ({ id: r.endpoint.id, name: r.endpoint.name, business: r.endpoint.customer, agentVersion: r.endpoint.agentVersion, attempts: r.agentAutoAttempts, lastAt: r.agentAutoLastAt })),
+        computers: failingRows.map((r) => ({ id: r.endpoint.id, name: r.endpoint.name, business: r.endpoint.customer, agentVersion: r.endpoint.agentVersion, versionView: this.updateTrust.agentVersionOf(r.endpoint, servedAgent), attempts: r.agentAutoAttempts, lastAt: r.agentAutoLastAt })),
       },
     };
   }

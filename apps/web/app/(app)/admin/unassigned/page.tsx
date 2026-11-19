@@ -1,4 +1,5 @@
 'use client';
+import { shownAgentVersion } from '@/lib/agent-version';
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
@@ -248,7 +249,7 @@ function Details({ c }: { c: PooledComputer }) {
     ['Serial number', inv?.serialNumber ?? c.serialNumber], ['Chassis', inv?.chassisType], ['Processor', inv?.cpuModel],
     ['Cores / threads', inv?.cpuCores ? `${inv.cpuCores} / ${inv.cpuThreads ?? '?'}` : null], ['Memory', gb(inv?.memoryTotalMb)], ['System disk', gb(inv?.systemDiskTotalMb)],
     ['MAC address', c.macAddress], ['Reported address', c.ipAddress], ['Source address (seen by the server)', c.sourceIp],
-    ['Agent', [c.agentVersion, c.updateChannel].filter(Boolean).join(' · ') || null], ['RustDesk', c.rustdeskVersion],
+    ['Agent', [shownAgentVersion(c.agentVersionView, c.agentVersion), c.updateChannel].filter(Boolean).join(' · ') || null], ['RustDesk', c.rustdeskVersion],
     ['Device secret', c.agentBound ? 'Bound' : 'None'], ['Inventory collected', inv?.collectedAt ? formatDate(inv.collectedAt) : null],
   ];
   return (

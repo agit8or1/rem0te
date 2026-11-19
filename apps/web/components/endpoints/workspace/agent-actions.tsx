@@ -1,4 +1,5 @@
 'use client';
+import type { AgentVersionView } from '@/lib/agent-version';
 
 import * as React from 'react';
 import Link from 'next/link';
@@ -31,7 +32,10 @@ import { useAsks } from '@/lib/confirm-policy';
 export interface AgentCardData {
   kind: 'standard' | 'signed' | 'linux' | 'macos' | 'rustdesk-only' | 'unknown';
   platform: string | null;
+  /** The recorded label. */
   version: string | null;
+  /** What to show (0.70.1); absent from an older API. */
+  versionView?: AgentVersionView;
   server: string;
   current: { state: 'current' | 'behind' | 'unknown'; text: string };
   channel: 'signed' | 'standard' | null;
