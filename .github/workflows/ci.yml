@@ -570,6 +570,72 @@ jobs:
   # it builds nothing that is published. Not a required check while the macOS
   # side has no platform code of its own yet; a red macOS run is a finding,
   # not a merge block.
+  # Older released signed agents against this server (0.68.2, docs/compatibility.md).
+  # One leg per tag in scripts/compat/supported-agents.json: the agent's decision
+  # code is built from that tag exactly as released and driven through this
+  # checkout's action suites. Simulator evidence, not real Windows.
+  compat-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tags: ${{ steps.list.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: list
+        run: echo "tags=$(node -e 'console.log(JSON.stringify(require("./scripts/compat/supported-agents.json").signedAgents.map((a) => a.tag)))')" >> "$GITHUB_OUTPUT"
+
+  compat-agents:
+    needs: compat-matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: ${{ fromJSON(needs.compat-matrix.outputs.tags) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rem0te
+          POSTGRES_PASSWORD: rem0te-ci-only
+          POSTGRES_DB: rem0te_compat_scratch
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U rem0te" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://rem0te:rem0te-ci-only@127.0.0.1:5432/rem0te_compat_scratch
+    name: compat (agent ${{ matrix.tag }})
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: tools/windows-installer/go.mod
+          cache-dependency-path: tools/windows-installer/go.sum
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Generate Prisma client and build the API
+        run: |
+          pnpm db:generate
+          pnpm --filter @reboot-remote/api build
+      - name: Agent ${{ matrix.tag }} against this server
+        env:
+          COMPAT_OUT: ${{ runner.temp }}/compat
+        run: scripts/compat-agents.sh "${{ matrix.tag }}"
+      - name: Evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: compat-evidence-${{ matrix.tag }}
+          path: ${{ runner.temp }}/compat/${{ matrix.tag }}/evidence.json
+          if-no-files-found: warn
+
   agent-real-os:
     strategy:
       fail-fast: false

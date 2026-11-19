@@ -7124,5 +7124,73 @@ export const DOCS: DocPage[] = [
         "text": "access control.md — the permission model in full connecting.md — the connect paths setup.md — installation and operations PUBLIC API.md — the API surface"
       }
     ]
+  },
+  {
+    "slug": "compatibility",
+    "title": "Compatibility testing",
+    "file": "compatibility.md",
+    "group": "Running the server",
+    "summary": "How every release is tested against the older agents still installed, which versions are supported, and what a pass does and does not prove.",
+    "minutes": 2,
+    "toc": [
+      {
+        "depth": 2,
+        "id": "what-runs",
+        "text": "What runs"
+      },
+      {
+        "depth": 2,
+        "id": "supported-versions",
+        "text": "Supported versions"
+      },
+      {
+        "depth": 2,
+        "id": "when-an-older-agent-fails",
+        "text": "When an older agent fails"
+      },
+      {
+        "depth": 2,
+        "id": "running-it-yourself",
+        "text": "Running it yourself"
+      },
+      {
+        "depth": 2,
+        "id": "what-is-not-covered-yet",
+        "text": "What is not covered yet"
+      }
+    ],
+    "html": "<h1 id=\"compatibility-testing\">Compatibility testing<a class=\"docs-anchor\" href=\"#compatibility-testing\" aria-label=\"Link to this section\">#</a></h1>\n<p>Every release must keep working with the agents already installed. Nothing\nforces a computer to update on the day a release ships: the signed agent\nchecks once a day, a computer may be off for weeks, and an update can be\npaused. So a server release is tested against the <strong>older released agents</strong>\nstill in use, not only against the agent built from the same commit.</p>\n<h2 id=\"what-runs\">What runs<a class=\"docs-anchor\" href=\"#what-runs\" aria-label=\"Link to this section\">#</a></h2>\n<div class=\"docs-table\"><table>\n<thead>\n<tr>\n<th>Check</th>\n<th>What it proves</th>\n<th>Evidence level</th>\n</tr>\n</thead>\n<tbody><tr>\n<td><code>compat (agent vX.Y.Z)</code> CI jobs</td>\n<td>the signed agent&#39;s decision code <strong>as released at that tag</strong> still works with this server: approved actions, staged patching and patch policies, maintenance actions, service and process control, technician presets</td>\n<td><strong>Sim</strong> — the agent&#39;s real Go code against <code>rem0te-action-sim</code>&#39;s fake Windows services</td>\n</tr>\n<tr>\n<td>The ordinary e2e suites</td>\n<td>the agent built from this commit works with this server</td>\n<td>Sim / API</td>\n</tr>\n<tr>\n<td><code>agent-lab-windows</code> (when merged)</td>\n<td>the agent&#39;s Windows code and RustDesk on a real, disposable Windows Server VM</td>\n<td>Lab</td>\n</tr>\n</tbody></table></div>\n<p>None of the compatibility jobs touch a real Windows computer. A green\ncompatibility run says the older agent&#39;s <em>decisions</em> still meet the new\nserver&#39;s plans, results and refusals. It does not say the agent&#39;s Windows\ncalls work; that is what the lab and the fleet are for\n(<code>docs/readiness.md</code> and <code>docs/lab-testing.md</code>, both in review).</p>\n<h2 id=\"supported-versions\">Supported versions<a class=\"docs-anchor\" href=\"#supported-versions\" aria-label=\"Link to this section\">#</a></h2>\n<p><code>scripts/compat/supported-agents.json</code> lists them, each with why it is there:</p>\n<div class=\"docs-table\"><table>\n<thead>\n<tr>\n<th>Agent</th>\n<th>Why</th>\n</tr>\n</thead>\n<tbody><tr>\n<td>v0.64.0</td>\n<td>running on production computers (2026-11-19)</td>\n</tr>\n<tr>\n<td>v0.67.0</td>\n<td>the previous release</td>\n</tr>\n</tbody></table></div>\n<p>The agent built from the commit under test is always covered by the ordinary\nsuites.</p>\n<p><strong>Changing the list is a support decision.</strong> A version leaves only by moving\nto <code>retired</code> with the date and the reason, so the record of what was once\nsupported stays. Add the previous release on every release, and any version\nstill reported by computers you manage.</p>\n<h2 id=\"when-an-older-agent-fails\">When an older agent fails<a class=\"docs-anchor\" href=\"#when-an-older-agent-fails\" aria-label=\"Link to this section\">#</a></h2>\n<p>A supported agent failing a suite fails the job. Either the server broke it\n(fix the server), or the change is intentional: then the suite goes in\n<code>knownIncompatible</code> for that tag, with the reason and what the computers on\nthat version must do, and the release notes say so. Nothing is dropped\nsilently.</p>\n<h2 id=\"running-it-yourself\">Running it yourself<a class=\"docs-anchor\" href=\"#running-it-yourself\" aria-label=\"Link to this section\">#</a></h2>\n<pre><code class=\"language-bash\">DATABASE_URL=postgresql://…/&lt;name containing scratch or test&gt; scripts/compat-agents.sh v0.64.0\n</code></pre>\n<p>It refuses any other database, builds the agent from the tag with\n<code>git archive</code> (the working tree is not used), and writes\n<code>.compat-logs/&lt;tag&gt;/evidence.json</code>: the tag, the server version and commit,\nand each suite&#39;s result.</p>\n<h2 id=\"what-is-not-covered-yet\">What is not covered yet<a class=\"docs-anchor\" href=\"#what-is-not-covered-yet\" aria-label=\"Link to this section\">#</a></h2>\n<ul>\n<li><strong>The standard (PowerShell) agent and the Linux and macOS agents.</strong> Their\nheartbeat and command-result bodies per released version, replayed against\nthe new API, are next.</li>\n<li><strong>RustDesk client versions</strong> against the server&#39;s connect paths: part of the\nlab.</li>\n<li><strong>ClientSt0r contract versions:</strong> the integration does not yet interoperate\nwith the real ClientSt0r (<code>docs/readiness.md</code>).</li>\n<li><strong>The release gate.</strong> The jobs report on every pull request; making them a\nrequired check is the owner&#39;s call once they have run stably.</li>\n</ul>\n",
+    "sections": [
+      {
+        "heading": "Compatibility testing",
+        "id": "",
+        "text": "Compatibility testing Every release must keep working with the agents already installed. Nothing forces a computer to update on the day a release ships: the signed agent checks once a day, a computer may be off for weeks, and an update can be paused. So a server release is tested against the older released agents still in use, not only against the agent built from the same commit."
+      },
+      {
+        "heading": "What runs",
+        "id": "what-runs",
+        "text": "Check What it proves Evidence level CI jobs the signed agent's decision code as released at that tag still works with this server: approved actions, staged patching and patch policies, maintenance actions, service and process control, technician presets Sim — the agent's real Go code against 's fake Windows services The ordinary e2e suites the agent built from this commit works with this server Sim / API (when merged) the agent's Windows code and RustDesk on a real, disposable Windows Server VM Lab None of the compatibility jobs touch a real Windows computer. A green compatibility run says the older agent's decisions still meet the new server's plans, results and refusals. It does not say the agent's Windows calls work; that is what the lab and the fleet are for ( and , both in review)."
+      },
+      {
+        "heading": "Supported versions",
+        "id": "supported-versions",
+        "text": "lists them, each with why it is there: Agent Why v0.64.0 running on production computers (2026 11 19) v0.67.0 the previous release The agent built from the commit under test is always covered by the ordinary suites. Changing the list is a support decision. A version leaves only by moving to with the date and the reason, so the record of what was once supported stays. Add the previous release on every release, and any version still reported by computers you manage."
+      },
+      {
+        "heading": "When an older agent fails",
+        "id": "when-an-older-agent-fails",
+        "text": "A supported agent failing a suite fails the job. Either the server broke it (fix the server), or the change is intentional: then the suite goes in for that tag, with the reason and what the computers on that version must do, and the release notes say so. Nothing is dropped silently."
+      },
+      {
+        "heading": "Running it yourself",
+        "id": "running-it-yourself",
+        "text": "It refuses any other database, builds the agent from the tag with (the working tree is not used), and writes : the tag, the server version and commit, and each suite's result."
+      },
+      {
+        "heading": "What is not covered yet",
+        "id": "what-is-not-covered-yet",
+        "text": "The standard (PowerShell) agent and the Linux and macOS agents. Their heartbeat and command result bodies per released version, replayed against the new API, are next. RustDesk client versions against the server's connect paths: part of the lab. ClientSt0r contract versions: the integration does not yet interoperate with the real ClientSt0r ( ). The release gate. The jobs report on every pull request; making them a required check is the owner's call once they have run stably."
+      }
+    ]
   }
 ];
