@@ -335,7 +335,10 @@ const SECTIONS: Section[] = [
           when an agent goes silent, add the <em>Agent silent</em> monitor in Settings → Monitoring (<em>Add recommended</em> includes it).
         </p>
         <p>
-          <strong className="text-foreground">Health</strong> is the worst open monitoring alert;{' '}
+          <strong className="text-foreground">Health</strong> is the worst open monitoring alert, in words (0.68):
+          Issues for a critical alert, Warning for a warning, Healthy for none (or informational ones only), and
+          Unknown when there is no warning or critical alert but the agent is not reporting, since a silent agent
+          raises nothing;{' '}
           <strong className="text-foreground">Pending patches</strong> comes from the last update scan; CPU, RAM,
           disk and the logged-in user come from the last heartbeat. Each shows its age, and a value that is stale —
           a resource sample older than 15 minutes, an update scan older than 36 hours — is greyed: it is what the

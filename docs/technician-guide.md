@@ -133,7 +133,7 @@ company-wide; for a technician, only the machines your assignment names.
 | **Device** | Name, hostname, and a dot: green online (the agent is checking in), amber reachable through RustDesk with the agent silent, grey offline. |
 | **Business / Site** | Who the machine belongs to and where. |
 | **OS** | An icon and the reported Windows edition or platform. |
-| **Health** | The worst *open* monitoring alert — Critical, Warning, Info — or *None* (no open alerts). That is not a promise nothing is wrong, only that no monitor says so. |
+| **Health** | The worst *open* monitoring alert, in words (0.68): **Issues** (a critical alert), **Warning** (a warning), **Healthy** (none, or informational ones only, and the agent is reporting) or **Unknown** (no warning or critical alert, but the agent is silent or the computer offline: a silent agent raises nothing). Healthy is not a promise nothing is wrong, only that no monitor says so. |
 | **Agent** | *Signed* (the 0.27+ signed agent), *Standard*, or *No agent report*, with when it last checked in. |
 | **Last seen** | *Online*, *Reachable (RustDesk) · agent silent …* in amber, or how long ago it was last heard from. |
 | **Logged-in user** | Who the last heartbeat said was signed in. |
@@ -147,7 +147,7 @@ pixels, **Agent** from 1536, **OS** from 1700, **Site** from 1860 and **Logged-i
 pixels that leaves Device, Business, Health, CPU / RAM / disk and Pending patches; a 1920-pixel screen shows
 everything but Logged-in user. The dot beside each name still says online, agent silent or offline. The column
 picker shows each one's width, for example *(1700 px and wider)*. A column you chose is never removed, only hidden
-while the window is narrower than that. **Alerts** is off by default, because **Health** already shows the worst open alert (*None* when
+while the window is narrower than that. **Alerts** is off by default, because **Health** already shows the worst open alert (*Healthy* when
 there is none); turn it on under **Columns**. A browser that saved its own column choice keeps it. Device names
 never wrap; long business and site names are cut short, with the full name on hover; and **Connect** stays pinned
 on the right.
@@ -363,6 +363,15 @@ heartbeat or an out-of-date agent (→ Overview), and which agent the computer r
 — *Standard agent*, *Signed agent* or *RustDesk only* (see
 [What each agent can do](capabilities.md)).
 
+**Naming it (0.68).** **Rename**, next to the name, sets the name the computer
+goes by everywhere in Rem0te and a short description shown under it. The agent
+never overwrites the name; the hostname is kept, shown beside it when they
+differ, still searchable, and *Use hostname* puts it back. **Aliases** on the
+Overview's Assignment card are other names it is known by (searchable), added
+and removed in place. The Overview's **Notes** card shows the latest three notes
+and takes a new one; all of them, and editing, are on History. All of it needs
+*Rename/edit computers*, and renames and alias changes are in the audit log.
+
 **The actions:** **Connect**, **Diagnose** (opens Diagnostics), **Run action**
 (opens Actions; disabled, with the reason printed underneath, when the computer
 lacks the signed agent or no approval signer is configured), **Patch** (opens
@@ -551,9 +560,10 @@ page; or the *Add device* tab) walks through it in six steps on one page:
    only when a device has used this link. You can revoke an unused link here.
 5. **First health** — what the server has actually received: the business and
    site it landed in, online, the agent and its version (after its first
-   heartbeat, up to 3 minutes), whether its device identity is bound, and
-   whether its first inventory has arrived. Each line says *waiting* until it is
-   true; nothing is assumed.
+   heartbeat, which the installer starts as it finishes), whether its device
+   identity is bound, and whether its first inventory has arrived — or, until
+   it has, whether it has been asked for yet, and the agent's reason if the pass
+   failed. Each line says *waiting* until it is true; nothing is assumed.
 6. **Next** — open the device, its Monitoring tab, or the business's monitoring
    policies, with the monitors that already apply to it listed.
 

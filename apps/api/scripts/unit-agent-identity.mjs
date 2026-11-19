@@ -78,6 +78,14 @@ check('Register is an installer check-in', I.isInstallerCheckIn(register));
 check('a heartbeat is not', !I.isInstallerCheckIn(beat));
 check('a signed report is never one', !I.isInstallerCheckIn({ updateChannel: 'signed' }));
 
+// ── carriesLiveSample (0.68): who is handed queued collection work ───────────
+check('Register carries no live sample', !I.carriesLiveSample(register));
+check('Test-Registered carries none', !I.carriesLiveSample({ agentVersion: '0.67.0' }));
+check('a Windows heartbeat does', I.carriesLiveSample(beat));
+check('a posix heartbeat with no user and no uptime still does (cpu)', I.carriesLiveSample({ cpuLoadPercent: 3 }));
+check('a posix heartbeat with only a boot time does', I.carriesLiveSample({ lastBootAt: '2026-11-19T00:00:00Z' }));
+check('a null figure is not a sample', !I.carriesLiveSample({ cpuLoadPercent: null }));
+
 // ── the Agent card's warning ──────────────────────────────────────────────────
 const w = I.dualAgentWarning({ updateChannel: 'signed', signedSeenAt: ago(2 * MIN), legacySeenAt: ago(MIN), legacySeenVersion: '0.46.0' }, NOW);
 check('warning: both seen recently', !!w && /^Two agents are reporting from this computer: /.test(w.text) && /0\.46\.0/.test(w.text) && w.command === I.STANDARD_RETIRE_COMMAND, JSON.stringify(w));

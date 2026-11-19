@@ -20,6 +20,7 @@ import { Prisma } from '@prisma/client';
 import { AGENT_CONTRACT_VERSION, agentMeetsContract } from '../common/agent-contract';
 import { readOnlyAgentRefusal } from '../common/platform';
 import type { CreateEndpointDto, UpdateEndpointDto } from './dto/create-endpoint.dto';
+import { ALIASES_PER_COMPUTER } from './dto/create-endpoint.dto';
 import { EndpointInventoryService } from '../endpoint-inventory/endpoint-inventory.service';
 import { likeEscape } from '../common/like';
 import { EndpointListService } from './endpoint-list.service';
@@ -391,11 +392,23 @@ export class EndpointsService {
       ? (await this.prisma.endpointGroupMember.findMany({ where: { endpointId: id }, select: { group: { select: { id: true, name: true } } } })).map((m) => m.group)
       : [];
 
+    // 0.68: the nickname is trimmed and never blank; an empty description
+    // clears it. Nothing the agent reports writes `name` after enrolment, so a
+    // nickname stays until someone changes it (the hostname is its own field).
+    const name = dto.name !== undefined ? dto.name.trim() : undefined;
+    if (name !== undefined && !name) throw new BadRequestException({ code: 'NAME_REQUIRED', message: 'A computer needs a name.' });
+    const description = dto.description !== undefined ? (dto.description.trim() || null) : undefined;
+    const renamed = name !== undefined && name !== existing.name ? { before: existing.name, after: name } : null;
+    const priorDescription = description !== undefined
+      ? (await this.prisma.endpoint.findUnique({ where: { id }, select: { description: true } }))?.description ?? null
+      : null;
+    const describedChanged = description !== undefined && description !== priorDescription;
+
     const endpoint = await this.prisma.endpoint.update({
       where: { id },
       data: {
-        ...(dto.name !== undefined ? { name: dto.name } : {}),
-        ...(dto.description !== undefined ? { description: dto.description } : {}),
+        ...(name !== undefined ? { name } : {}),
+        ...(description !== undefined ? { description } : {}),
         ...(dto.customerId !== undefined ? { customerId: dto.customerId } : {}),
         ...(dto.siteId !== undefined ? { siteId: dto.siteId } : {}),
         ...(dto.hostname !== undefined ? { hostname: dto.hostname } : {}),
@@ -411,7 +424,11 @@ export class EndpointsService {
       action: 'ENDPOINT_UPDATED', actorId: actor.userId, actorIp: actor.ip,
       tenantId: existing.tenantId ?? undefined, customerId: existing.customerId ?? undefined,
       resource: 'endpoint', resourceId: id,
-      ...(movesBusiness ? { meta: { movedToBusiness: dto.customerId ?? null, leftGroups } } : {}),
+      ...(movesBusiness || renamed || describedChanged ? { meta: {
+        ...(movesBusiness ? { movedToBusiness: dto.customerId ?? null, leftGroups } : {}),
+        ...(renamed ? { renamed } : {}),
+        ...(describedChanged ? { descriptionChanged: true } : {}),
+      } } : {}),
     });
     return endpoint;
   }
@@ -539,19 +556,47 @@ export class EndpointsService {
     await this.prisma.endpointTag.deleteMany({ where: { endpointId: id, tag } });
   }
 
+  /**
+   * Another name a computer is known by (0.68 gave it a console control):
+   * searchable as `alias:`. Trimmed, not blank, at most ALIASES_PER_COMPUTER,
+   * no duplicate ignoring case, and audited.
+   */
   async addAlias(actor: ActorContext, id: string, alias: string, isPrimary = false) {
-    await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
+    const existing = await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
+    const value = alias.trim();
+    if (!value) throw new BadRequestException({ code: 'ALIAS_REQUIRED', message: 'An alias cannot be blank.' });
+    const current = await this.prisma.endpointAlias.findMany({ where: { endpointId: id }, select: { alias: true } });
+    if (current.some((a) => a.alias.toLowerCase() === value.toLowerCase())) {
+      throw new ConflictException({ code: 'ALIAS_EXISTS', message: `This computer already has the alias "${value}".` });
+    }
+    if (current.length >= ALIASES_PER_COMPUTER) {
+      throw new BadRequestException({ code: 'TOO_MANY_ALIASES', message: `A computer can have at most ${ALIASES_PER_COMPUTER} aliases.` });
+    }
     if (isPrimary) {
       await this.prisma.endpointAlias.updateMany({ where: { endpointId: id, isPrimary: true }, data: { isPrimary: false } });
     }
-    return this.prisma.endpointAlias.create({ data: { endpointId: id, alias, isPrimary } });
+    const row = await this.prisma.endpointAlias.create({ data: { endpointId: id, alias: value, isPrimary } });
+    await this.audit.log({
+      action: 'ENDPOINT_UPDATED', actorId: actor.userId, actorIp: actor.ip,
+      tenantId: existing.tenantId ?? undefined, customerId: existing.customerId ?? undefined,
+      resource: 'endpoint', resourceId: id, meta: { aliasAdded: value },
+    });
+    return row;
   }
 
   async removeAlias(actor: ActorContext, id: string, aliasId: string) {
-    await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
+    const existing = await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
+    const row = await this.prisma.endpointAlias.findFirst({ where: { id: aliasId, endpointId: id }, select: { alias: true } });
     await this.prisma.endpointAlias.deleteMany({ where: { id: aliasId, endpointId: id } });
+    if (row) {
+      await this.audit.log({
+        action: 'ENDPOINT_UPDATED', actorId: actor.userId, actorIp: actor.ip,
+        tenantId: existing.tenantId ?? undefined, customerId: existing.customerId ?? undefined,
+        resource: 'endpoint', resourceId: id, meta: { aliasRemoved: row.alias },
+      });
+    }
   }
 
   // ── Credentials ───────────────────────────────────────────────────────────

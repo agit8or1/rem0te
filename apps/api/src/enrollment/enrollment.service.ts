@@ -1,6 +1,6 @@
 import { ActionsService } from '../actions/actions.service';
 import { HEARTBEAT_STALE_MS } from '../common/connectivity';
-import { DUAL_AUDIT_EVERY_MS, heartbeatKind, heartbeatMayAct, isInstallerCheckIn, type HeartbeatKind } from '../common/agent-identity';
+import { carriesLiveSample, DUAL_AUDIT_EVERY_MS, heartbeatKind, heartbeatMayAct, isInstallerCheckIn, type HeartbeatKind } from '../common/agent-identity';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { AgentMigrationService } from '../update-trust/agent-migration.service';
 import {
@@ -291,6 +291,16 @@ export class EnrollmentService {
           inventory: { select: { collectedAt: true, liveSampledAt: true, osCaption: true, updatesCheckedAt: true } },
         },
       });
+      // The automatic inventory pass (0.68), so the page can say where it is
+      // rather than "not received yet" whatever happened: not asked yet,
+      // asked, or failed with the agent's own reason.
+      const ask = ep && !ep.inventory?.collectedAt
+        ? await this.prisma.endpointCommand.findFirst({
+          where: { endpointId: ep.id, type: 'INVENTORY_REFRESH', requestedById: null },
+          orderBy: { createdAt: 'desc' },
+          select: { status: true, error: true, dispatchedAt: true, completedAt: true },
+        })
+        : null;
       if (ep) {
         deviceVisible = true;
         const { rustdeskNode: node, inventory: inv, ...rest } = ep;
@@ -304,6 +314,7 @@ export class EnrollmentService {
           liveSampledAt: inv?.liveSampledAt ?? null,
           updatesCheckedAt: inv?.updatesCheckedAt ?? null,
           osCaption: inv?.osCaption ?? null,
+          inventoryAsk: ask ? { status: ask.status, error: ask.error, dispatchedAt: ask.dispatchedAt, completedAt: ask.completedAt } : null,
         };
       }
     }
@@ -990,8 +1001,9 @@ export class EnrollmentService {
           memoryTotalMb: dto.memoryTotalMb, memoryFreeMb: dto.memoryFreeMb, systemDiskTotalMb: dto.systemDiskTotalMb, systemDiskFreeMb: dto.systemDiskFreeMb,
         });
         // Only the automatic collections: a person's request needs a tenant
-        // (requesterStillAllowed) and fails before it is handed out.
-        commands = await this.inventory.collectForHeartbeat(node.endpointId);
+        // (requesterStillAllowed) and fails before it is handed out. Never to
+        // an installer's own check-in (0.68): it cannot run them.
+        if (dto.updateChannel === 'signed' || carriesLiveSample(dto)) commands = await this.inventory.collectForHeartbeat(node.endpointId);
       } catch (e) {
         this.logger.warn(`Inventory step failed for pooled endpoint ${node.endpointId}: ${String(e)}`);
       }
@@ -1190,7 +1202,16 @@ export class EnrollmentService {
           await this.metrics.recordHeartbeat(node.endpointId, live)
             .catch((e) => this.logger.warn(`Metric sample failed for ${node.endpointId}: ${String(e)}`));
         }
-        commands = await this.inventory.collectForHeartbeat(node.endpointId);
+        // 0.68: never to an installer's own check-in (Register, the
+        // Test-Registered poll, the Rem0teEnrollment retry). It reads nothing
+        // in the answer but the RustDesk registration, yet each hand-out
+        // counted towards MAX_DISPATCHES: the poll runs every 5 seconds for up
+        // to 90, so a slow RustDesk registration spent all four hand-outs of
+        // the first inventory pass and the first update scan before the agent
+        // ever beat. Both were then failed ("re-run the installer") and not
+        // asked again for an hour, and Add device sat on "Inventory — not
+        // received yet". The first real heartbeat stages and collects them.
+        if (dto.updateChannel === 'signed' || carriesLiveSample(dto)) commands = await this.inventory.collectForHeartbeat(node.endpointId);
       } catch (e) {
         this.logger.warn(`Inventory step failed for endpoint ${node.endpointId}: ${String(e)}`);
       }

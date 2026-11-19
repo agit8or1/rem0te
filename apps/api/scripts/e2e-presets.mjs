@@ -393,7 +393,7 @@ async function main() {
     await assign({ userId: t2.id, businessId: A, presetId: presets.L1.id });
     const red = await fetch(`${API}/endpoints/grants/redeem`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': ip() }, body: JSON.stringify({ token: g.body.data.grantToken }) });
     check(red.status === 404, 'redemption after demotion is refused', `HTTP ${red.status}`);
-    const hb = await fetch(`${API}/enrollment/heartbeat`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': ip() }, body: JSON.stringify({ rustdeskId: eps['WS-A4'].rid, agentSecret: eps['WS-A4'].secret }) });
+    const hb = await fetch(`${API}/enrollment/heartbeat`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': ip() }, body: JSON.stringify({ rustdeskId: eps['WS-A4'].rid, agentSecret: eps['WS-A4'].secret, uptimeSeconds: 600 }) });
     const hbBody = await hb.json().catch(() => ({}));
     const cmds = hbBody?.data?.commands ?? [];
     const row = await prisma.endpointCommand.findFirst({ where: { endpointId: eps['WS-A4'].id, requestedById: t2.id }, orderBy: { createdAt: 'desc' } });

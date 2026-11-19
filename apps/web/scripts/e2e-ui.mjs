@@ -749,6 +749,9 @@ async function devicesAndWorkspace(page, f, vp, label) {
   const row = page.locator(`table a[href="/endpoints/${f.main.id}"]`);
   const rows = await rowsSettle(page, 5);
   check(rows === 5, `${label}: the device list finds the five ${TAG}-WS devices`, `rows ${rows}`);
+  // 0.68: Health in words, never "None".
+  const health = await page.locator('table [data-health]').evaluateAll((els) => els.map((e) => e.getAttribute('data-health')));
+  check(health.length === 5 && health.every((h) => ['healthy', 'warning', 'issues', 'unknown'].includes(h)), `${label}: Health says healthy, warning, issues or unknown for each`, health.join(','));
   if (vp === 'phone') {
     const table = await page.locator('table').first().evaluate((t) => ({ table: t.scrollWidth, box: t.parentElement.clientWidth, scrolls: getComputedStyle(t.parentElement).overflowX }));
     check(table.table > table.box && /auto|scroll/.test(table.scrolls), `${label}: the wide table scrolls inside its own container`, JSON.stringify(table));
@@ -789,6 +792,54 @@ async function devicesAndWorkspace(page, f, vp, label) {
     if (['performance', 'processes', 'network'].includes(t)) await shot(page, `${label}-tab-${t}`);
     await cleanCheck(page, `${label} ${t} tab`);
   }
+  if (vp === 'desktop' && !namingChecked) { namingChecked = true; await deviceNaming(page, f, label); }
+}
+
+// 0.68: Rename, aliases and notes on the device page, once, then put back.
+let namingChecked = false;
+async function deviceNaming(page, f, label) {
+  const before = await prisma.endpoint.findUnique({ where: { id: f.main.id }, select: { name: true, description: true } });
+  await page.locator('[data-testid="tab-overview"]').click();
+  await settled(page);
+  await page.locator('[data-testid="rename-device"]').click();
+  const dlg = page.locator('[data-testid="rename-dialog"]');
+  await dlg.waitFor({ timeout: 10_000 });
+  check(await page.locator('[data-testid="rename-name"]').inputValue() === before.name, `${label}: Rename opens with the current name`);
+  const nick = `${TAG} Front desk`;
+  await page.locator('[data-testid="rename-name"]').fill(nick);
+  await page.locator('[data-testid="rename-description"]').fill('Reception, by the window');
+  await page.locator('[data-testid="rename-save"]').click();
+  await dlg.waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {});
+  await settled(page);
+  const h1 = await page.locator('[data-testid="device-header"] h1').innerText().catch(() => '');
+  const desc = await page.locator('[data-testid="device-description"]').innerText().catch(() => '');
+  check(h1 === nick && desc === 'Reception, by the window', `${label}: the new name and description show in the header`, JSON.stringify({ h1, desc }));
+  const audit = await prisma.activityLog.findFirst({ where: { action: 'ENDPOINT_UPDATED', resourceId: f.main.id }, orderBy: { createdAt: 'desc' } });
+  check(audit?.metadata?.renamed?.before === before.name && audit?.metadata?.renamed?.after === nick && audit?.metadata?.descriptionChanged === true
+    && !JSON.stringify(audit?.metadata).includes('Reception'), `${label}: the rename is audited, before and after, without the description's text`, JSON.stringify(audit?.metadata));
+
+  await page.locator('[data-testid="alias-add"]').click();
+  await page.locator('[data-testid="alias-input"]').fill('FRONT-PC');
+  await page.locator('[data-testid="alias-input"]').press('Enter');
+  await settled(page);
+  check(await page.locator('[data-testid="device-aliases"]').innerText().then((t) => t.includes('FRONT-PC')), `${label}: an alias is added in place`);
+  await page.locator('[data-testid="alias-add"]').click();
+  await page.locator('[data-testid="alias-input"]').fill('front-pc');
+  await page.locator('[data-testid="alias-input"]').press('Enter');
+  await settled(page);
+  check(await page.locator('[data-testid="device-aliases"]').innerText().then((t) => /already has the alias/.test(t)), `${label}: the same alias in another case is refused, with the reason`);
+  await page.locator('button[aria-label="Remove alias FRONT-PC"]').click();
+  await settled(page);
+  check((await prisma.endpointAlias.count({ where: { endpointId: f.main.id, alias: 'FRONT-PC' } })) === 0, `${label}: and removed`);
+
+  await page.locator('[data-testid="overview-note-input"]').fill(`${TAG} replaced the dock`);
+  await page.locator('[data-testid="overview-note-add"]').click();
+  await settled(page);
+  check(await page.locator('[data-testid="overview-notes"]').innerText().then((t) => t.includes(`${TAG} replaced the dock`)), `${label}: a note is added from the Overview`);
+  await cleanCheck(page, `${label} device naming`);
+  await prisma.endpoint.update({ where: { id: f.main.id }, data: { name: before.name, description: before.description } });
+  await page.reload();
+  await page.locator('[data-testid="workspace-tabs"]').waitFor({ timeout: 20_000 });
 }
 
 async function savedViewAndBulk(page, f, vp, label) {
