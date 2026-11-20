@@ -12,8 +12,9 @@ import { formatDate } from '@/lib/utils';
 /**
  * Managed Secure Access cutover controls (0.72, build step 4) on the device
  * page's readiness card. Platform Admins only, and only while the server
- * runs with MSA_GRANTS=on: the API answers 404 MSA_NOT_ENABLED otherwise,
- * and this renders nothing at all. One computer at a time; the API makes
+ * runs with MSA_GRANTS=on: the readiness card mounts this only when its own
+ * (ungated) answer says `managedControls: true`, so with the switch off the
+ * console makes no request to a gated route at all. One computer at a time; the API makes
  * every decision (readiness gate, published grant key, pauses).
  */
 

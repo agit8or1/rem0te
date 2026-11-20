@@ -33,6 +33,8 @@ export interface MsaEndpointView {
   note: string;
   labTested: { versions: string[]; min: string; max: string };
   minAgent: string;
+  /** 0.72: MSA_GRANTS is on, so the managed routes exist. Absent or false: never ask them. */
+  managedControls?: boolean;
 }
 
 /** The one sentence every readiness view leads with (the API's READINESS_NOTE). */
@@ -114,7 +116,7 @@ export function MsaReadinessCard({ endpointId }: { endpointId: string }) {
             </p>
           </>
         )}
-        <MsaManagedControls endpointId={endpointId} />
+        {data?.managedControls === true && <MsaManagedControls endpointId={endpointId} />}
       </CardContent>
     </Card>
   );

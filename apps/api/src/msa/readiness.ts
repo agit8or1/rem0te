@@ -90,6 +90,9 @@ export const READINESS_NOTE =
   'Readiness only — Managed Secure Access is not available yet; nothing has changed on this computer.';
 export const READINESS_FLEET_NOTE =
   'Readiness only — Managed Secure Access is not available yet; nothing has changed on any computer.';
+/** 0.72: the fleet note while MSA_GRANTS is on (a test server). */
+export const READINESS_FLEET_MANAGED_NOTE =
+  'Managed Secure Access is switched on for testing: a Platform Admin can move one computer at a time. It has run only in the Windows lab.';
 /** 0.72: the note for a computer a Platform Admin moved into Managed Secure Access. */
 export const MANAGED_NOTE =
   'Managed Secure Access (build step 4) has run only in the Windows lab: never on a Windows 10 or 11 desktop or on the fleet.';

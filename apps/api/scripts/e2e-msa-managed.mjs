@@ -211,6 +211,13 @@ async function all() {
     await prisma.msaManagedComputer.create({ data: { endpointId: A4.id, state: 'pending', requestedById: admin.id } });
     r = await signedBeat(A4, { rustdeskPreflight: preflight() });
     check(ok(r) && r.data.authenticated === true && r.data.msaPoll === undefined, 'a managed computer\'s signed heartbeat with the switch off: no msaPoll', msg(r));
+    r = await req('GET', `/msa/readiness/${A1.id}`, { s: SAd });
+    check(ok(r) && r.data.managedControls === false, 'readiness says managedControls: false, so the console never asks a gated route', msg(r));
+    r = await req('GET', '/msa/readiness', { s: SAd });
+    const st = (r.data?.states ?? []).map((x) => x.state);
+    check(ok(r) && r.data.managedControls === false && J(st.slice(0, 4)) === J(['unsupported', 'upgrade_available', 'compatible', 'unknown'])
+      && st.slice(4).every((x) => r.data.counts[x] > 0) && /not available yet/.test(r.data.note),
+      'the fleet with the switch off: the four readiness tiles, a managed tile only for a state some computer is really in, the readiness note', J({ st, counts: r.data?.counts }));
     await prisma.msaManagedComputer.delete({ where: { endpointId: A4.id } });
     check(await prisma.msaManagedComputer.count({ where: { endpointId: { in: created.endpoints } } }) === 0, 'no managed row was written by any route');
   }
@@ -238,7 +245,9 @@ async function all() {
     check(ok(r) && r.data.rustdeskPreflightAck && r.data.msaPoll === undefined, `${ep === A1 ? 'A1' : 'A2'}: a signed heartbeat with a preflight; not managed, so no msaPoll`, msg(r));
   }
   r = await req('GET', `/msa/readiness/${A1.id}`, { s: SO });
-  check(ok(r) && r.data.readiness.state === 'compatible', 'A1 is Compatible now', msg(r));
+  check(ok(r) && r.data.readiness.state === 'compatible' && r.data.managedControls === true, 'A1 is Compatible now, and readiness says managedControls: true', msg(r));
+  r = await req('GET', '/msa/readiness', { s: SO });
+  check(ok(r) && r.data.managedControls === true && r.data.states.length === 7 && /switched on for testing/.test(r.data.note), 'the fleet with the switch on: all seven tiles and the testing note', J({ states: r.data?.states?.length, note: r.data?.note }));
   r = await req('POST', `/msa/managed/${A1.id}/cutover`, { s: SAd });
   check(r.status === 409 && code(r) === 'MSA_GRANT_KEY_NOT_PUBLISHED', 'Compatible, but no grant key in the signed metadata: 409 MSA_GRANT_KEY_NOT_PUBLISHED', msg(r));
 

@@ -8,7 +8,7 @@ import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { parsePreflight, PREFLIGHT_KEYS } from './preflight';
 import {
   decideReadiness, LAB_TESTED_MAX, LAB_TESTED_MIN, LAB_TESTED_RUSTDESK, MANAGED_NOTE, MIN_REPORTING_AGENT, PRODUCIBLE_STATES,
-  READINESS_FLEET_NOTE, READINESS_NOTE, STATE_LABEL, type ManagedFacts, type ProducibleState, type Readiness,
+  READINESS_FLEET_MANAGED_NOTE, READINESS_FLEET_NOTE, READINESS_NOTE, READINESS_STATES, STATE_LABEL, type ManagedFacts, type ProducibleState, type Readiness,
 } from './readiness';
 import { msaGrantsEnabled } from './msa-grants-flag';
 import { rotationHeld, type ManagedState } from './managed';
@@ -105,6 +105,10 @@ export class MsaService {
       note: r.msaManaged ? MANAGED_NOTE : READINESS_NOTE,
       labTested: { versions: [...LAB_TESTED_RUSTDESK], min: LAB_TESTED_MIN, max: LAB_TESTED_MAX },
       minAgent: MIN_REPORTING_AGENT,
+      // 0.72: whether the Managed Secure Access routes exist on this server
+      // (MSA_GRANTS on). The console asks /msa/managed/:id only when this is
+      // true, so with the switch off it makes no request to a gated route.
+      managedControls: msaGrantsEnabled(),
     };
   }
 
@@ -172,10 +176,17 @@ export class MsaService {
         state: d.state, label: d.label, reasons: d.reasons, rustdeskVersion: d.rustdeskVersion, checkedAt: d.checkedAt, labTested: d.labTested,
       };
     });
+    // 0.72: with MSA_GRANTS off nothing can be moved into Managed, so the
+    // console shows the four readiness states only — plus a managed state
+    // that some computer is actually in (a row left from a test server),
+    // never an empty "Managed" tile that suggests it is available.
+    const on = msaGrantsEnabled();
+    const shown = PRODUCIBLE_STATES.filter((s) => on || (READINESS_STATES as readonly string[]).includes(s) || counts[s] > 0);
     return {
-      note: READINESS_FLEET_NOTE,
+      note: on ? READINESS_FLEET_MANAGED_NOTE : READINESS_FLEET_NOTE,
       generatedAt: new Date(now).toISOString(),
-      states: PRODUCIBLE_STATES.map((s) => ({ state: s, label: STATE_LABEL[s] })),
+      states: shown.map((s) => ({ state: s, label: STATE_LABEL[s] })),
+      managedControls: on,
       counts,
       total: computers.length,
       truncated,
