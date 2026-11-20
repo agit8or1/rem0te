@@ -2331,6 +2331,9 @@ async function toolsPanel(page, f, vp, theme, label) {
       check(w.box <= w.vw && w.scroll <= w.client + 1, `${label}: Tools on the ${kind} computer fits 375 px with no sideways scroll`, JSON.stringify(w));
     }
     await closeTools(page);
+    // Radix returns the focus when the close animation ends, which on a slow
+    // runner is after the panel detaches: wait for it, bounded, not one sample.
+    await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'action-tools', null, { timeout: 3_000 }).catch(() => {});
     const focused = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'));
     check(focused === 'action-tools', `${label}: Escape closes Tools and gives the focus back to the Tools button (${kind})`, String(focused));
     await cleanCheck(page, `${label} Tools on the ${kind} computer`);
