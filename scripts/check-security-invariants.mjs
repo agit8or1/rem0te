@@ -4539,6 +4539,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'update-trust/update-trust.controller.ts': ['update.trust'],
     'users/users.controller.ts': ['permissions.change'],
     'warranty/warranty.controller.ts': ['warranty.settings'],
+    'msa/msa-grant.controller.ts': ['msa.grant'],
   };
   const named = {};
   for (const f of files) {
@@ -6425,6 +6426,166 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     / msa-readiness;/.test(read('scripts/run-e2e.sh')) && /unit-msa-readiness\.mjs/.test(read('.github/workflows/ci.yml'))
       && /TestLabRustdeskPreflight/.test(read('.github/workflows/lab-windows.yml')),
     'e2e-msa-readiness.mjs in run-e2e.sh, unit-msa-readiness.mjs in CI, TestLabRustdeskPreflight in the Windows lab');
+}
+
+// ── §81 (0.71): Managed Secure Access grants and the long-poll — behind MSA_GRANTS, off ──
+//     Build step 3 of docs/managed-secure-access.md. The portal can sign a
+//     session grant and hand it to a signed agent over a long-poll; nothing on
+//     a computer acts on one, and nothing but a Platform Admin's test route
+//     issues one:
+//       - the switch is exactly MSA_GRANTS === 'on', read in one file, and a
+//         middleware on both grant controllers answers 404 MSA_NOT_ENABLED
+//         before the throttler, the session guard or the handler; every
+//         public service method asserts it again first;
+//       - the grant key and the grants are written only by MsaGrantService,
+//         the three rem0te-msa-grant-* secret-box purposes are used only
+//         there, and no audit meta, log line or answer carries the private
+//         key, the password or the envelope;
+//       - issuing is a Platform Admin with a fresh confirmation (msa.grant),
+//         then scope, the pool, Windows and the signed agent, the `remote`
+//         pause, the key, and the audit row (logOrFail) before the grant row;
+//         nothing outside the controller calls it and the module exports
+//         nothing, so Connect cannot reach it (step 4);
+//       - the poll checks the device secret before reading anything and
+//         admits only the signed Windows agent of an assigned computer;
+//       - grant.ts is pure, its prefix and reason list are the Go verifier's,
+//         the Go verifier is pure and imported by no command;
+//       - 0088 CHECKs the closed state set, the five-minute window and the
+//         limits, and holds one active key.
+{
+  console.log('\n§81 Managed Secure Access grants (MSA_GRANTS, off)');
+  const J = JSON.stringify;
+  const SRC = 'apps/api/src';
+  const flag = read(`${SRC}/msa/msa-grants-flag.ts`);
+  const svc = read(`${SRC}/msa/msa-grant.service.ts`);
+  const ctl = read(`${SRC}/msa/msa-grant.controller.ts`);
+  const mod = read(`${SRC}/msa/msa-grants.module.ts`);
+  const gts = read(`${SRC}/msa/grant.ts`);
+  const ggo = read('tools/windows-installer/internal/msa/grant/grant.go');
+  const mig = read('apps/api/prisma/migrations/0088_msa_grants/migration.sql');
+  const files = walk(SRC);
+  const rel = (f) => f.replace(/^.*apps\/api\/src\//, '');
+  const tree = (dir, test) => {
+    const out = [];
+    (function w(d) {
+      for (const n of readdirSync(join(ROOT, d))) {
+        const p = `${d}/${n}`;
+        if (n === 'node_modules') continue;
+        if (statSync(join(ROOT, p)).isDirectory()) w(p); else if (test(n)) out.push(p);
+      }
+    })(dir);
+    return out;
+  };
+
+  const flagReaders = files.filter((f) => /process\.env\.MSA_GRANTS\b|env\.MSA_GRANTS\b|\['MSA_GRANTS'\]/.test(read(f)));
+  check('the switch is exactly MSA_GRANTS === \'on\', read in one place',
+    /export function msaGrantsEnabled\(env: NodeJS\.ProcessEnv = process\.env\): boolean \{\n\s*return env\.MSA_GRANTS === 'on';\n\s*\}/.test(flag)
+      && J(flagReaders.map(rel)) === J(['msa/msa-grants-flag.ts'])
+      && !files.some((f) => /MSA_GRANTS\s*(\?\?|\|\|)\s*'on'|MSA_GRANTS\s*!==\s*'off'/.test(read(f))),
+    `read in: ${flagReaders.map(rel).join(', ')}`);
+  const deployOn = tree('deploy', () => true).filter((p) => /MSA_GRANTS\s*=\s*['"]?on/.test(read(p)));
+  check('nothing shipped turns it on: no deploy file sets MSA_GRANTS=on, and run-e2e.sh does not export it',
+    deployOn.length === 0 && !/MSA_GRANTS/.test(read('scripts/run-e2e.sh')), deployOn.join(', '));
+  check('a middleware answers 404 MSA_NOT_ENABLED on every grant route before the throttler, the session guard or the handler',
+    /if \(!msaGrantsEnabled\(\)\) throw new NotFoundException\(\{ code: MSA_NOT_ENABLED,/.test(flag)
+      && /consumer\.apply\(MsaGrantsGate\)\.forRoutes\(MsaGrantsController, MsaAgentController\);/.test(mod)
+      && J([...ctl.matchAll(/^export class (\w+Controller)/gm)].map((m) => m[1])) === J(['MsaGrantsController', 'MsaAgentController']),
+    'msa-grants-flag.ts MsaGrantsGate; msa-grants.module.ts configure');
+  const publicMethods = [...svc.matchAll(/^  async (\w+)\(/gm)].map((m) => m[1]);
+  const firstLine = (name) => svc.slice(svc.indexOf(`  async ${name}(`)).split('\n')[1]?.trim();
+  check('every public MsaGrantService method asserts the switch first',
+    J(publicMethods) === J(['publicKeys', 'issueTest', 'listForEndpoint', 'poll']) && publicMethods.every((m) => firstLine(m) === 'this.assertEnabled();')
+      && /private assertEnabled\(\) \{\n\s*if \(!msaGrantsEnabled\(\)\) throw new NotFoundException\(\{ code: MSA_NOT_ENABLED,/.test(svc),
+    `methods: ${publicMethods.join(', ')}`);
+
+  const writers = files.filter((f) => /msaGrant(Key)?\.(create|update|updateMany|upsert|delete|deleteMany|createMany)\(/.test(read(f)));
+  check('only MsaGrantService writes MsaGrant and MsaGrantKey', J(writers.map(rel)) === J(['msa/msa-grant.service.ts']), writers.map(rel).join(', '));
+  const purposeUsers = files.filter((f) => /rem0te-msa-grant-(key|pw|envelope)-v1/.test(read(f))).map(rel);
+  check('the grant key, password and envelope purposes are used only in MsaGrantService (and declared in secret-box)',
+    J(purposeUsers.sort()) === J(['common/secret-box.ts', 'msa/msa-grant.service.ts'])
+      && /sealSecret\(this\.encKey, 'rem0te-msa-grant-key-v1', k\.privatePem\)/.test(svc)
+      && /sealSecret\(this\.encKey, 'rem0te-msa-grant-pw-v1', grant\.password\)/.test(svc)
+      && /sealSecret\(this\.encKey, 'rem0te-msa-grant-envelope-v1', JSON\.stringify\(envelope\)\)/.test(svc),
+    purposeUsers.join(', '));
+  const auditCalls = [...svc.matchAll(/this\.audit\.(log|logOrFail)\(\{[\s\S]*?\}\);/g)].map((m) => m[0]);
+  const logLines = [...svc.matchAll(/this\.logger\.\w+\([^;]*\);/g)].map((m) => m[0]);
+  const issueRet = svc.slice(svc.indexOf("this.waiters.get(ep.id)?.wake('grant');"), svc.indexOf('// ── Reading'));
+  const listSel = svc.slice(svc.indexOf('  async listForEndpoint('), svc.indexOf('// ── The device long-poll'));
+  check('no audit meta, log line or answer carries the private key, the password or the envelope',
+    auditCalls.length === 2 && auditCalls.every((c) => !/password|privatePem|privateKeyEnc|envelope|\bsig\b/i.test(c))
+      && /meta: \{ keyId: k\.keyId \}/.test(auditCalls.join('\n'))
+      && /meta: \{ grantId: grant\.grantId, endpointId: ep\.id, mode: grant\.mode, consent: grant\.consent, keyId: key\.keyId, source: 'test' \}/.test(auditCalls.join('\n'))
+      && logLines.length >= 1 && logLines.every((l) => !/password|privatePem|envelope\b|envelopeEnc|passwordEnc/i.test(l))
+      && !/password/.test(issueRet) && !/envelopeEnc: true|passwordEnc: true/.test(listSel)
+      && !/privateKeyEnc/.test(svc.slice(svc.indexOf('  async publicKeys('), svc.indexOf('// ── Issuing'))),
+    `${auditCalls.length} audit calls, ${logLines.length} log lines`);
+
+  const iss = svc.slice(svc.indexOf('  async issueTest('), svc.indexOf('// ── Reading'));
+  const order = [
+    "await this.acl.assertEndpointInScope(actor, endpointId, 'computers:view');",
+    'where: { AND: [{ id: endpointId }, this.acl.endpointVisibilityWhere(actor)] },',
+    'assertAssigned(ep);',
+    'if (!isWindowsPlatform(ep.platform) || !runsSignedAgent(',
+    "const pause = await activePause(this.prisma, 'remote', ep.customerId);",
+    'const key = await this.activeKey(actor);',
+    'await this.audit.logOrFail({',
+    'this.prisma.msaGrant.create({',
+  ].map((s) => iss.indexOf(s));
+  const test = ctl.slice(ctl.indexOf("@Post('test/:endpointId')"), ctl.indexOf("@Get('keys')"));
+  check('issuing: Platform Admin and a fresh confirmation (msa.grant), then scope, the pool, the signed Windows agent, the remote pause, the key, the audit row, the grant',
+    order.every((i, k) => i > 0 && (k === 0 || i > order[k - 1]))
+      && /@UseGuards\(PlatformAdminGuard\)/.test(test) && /assertFresh\(u\?\.sub \? this\.stepUp\.read\(req, u\.sub, u\.iat\)\?\.method \?\? null : null, \{ action: 'msa\.grant',/.test(test)
+      && test.indexOf('assertFresh(') < test.indexOf('this.grants.issueTest('),
+    `order ${J(order)}`);
+  const callers = files.filter((f) => /\.issueTest\(/.test(read(f))).map(rel);
+  const importers = files.filter((f) => /from '[^']*msa-grant\.service'|from '[^']*msa-grants\.module'/.test(read(f))).map(rel).sort();
+  check('issuance is not reachable from Connect: one caller (the test route), the module exports nothing, nothing outside it imports the service',
+    J(callers) === J(['msa/msa-grant.controller.ts']) && !/exports:/.test(mod)
+      && J(importers) === J(['app.module.ts', 'msa/msa-grant.controller.ts', 'msa/msa-grants.module.ts'])
+      && files.filter((f) => /sessions|launcher|connect/.test(rel(f))).every((f) => !/MsaGrant|msaGrant|msa\/grant/.test(read(f))),
+    `callers ${J(callers)}; importers ${J(importers)}`);
+
+  const pollFn = svc.slice(svc.indexOf('  async poll('), svc.lastIndexOf('\n}'));
+  const iAuth = pollFn.indexOf("const dev = await this.enrollment.authenticateDevice(dto.rustdeskId, dto.agentSecret, 'msa_poll_unauthenticated');");
+  const iSigned = pollFn.indexOf('if (!isWindowsPlatform(ep.platform) || !runsSignedAgent({ updateChannel: ep.updateChannel, signedSeenAt: ep.signedSeenAt })) {');
+  const iPool = pollFn.indexOf('assertAssigned(ep);');
+  const iFirstGrant = pollFn.indexOf('this.prisma.msaGrant.');
+  const pollCtl = ctl.slice(ctl.indexOf("@Controller('msa/agent')"));
+  check('the poll checks the device secret before reading anything, then admits only the signed Windows agent of an assigned computer',
+    iAuth > 0 && iSigned > iAuth && iPool > iSigned && iFirstGrant > iPool && pollFn.indexOf('this.prisma.') > iAuth
+      && /@Post\('poll'\)\n\s*@Public\(\)\n\s*@RateLimit\(120\)/.test(pollCtl) && (ctl.match(/@Public\(\)/g) ?? []).length === 1
+      && /where: \{ id: \{ in: ackIds \}, endpointId: ep\.id, state: 'issued', notAfter: \{ gte: new Date\(now\) \} \},/.test(pollFn)
+      && /if \(why === 'superseded'\) return \{ grants: \[\]/.test(pollFn),
+    'msa-grant.service.ts poll; msa-grant.controller.ts MsaAgentController');
+
+  const tsImports = [...gts.matchAll(/^import [\s\S]*? from '([^']+)';/gm)].map((m) => m[1]);
+  const tsPrefix = /export const GRANT_PREFIX = '([^']*)';/.exec(gts)?.[1];
+  const goPrefix = /const Prefix = "([^"]*)"/.exec(ggo)?.[1];
+  const tsReasons = [...(/export const REASONS = \[([\s\S]*?)\] as const;/.exec(gts)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  const goConsts = Object.fromEntries([...ggo.matchAll(/^\t(\w+)\s+= "([a-z_]+)"$/gm)].map((m) => [m[1], m[2]]));
+  const goReasons = [...(/var Reasons = \[\]string\{([^}]*)\}/.exec(ggo)?.[1] ?? '').matchAll(/\b([A-Z]\w+)\b/g)].map((m) => goConsts[m[1]]);
+  check('grant.ts is pure; its signing prefix and reason list are the Go verifier\'s, in the same order',
+    J(tsImports) === J(['node:crypto', 'zod']) && !/process\.env|from '@prisma|fetch\(/.test(gts)
+      && tsPrefix === 'rem0te-msa-grant-v1\\n' && goPrefix === tsPrefix && tsReasons.length === 14 && J(goReasons) === J(tsReasons),
+    `prefix ts ${tsPrefix} go ${goPrefix}; reasons ${J(tsReasons)} vs ${J(goReasons)}`);
+  const goImports = [...(/import \(([\s\S]*?)\)/.exec(ggo)?.[1] ?? '').matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  const goImporters = tree('tools/windows-installer', (n) => n.endsWith('.go'))
+    .filter((f) => /"github\.com\/agit8or1\/rem0te\/windows-installer\/internal\/msa\/grant"/.test(read(f)));
+  check('the Go verifier is pure (no clock, file, network or process) and imported by no command or package',
+    J(goImports) === J(['bytes', 'crypto/ed25519', 'encoding/base64', 'encoding/json', 'io', 'regexp', 'time']) && !/time\.Now\(/.test(ggo)
+      && goImporters.length === 0,
+    `imports ${J(goImports)}; imported by ${goImporters.join(', ')}`);
+  check('0088: the closed state set, the five-minute window, the limits, sealed columns and one active key',
+    /CHECK \("state" IN \('issued', 'delivered', 'expired', 'cancelled'\)\)/.test(mig)
+      && /CHECK \("notAfter" > "notBefore" AND "notAfter" - "notBefore" <= interval '5 minutes'\)/.test(mig)
+      && /CHECK \("maxMinutes" BETWEEN 1 AND 480\)/.test(mig) && /CHECK \("idleMinutes" BETWEEN 1 AND 120 AND "idleMinutes" <= "maxMinutes"\)/.test(mig)
+      && /CREATE UNIQUE INDEX "MsaGrantKey_one_active" ON "MsaGrantKey" \(\(true\)\) WHERE "retiredAt" IS NULL;/.test(mig)
+      && (mig.match(/\^\[0-9a-f\]\{24\}:\[0-9a-f\]\{32\}:\[0-9a-f\]\+\$/g) ?? []).length === 3,
+    '0088 migration');
+  check('MSA grants: the suites prove it',
+    / msa-grants[ ;]/.test(read('scripts/run-e2e.sh')) && /unit-msa-grants\.mjs/.test(read('.github/workflows/ci.yml'))
+      && JSON.parse(read('tools/windows-installer/internal/msa/testdata/msa-grants.json')).cases.length >= 60,
+    'e2e-msa-grants.mjs in run-e2e.sh, unit-msa-grants.mjs in CI, the shared fixture');
 }
 
 // ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──

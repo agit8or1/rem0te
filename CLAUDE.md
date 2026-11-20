@@ -244,6 +244,14 @@ previous build's files 404s every browser that already had the app open.
 - **A maintenance window is not containment.** `MonitorSuppression` only
   holds notifications (and ClientSt0r's `alert.raised`); it never touches
   `ContainmentPause`. Keep them apart — §17 checks it.
+- **`MSA_GRANTS=on` must not be set in production until build step 4
+  ships (0.71).** It turns on Managed Secure Access grants: a Platform Admin
+  can then issue a signed session grant (with a one-time RustDesk password)
+  and hand it to a computer's signed agent over `POST /msa/agent/poll`. No
+  agent in 0.71 polls or enforces one, and the grant key is not yet in the
+  signed release metadata, so on a live server it only creates a key and rows
+  that mean nothing. It is exact (`'on'`, nothing else) and is not a console
+  setting. Test stacks set it per suite (`e2e-msa-grants.mjs`).
 - **hbbs logs nothing when a connection fails.** Use
   `deploy/scripts/hbbs-probe.py <id>`. Note it sends a real punch-hole, so the
   endpoint will dial the relay as a side effect.
@@ -1584,6 +1592,46 @@ unit: `unit-msa-readiness.mjs` (in CI) and the Go `internal/msa` tests; lab:
 `TestLabRustdeskPreflight` in the Windows lab's RustDesk jobs (as the
 administrator, and as SYSTEM through the real agent). **It has run only on
 Windows Server in the lab**, never on a desktop or the fleet.
+
+§81 (0.71) is Managed Secure Access grants and the long-poll: build step 3,
+**behind `MSA_GRANTS`, off**. Nothing on a computer acts on a grant, and the
+agent binary is unchanged.
+
+- **The switch** is `msaGrantsEnabled()` in `msa/msa-grants-flag.ts`, exactly
+  `MSA_GRANTS === 'on'`, read nowhere else. `MsaGrantsGate`, a middleware on
+  both grant controllers, answers `404 MSA_NOT_ENABLED` before the throttler,
+  the session guard or the handler. Every public `MsaGrantService` method
+  asserts it again first. Nothing under `deploy/` and not `run-e2e.sh` sets it.
+- **Writers.** Only `MsaGrantService` writes `MsaGrant` and `MsaGrantKey`, and
+  only it uses the purposes `rem0te-msa-grant-key-v1`, `-pw-v1` and
+  `-envelope-v1`. No audit meta, log line or answer carries the private key,
+  the password or the envelope. `MSA_GRANT_KEY_CREATED` is the key id;
+  `MSA_GRANT_ISSUED` is ids, mode, consent and key id.
+- **Issuing** is `POST /msa/grants/test/:endpointId`, Platform Admin, then
+  `assertFresh` naming `msa.grant`. The service then checks, in order:
+  scope; `assertAssigned`; Windows and `runsSignedAgent`; the `remote`
+  pause; the key. It writes the audit row (`logOrFail`) before the grant
+  row. `issueTest` has one caller, and the module exports nothing, so
+  Connect cannot reach it (step 4).
+- **The poll** (`POST /msa/agent/poll`, `@Public`, `@RateLimit(120)`) calls
+  `authenticateDevice` before reading anything. It then admits only an
+  assigned Windows computer whose identity is the signed agent. An ack is
+  conditional on the computer's own issued, unexpired grants. A superseded
+  poll hands nothing over.
+- **The document.** `msa/grant.ts` imports only `node:crypto` and zod. Its
+  `GRANT_PREFIX` (`rem0te-msa-grant-v1\n`) and `REASONS` order are the Go
+  verifier's (`internal/msa/grant`). That package is pure and imported by
+  nothing: it lives outside `internal/msa` because the agent imports that
+  package for the preflight.
+- **0088** CHECKs the four states, the five-minute window, the limits and
+  the sealed columns, and holds one active key (partial unique index).
+
+Behavioural proof: `e2e-msa-grants.mjs` (port 3951, in `run-e2e.sh`). Unit:
+`unit-msa-grants.mjs` (in CI), which rebuilds the shared fixture
+`internal/msa/testdata/msa-grants.json` (`gen-msa-grant-fixture.mjs`,
+test-only keys) and asserts every case, and the Go `internal/msa/grant`
+tests, which assert the same file. **No agent polls, and none of it has run
+on Windows.**
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 

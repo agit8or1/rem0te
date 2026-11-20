@@ -110,6 +110,9 @@ export const CONFIRM_CATALOG = [
   { key: 'credential.reveal', group: 'Devices & enrolment', label: 'Computer passwords', default: 'off',
     prompt: 'reveal a computer password',
     description: "Revealing a computer's stored RustDesk password, or connecting with it." },
+  { key: 'msa.grant', group: 'Devices & enrolment', label: 'Managed Secure Access test grants', default: 'off',
+    prompt: 'issue a test session grant',
+    description: 'Issuing a Managed Secure Access test grant to a computer (Platform Admin; only while the server runs with MSA_GRANTS=on, which is off by default).' },
   // 0.57: discovery and adoption.
   { key: 'devices.adopt', group: 'Devices & enrolment', label: 'Adopting unassigned computers', default: 'off',
     prompt: 'assign or forget unassigned computers',
