@@ -108,6 +108,13 @@ The readiness card gains *Move to Managed (pending)*, *Send test grant*, *Reveal
 verified*, *Roll back to Legacy* and *Finish rollback without the agent*, with the evidence behind each state and
 the grant-key commands. Labels say what was observed, never what was merely saved.
 
+With the switch off the console makes **no request to a gated route**: the readiness answers carry
+`managedControls` (the switch), and the card mounts the managed controls only when it is true (an earlier build
+of this branch asked `GET /msa/managed/:id` on every device page and got a 404 each time; `e2e-ui.mjs` now asserts
+no `/msa/managed` or `/msa/grants` request is made). *Remote access readiness* shows the four readiness tiles while
+the switch is off — a managed tile appears only for a state some computer is really in — and all seven, with a
+testing note, when it is on.
+
 ### Not in this release (step 5)
 
 Connect issuing grants for technicians; `control` mode or any permission above view-only; group or business
