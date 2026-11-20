@@ -1,3 +1,11 @@
+# Plain HTTP: redirect only, without announcing the server (Caddy still
+# answers ACME HTTP-01 challenges on port 80 first). Add the approval
+# signer's name here too if you enable it below.
+http://your-domain.example.com {
+    header -Server
+    redir https://{host}{uri} permanent
+}
+
 your-domain.example.com {
     # Uploaded branding. Served as inert files: a logo has no business running
     # script, and these are same-origin with the console.
@@ -37,6 +45,7 @@ your-domain.example.com {
         X-Content-Type-Options nosniff
         X-Frame-Options DENY
         Referrer-Policy strict-origin-when-cross-origin
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), bluetooth=(), midi=(), accelerometer=(), gyroscope=(), magnetometer=()"
         -Server
     }
 
@@ -66,6 +75,7 @@ your-domain.example.com {
 #        X-Content-Type-Options nosniff
 #        X-Frame-Options DENY
 #        Referrer-Policy no-referrer
+#        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), bluetooth=(), midi=(), accelerometer=(), gyroscope=(), magnetometer=()"
 #        -Server
 #    }
 #    log {

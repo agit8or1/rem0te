@@ -15,6 +15,17 @@ Nothing in sudoers changed: the page uses only the lines `deploy/scripts/install
 `rem0te-f2b` wrapper, `apt-get update|upgrade|install -y fail2ban`, `systemctl enable|start fail2ban`), now with
 `sudo -n` so a missing grant fails at once instead of hanging on a password prompt.
 
+### Changed — the Caddy template (`deploy/caddy/Caddyfile`)
+
+- **Plain HTTP no longer announces `Server: Caddy`.** Caddy's automatic HTTP→HTTPS redirect ignores the site
+  block's `-Server`, so port 80 still sent it; an explicit `http://` block now redirects with `header -Server`
+  (ACME HTTP-01 challenges are still answered first).
+- **`Permissions-Policy`** denies camera, microphone, geolocation, payment, USB, serial, HID, Bluetooth, MIDI and
+  motion sensors on the console and the approval signer. Nothing in the console uses any of them; passkeys
+  (`publickey-credentials-*`) and the clipboard keep their defaults.
+- Applied by hand to this host's `/etc/caddy/Caddyfile` on 2026-11-20 (backup `Caddyfile.bak-20261120`), with
+  the same change for the LAN-address redirect. An existing install picks it up only by editing its Caddyfile.
+
 ### Fixed — each one was on the production page
 
 - **Code audit said "no issues" without auditing anything.** ESLint ran on the deployed `dist/`
