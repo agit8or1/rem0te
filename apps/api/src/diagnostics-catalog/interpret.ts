@@ -70,7 +70,7 @@ const days = (from: string | null | undefined, to: number) => {
   const t = new Date(from).getTime();
   return Number.isNaN(t) ? null : Math.floor((to - t) / DAY);
 };
-const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : /(s|sh|ch|x)$/.test(w) ? 'es' : 's'}`;
 
 export function worst(states: HealthState[]): HealthState {
   if (!states.length) return 'unknown';
