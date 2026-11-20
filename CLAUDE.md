@@ -1838,6 +1838,42 @@ diagnostics key; its one link is the existing diagnostics report. No API
 route names "tools"; the server stays the authority. Unit:
 `unit-device-tools.mjs` (in CI); browser: `e2e-ui.mjs`.
 
+§86 (0.76) is the read-only diagnostics palette: thirteen more catalog keys
+(Defender, firewall, BitLocker, Secure Boot / TPM, local administrators, a
+DNS lookup, a TCP port test, routes, time sync, activation, unexpected
+shutdowns, scheduled tasks, sessions) on §20's path unchanged. No new action,
+nothing signed, no new route, nothing that changes the computer.
+
+- **The agent block** (`# ---- Read-only palette (0.76)` in
+  `windows-script.ts`) passes `assertPaletteBlockSafe`, which `template()`
+  returns through. It allows only `Get-*` and a short read-only list, and no
+  `Set-`/`Enable-`/`Disable-`/`Remove-`/`Start-`/`Stop-`/`Restart-`. It has
+  no `Invoke-Expression`, no download and no script block, a fixed list of
+  .NET calls, and one `New-Object` (the TCP client).
+- **One process.** The call operator appears exactly once:
+  System32's `w32tm.exe /query /status`.
+- **Never read:** a recovery password, a protector id, a product key or a
+  task's actions. §86 checks all of this again, independently of the guard.
+- **Typed parameters** exist for `dns_lookup { name }` and
+  `tcp_port { host, port, timeoutSeconds }` only.
+  - They are checked by `parseDiagnosticParams` at request (before anything
+    is read) and again at delivery (`bad_params`), by 0092's CHECK
+    (`ELSE "params" IS NULL`), and by the agent (`Test-Rem0tePalKeys`).
+  - The host-name rule is the same text in `catalog.ts`,
+    `windows-script.ts` and both CHECK clauses.
+  - Both keys need `computers:connect`.
+- **Interpretation.** `interpret.ts` is pure. Unknown or Unsupported is never
+  Healthy. OS support comes from a static table and goes Unknown after a
+  year.
+- **Agent version.** A palette key on an agent older than 0.76.0 is
+  `DIAGNOSTIC_NEEDS_NEWER_AGENT`. It is the heartbeat script, not a Go
+  build: signed agents get it at the next `rem0te-signed-publish`.
+
+Unit: `unit-diagnostics-palette.mjs` (in CI; with `PWSH`, stub runs).
+Behavioural: `e2e-diagnostics-palette.mjs` (port 4011, in `run-e2e.sh`).
+Lab: `agent-lab-windows (diagnostics palette)`. **It has run only on GitHub's
+Windows Server runner**, never on a desktop or the fleet.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

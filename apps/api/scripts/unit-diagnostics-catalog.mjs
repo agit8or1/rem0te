@@ -31,17 +31,20 @@ const check = (name, ok, detail = '') => { if (ok) passed++; else failures.push(
 // The 0.31 nine; this suite runs them under pwsh. The 0.33 snapshot keys are
 // run under pwsh by unit-system-inventory.mjs.
 const KEYS = ['refresh_inventory', 'disk_space', 'service_health', 'recent_system_errors', 'top_processes', 'network_connectivity', 'dns_resolution', 'pending_updates', 'reboot_status'];
-const ALL_KEYS = [...KEYS, 'process_list', 'service_list', 'network_adapters'];
+// 0.76: the read-only palette, run under pwsh by unit-diagnostics-palette.mjs.
+const PALETTE = ['defender_status', 'firewall_status', 'bitlocker_status', 'secure_boot_tpm', 'local_admins', 'dns_lookup', 'tcp_port', 'route_table', 'time_sync', 'windows_activation', 'unexpected_shutdowns', 'scheduled_tasks', 'signed_in_sessions'];
+const ALL_KEYS = [...KEYS, 'process_list', 'service_list', 'network_adapters', ...PALETTE];
 
 // ── The catalog ─────────────────────────────────────────────────────────────
 {
-  check('the catalog has exactly the twelve stable keys, in order', JSON.stringify(c.DIAGNOSTIC_KEYS) === JSON.stringify(ALL_KEYS) && JSON.stringify(c.CATALOG.map((e) => e.key)) === JSON.stringify(ALL_KEYS));
+  check('the catalog has exactly the twenty-five stable keys, in order', JSON.stringify(c.DIAGNOSTIC_KEYS) === JSON.stringify(ALL_KEYS) && JSON.stringify(c.CATALOG.map((e) => e.key)) === JSON.stringify(ALL_KEYS));
   for (const e of c.CATALOG) {
     check(`${e.key}: read-only, no impact, no approvals, Windows`, e.risk === 'read_only' && e.expectedImpact === 'none' && e.approvals === 'none (read-only)' && JSON.stringify(e.supportedOs) === '["windows"]');
-    check(`${e.key}: label, description, duration and a justified capability`, !!e.label && e.description.length > 20 && ['seconds', 'minute', 'minutes'].includes(e.duration) && ['computers:view', 'computers:event_logs'].includes(e.capability) && e.capabilityReason.length > 10);
+    check(`${e.key}: label, description, duration and a justified capability`, !!e.label && e.description.length > 20 && ['seconds', 'minute', 'minutes'].includes(e.duration) && ['computers:view', 'computers:event_logs', 'computers:connect'].includes(e.capability) && e.capabilityReason.length > 10);
   }
   check('recent_system_errors needs computers:event_logs (it returns log text)', c.catalogEntry('recent_system_errors').capability === 'computers:event_logs');
-  check('every other diagnostic needs only computers:view', c.CATALOG.filter((e) => e.key !== 'recent_system_errors').every((e) => e.capability === 'computers:view'));
+  check('dns_lookup and tcp_port need computers:connect (the requester names where the computer reaches)', c.catalogEntry('dns_lookup').capability === 'computers:connect' && c.catalogEntry('tcp_port').capability === 'computers:connect');
+  check('every other diagnostic needs only computers:view', c.CATALOG.filter((e) => !['recent_system_errors', 'dns_lookup', 'tcp_port'].includes(e.key)).every((e) => e.capability === 'computers:view'));
   check('pending_updates is the slow one', c.catalogEntry('pending_updates').duration === 'minutes');
   for (const k of ['run_script', '__proto__', 'constructor', 'toString', 'Disk_Space', 'disk_space ', '', null, 1, ['disk_space']]) check(`isCatalogKey refuses ${JSON.stringify(k)}`, !c.isCatalogKey(k));
   check('isCatalogKey accepts each catalog key', ALL_KEYS.every((k) => c.isCatalogKey(k)));
@@ -97,8 +100,8 @@ const ALL_KEYS = [...KEYS, 'process_list', 'service_list', 'network_adapters'];
   check('capResult: a small result is untouched', !small.truncated && small.result.a.length === 3);
   check('capResult: an unshrinkable result becomes a marker', c.capResult({ s: 'y'.repeat(10_000) }, 1_000).result.tooLarge === true);
   check('the stored cap is 32 KB and under the database backstop of 64 KB', c.MAX_RESULT_BYTES === 32_768 && /octet_length\("result"::text\) <= 65536/.test(readFileSync(join(here, '..', 'prisma', 'migrations', '0031_diagnostic_runs', 'migration.sql'), 'utf8')));
-  // The newest migration that redefines the constraint (0042 added the snapshot keys).
-  const mig = readFileSync(join(here, '..', 'prisma', 'migrations', '0042_system_inventory', 'migration.sql'), 'utf8');
+  // The newest migration that redefines the constraint (0042 added the snapshot keys, 0092 the palette).
+  const mig = readFileSync(join(here, '..', 'prisma', 'migrations', '0092_diagnostics_palette', 'migration.sql'), 'utf8');
   const dbKeys = [...(/"DiagnosticRun_key_catalog" CHECK \("key" IN \(([\s\S]*?)\)\)/.exec(mig)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
   check('the database CHECK lists exactly the catalog keys', JSON.stringify(dbKeys) === JSON.stringify(ALL_KEYS), JSON.stringify(dbKeys));
 }
@@ -108,6 +111,9 @@ const signed = w.buildSignedWindowsScript('0.31.0');
 const legacy = w.buildLegacyWindowsScript({ version: '1.4.1', host: 'portal.example.com', key: 'A'.repeat(43) + '=', agentVersion: '0.31.0', fallbackVersion: '1.4.1' });
 const hbOf = (s) => /\$hbBody = @'\r?\n([\s\S]*?)\r?\n'@/.exec(s)[1];
 const blockOf = (hb) => hb.slice(hb.indexOf('# ---- Diagnostics catalog (0.31)'), hb.indexOf('# ---- Monitoring (0.29)'));
+// The 0.31 rules apply to everything but the 0.76 palette functions, which
+// have their own guard (one fixed w32tm.exe call; unit-diagnostics-palette.mjs).
+const without = (b) => b.slice(0, b.indexOf('# ---- Read-only palette (0.76)')) + b.slice(b.indexOf('# ---- Snapshots (0.33)'));
 const blk = blockOf(hbOf(signed));
 {
   check('both installer variants carry the same diagnostics block', blk.length > 5000 && blk === blockOf(hbOf(legacy)));
@@ -116,8 +122,8 @@ const blk = blockOf(hbOf(signed));
   check('the agent switch has exactly the catalog keys, and a default that throws', JSON.stringify(arms) === JSON.stringify(ALL_KEYS) && /default \{ throw /.test(sw), JSON.stringify(arms));
   const list = [...(/\$diagKeys = @\(([^)]*)\)/.exec(blk)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
   check('the agent refuses any key not in its own list of the catalog keys', JSON.stringify(list) === JSON.stringify(ALL_KEYS) && /if \(-not \(\$diagKeys -contains \$dk\)\)/.test(blk));
-  check('the block runs no process, expression or download, and changes nothing',
-    !/Invoke-Expression|\biex\b|Start-Process|Invoke-WebRequest|DownloadString|DownloadFile|Net\.WebClient|Invoke-Command|\bStart-Job\b|(Set|Stop|Start|Restart|Suspend|Remove|Clear|New)-(Service|Item|ItemProperty|EventLog)|Set-Content|Out-File|Add-Content|\bsc(\.exe)? |\bcmd(\.exe)? \/c|& \$/i.test(blk));
+  check('the block (palette aside) runs no process, expression or download, and changes nothing',
+    without(blk).length > 5000 && !/Invoke-Expression|\biex\b|Start-Process|Invoke-WebRequest|DownloadString|DownloadFile|Net\.WebClient|Invoke-Command|\bStart-Job\b|(Set|Stop|Start|Restart|Suspend|Remove|Clear|New)-(Service|Item|ItemProperty|EventLog)|Set-Content|Out-File|Add-Content|\bsc(\.exe)? |\bcmd(\.exe)? \/c|& \$/i.test(without(blk)));
   check('one network post, to diagnostic-result', (blk.match(/Invoke-RestMethod/g) ?? []).length === 1 && /enrollment\/diagnostic-result/.test(blk));
   check('only with the device secret', /^if \(\$state\.agentSecret -and \$resp -and \$resp\.data -and \$resp\.data\.diagnostics\)/m.test(blk));
   check('the agent caps what it posts', /if \(\$j\.Length -gt 600000\)/.test(blk) && c.MAX_AGENT_RESULT_CHARS === 600_000);

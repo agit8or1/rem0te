@@ -396,9 +396,9 @@ again exactly as before.
 | Services & Processes | Services and Processes (their tabs), Start/stop/restart a service (`windows.service.control`, from a row), Restart an allowlisted service and Start the Print Spooler (Actions), End a process (`windows.process.stop`, from a row) |
 | Software | Installed software, Install software (`windows.software.install`), Remove a program (`windows.software.remove`) — the Software tab |
 | Windows Updates | Check for updates now and Restart pending? (Patches), Restart signals (a Diagnostics check), Install updates (`windows.update.install`, Patches) |
-| Networking | Network adapters (Network tab), Network connectivity and DNS resolution (Diagnostics checks), *Flush DNS / renew DHCP — coming later* |
-| Security | Security event log (Event logs, with Security and Information chosen), *Antivirus, firewall, BitLocker, Secure Boot — coming later* |
-| Maintenance | Schedule a restart, Cancel a scheduled restart, Collect diagnostic logs (Actions) |
+| Networking | Network adapters (Network tab), Network connectivity, DNS resolution, DNS lookup, TCP port test and Routes (Diagnostics checks; the lookup and port test need *Remote connect*), *Flush DNS / renew DHCP — coming later* |
+| Security | Windows support (from the inventory), Microsoft Defender, Firewall, BitLocker, Secure Boot and TPM, Local administrators (Diagnostics checks, 0.76), Security event log (Event logs, with Security and Information chosen) |
+| Maintenance | Time sync, Windows activation, Unexpected shutdowns, Scheduled tasks, Signed-in sessions (Diagnostics checks, 0.76), Schedule a restart, Cancel a scheduled restart, Collect diagnostic logs (Actions) |
 
 Each tool says whether it can work here, and why not:
 
@@ -414,6 +414,12 @@ Each tool says whether it can work here, and why not:
 | Not set up | No approval signer is configured on this server, so no action can be approved |
 | Unavailable | Archived, not enrolled, in the unassigned pool, or never bound to a device secret |
 | Coming later | No flow does it yet; it is listed so the gap is visible, and nothing is shown in its place — unknown is never healthy |
+
+The 0.76 checks (security posture, networking, maintenance) are read-only and
+need agent 0.76.0 or later; each result is shown as findings marked Healthy,
+Warning, Critical, Unknown or Unsupported, and Unknown or Unsupported is never
+drawn as Healthy. They have run for real only on GitHub's Windows Server runner
+— see [diagnostics.md](diagnostics.md#the-read-only-palette-076).
 
 *Restart pending?* says **Yes**, **No** or **Unknown** from the last update scan;
 it says Unknown until a scan has answered. The panel decides only what it shows

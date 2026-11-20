@@ -69,6 +69,9 @@ listed under *Related work*, with Managed Secure Access, which this audit does n
   timeouts. Interpreter reporting and selection, and run-as, are decided (2026-11-16) but not built.
 - **Remote PowerShell read-only palette**: Partial. The closed, read-only diagnostics catalog (12 checks, Fleet
   evidence) exists. There is no palette and no parameterised command. No interactive terminal, by design.
+  *Update, 0.76.0:* thirteen more read-only checks in Security, Networking and Maintenance groups, typed
+  parameters for a DNS lookup and a TCP port test, per-finding states — **Lab (Windows Server) only**; no desktop
+  or fleet evidence yet.
 - **Built-in reviewed library**: Missing as a library. About half the listed checks exist elsewhere as
   diagnostics, tray self-help, signed actions or monitors. The security posture reads and SFC/DISM, gpupdate,
   time sync and activation are missing.
@@ -115,7 +118,7 @@ listed under *Related work*, with Managed Secure Access, which this audit does n
 
 | Item | Status | Evidence | Where | Gap |
 |---|---|---|---|---|
-| Read-only diagnostics command palette | Partial | Fleet (diagnostics); pwsh | `diagnostics-catalog/catalog.ts`: 12 closed, read-only checks; *Diagnostics* tab | No palette; no typed arguments (a DNS name, a TCP host and port); no route table, scheduled tasks or security reads |
+| Read-only diagnostics command palette | Partial | Fleet (the 12 diagnostics); Lab, Windows Server (the 0.76 palette); pwsh | `diagnostics-catalog/catalog.ts`: 25 closed, read-only checks in groups, typed DNS / TCP parameters (0.76); *Diagnostics* tab | Startup apps; a Windows 10/11 desktop run (Defender, BitLocker and TPM differ from Server); fleet evidence |
 | Interactive terminal | Missing | — | — | Deliberately not built. Needs its own threat model first (conflict 6 below) |
 
 ### Built-in reviewed script library
@@ -341,7 +344,7 @@ tests, and docs. Each says *not run on real hardware* until it has been.
 |---|---|---|---|---|---|---|
 | 1 | **0.75.0: interpreter and tool capability reporting** | Signed agent reports PS 5.1 and 7 presence and version (an optional strict heartbeat block, dropped when it does not parse, as 0.69 did). `GET /endpoints/:id/tools` gives every tool a state: *available*, *needs approval*, *needs a newer agent*, *unsupported OS*, *not assigned*, *contained*, *no signer*. Add `script-run` to the compatibility suites | — | **Yes** (reporting only) | No | Lab: `windows-latest` with and without `pwsh`, as SYSTEM. Fleet: read the four computers' reports |
 | 2 | **0.76.0: Device Tools panel** | The eight groups on the device page from #1's states. Every button opens an existing flow. Nothing new runs | 1 | No | No | None (browser suite) |
-| 3 | **0.77.0: diagnostics palette, read-only** | Diagnostics catalog gains typed arguments (closed charsets, the §39 rule) and the read-only checks: DNS test by name, TCP host and port, routes, scheduled tasks, startup apps, local administrators, sessions (`quser`), Defender, firewall, BitLocker, Secure Boot / TPM, time sync, activation, pending reboot sources. A palette UI. Read-only, portal-side, no signer | 1 | Script slots only (§12); signed channel at the next publish | No | Lab: every check under PS 5.1 as SYSTEM. **A Windows 10/11 desktop**: Defender, BitLocker and TPM differ from Server |
+| 3 | **0.77.0: diagnostics palette, read-only** (shipped as **0.76.0** *Litmus*, after the Tools panel took 0.75.0: everything but startup apps; sessions from `explorer.exe` owners rather than `quser`, which is not on every edition and prints translated text; Lab on Windows Server only) | Diagnostics catalog gains typed arguments (closed charsets, the §39 rule) and the read-only checks: DNS test by name, TCP host and port, routes, scheduled tasks, startup apps, local administrators, sessions (`quser`), Defender, firewall, BitLocker, Secure Boot / TPM, time sync, activation, pending reboot sources. A palette UI. Read-only, portal-side, no signer | 1 | Script slots only (§12); signed channel at the next publish | No | Lab: every check under PS 5.1 as SYSTEM. **A Windows 10/11 desktop**: Defender, BitLocker and TPM differ from Server |
 | 4 | **0.78.0: built-in reviewed library** | Category field (migration). Global, reviewed scripts for the categories that need writes: gpupdate, DHCP renew, flush DNS, WU scan trigger, spooler queue clear, time resync. They still go through the allowlist (§39; one step in direct mode) | 3 | No (`@1`) | No | Lab: each script through `windows.script.run@1` **as SYSTEM** (a scheduled-task harness, as the preflight does) |
 | 5 | **0.79.0: bulk runs, history, notifications** | Group, site and business targets resolved at request time with a preview (count, and each computer left out with its reason); ≤ 25-computer plans under one approval (a one-off automation document); per-business concurrency and pace; searchable run history; finish notifications through notification policies | 4 | No | **Yes** (new recurrence kind) | Sim. Fleet: one bulk run on the four computers, with the owner's approval |
 | 6 | **0.80.0: `windows.script.run@2`** | Interpreter (5.1, 7, later CMD), run-as (`system` / `unprivileged`), a longer closed timeout list bounded by policy, pending-reboot after the run, operator stop of a running script (conflict 3 decided first). `@1` kept for older agents | 1, 5 | **Yes** | **Yes** | Lab: both interpreters, both accounts, stop in the middle, reboot detection, SFC/DISM length. Desktop VM |

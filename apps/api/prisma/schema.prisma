@@ -1594,6 +1594,9 @@ model DiagnosticRun {
 
   key    String
   status DiagnosticRunStatus @default(REQUESTED)
+  // 0.76: the canonical parameters of a palette key that takes them (dns_lookup,
+  // tcp_port), null for every other key. Migration 0092's CHECK holds the schema.
+  params Json?
 
   // Not a relation, like EndpointCommand.requestedById: a run outlives its requester.
   // Null (0.35) means the server asked on its own — an automatic snapshot

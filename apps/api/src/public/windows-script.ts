@@ -135,6 +135,58 @@ export function assertSnapshotBlockSafe(script: string): string {
   return script;
 }
 
+// ── Build-time guard for the 0.76 read-only palette block ────────────────────
+//
+// The same idea as the snapshot guard above, for the thirteen palette keys
+// (security posture, networking, maintenance). It refuses, at build time:
+//   - any command but Get-*, Test-Path, Join-Path, Select-Object, Sort-Object,
+//     Confirm-SecureBootUEFI, New-Object (once, for the TcpClient) and the
+//     block's own Test-Rem0tePal* helpers — so no Set-, Enable-, Disable-,
+//     Remove-, Start-, Stop-, Restart-, Register- or anything else that changes
+//     the computer;
+//   - Invoke-*, iex, script blocks, Add-Type, a download, the environment;
+//   - any static .NET call or method not on a fixed list;
+//   - the call operator anywhere but the one fixed w32tm.exe line;
+//   - reading a BitLocker recovery password or protector id, a product key,
+//     or a scheduled task's actions;
+//   - a host-name check that is not the portal's rule.
+// String literals are blanked before commands are looked for, so an event
+// provider's name ('Microsoft-Windows-Kernel-Power') is not a command.
+export const PALETTE_BLOCK_START = '# ---- Read-only palette (0.76): security, networking, maintenance';
+const PALETTE_ALLOWED_COMMANDS = /^(Get-[A-Za-z0-9]+|Test-Path|Join-Path|Select-Object|Sort-Object|Confirm-SecureBootUEFI|New-Object|Test-Rem0tePal[A-Za-z]+)$/;
+const PALETTE_FORBIDDEN = /Invoke-|\biex\b|\[scriptblock\]|\.Invoke\(|Add-Type|\b(Set|Enable|Disable|Remove|Start|Stop|Restart|Suspend|Resume|Clear|Register|Unregister|Update|Install|Uninstall|Backup|Unlock|Lock|Out|Export|Write|Rename|Move|Copy|Grant|Revoke|Initialize|Repair|Reset)-[A-Za-z]|DownloadString|DownloadFile|WebClient|\$env:|RecoveryPassword|KeyProtectorId|\.(PartialProductKey|ProductKey|OA3xOriginalProductKey)\b|\.Actions\b|CommandLine|ExecutablePath|\{\s*param\b/m;
+const PALETTE_STATIC_CALLS = ['[Diagnostics.Stopwatch]::StartNew', '[Environment]::SystemDirectory', '[Globalization.CultureInfo]::CurrentCulture', '[System.Net.Dns]::BeginGetHostAddresses', '[System.Net.Dns]::EndGetHostAddresses', '[datetime]::Parse'];
+const PALETTE_METHODS = ['AddDays', 'BeginConnect', 'Close', 'ContainsKey', 'EndConnect', 'IndexOf', 'Replace', 'Substring', 'ToString', 'ToUniversalTime', 'ToUpper', 'Trim', 'WaitOne'];
+/** The host-name rule for dns_lookup and tcp_port: catalog.ts HOSTNAME_RE_SOURCE and migration 0092, character for character (§86). */
+export const PALETTE_HOSTNAME_RE = '^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$';
+/** The one process the palette runs, on the one line allowed to. */
+export const PALETTE_EXEC_LINE = "$lines = @(& $w32tm '/query' '/status' | Select-Object -First 40)";
+
+export function assertPaletteBlockSafe(script: string): string {
+  const a = script.indexOf(`\n${PALETTE_BLOCK_START}`);
+  const b = script.indexOf(`\n${SNAPSHOT_BLOCK_START}`, a);
+  if (a < 0 || b < 0) throw new Error('heartbeat: the palette block is missing');
+  const code = script.slice(a, b).split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  const fail = (why: string) => { throw new Error(`heartbeat palette block refused: ${why}`); };
+  const bad = PALETTE_FORBIDDEN.exec(code);
+  if (bad) fail(`forbidden construct "${bad[0]}"`);
+  const bare = code.replace(/'[^'\n]*'/g, "''").replace(/"[^"\n]*"/g, '""');
+  for (const m of bare.matchAll(/\b[A-Z][a-z]+-[A-Z][A-Za-z0-9]+\b/g)) {
+    if (!PALETTE_ALLOWED_COMMANDS.test(m[0])) fail(`"${m[0]}" is not an allowed read-only command`);
+  }
+  if ((bare.match(/\bNew-Object\b/g) ?? []).length !== 1 || !/New-Object System\.Net\.Sockets\.TcpClient\n/.test(code)) fail('New-Object is allowed once, for System.Net.Sockets.TcpClient');
+  for (const m of code.matchAll(/\[[A-Za-z.]+\]::[A-Za-z]+/g)) {
+    if (!PALETTE_STATIC_CALLS.includes(m[0])) fail(`static call ${m[0]} is not on the list`);
+  }
+  for (const m of bare.matchAll(/\.([A-Za-z]+)\(/g)) {
+    if (!PALETTE_METHODS.includes(m[1])) fail(`method .${m[1]}( is not on the list`);
+  }
+  if ([...bare.matchAll(/&\s*[$'"({]/g)].length !== 1 || !code.includes(PALETTE_EXEC_LINE)) fail('the call operator is allowed once, on the fixed w32tm line');
+  if (!code.includes("$w32tm = Join-Path ([Environment]::SystemDirectory) 'w32tm.exe'")) fail('w32tm.exe must be System32\'s, by absolute path');
+  if (!code.includes(`return ($v -cmatch '${PALETTE_HOSTNAME_RE}')`)) fail('Test-Rem0tePalHost must check the portal\'s host-name rule');
+  return script;
+}
+
 function assertSafe(value: string, re: RegExp, what: string): string {
   if (!value) return '';
   if (!re.test(value)) throw new Error(`${what} is not valid for an installer script`);
@@ -501,6 +553,10 @@ Log "  Tray: started by the signed agent in each signed-in session."`,
 }
 
 function template(v: Variant, host: string | null): string {
+  return assertPaletteBlockSafe(templateText(v, host));
+}
+
+function templateText(v: Variant, host: string | null): string {
   return `# Rem0te Managed Agent — Windows installer
 # Server: ${host ?? 'NOT CONFIGURED'}
 # Safe to re-run; existing installs will be reconfigured, not duplicated.
@@ -1526,8 +1582,10 @@ if (\$state.agentSecret) {
 }
 # ---- Diagnostics catalog (0.31) ---------------------------------------------
 # One-click read-only diagnostics. The server sends a run id and a catalog KEY
-# - never a parameter, never script text - and the switch below maps each key
-# to one fixed function in this block. A key that is not in the list is
+# - never script text, and a parameter only for the two keys that have a
+# closed schema (0.76: dns_lookup, tcp_port), checked again by the function
+# that uses it - and the switch below maps each key to one fixed function in
+# this block. A key that is not in the list is
 # refused and reported as failed. Every function only reads: CIM queries,
 # Get-Service, Get-WinEvent, Get-Process, registry presence checks, a DNS
 # lookup and one TCP connect to this agent's own server. Results are capped
@@ -1706,6 +1764,440 @@ function Get-Rem0teDiagReboot {
     try { \$os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop; if (\$os.LastBootUpTime) { \$boot = \$os.LastBootUpTime.ToUniversalTime().ToString('o'); \$up = [int]((Get-Date) - \$os.LastBootUpTime).TotalSeconds } } catch {}
     return @{ pending = (\$src.Count -gt 0); sources = \$src; lastBootAt = \$boot; uptimeSeconds = \$up }
 }
+# ---- Read-only palette (0.76): security, networking, maintenance ----------
+# Thirteen more catalog keys. The same rules as the block above, and a
+# build-time guard of their own (assertPaletteBlockSafe): Get-* cmdlets, CIM
+# reads and two .NET network calls only; nothing is set, enabled, disabled,
+# removed, started, stopped or restarted; no expression, script block or
+# download. One process is run, w32tm.exe from System32 with the fixed
+# arguments /query /status. Two keys take parameters (dns_lookup: a host
+# name; tcp_port: a host, a port and a timeout), and both check them here
+# against the same closed rules the portal and the database use before
+# anything is resolved or dialled. Never read: BitLocker recovery passwords
+# or protector ids, product keys, scheduled-task actions, command lines.
+function Get-Rem0tePalText(\$v, [int]\$max) {
+    if (\$null -eq \$v) { return \$null }
+    \$x = (([string]\$v) -replace '[\\x00-\\x1F\\x7F]', ' ').Trim()
+    if (\$x.Length -gt \$max) { \$x = \$x.Substring(0, \$max) }
+    if (\$x.Length -eq 0) { return \$null }
+    return \$x
+}
+function Get-Rem0tePalMatch(\$v, [string]\$re, [int]\$max) {
+    \$x = Get-Rem0tePalText \$v \$max
+    if (\$null -eq \$x -or \$x -notmatch \$re) { return \$null }
+    return \$x
+}
+function Get-Rem0tePalIso(\$d) {
+    if (\$null -eq \$d) { return \$null }
+    try { return ([datetime]\$d).ToUniversalTime().ToString('o') } catch { return \$null }
+}
+function Get-Rem0tePalInt(\$v) {
+    if (\$null -eq \$v) { return \$null }
+    try { return [int64]\$v } catch { return \$null }
+}
+function Get-Rem0tePalBool(\$v) {
+    if (\$null -eq \$v) { return \$null }
+    if (\$v -is [bool]) { return \$v }
+    \$s = [string]\$v
+    if (\$s -eq 'True') { return \$true }
+    if (\$s -eq 'False') { return \$false }
+    return \$null
+}
+# The host-name rule, the same regular expression as the portal's
+# HOSTNAME_RE_SOURCE and migration 0092's CHECK. A line break is refused
+# separately: .NET's \$ also matches before a final newline.
+function Test-Rem0tePalHost(\$v) {
+    if (-not (\$v -is [string])) { return \$false }
+    if (\$v.Length -lt 1 -or \$v.Length -gt 253) { return \$false }
+    if (\$v -match '[\\r\\n]') { return \$false }
+    return (\$v -cmatch '^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\$')
+}
+# Exactly these property names, nothing more, nothing less.
+function Test-Rem0tePalKeys(\$p, [string[]]\$names) {
+    if (\$null -eq \$p) { return \$false }
+    \$have = @()
+    foreach (\$pp in @(\$p.PSObject.Properties)) { \$have += [string]\$pp.Name }
+    if (\$have.Count -ne \$names.Count) { return \$false }
+    foreach (\$n in \$names) { if (-not (\$have -ccontains \$n)) { return \$false } }
+    return \$true
+}
+function Get-Rem0tePalDefender {
+    if (-not (Get-Command -Name Get-MpComputerStatus -ErrorAction SilentlyContinue)) { return @{ supported = \$false; reason = 'not_installed' } }
+    \$out = @{ supported = \$true }
+    try { \$s = Get-MpComputerStatus -ErrorAction Stop }
+    catch { return @{ supported = \$false; reason = 'not_running'; error = (Get-Rem0teDiagErrText \$_) } }
+    \$out['amServiceEnabled'] = Get-Rem0tePalBool \$s.AMServiceEnabled
+    \$out['antivirusEnabled'] = Get-Rem0tePalBool \$s.AntivirusEnabled
+    \$out['realTimeProtectionEnabled'] = Get-Rem0tePalBool \$s.RealTimeProtectionEnabled
+    \$out['behaviorMonitorEnabled'] = Get-Rem0tePalBool \$s.BehaviorMonitorEnabled
+    \$out['isTamperProtected'] = Get-Rem0tePalBool \$s.IsTamperProtected
+    \$out['runningMode'] = Get-Rem0tePalMatch \$s.AMRunningMode '^[A-Za-z ]{1,32}\$' 32
+    \$out['signatureVersion'] = Get-Rem0tePalMatch \$s.AntivirusSignatureVersion '^[0-9.]{1,32}\$' 32
+    \$out['signatureLastUpdated'] = Get-Rem0tePalIso \$s.AntivirusSignatureLastUpdated
+    \$out['signatureAgeDays'] = Get-Rem0tePalInt \$s.AntivirusSignatureAge
+    \$out['quickScanEndAt'] = Get-Rem0tePalIso \$s.QuickScanEndTime
+    \$out['fullScanEndAt'] = Get-Rem0tePalIso \$s.FullScanEndTime
+    # Antivirus registered with Security Center: client Windows only (Server
+    # has no root/SecurityCenter2), so unread is said, not guessed.
+    \$av = @()
+    \$avRead = \$false
+    try {
+        foreach (\$p in @(Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName AntiVirusProduct -ErrorAction Stop | Select-Object -First 8)) {
+            \$n = Get-Rem0tePalText \$p.displayName 128
+            if (\$n) { \$av += @{ name = \$n; productState = (Get-Rem0tePalInt \$p.productState) } }
+        }
+        \$avRead = \$true
+    }
+    catch {}
+    \$out['securityCenterRead'] = \$avRead
+    \$out['registeredAntivirus'] = \$av
+    return \$out
+}
+function Get-Rem0tePalFirewall {
+    \$profiles = @()
+    foreach (\$p in @(Get-NetFirewallProfile -PolicyStore ActiveStore -ErrorAction Stop | Select-Object -First 3)) {
+        \$profiles += @{
+            name = (Get-Rem0tePalMatch \$p.Name '^[A-Za-z]{1,16}\$' 16)
+            enabled = (Get-Rem0tePalBool \$p.Enabled)
+            defaultInbound = (Get-Rem0tePalMatch \$p.DefaultInboundAction '^[A-Za-z]{1,16}\$' 16)
+            defaultOutbound = (Get-Rem0tePalMatch \$p.DefaultOutboundAction '^[A-Za-z]{1,16}\$' 16)
+        }
+    }
+    \$cats = @()
+    foreach (\$c in @(Get-NetConnectionProfile -ErrorAction SilentlyContinue | Select-Object -First 16)) {
+        \$n = Get-Rem0tePalMatch \$c.NetworkCategory '^[A-Za-z]{1,32}\$' 32
+        if (\$n -and -not (\$cats -contains \$n)) { \$cats += \$n }
+    }
+    \$svc = Get-Service -Name 'mpssvc' -ErrorAction SilentlyContinue
+    \$st = \$null
+    if (\$svc) { \$st = Get-Rem0tePalMatch \$svc.Status '^[A-Za-z]{1,32}\$' 32 }
+    return @{ profiles = \$profiles; activeCategories = \$cats; serviceState = \$st }
+}
+function Get-Rem0tePalBitLocker {
+    if (-not (Get-Command -Name Get-BitLockerVolume -ErrorAction SilentlyContinue)) { return @{ supported = \$false; reason = 'not_installed' } }
+    \$rows = @()
+    try { \$rows = @(Get-BitLockerVolume -ErrorAction Stop | Select-Object -First 26) }
+    catch { return @{ supported = \$false; reason = 'not_available'; error = (Get-Rem0teDiagErrText \$_) } }
+    \$vols = @()
+    foreach (\$v in \$rows) {
+        # The protector TYPE only (Tpm, RecoveryPassword, ...). The protector
+        # objects also carry the recovery password itself; nothing else of
+        # them is read.
+        \$types = @()
+        foreach (\$kp in @(\$v.KeyProtector | Select-Object -First 16)) {
+            \$t = Get-Rem0tePalMatch \$kp.KeyProtectorType '^[A-Za-z]{1,32}\$' 32
+            if (\$t -and -not (\$types -contains \$t)) { \$types += \$t }
+        }
+        \$vols += @{
+            mountPoint = (Get-Rem0tePalMatch \$v.MountPoint '^([A-Za-z]:|\\\\\\\\\\?\\\\Volume\\{[0-9A-Fa-f-]{36}\\}\\\\)\$' 64)
+            volumeType = (Get-Rem0tePalMatch \$v.VolumeType '^[A-Za-z]{1,32}\$' 32)
+            protectionStatus = (Get-Rem0tePalMatch \$v.ProtectionStatus '^[A-Za-z]{1,32}\$' 32)
+            volumeStatus = (Get-Rem0tePalMatch \$v.VolumeStatus '^[A-Za-z]{1,32}\$' 32)
+            lockStatus = (Get-Rem0tePalMatch \$v.LockStatus '^[A-Za-z]{1,32}\$' 32)
+            encryptionMethod = (Get-Rem0tePalMatch \$v.EncryptionMethod '^[A-Za-z0-9]{1,32}\$' 32)
+            encryptionPercentage = (Get-Rem0tePalInt \$v.EncryptionPercentage)
+            protectorTypes = \$types
+        }
+    }
+    return @{ supported = \$true; volumes = \$vols }
+}
+function Get-Rem0tePalBoot {
+    \$sb = 'unknown'
+    \$sbError = \$null
+    try {
+        if (Confirm-SecureBootUEFI -ErrorAction Stop) { \$sb = 'on' } else { \$sb = 'off' }
+    }
+    catch {
+        if (\$_.Exception -is [System.PlatformNotSupportedException] -or [string]\$_.FullyQualifiedErrorId -like '*NotSupported*') { \$sb = 'unsupported' }
+        \$sbError = Get-Rem0teDiagErrText \$_
+    }
+    \$tpm = @{ read = \$false; present = \$null; ready = \$null; enabled = \$null; activated = \$null; manufacturer = \$null; specVersion = \$null; error = \$null }
+    try {
+        \$t = Get-Tpm -ErrorAction Stop
+        \$tpm['read'] = \$true
+        \$tpm['present'] = Get-Rem0tePalBool \$t.TpmPresent
+        \$tpm['ready'] = Get-Rem0tePalBool \$t.TpmReady
+        \$tpm['enabled'] = Get-Rem0tePalBool \$t.TpmEnabled
+        \$tpm['activated'] = Get-Rem0tePalBool \$t.TpmActivated
+        \$tpm['manufacturer'] = Get-Rem0tePalMatch \$t.ManufacturerIdTxt '^[A-Za-z0-9 ._-]{1,32}\$' 32
+    }
+    catch { \$tpm['error'] = Get-Rem0teDiagErrText \$_ }
+    try {
+        \$w = Get-CimInstance -Namespace 'root/cimv2/Security/MicrosoftTpm' -ClassName Win32_Tpm -ErrorAction Stop | Select-Object -First 1
+        if (\$w) { \$tpm['specVersion'] = Get-Rem0tePalMatch \$w.SpecVersion '^[0-9., ]{1,32}\$' 32 }
+    }
+    catch {}
+    return @{ secureBoot = \$sb; secureBootError = \$sbError; tpm = \$tpm }
+}
+function Get-Rem0tePalAdmins {
+    # The local Administrators group by its well-known SID, so a translated
+    # group name does not matter. Names, kind and source only; no SID leaves
+    # the computer, only whether it is the built-in Administrator (-500).
+    \$rows = @()
+    \$how = 'localaccounts'
+    \$err = \$null
+    try {
+        foreach (\$m in @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop | Select-Object -First 100)) {
+            \$sid = [string]\$m.SID
+            \$rows += @{
+                name = (Get-Rem0tePalMatch \$m.Name '^[A-Za-z0-9 _.\$@\\\\-]{1,128}\$' 128)
+                kind = (Get-Rem0tePalMatch \$m.ObjectClass '^[A-Za-z]{1,16}\$' 16)
+                source = (Get-Rem0tePalMatch \$m.PrincipalSource '^[A-Za-z]{1,32}\$' 32)
+                builtinAdministrator = (\$sid -like 'S-1-5-21-*-500')
+            }
+        }
+    }
+    catch {
+        # Get-LocalGroupMember fails outright on one member it cannot resolve
+        # (an orphaned or Entra ID SID); the CIM association does not.
+        \$err = Get-Rem0teDiagErrText \$_
+        \$how = 'cim'
+        \$rows = @()
+        try {
+            \$g = Get-CimInstance -ClassName Win32_Group -Filter "LocalAccount=True AND SID='S-1-5-32-544'" -ErrorAction Stop | Select-Object -First 1
+            foreach (\$a in @(Get-CimAssociatedInstance -InputObject \$g -Association Win32_GroupUser -ErrorAction Stop | Select-Object -First 100)) {
+                \$sid = [string]\$a.SID
+                \$kind = 'User'
+                if ([string]\$a.CimClass.CimClassName -eq 'Win32_Group') { \$kind = 'Group' }
+                \$rows += @{
+                    name = (Get-Rem0tePalMatch ([string]\$a.Domain + '\\' + [string]\$a.Name) '^[A-Za-z0-9 _.\$@\\\\-]{1,128}\$' 128)
+                    kind = \$kind
+                    source = \$null
+                    builtinAdministrator = (\$sid -like 'S-1-5-21-*-500')
+                }
+            }
+        }
+        catch { \$how = 'none'; \$err = Get-Rem0teDiagErrText \$_ }
+    }
+    return @{ method = \$how; members = \$rows; error = \$err }
+}
+function Get-Rem0tePalDns(\$p) {
+    if (-not (Test-Rem0tePalKeys \$p @('name'))) { throw 'The lookup takes exactly one parameter, name' }
+    \$n = \$p.name
+    if (-not (Test-Rem0tePalHost \$n)) { throw 'The name is not a valid host name' }
+    \$res = @()
+    foreach (\$c in @(Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'IPEnabled=True' -ErrorAction SilentlyContinue)) {
+        foreach (\$s in @(\$c.DNSServerSearchOrder)) {
+            \$v = Get-Rem0tePalMatch \$s '^[0-9a-fA-F:.%]{2,64}\$' 64
+            if (\$v -and -not (\$res -contains \$v)) { \$res += \$v }
+        }
+    }
+    \$item = @{ name = \$n; ok = \$false; addresses = @(); latencyMs = \$null; error = \$null; timedOut = \$false }
+    \$sw = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        # The system resolver (hosts file, cache, then DNS), as applications
+        # see it, bounded at ten seconds.
+        \$ar = [System.Net.Dns]::BeginGetHostAddresses(\$n, \$null, \$null)
+        if (\$ar.AsyncWaitHandle.WaitOne(10000)) {
+            \$addrs = @()
+            foreach (\$a in @([System.Net.Dns]::EndGetHostAddresses(\$ar) | Select-Object -First 16)) {
+                \$v = Get-Rem0tePalMatch \$a.IPAddressToString '^[0-9a-fA-F:.%]{2,64}\$' 64
+                if (\$v) { \$addrs += \$v }
+            }
+            \$item['addresses'] = \$addrs
+            \$item['ok'] = (\$addrs.Count -gt 0)
+        }
+        else { \$item['timedOut'] = \$true; \$item['error'] = 'No answer within 10 seconds' }
+    }
+    catch { \$item['error'] = (Get-Rem0teDiagErrText \$_) }
+    \$item['latencyMs'] = [int]\$sw.ElapsedMilliseconds
+    return @{ resolvers = @(\$res | Select-Object -First 8); lookup = \$item }
+}
+function Get-Rem0tePalTcp(\$p) {
+    if (-not (Test-Rem0tePalKeys \$p @('host', 'port', 'timeoutSeconds'))) { throw 'The test takes exactly three parameters: host, port, timeoutSeconds' }
+    \$h = \$p.host
+    if (-not (Test-Rem0tePalHost \$h)) { throw 'The host is not a valid host name' }
+    \$port = \$p.port
+    if (-not (\$port -is [int] -or \$port -is [long]) -or \$port -lt 1 -or \$port -gt 65535) { throw 'The port must be a whole number from 1 to 65535' }
+    \$to = \$p.timeoutSeconds
+    if (-not (\$to -is [int] -or \$to -is [long]) -or -not (@(1, 2, 3, 5, 10) -contains [int]\$to)) { throw 'The timeout must be 1, 2, 3, 5 or 10 seconds' }
+    # A connect and a close: no byte is sent or read.
+    \$r = @{ host = \$h; port = [int]\$port; timeoutSeconds = [int]\$to; outcome = 'error'; latencyMs = \$null; remoteAddress = \$null; socketError = \$null; error = \$null }
+    \$tc = New-Object System.Net.Sockets.TcpClient
+    \$sw = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        \$ar = \$tc.BeginConnect(\$h, [int]\$port, \$null, \$null)
+        if (\$ar.AsyncWaitHandle.WaitOne([int]\$to * 1000)) {
+            \$tc.EndConnect(\$ar)
+            \$r['outcome'] = 'open'
+            \$r['latencyMs'] = [int]\$sw.ElapsedMilliseconds
+            try { \$r['remoteAddress'] = Get-Rem0tePalMatch \$tc.Client.RemoteEndPoint.Address.IPAddressToString '^[0-9a-fA-F:.%]{2,64}\$' 64 } catch {}
+        }
+        else { \$r['outcome'] = 'timeout'; \$r['error'] = ('No answer within ' + [int]\$to + ' seconds') }
+    }
+    catch {
+        \$e = \$_.Exception
+        while (\$e.InnerException) { \$e = \$e.InnerException }
+        if (\$e -is [System.Net.Sockets.SocketException]) {
+            \$code = [int]\$e.ErrorCode
+            \$r['socketError'] = \$code
+            if (\$code -eq 10061) { \$r['outcome'] = 'refused' }
+            elseif (\$code -eq 11001 -or \$code -eq 11004) { \$r['outcome'] = 'not_resolved' }
+            elseif (\$code -eq 10060) { \$r['outcome'] = 'timeout' }
+            elseif (\$code -eq 10065 -or \$code -eq 10051) { \$r['outcome'] = 'unreachable' }
+        }
+        \$r['error'] = (Get-Rem0teDiagErrText \$_)
+        \$r['latencyMs'] = [int]\$sw.ElapsedMilliseconds
+    }
+    finally { \$tc.Close() }
+    return \$r
+}
+function Get-Rem0tePalRoutes {
+    \$all = @(Get-NetRoute -ErrorAction Stop)
+    \$out = @()
+    foreach (\$r in @(\$all | Sort-Object -Property RouteMetric | Select-Object -First 400)) {
+        \$d = Get-Rem0tePalMatch \$r.DestinationPrefix '^[0-9a-fA-F:.%]{2,64}/[0-9]{1,3}\$' 70
+        if (\$null -eq \$d) { continue }
+        # Multicast and broadcast routes are the same on every computer.
+        if (\$d -like 'ff00::/8' -or \$d -like '224.0.0.0/4' -or \$d -like '255.255.255.255/32') { continue }
+        if (\$out.Count -ge 200) { break }
+        \$out += @{
+            destination = \$d
+            nextHop = (Get-Rem0tePalMatch \$r.NextHop '^[0-9a-fA-F:.%]{2,64}\$' 64)
+            interfaceAlias = (Get-Rem0tePalText \$r.InterfaceAlias 128)
+            routeMetric = (Get-Rem0tePalInt \$r.RouteMetric)
+            addressFamily = (Get-Rem0tePalMatch \$r.AddressFamily '^IPv[46]\$' 8)
+        }
+    }
+    return @{ routeCount = [int]\$all.Count; routes = \$out }
+}
+# One w32tm /query /status field: by its English label, else by its line.
+function Get-Rem0tePalW32(\$byLabel, \$vals, [string]\$label, [int]\$pos) {
+    if (\$byLabel.ContainsKey(\$label)) { return [string]\$byLabel[\$label] }
+    if (\$pos -lt \$vals.Count) { return [string]\$vals[\$pos].value }
+    return ''
+}
+function Get-Rem0tePalTime {
+    # w32tm.exe from System32 with fixed arguments: the time service's own
+    # view of its last sync. Its labels are translated on non-English
+    # Windows, so lines are matched by position as well as by label.
+    \$par = \$null
+    try { \$par = Get-ItemProperty -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters' -ErrorAction Stop } catch {}
+    \$type = \$null; \$ntp = \$null
+    if (\$par) {
+        \$type = Get-Rem0tePalMatch \$par.Type '^[A-Za-z0-9]{1,16}\$' 16
+        \$ntp = Get-Rem0tePalMatch \$par.NtpServer '^[A-Za-z0-9.,: -]{1,256}\$' 256
+    }
+    \$svc = Get-Service -Name 'W32Time' -ErrorAction SilentlyContinue
+    \$svcState = \$null; \$svcStart = \$null
+    if (\$svc) { \$svcState = Get-Rem0tePalMatch \$svc.Status '^[A-Za-z]{1,32}\$' 32; \$svcStart = Get-Rem0tePalMatch \$svc.StartType '^[A-Za-z]{1,32}\$' 32 }
+    \$q = @{ ran = \$false; exitCode = \$null; leapIndicator = \$null; stratum = \$null; lastSyncAt = \$null; source = \$null; pollSeconds = \$null }
+    \$w32tm = Join-Path ([Environment]::SystemDirectory) 'w32tm.exe'
+    if (Test-Path -LiteralPath \$w32tm -PathType Leaf) {
+        \$lines = @(& \$w32tm '/query' '/status' | Select-Object -First 40)
+        \$q['ran'] = \$true
+        \$q['exitCode'] = [int]\$LASTEXITCODE
+        \$vals = @()
+        foreach (\$l in \$lines) { \$s = [string]\$l; \$i = \$s.IndexOf(':'); if (\$i -gt 0) { \$vals += @{ label = \$s.Substring(0, \$i).Trim(); value = \$s.Substring(\$i + 1).Trim() } } }
+        if (\$q['exitCode'] -eq 0 -and \$vals.Count -ge 8) {
+            \$byLabel = @{}
+            foreach (\$v in \$vals) { \$byLabel[\$v.label] = \$v.value }
+            \$li = Get-Rem0tePalW32 \$byLabel \$vals 'Leap Indicator' 0
+            if (\$li -match '^\\s*([0-3])') { \$q['leapIndicator'] = [int]\$Matches[1] }
+            \$stv = Get-Rem0tePalW32 \$byLabel \$vals 'Stratum' 1
+            if (\$stv -match '^\\s*([0-9]{1,2})') { \$q['stratum'] = [int]\$Matches[1] }
+            \$ls = Get-Rem0tePalW32 \$byLabel \$vals 'Last Successful Sync Time' 6
+            try { \$q['lastSyncAt'] = ([datetime]::Parse(\$ls, [Globalization.CultureInfo]::CurrentCulture)).ToUniversalTime().ToString('o') } catch {}
+            \$q['source'] = Get-Rem0tePalMatch (Get-Rem0tePalW32 \$byLabel \$vals 'Source' 7) '^[A-Za-z0-9 .,:()_-]{1,128}\$' 128
+            \$pi = Get-Rem0tePalW32 \$byLabel \$vals 'Poll Interval' 8
+            if (\$pi -match '\\(([0-9]{1,7})s\\)') { \$q['pollSeconds'] = [int]\$Matches[1] }
+        }
+    }
+    return @{ type = \$type; ntpServer = \$ntp; serviceState = \$svcState; serviceStart = \$svcStart; status = \$q }
+}
+function Get-Rem0tePalActivation {
+    # Windows' own licence rows (its application id), status and grace only.
+    # The partial product key is in the filter and never in the result.
+    \$rows = @()
+    foreach (\$l in @(Get-CimInstance -ClassName SoftwareLicensingProduct -Filter "ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL" -ErrorAction Stop | Select-Object -First 4)) {
+        \$rows += @{
+            name = (Get-Rem0tePalText \$l.Name 128)
+            channel = (Get-Rem0tePalMatch \$l.ProductKeyChannel '^[A-Za-z0-9_:. -]{1,32}\$' 32)
+            licenseStatus = (Get-Rem0tePalInt \$l.LicenseStatus)
+            graceMinutes = (Get-Rem0tePalInt \$l.GracePeriodRemaining)
+        }
+    }
+    return @{ products = \$rows }
+}
+function Get-Rem0tePalShutdowns {
+    # Last 30 days of the System log: Kernel-Power 41 (rebooted without a
+    # clean shutdown), EventLog 6008 (the previous shutdown was unexpected)
+    # and WER 1001 (rebooted from a bugcheck). Times, kinds and the bugcheck
+    # code only; no message text, so View computers is enough.
+    \$since = (Get-Date).AddDays(-30)
+    \$ev = @()
+    try { \$ev = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = @(41, 6008, 1001); StartTime = \$since } -MaxEvents 200 -ErrorAction Stop) }
+    catch { if (\$_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*') { throw } }
+    \$out = @()
+    foreach (\$e in \$ev) {
+        \$prov = [string]\$e.ProviderName
+        \$kind = \$null
+        if (\$e.Id -eq 41 -and \$prov -eq 'Microsoft-Windows-Kernel-Power') { \$kind = 'kernel_power' }
+        elseif (\$e.Id -eq 6008 -and \$prov -eq 'EventLog') { \$kind = 'unexpected_shutdown' }
+        elseif (\$e.Id -eq 1001 -and (\$prov -eq 'Microsoft-Windows-WER-SystemErrorReporting' -or \$prov -eq 'BugCheck')) { \$kind = 'bugcheck' }
+        if (\$null -eq \$kind) { continue }
+        \$code = \$null
+        try {
+            \$first = \$e.Properties[0].Value
+            if (\$kind -eq 'kernel_power' -and \$null -ne \$first -and [int64]\$first -gt 0) { \$code = ('0x{0:X8}' -f [int64]\$first) }
+            if (\$kind -eq 'bugcheck' -and ([string]\$first) -match '^(0x[0-9A-Fa-f]{8})') { \$code = \$Matches[1].ToUpper().Replace('0X', '0x') }
+        }
+        catch {}
+        \$out += @{ at = (Get-Rem0tePalIso \$e.TimeCreated); kind = \$kind; eventId = [int]\$e.Id; bugcheckCode = \$code }
+        if (\$out.Count -ge 50) { break }
+    }
+    return @{ windowDays = 30; events = \$out }
+}
+function Get-Rem0tePalTasks {
+    # Names, folder, state, author, run-as account and last and next run.
+    # A task's actions (what it runs, with its arguments) are never read.
+    \$all = @(Get-ScheduledTask -ErrorAction Stop)
+    \$ms = 0
+    \$out = @()
+    foreach (\$t in \$all) {
+        \$path = [string]\$t.TaskPath
+        if (\$path -like '\\Microsoft\\*') { \$ms++; continue }
+        if (\$out.Count -ge 300) { continue }
+        \$info = \$null
+        try { \$info = Get-ScheduledTaskInfo -InputObject \$t -ErrorAction Stop } catch {}
+        \$last = \$null; \$next = \$null; \$res = \$null
+        if (\$info) { \$last = Get-Rem0tePalIso \$info.LastRunTime; \$next = Get-Rem0tePalIso \$info.NextRunTime; \$res = Get-Rem0tePalInt \$info.LastTaskResult }
+        \$runAs = \$null
+        if (\$t.Principal) { \$runAs = Get-Rem0tePalMatch \$t.Principal.UserId '^[A-Za-z0-9 _.\$@\\\\-]{1,128}\$' 128 }
+        \$out += @{
+            path = (Get-Rem0tePalText \$path 256)
+            name = (Get-Rem0tePalText \$t.TaskName 256)
+            state = (Get-Rem0tePalMatch \$t.State '^[A-Za-z]{1,16}\$' 16)
+            author = (Get-Rem0tePalText \$t.Author 128)
+            runAs = \$runAs
+            lastRunAt = \$last
+            lastResult = \$res
+            nextRunAt = \$next
+        }
+    }
+    return @{ taskCount = [int]\$all.Count; microsoftTasks = \$ms; tasks = \$out }
+}
+function Get-Rem0tePalSessions {
+    # Who is signed in: the owner of each session's Explorer. A session with
+    # another shell, or none, is not seen; the result says how it was read.
+    \$namesRead = \$true
+    \$ps = @()
+    try { \$ps = @(Get-Process -Name 'explorer' -IncludeUserName -ErrorAction Stop) }
+    catch { \$namesRead = \$false; \$ps = @(Get-Process -Name 'explorer' -ErrorAction SilentlyContinue) }
+    \$seen = @{}
+    \$out = @()
+    foreach (\$pr in @(\$ps | Select-Object -First 64)) {
+        \$sid = [int]\$pr.SessionId
+        if (\$seen.ContainsKey(\$sid)) { continue }
+        \$seen[\$sid] = \$true
+        \$u = \$null
+        if (\$namesRead) { \$u = Get-Rem0tePalMatch \$pr.UserName '^[A-Za-z0-9 _.\$@\\\\-]{1,128}\$' 128 }
+        \$since = \$null
+        try { \$since = Get-Rem0tePalIso \$pr.StartTime } catch {}
+        \$out += @{ sessionId = \$sid; user = \$u; since = \$since }
+    }
+    return @{ method = 'explorer'; userNamesRead = \$namesRead; sessions = \$out }
+}
 # ---- Snapshots (0.33): processes, services, network adapters --------------
 # Three more catalog keys, each a full list for the device workspace's
 # Processes, Services and Network tabs. Same rules as above: Get-* cmdlets
@@ -1812,7 +2304,7 @@ function Get-Rem0teSnapNetwork {
     return @{ adapters = \$ads }
 }
 if (\$state.agentSecret -and \$resp -and \$resp.data -and \$resp.data.diagnostics) {
-    \$diagKeys = @('refresh_inventory', 'disk_space', 'service_health', 'recent_system_errors', 'top_processes', 'network_connectivity', 'dns_resolution', 'pending_updates', 'reboot_status', 'process_list', 'service_list', 'network_adapters')
+    \$diagKeys = @('refresh_inventory', 'disk_space', 'service_health', 'recent_system_errors', 'top_processes', 'network_connectivity', 'dns_resolution', 'pending_updates', 'reboot_status', 'process_list', 'service_list', 'network_adapters', 'defender_status', 'firewall_status', 'bitlocker_status', 'secure_boot_tpm', 'local_admins', 'dns_lookup', 'tcp_port', 'route_table', 'time_sync', 'windows_activation', 'unexpected_shutdowns', 'scheduled_tasks', 'signed_in_sessions')
     foreach (\$dr in @(\$resp.data.diagnostics | Select-Object -First 3)) {
         if (-not \$dr) { continue }
         \$rid = [string]\$dr.id
@@ -1835,6 +2327,19 @@ if (\$state.agentSecret -and \$resp -and \$resp.data -and \$resp.data.diagnostic
                 'process_list' { \$out = Get-Rem0teSnapProcesses }
                 'service_list' { \$out = Get-Rem0teSnapServices }
                 'network_adapters' { \$out = Get-Rem0teSnapNetwork }
+                'defender_status' { \$out = Get-Rem0tePalDefender }
+                'firewall_status' { \$out = Get-Rem0tePalFirewall }
+                'bitlocker_status' { \$out = Get-Rem0tePalBitLocker }
+                'secure_boot_tpm' { \$out = Get-Rem0tePalBoot }
+                'local_admins' { \$out = Get-Rem0tePalAdmins }
+                'dns_lookup' { \$out = Get-Rem0tePalDns \$dr.params }
+                'tcp_port' { \$out = Get-Rem0tePalTcp \$dr.params }
+                'route_table' { \$out = Get-Rem0tePalRoutes }
+                'time_sync' { \$out = Get-Rem0tePalTime }
+                'windows_activation' { \$out = Get-Rem0tePalActivation }
+                'unexpected_shutdowns' { \$out = Get-Rem0tePalShutdowns }
+                'scheduled_tasks' { \$out = Get-Rem0tePalTasks }
+                'signed_in_sessions' { \$out = Get-Rem0tePalSessions }
                 default { throw 'Not a catalog diagnostic' }
             }
             Send-Rem0teDiag \$rid \$dk 'completed' \$out \$null

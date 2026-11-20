@@ -9,8 +9,13 @@ From 0.33 the same catalog also carries three **full snapshots** — every proce
 connection — shown on the device page's **Processes**, **Services** and **Network** tabs rather than in the
 Diagnostics list. See [The Processes, Services and Network tabs](#the-processes-services-and-network-tabs).
 
-This is not a "run a command" feature, and it cannot become one. The request names a **catalog key** and nothing
-else; there is no box to type into. Why that matters is in [inventory.md](inventory.md#why-there-is-no-run-a-command-button).
+From 0.76 it also carries thirteen more read-only checks — **security posture, networking and maintenance** — each
+result read as findings marked Healthy, Warning, Critical, Unknown or Unsupported. See
+[The read-only palette (0.76)](#the-read-only-palette-076).
+
+This is not a "run a command" feature, and it cannot become one. The request names a **catalog key** — and, for the
+two 0.76 network tests only, a host name and port checked against closed rules — and nothing else; there is no
+script box to type into. Why that matters is in [inventory.md](inventory.md#why-there-is-no-run-a-command-button).
 
 ## The catalog
 
@@ -70,7 +75,8 @@ handed to a computer per check-in, and the fleet abuse guard applies as it does 
 
 ## What the computer does
 
-The heartbeat response carries `diagnostics: [{ id, key }]` — never parameters — and only to a heartbeat that
+The heartbeat response carries `diagnostics: [{ id, key }]` — with `params` only for `dns_lookup` and `tcp_port`
+(0.76, below) — and only to a heartbeat that
 authenticated with the device secret. The agent checks the key against its own copy of the catalog, maps it to one
 fixed function compiled into `heartbeat.ps1`, and posts `running`, then the result, to
 `/enrollment/diagnostic-result` with the device secret. The functions only read: CIM queries, `Get-Service`,
@@ -92,8 +98,8 @@ keeps only the monitored services this server asked about. `refresh_inventory` a
 inventory service exactly as the automatic collections do, and the run keeps a summary.
 
 The catalog is closed in four places: the request (unknown key: 400 `UNKNOWN_DIAGNOSTIC`), the heartbeat, the
-result, and the database — `DiagnosticRun.key` has a `CHECK` constraint listing the twelve keys (migration 0042
-added the snapshots), and results over 64 KB (256 KB for a snapshot) are refused by another. Adding a diagnostic is
+result, and the database — `DiagnosticRun.key` has a `CHECK` constraint listing the twenty-five keys (migration 0042
+added the snapshots, 0092 the palette, along with a `CHECK` on `params`), and results over 64 KB (256 KB for a snapshot) are refused by another. Adding a diagnostic is
 a migration on purpose. `scripts/check-security-invariants.mjs` §20 checks all of it, and §31 the snapshots.
 
 **Who may see what.** Every route here applies business scope *and* the device-list visibility rule: a Business User
@@ -111,13 +117,89 @@ secret is `ENDPOINT_HEARTBEAT_REJECTED`, reason `diagnostic_result_unauthenticat
 
 | Route | Who |
 |---|---|
-| `GET /endpoints/:id/diagnostics/catalog` | View computers; the catalog with `allowed` per entry for you |
-| `POST /endpoints/:id/diagnostics/runs` `{ "key": "disk_space" }` | View computers, plus the entry's permission |
+| `GET /endpoints/:id/diagnostics/catalog` | View computers; the catalog with `allowed` per entry for you; from 0.76 also `group`, `minAgent`, `params`, `evidence` and `needsNewerAgent` per entry, the computer's `agentVersion`, and `osSupport` |
+| `POST /endpoints/:id/diagnostics/runs` `{ "key": "disk_space" }` | View computers, plus the entry's permission. `params` only for `dns_lookup` (`{ "name" }`) and `tcp_port` (`{ "host", "port", "timeoutSeconds" }`), otherwise 400 `INVALID_DIAGNOSTIC_PARAMS`; 409 `DIAGNOSTIC_NEEDS_NEWER_AGENT` for a 0.76 key on an older agent |
 | `GET /endpoints/:id/diagnostics/runs` | View computers; results withheld where you lack the entry's permission |
 | `GET /endpoints/:id/diagnostics/runs/:runId` | As above |
 | `GET /endpoints/:id/diagnostics/snapshots/:key` (0.33) | View computers; `key` is `process_list`, `service_list` or `network_adapters` (anything else: 400 `UNKNOWN_SNAPSHOT`). The newest completed result, `takenAt`, an open refresh (`pending`) and a newer failure (`lastFailure`); from 0.35 also `automatic` (`state`, `reason`, `nextAt`, `intervalMinutes`, `basis`), `agentSilent` and `agentVersion`. Reading it marks the tab as open (see below) |
 | `GET /admin/snapshot-schedule`, `PUT /admin/snapshot-schedule` (0.35) | Platform Admin. The automatic snapshot schedule; `PUT` takes any of `enabled`, `minutes` (per key) and `watchMinutes` |
 | `POST /enrollment/diagnostic-result` | The computer, with its device secret |
+
+## The read-only palette (0.76)
+
+Thirteen checks in three groups on the Diagnostics tab (and in the device's Tools panel), each run on its own or —
+for Security — all five with **Run all security checks**. Same path as every other key: the same request route,
+heartbeat delivery, device secret, scope, capability, containment, audit, expiry and limits. No new action, nothing
+signed, no new route. Every one only reads; none changes the computer.
+
+| Key | Group | What it reads | Never read | Needs |
+|---|---|---|---|---|
+| *Windows support* (no key) | Security | Worked out **on the server** from the stored inventory's caption and build against a static end-of-servicing table (`OS_SUPPORT` in `interpret.ts`, reviewed 2026-11-20; it reads Unknown once it is a year old). Nothing is asked of the computer or of any network service | — | View computers |
+| `defender_status` | Security | `Get-MpComputerStatus`: real-time, behaviour monitoring, tamper protection, running mode, signature version and date, last quick and full scan; on a desktop, the antivirus products Security Center lists (Server has no Security Center) | Exclusions, threat history | View computers |
+| `firewall_status` | Security | `Get-NetFirewallProfile -PolicyStore ActiveStore` (what is in force, including Group Policy): each profile on or off and its default actions; the active network categories; the firewall service | Rules | View computers |
+| `bitlocker_status` | Security | `Get-BitLockerVolume`: each volume's type, protection, encryption state, method and percentage, and the **kinds** of protector (TPM, recovery password…). Unsupported where the BitLocker feature is not installed (Server by default) | **Recovery passwords and protector ids** | View computers |
+| `secure_boot_tpm` | Security | `Confirm-SecureBootUEFI` (on, off, or Unsupported on legacy BIOS), `Get-Tpm` and `Win32_Tpm`'s spec version | TPM owner authorisation | View computers |
+| `local_admins` | Security | The Administrators group by its SID (`S-1-5-32-544`): names, kinds and sources only, from `Get-LocalGroupMember`, falling back to the CIM group association where that fails (it does on some domain-joined machines) | SIDs | View computers |
+| `dns_lookup` | Networking | The system resolver's answer for a name **you give**, with the time taken, and the configured DNS servers | — | **Remote connect** |
+| `tcp_port` | Networking | Whether a TCP connection to a host and port **you give** opens within 1, 2, 3, 5 or 10 seconds: open, refused, no answer, not resolved. It connects and closes; nothing is sent or read | — | **Remote connect** |
+| `route_table` | Networking | `Get-NetRoute`: the default route and gateway, and up to 400 routes (multicast and link-local dropped) | — | View computers |
+| `time_sync` | Maintenance | The W32Time configuration from the registry, the service state, and `w32tm.exe /query /status` from System32 — the only program the palette runs | — | View computers |
+| `windows_activation` | Maintenance | `SoftwareLicensingProduct` for Windows: name, channel, licence status, grace remaining | **Product keys, partial keys** | View computers |
+| `unexpected_shutdowns` | Maintenance | The System log, last 30 days, ids 41 (Kernel-Power), 6008 (unexpected shutdown) and 1001 (blue screen, with its bugcheck code), at most 200 events | Event message text | View computers |
+| `scheduled_tasks` | Maintenance | Every task that is not Microsoft's: path, name, state, author, the account it runs as, last and next run and last result; Microsoft's own are only counted | **Task actions** (commands and arguments) | View computers |
+| `signed_in_sessions` | Maintenance | Who is signed in, one row per session, from the owners of `explorer.exe` | — | View computers |
+
+`reboot_status` (0.31) is interpreted the same way from 0.76.
+
+**Why Remote connect for two of them.** Every other check reports a fact about the computer. The DNS lookup and
+TCP test make it reach a host the requester names, on its own network — what a remote session already lets someone
+do — so they need the same permission (`computers:connect`).
+
+**Typed parameters.** Only those two keys take any, and only these: `dns_lookup { name }` and `tcp_port { host,
+port, timeoutSeconds }`. A name is 1–253 characters of dot-separated labels (letters, digits and inner hyphens, at
+most 63 to a label; an IPv4 literal passes, a URL, a path, a space, a shell character or a line break does not); a
+port is an integer 1–65535; the timeout is one of 1, 2, 3, 5 or 10 seconds (default 5). The same rule, character
+for character, is checked by the portal (`parseDiagnosticParams`, at request and again at delivery), by the
+database (0092's `CHECK`) and by the agent (`Test-Rem0tePalHost`, `Test-Rem0tePalKeys`), which refuses anything
+else as a failed run before it resolves or dials anything. Asking again for the same target returns the open run; a
+different target is a new run. The request's audit entry records the parameters.
+
+**States.** Each result is turned into findings by one pure module, `apps/api/src/diagnostics-catalog/interpret.ts`,
+each stamped with the time of the evidence (the run's completion). The overall state is the worst finding, in the
+order Critical, Warning, Unknown, Unsupported, Healthy — so **something that could not be read is never shown as
+Healthy**. The thresholds:
+
+| Finding | Warning | Critical |
+|---|---|---|
+| Defender signatures | older than 3 days | older than 7 days; real-time protection off with no other antivirus enabled |
+| Last scan | older than 14 days | — |
+| Firewall profile | off and not in use; inbound allowed by default | in use and off; Public off; the service stopped |
+| BitLocker | protection suspended, not encrypted, encrypting | — |
+| Secure Boot / TPM | off / absent or not ready | — |
+| Local administrators | more than three user accounts besides the built-in one; a member that cannot be named | — |
+| DNS lookup | slower than one second | failed or timed out |
+| TCP port | — | refused, no answer, not resolved |
+| Time sync | last sync older than 8 days; a free-running clock; the service stopped | last sync older than 30 days |
+| Activation | in a grace period | unlicensed, or in notification |
+| Unexpected shutdowns | one or two dirty restarts | three or more, or any blue screen |
+| Scheduled tasks | a task whose last run failed | — |
+| Windows support | ends within 90 days | ended (unless the computer has Extended Security Updates, which cannot be seen from here) |
+
+**Agent version.** The checks live in the served `heartbeat.ps1`, not in the signed Go agent, so there is no new
+agent binary. A standard agent gets them when it is reinstalled or updated from a 0.76 portal; a signed agent gets
+them with the next signed release published at or after 0.76.0 (`rem0te-signed-publish`). A computer that reports an
+older agent is refused a palette key with `DIAGNOSTIC_NEEDS_NEWER_AGENT`, and the tab says so. If an older agent is
+handed one anyway, it reports the key as unknown and the run fails at once with "update the agent".
+
+**The guard.** Every served script passes `assertPaletteBlockSafe` (`windows-script.ts`) when it is built: only
+`Get-*` and a short read-only list of commands; no `Set-`, `Enable-`, `Disable-`, `Remove-`, `Start-`, `Stop-` or
+`Restart-`; no `Invoke-Expression`, no download, no script block; a fixed list of .NET calls; one `New-Object` (the
+TCP client); and the call operator exactly once, on the `w32tm.exe /query /status` line. It also refuses reading a
+recovery password, protector id, product key or a task's actions. `check-security-invariants.mjs` §86 checks the
+same things independently of the guard.
+
+**It has run only on GitHub's Windows Server runner**, and the console labels every palette check that way. See
+[How far this has been tested](#how-far-this-has-been-tested).
 
 ## The Processes, Services and Network tabs
 
@@ -265,6 +347,7 @@ would mean widening what that agent reads and runs, so the tabs are not shown fo
 |---|---|---|---|
 | The diagnostics block in `heartbeat.ps1` | **No** | Parsed by PowerShell 7.4's parser, both installer variants; run under pwsh against stub cmdlets (`unit-diagnostics-catalog.mjs`) | — |
 | Request, delivery, results, expiry, limits, cross-business refusal, audit | — | — | Real API and database with a simulated heartbeat (`e2e-diagnostics-catalog.mjs`) |
+| The 0.76 palette (thirteen checks) | **Windows Server only**: GitHub's `windows-latest` runner, Windows PowerShell 5.1, as the administrator and as SYSTEM, read-only, with a before/after configuration fingerprint (`tools/lab/windows/diagnostics-lab.mjs`, the `agent-lab-windows (diagnostics palette)` job). Never on Windows 10/11 or the fleet | Parsed and run under pwsh against stubs in a desktop and a Server world, with secrets planted in the stubs that must not reach a post; the build-time guard proven by mutation (`unit-diagnostics-palette.mjs`) | Catalog, typed parameters, the 0092 CHECK, Remote connect, the agent-version refusal, results and interpretation (`e2e-diagnostics-palette.mjs`) |
 | The 0.33 snapshot functions | **No** | Parsed with `ParseFile()`; run under pwsh 7.4 against stub `Get-Process` / `Get-CimInstance`, elevated and not, with hostile values and 1,505 processes (`unit-system-inventory.mjs`); the build-time guard proven by mutation | Request → heartbeat → result, hostile and oversized results, visibility, A/B isolation, capability, audit (`e2e-system-inventory.mjs`) |
 
 The stubs stand in for `Get-CimInstance`, `Get-Service`, `Get-WinEvent`, `Get-Process`, the registry and the TCP

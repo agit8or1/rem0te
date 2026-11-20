@@ -12,7 +12,9 @@
 // order the states are decided in, the restart-pending wording (unknown is
 // never "No"), who may request an action (mirroring AccessPolicyService), and
 // that every action id, diagnostics key and tab the panel names exists in the
-// API's catalogs and the device page.
+// API's catalogs and the device page. 0.76: the palette's tools, the
+// diagnostics catalog's allowed / needsNewerAgent facts, and that
+// lib/diagnostic-params.ts gives the API's answer on every input tried.
 
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -41,7 +43,8 @@ const ALL_ACTIONS = ['windows.service.start@1', 'windows.update.install@1', 'win
   'windows.logs.collect@1', 'windows.script.run@1', 'windows.software.install@1', 'windows.software.uninstall@1', 'windows.software.remove@1',
   'windows.service.control@1', 'windows.process.stop@1'];
 const base = () => ({
-  agentKind: 'signed', readOnlyOs: null, agentVersion: '0.73.0', agentActions: [...ALL_ACTIONS], status: 'ACTIVE', pooled: false, agentBound: true,
+  agentKind: 'signed', readOnlyOs: null, agentVersion: '0.76.0', agentActions: [...ALL_ACTIONS], status: 'ACTIVE', pooled: false, agentBound: true,
+  diagAllowed: null, diagNeedsNewer: null,
   connectivity: 'online', connectivityText: 'Online', signer: { configured: true, approval: 'signed' }, paused: [],
   perms: { view: true, eventLogs: true, requestLow: true, requestHigh: true }, actionRisk: { 'windows.service.start': 'low' }, restartPending: false,
 });
@@ -70,7 +73,12 @@ function scenario(name, f, expect) {
   check('eight groups, in the directive order', j(T.TOOL_GROUPS.map((g) => g.label)) === j(['Diagnostics', 'PowerShell / Scripts', 'Services & Processes', 'Software', 'Windows Updates', 'Networking', 'Security', 'Maintenance']));
   check('every tool belongs to a known group', tools.every((t) => T.TOOL_GROUPS.some((g) => g.id === t.group)));
   const later = tools.filter((t) => kindOf(t) === 'later').map((t) => t.id);
-  check('only two tools are "coming later" (flush DNS / renew DHCP, security posture)', j(later) === j(['flush-dns', 'security-posture']), j(later));
+  check('only one tool is "coming later" (flush DNS / renew DHCP); 0.76 replaced the security-posture placeholder with its checks', j(later) === j(['flush-dns']), j(later));
+  const keysOf = (g) => tools.filter((t) => t.group === g && kindOf(t) === 'diagnostic').map((t) => t.need.key);
+  check('0.76: the security group lists the five palette security checks', ['defender_status', 'firewall_status', 'bitlocker_status', 'secure_boot_tpm', 'local_admins'].every((k) => keysOf('security').includes(k)), j(keysOf('security')));
+  check('0.76: the networking group lists DNS lookup, TCP port and routes', ['dns_lookup', 'tcp_port', 'route_table'].every((k) => keysOf('networking').includes(k)), j(keysOf('networking')));
+  check('0.76: the maintenance group lists the five palette maintenance checks', ['time_sync', 'windows_activation', 'unexpected_shutdowns', 'scheduled_tasks', 'signed_in_sessions'].every((k) => keysOf('maintenance').includes(k)), j(keysOf('maintenance')));
+  check('0.76: the OS support row is the server\'s own check, opening the Diagnostics tab at os_support', (() => { const o = tools.find((t) => t.id === 'os-support'); return o && kindOf(o) === 'server' && j(o.target) === j({ kind: 'tab', tab: 'diagnostics', check: 'os_support' }); })());
   check('a "coming later" tool has no target', tools.filter((t) => kindOf(t) === 'later').every((t) => t.target === null));
   check('every other tool has a target', tools.filter((t) => kindOf(t) !== 'later').every((t) => t.target !== null));
 
@@ -90,6 +98,10 @@ function scenario(name, f, expect) {
     check(`${t.id}: opens the Diagnostics tab at ${t.need.key}`, t.target.kind === 'tab' && t.target.tab === 'diagnostics' && t.target.check === t.need.key, j(t.target));
     const ev = /capability: 'computers:event_logs'/.test(m?.[0] ?? '');
     check(`${t.id}: needs Read event logs exactly when the API's entry does`, !!t.need.eventLogs === ev);
+    const cn = /capability: 'computers:connect'/.test(m?.[0] ?? '');
+    check(`${t.id}: needs Connect exactly when the API's entry does`, !!t.need.connect === cn);
+    const pal = /\.\.\.PAL\b/.test(m?.[0] ?? '');
+    check(`${t.id}: a palette key names minAgent 0.76.0, as PALETTE_MIN_AGENT does`, !pal || t.need.minAgent === '0.76.0', j(t.need));
   }
   // The logs collection needs event logs, as the catalog's requiresCapability says.
   check('logs-collect needs Read event logs (requiresCapability)', tools.find((t) => t.id === 'logs-collect').need.eventLogs === true && /requiresCapability: 'computers:event_logs'/.test(apiCatalog));
@@ -113,6 +125,7 @@ function scenario(name, f, expect) {
 // ── Scenarios: every tool in every state ────────────────────────────────────
 const isAction = (t) => kindOf(t) === 'action';
 const later = (t) => kindOf(t) === 'later';
+const palette = (t) => kindOf(t) === 'diagnostic' && t.need.minAgent === '0.76.0';
 
 // 1. A signed agent, online, everything supported, two-approver mode.
 {
@@ -214,11 +227,30 @@ for (const c of ['offline', 'agent_silent']) {
 // 13. An agent older than the snapshots (0.33.0).
 {
   const f = base(); f.agentKind = 'standard'; f.agentActions = []; f.agentVersion = '0.32.4';
-  scenario('agent 0.32.4', f, (t) => (later(t) ? 'coming_later' : ['services', 'processes', 'network'].includes(t.id) || isAction(t) ? 'needs_newer_agent' : 'available'));
+  scenario('agent 0.32.4', f, (t) => (later(t) ? 'coming_later' : ['services', 'processes', 'network'].includes(t.id) || palette(t) || isAction(t) ? 'needs_newer_agent' : 'available'));
   const g = base(); g.agentVersion = 'garbage';
   check('an unparseable version is not "too old"', states(g)['services'].state === 'available');
   const x = base(); x.agentVersion = '0.33.0';
   check('exactly 0.33.0 is new enough', states(x)['services'].state === 'available');
+}
+
+// 14. 0.76: the palette, from the diagnostics catalog's allowed and needsNewerAgent.
+{
+  const f = base(); f.agentVersion = '0.75.0';
+  const g = scenario('agent 0.75.0', f, (t) => (later(t) ? 'coming_later' : palette(t) ? 'needs_newer_agent' : isAction(t) ? 'needs_approval' : 'available'));
+  check('0.75 agent: a palette check names 0.76.0', /0\.76\.0/.test(g['defender'].reason), g['defender'].reason);
+  const n = base(); n.diagNeedsNewer = { defender_status: true };
+  const gn = states(n);
+  check('the server saying needsNewerAgent wins over a version the browser thinks is new enough', gn['defender'].state === 'needs_newer_agent' && gn['firewall'].state === 'available', `${gn['defender'].state} ${gn['firewall'].state}`);
+  const c = base(); c.diagAllowed = { dns_lookup: false, tcp_port: false, route_table: true };
+  const gc = scenario('no connect', c, (t) => (later(t) ? 'coming_later' : ['dns-lookup', 'tcp-port'].includes(t.id) ? 'not_permitted' : isAction(t) ? 'needs_approval' : 'available'));
+  check('no connect: names the Remote connect permission', /Remote connect/.test(gc['tcp-port'].reason), gc['tcp-port'].reason);
+  const o = base(); o.diagAllowed = {};
+  check('a key the catalog did not list is not refused by the browser (the server decides)', states(o)['dns-lookup'].state === 'available');
+  const w = base(); w.diagAllowed = { dns_lookup: false }; w.diagNeedsNewer = { dns_lookup: true };
+  check('order: permission before agent', states(w)['dns-lookup'].state === 'not_permitted');
+  const os = base(); os.agentKind = 'rustdesk-only'; os.agentActions = []; os.agentVersion = null;
+  check('the OS support row is available with RustDesk only (it reads the inventory on the server)', states(os)['os-support'].state === 'available');
 }
 
 check('every state is reached by some scenario', T.TOOL_STATES.every((s) => reached.has(s)), `missing: ${T.TOOL_STATES.filter((s) => !reached.has(s)).join(', ')}`);
@@ -286,6 +318,44 @@ check('compareVersions', T.compareVersions('0.33.0', '0.33.0') === 0 && T.compar
     /CAP\.ACTIONS_REQUEST/.test(ap) && /isOwnerRole\(actor\.roleType\)/.test(ap) && /fixRequests === 'higher_risk'/.test(ap) && /standardWorkstationsOnly/.test(ap));
   const caps = readFileSync(join(API, 'src', 'rbac', 'capabilities.ts'), 'utf8');
   check('owner roles agree with LEGACY_OWNER_ROLES', /LEGACY_OWNER_ROLES: RoleType\[\] = \[RoleType\.TENANT_OWNER, RoleType\.TENANT_ADMIN\]/.test(caps));
+}
+
+// ── 0.76: lib/diagnostic-params.ts mirrors the API's parseDiagnosticParams ──
+{
+  const load = (file) => {
+    const out = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 } }).outputText;
+    if (/\brequire\s*\(/.test(out)) throw new Error(`${file} imports a module: it must stay pure`);
+    const m = { exports: {} };
+    new Function('module', 'exports', out)(m, m.exports);
+    return m.exports;
+  };
+  const W = load(join(WEB, 'lib', 'diagnostic-params.ts'));
+  const A = load(join(API, 'src', 'diagnostics-catalog', 'catalog.ts'));
+  check('params: the host-name pattern is the API\'s, character for character', W.HOSTNAME_RE_SOURCE === A.HOSTNAME_RE_SOURCE);
+  check('params: the same maximum, timeouts, default and fields', W.HOSTNAME_MAX === A.HOSTNAME_MAX && j(W.TCP_TIMEOUTS) === j(A.TCP_TIMEOUTS)
+    && W.DEFAULT_TCP_TIMEOUT === A.DEFAULT_TCP_TIMEOUT && j(W.PARAM_FIELDS) === j(A.PARAM_FIELDS));
+  const long = `${'a'.repeat(63)}.`.repeat(4).slice(0, 254);
+  const names = ['intranet.example.com', '10.0.0.1', 'a', 'A-1.b-2', '-bad.example', 'bad-.example', 'bad_name', 'has space', 'trailing.', '.lead', 'x..y', 'ok\n', 'a\r', '*.example.com',
+    'http://x', 'x:80', `${'a'.repeat(63)}.com`, `${'a'.repeat(64)}.com`, long, long.slice(0, 253), '', 'ünïcode.example', 42, null];
+  const inputs = [undefined, null, {}, [], 'x', { name: 'x' }, { extra: 1 }, Object.create(null)];
+  for (const n of names) {
+    inputs.push({ name: n }, { name: n, extra: true }, { host: n, port: 445 }, { host: n, port: 445, timeoutSeconds: 3 });
+  }
+  for (const port of [0, 1, 22, 65535, 65536, -1, 1.5, '445', NaN, null]) inputs.push({ host: 'h.example', port });
+  for (const t of [1, 2, 3, 4, 5, 10, 11, 0, '5', null]) inputs.push({ host: 'h.example', port: 80, timeoutSeconds: t });
+  const LABELS = { dns_lookup: 'DNS lookup', tcp_port: 'TCP port test', disk_space: 'Disk space' };
+  let compared = 0;
+  for (const [key, schema] of [['dns_lookup', 'dns_lookup'], ['tcp_port', 'tcp_port'], ['disk_space', undefined]]) {
+    for (const raw of inputs) {
+      const a = A.parseDiagnosticParams(key, raw);
+      const w = W.parseDiagnosticParams(schema, LABELS[key], raw);
+      compared++;
+      check(`params: ${key} ${j(raw)} gives the API's answer`, j(a) === j(w), `api ${j(a)} web ${j(w)}`);
+    }
+  }
+  check('params: compared a few hundred inputs', compared > 200, String(compared));
+  check('params: portFromText takes digits only', W.portFromText('445') === 445 && Number.isNaN(W.portFromText('44 5')) && Number.isNaN(W.portFromText('0x1BD')) && Number.isNaN(W.portFromText('1e3')) && Number.isNaN(W.portFromText('')));
+  check('params: the summary of a run', W.paramsSummary({ name: 'x.example' }) === 'x.example' && W.paramsSummary({ host: 'h', port: 1, timeoutSeconds: 5 }) === 'h:1 (5 s)' && W.paramsSummary(null) === null);
 }
 
 if (failures.length) {

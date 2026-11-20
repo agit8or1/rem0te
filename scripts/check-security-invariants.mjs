@@ -743,6 +743,9 @@ check(
   const keys = [...(/export const DIAGNOSTIC_KEYS = \[([\s\S]*?)\] as const;/.exec(cat)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
   const ws = read('apps/api/src/public/windows-script.ts');
   const blk = ws.slice(ws.indexOf('# ---- Diagnostics catalog (0.31)'), ws.indexOf('# ---- Monitoring (0.29)'));
+  // The 0.76 palette functions sit inside this block under their own guard and
+  // their own section (§86), which allows one fixed System32 w32tm.exe call.
+  const blkNoPal = blk.slice(0, blk.indexOf('# ---- Read-only palette (0.76)')) + blk.slice(blk.indexOf('# ---- Snapshots (0.33)'));
   const sw = /switch -Exact \(\\\$dk\) \{([\s\S]*?)\n {12}\}/.exec(blk)?.[1] ?? '';
   const arms = [...sw.matchAll(/^\s+'([a-z_]+)' \{/gm)].map((m) => m[1]);
   const listed = [...(/\\\$diagKeys = @\(([^)]*)\)/.exec(blk)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
@@ -754,7 +757,8 @@ check(
       && blk.indexOf('\\$diagKeys -contains') < blk.indexOf('switch -Exact'),
     '$diagKeys must equal DIAGNOSTIC_KEYS and be checked before the switch');
   check('the diagnostics block runs no process, expression or download, and writes nothing',
-    blk.length > 5000 && !/Invoke-Expression|\biex\b|Start-Process|Invoke-WebRequest|DownloadString|DownloadFile|Net\.WebClient|Invoke-Command|Start-Job|(Set|Stop|Start|Restart|Suspend|Remove|Clear|New)-(Service|Item|ItemProperty|EventLog)\b|Set-Content|Out-File|Add-Content|& \\\$/i.test(blk)
+    blk.length > 5000 && !/Invoke-Expression|\biex\b|Start-Process|Invoke-WebRequest|DownloadString|DownloadFile|Net\.WebClient|Invoke-Command|Start-Job|(Set|Stop|Start|Restart|Suspend|Remove|Clear|New)-(Service|Item|ItemProperty|EventLog)\b|Set-Content|Out-File|Add-Content|& \\\$/i.test(blkNoPal)
+      && blk.indexOf('# ---- Read-only palette (0.76)') > 0 && blkNoPal.length > 5000
       && (blk.match(/Invoke-RestMethod/g) ?? []).length === 1 && /enrollment\/diagnostic-result/.test(blk),
     'read-only blocks only, and one post to /enrollment/diagnostic-result');
   check('the agent caps a diagnostic result before posting it',
@@ -764,19 +768,28 @@ check(
   const repFn = dsvc.slice(dsvc.indexOf('async report('), dsvc.indexOf('private async shapeAgentResult('));
   check('the server accepts only catalog keys, on request and on result',
     /^\s*if \(!isCatalogKey\(key\)\) \{\s*throw new BadRequestException/m.test(reqFn.split('\n').slice(0, 3).join('\n'))
-      && /^\s*if \(!isCatalogKey\(dto\.key\)\) return \{ accepted: false/m.test(repFn.split('\n').slice(0, 3).join('\n'))
+      && /^\s*if \(!isCatalogKey\(dto\.key\)\) return dto\.key === 'unknown' && dto\.state === 'failed' \? this\.refusedByAgent\(endpointId, dto\.runId\) : \{ accepted: false/m.test(repFn.split('\n').slice(0, 3).join('\n'))
+      // 0.76: an agent older than a key reports key 'unknown'; that only fails this device's own open run.
+      && /private async refusedByAgent\(endpointId: string, runId: string\) \{\s*const run = await this\.prisma\.diagnosticRun\.findFirst\(\{ where: \{ id: runId, endpointId \} \}\);[\s\S]{0,300}if \(run\.status !== 'DELIVERED' && run\.status !== 'RUNNING'\) return/.test(dsvc)
       && /if \(run\.key !== dto\.key\) return \{ accepted: false/.test(repFn)
       && /export function isCatalogKey\(k: unknown\): k is DiagnosticKey \{\s*return typeof k === 'string' && BY_KEY\.has\(k\);/.test(cat),
     'request() and report() must refuse a non-catalog key first; report() must match the run\'s key');
   const mig = read('apps/api/prisma/migrations/0031_diagnostic_runs/migration.sql');
-  // 0042 (0.33) redefines the key list; the newest definition is the one in force.
-  const migKeys = read('apps/api/prisma/migrations/0042_system_inventory/migration.sql');
+  // 0042 (0.33) and 0092 (0.76) redefine the key list; the newest definition is the one in force.
+  const migKeys = read('apps/api/prisma/migrations/0092_diagnostics_palette/migration.sql');
   const dbKeys = [...(/"DiagnosticRun_key_catalog" CHECK \("key" IN \(([\s\S]*?)\)\)/.exec(migKeys)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
   check('the database refuses a key outside the catalog', JSON.stringify(dbKeys) === JSON.stringify(keys), `CHECK lists: ${dbKeys.join(',')}`);
-  check('a request carries a key and nothing else',
-    /export class RequestDiagnosticDto \{\s*@IsString\(\)\s*@Length\(1, 64\)\s*@Matches\([^\n]*\)\s*key!: string;\s*\}/.test(read('apps/api/src/diagnostics-catalog/diagnostics-catalog.controller.ts'))
-      && /out\.push\(\{ id: r\.id, key: r\.key \}\)/.test(dsvc) && !/params/.test(dsvc.slice(dsvc.indexOf('async forHeartbeat('), dsvc.indexOf('private async requesterStillAllowed('))),
-    'no parameters from the console, none to the agent');
+  // 0.76: a key and, for dns_lookup and tcp_port only, the closed schema of
+  // parseDiagnosticParams — at request, again at delivery, in 0092's CHECK
+  // and on the agent (§86).
+  const hbFn = dsvc.slice(dsvc.indexOf('async forHeartbeat('), dsvc.indexOf('private async requesterStillAllowed('));
+  check('a request carries a key and, only where the catalog has a schema, its closed parameters',
+    /export class RequestDiagnosticDto \{\s*@IsString\(\)\s*@Length\(1, 64\)\s*@Matches\([^\n]*\)\s*key!: string;\s*@IsOptional\(\)\s*@IsObject\(\)\s*params\?: Record<string, unknown>;\s*\}/.test(read('apps/api/src/diagnostics-catalog/diagnostics-catalog.controller.ts'))
+      && /const parsed = parseDiagnosticParams\(key, rawParams\);\s*if \(!parsed\.ok\) throw new BadRequestException\(\{ code: 'INVALID_DIAGNOSTIC_PARAMS'/.test(reqFn)
+      && reqFn.indexOf('parseDiagnosticParams(') < reqFn.indexOf('this.assertVisible(')
+      && /const reparsed = parseDiagnosticParams\(r\.key, r\.params \?\? undefined\);/.test(hbFn)
+      && /out\.push\(reparsed\.ok && reparsed\.params \? \{ id: r\.id, key: r\.key, params: reparsed\.params \} : \{ id: r\.id, key: r\.key \}\)/.test(hbFn),
+    'parameters only through parseDiagnosticParams, at request (before anything is read) and again at delivery; the agent is handed only the re-parsed copy');
   check('stored diagnostic results are size-capped',
     /const capped = capResult\(shaped, resultCapFor\(run\.key\)\);[\s\S]{0,300}result: capped\.result/.test(repFn) && /export const MAX_RESULT_BYTES = 32_768;/.test(cat)
       && /CHECK \("result" IS NULL OR octet_length\("result"::text\) <= 65536\)/.test(mig),
@@ -787,7 +800,7 @@ check(
   check('only an authenticated heartbeat is handed diagnostic runs', /if \(authenticated\) \{\s*try \{\s*diagnostics = await this\.diagnostics\.forHeartbeat\(node\.endpointId\);/.test(enr), 'forHeartbeat must be gated on authenticated');
   // 0.35: a run with no requester (an automatic snapshot, §50) has nobody to
   // re-check; every run that has one still is.
-  check('a run is re-authorized against its requester at delivery', /const why = !entry \? 'unknown_key' : !ep \? 'endpoint_missing' : r\.requestedById === null \? \(isSnapshotKey\(r\.key\) \? null : 'not_a_snapshot'\) : await this\.requesterStillAllowed\(r, entry, ep\);/.test(dsvc), 'forHeartbeat must check the requester before DELIVERED');
+  check('a run is re-authorized against its requester at delivery', /const why = !entry \? 'unknown_key' : !ep \? 'endpoint_missing' : !reparsed\.ok \? 'bad_params' : r\.requestedById === null \? \(isSnapshotKey\(r\.key\) \? null : 'not_a_snapshot'\) : await this\.requesterStillAllowed\(r, entry, ep\);/.test(dsvc), 'forHeartbeat must check the requester before DELIVERED');
 }
 
 // 21. Scheduled client updates (0.32). A business's update policy makes the
@@ -3137,7 +3150,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && sa.indexOf('this.quiet.get(endpointId)') < sa.indexOf('this.prisma.')
       && /if \(!due\.length\) \{\s*const until = quietUntil\(schedule, history, now, QUIET_CAP_MS\);/.test(sa)
       && /export const QUIET_CAP_MS = 60 \* 60_000;/.test(dsch) && /if \(!h \|\| h\.open\) return null;/.test(dsch)
-      && /async report\([^)]*\) \{\s*if \(!isCatalogKey\(dto\.key\)\) return \{ accepted: false, reason: 'unknown_key' \};\s*this\.quiet\.delete\(endpointId\);/.test(dsvc)
+      && /async report\([^)]*\) \{\s*if \(!isCatalogKey\(dto\.key\)\) return [^\n]*\{ accepted: false, reason: 'unknown_key' \};\s*this\.quiet\.delete\(endpointId\);/.test(dsvc)
       && /if \(n\.count\) \{ this\.quiet\.delete\(r\.endpointId\);/.test(dsvc)
       && /this\.scheduleCache = null;\s*this\.quiet\.clear\(\);/.test(dsvc)
       && /if \(this\.quiet\.size >= QUIET_MAX_ENTRIES\) this\.quiet\.clear\(\);/.test(sa),
@@ -7275,6 +7288,89 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('Tools: the suites prove it',
     /unit-device-tools\.mjs/.test(read('.github/workflows/ci.yml')) && /async function toolsPanel\(/.test(read('apps/web/scripts/e2e-ui.mjs')),
     'unit-device-tools.mjs in CI; toolsPanel() in e2e-ui.mjs');
+}
+
+// ── §86 (0.76): the read-only diagnostics palette ───────────────────────────
+//     Thirteen more catalog keys (security posture, networking, maintenance),
+//     through §20's path unchanged: same delivery, auth, scope, capability,
+//     containment, audit and retention. No new action, nothing signed, and
+//     nothing that changes the computer:
+//       - The agent's palette block passes assertPaletteBlockSafe, which every
+//         served script goes through: Get-* and a short read-only list only,
+//         no Set-/Enable-/Disable-/Remove-/Start-/Stop-/Restart-, no
+//         Invoke-Expression, no download, no script block, a fixed list of
+//         .NET calls, and the call operator once — System32 w32tm.exe with
+//         /query /status. Checked here again, independently of that guard.
+//       - It reads no BitLocker recovery password or protector id, no product
+//         key, and no scheduled task's actions.
+//       - Typed parameters exist only for dns_lookup and tcp_port, a closed
+//         schema in parseDiagnosticParams; the same host-name rule character
+//         for character in the portal, the agent and 0092's CHECK; the agent
+//         checks the exact fields again. Both keys need computers:connect.
+//       - Every palette key has a sanitizer; interpret.ts imports nothing.
+{
+  console.log('\n§86 Diagnostics palette (read-only checks, typed DNS / TCP parameters)');
+  const ws = read('apps/api/src/public/windows-script.ts');
+  const cat = read('apps/api/src/diagnostics-catalog/catalog.ts');
+  const ipt = read('apps/api/src/diagnostics-catalog/interpret.ts');
+  const mig = read('apps/api/prisma/migrations/0092_diagnostics_palette/migration.sql');
+  const PAL = ['defender_status', 'firewall_status', 'bitlocker_status', 'secure_boot_tpm', 'local_admins', 'dns_lookup', 'tcp_port', 'route_table', 'time_sync', 'windows_activation', 'unexpected_shutdowns', 'scheduled_tasks', 'signed_in_sessions'];
+  const keys = [...(/export const DIAGNOSTIC_KEYS = \[([\s\S]*?)\] as const;/.exec(cat)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  check('palette: the thirteen keys are catalog keys, after the twelve, in order', JSON.stringify(keys.slice(12)) === JSON.stringify(PAL) && keys.length === 25, keys.join(','));
+  check('palette: every served script goes through assertPaletteBlockSafe',
+    /function template\(v: Variant, host: string \| null\): string \{\s*return assertPaletteBlockSafe\(templateText\(v, host\)\);\s*\}/.test(ws)
+      && /const PALETTE_ALLOWED_COMMANDS = \/\^\(Get-\[A-Za-z0-9\]\+\|Test-Path\|Join-Path\|Select-Object\|Sort-Object\|Confirm-SecureBootUEFI\|New-Object\|Test-Rem0tePal\[A-Za-z\]\+\)\$\/;/.test(ws)
+      && /const PALETTE_FORBIDDEN = \/Invoke-\|\\biex\\b\|/.test(ws) && /\(Set\|Enable\|Disable\|Remove\|Start\|Stop\|Restart\|/.test(ws)
+      && ['DownloadString', 'RecoveryPassword', 'KeyProtectorId', 'PartialProductKey', '\\.Actions\\b', '\\$env:'].every((t) => ws.slice(ws.indexOf('const PALETTE_FORBIDDEN'), ws.indexOf('const PALETTE_STATIC_CALLS')).includes(t)),
+    'template() must return assertPaletteBlockSafe(templateText(...)) and the guard keep its lists');
+  // Independently of the guard: the block as it sits in the source.
+  const a = ws.indexOf('\n# ---- Read-only palette (0.76)');
+  const pal = ws.slice(a, ws.indexOf('\n# ---- Snapshots (0.33)', a)).split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  const bare = pal.replace(/'[^'\n]*'/g, "''").replace(/"[^"\n]*"/g, '""');
+  const cmds = [...new Set([...bare.matchAll(/\b[A-Z][a-z]+-[A-Z][A-Za-z0-9]+\b/g)].map((m) => m[0]))];
+  const okCmd = (c) => /^Get-/.test(c) || ['Test-Path', 'Join-Path', 'Select-Object', 'Sort-Object', 'Confirm-SecureBootUEFI', 'New-Object'].includes(c) || /^Test-Rem0tePal[A-Za-z]+$/.test(c);
+  check('palette: the block uses only Get-* and the read-only list, and no verb that changes anything',
+    a > 0 && pal.length > 15000 && cmds.every(okCmd) && !/\b(Set|Enable|Disable|Remove|Start|Stop|Restart|Register|Unregister|Clear|Update|Install|Uninstall|Invoke|Out|Export|Write|Add)-[A-Z]/.test(bare),
+    `commands: ${cmds.filter((c) => !okCmd(c)).join(', ') || cmds.join(', ')}`);
+  check('palette: no expression, download, script block or environment read; no recovery password, protector id, product key or task action',
+    !/Invoke-Expression|\biex\b|DownloadString|DownloadFile|WebClient|Invoke-WebRequest|Invoke-RestMethod|Start-Process|\[scriptblock\]|Add-Type|\\\$env:|RecoveryPassword|KeyProtectorId|\.(PartialProductKey|ProductKey|OA3xOriginalProductKey)\b|\.Actions\b|CommandLine/i.test(pal),
+    'the palette reads; Send-Rem0teDiag, outside it, is the one post');
+  const calls = [...bare.matchAll(/&\s*[\\$'"({]/g)];
+  check('palette: the call operator appears once, running System32 w32tm.exe /query /status',
+    calls.length === 1 && pal.includes("\\$lines = @(& \\$w32tm '/query' '/status' | Select-Object -First 40)")
+      && pal.includes("\\$w32tm = Join-Path ([Environment]::SystemDirectory) 'w32tm.exe'") && (bare.match(/New-Object/g) ?? []).length === 1 && /New-Object System\.Net\.Sockets\.TcpClient\n/.test(pal),
+    `${calls.length} call operator(s)`);
+  // One host-name rule in three places (TS source literals unescaped once).
+  const tsRe = /export const HOSTNAME_RE_SOURCE = '([^']+)';/.exec(cat)?.[1]?.replace(/\\\\/g, '\\');
+  const psRaw = /export const PALETTE_HOSTNAME_RE = '([^']+)';/.exec(ws)?.[1];
+  const psRe = psRaw?.replace(/\\\\/g, '\\');
+  const sqlRe = [...mig.matchAll(/~ '(\^\[A-Za-z0-9\][^']*)'/g)].map((m) => m[1]);
+  check('palette: the host-name rule is the same in the portal, the agent and both of 0092\'s CHECK clauses',
+    !!tsRe && tsRe === psRe && sqlRe.length === 2 && sqlRe.every((r) => r === tsRe)
+      && pal.includes(`return (\\$v -cmatch '${psRaw?.replace(/\$/g, '\\$')}')`) && /if \(\\\$v -match '\[\\\\r\\\\n\]'\) \{ return \\\$false \}/.test(pal),
+    JSON.stringify({ tsRe, psRe, sqlRe }));
+  check('palette: parameters are a closed schema for dns_lookup and tcp_port only, checked again by the agent and the database',
+    /export const PARAM_FIELDS = \{ dns_lookup: \['name'\], tcp_port: \['host', 'port', 'timeoutSeconds'\] \} as const;/.test(cat)
+      && /export const TCP_TIMEOUTS = \[1, 2, 3, 5, 10\] as const;/.test(cat)
+      && (cat.match(/\bparams: '(dns_lookup|tcp_port)',/g) ?? []).length === 2 && !/\bparams: '(?!dns_lookup'|tcp_port')/.test(cat)
+      && /Test-Rem0tePalKeys \\\$p @\('name'\)/.test(pal) && /Test-Rem0tePalKeys \\\$p @\('host', 'port', 'timeoutSeconds'\)/.test(pal) && /@\(1, 2, 3, 5, 10\) -contains/.test(pal)
+      && /ELSE "params" IS NULL/.test(mig) && /\("params" - 'host' - 'port' - 'timeoutSeconds'\) = '\{\}'::jsonb/.test(mig)
+      && (ws.match(/\\\$dr\.params/g) ?? []).length === 2,
+    'PARAM_FIELDS, the agent\'s Test-Rem0tePalKeys, 0092 CHECK; $dr.params handed only to Get-Rem0tePalDns / Get-Rem0tePalTcp');
+  const entryOf = (k) => cat.slice(cat.indexOf(`key: '${k}'`), cat.indexOf('},', cat.indexOf(`key: '${k}'`)));
+  check('palette: dns_lookup and tcp_port need computers:connect; every palette key is read-only, agent 0.76.0, lab-evidence only',
+    ['dns_lookup', 'tcp_port'].every((k) => /capability: 'computers:connect'/.test(entryOf(k)))
+      && PAL.every((k) => /\.\.\.RO, \.\.\.PAL\b/.test(entryOf(k)))
+      && /const RO = \{ risk: 'read_only', expectedImpact: 'none', approvals: 'none \(read-only\)', supportedOs: W \} as const;/.test(cat)
+      && /const PAL = \{ minAgent: PALETTE_MIN_AGENT, evidence: 'lab_windows_server' \} as const;/.test(cat) && /export const PALETTE_MIN_AGENT = '0\.76\.0';/.test(cat),
+    'catalog entries');
+  const san = cat.slice(cat.indexOf('export function sanitizeResult('));
+  check('palette: every key has its own sanitizer case; interpret.ts imports nothing',
+    PAL.every((k) => san.includes(`case '${k}':`)) && !/^\s*import\s/m.test(ipt) && !/\brequire\(/.test(ipt),
+    'sanitizeResult cases; interpret.ts pure');
+  check('palette: the suites prove it',
+    /unit-diagnostics-palette\.mjs/.test(read('.github/workflows/ci.yml')) && /diagnostics-lab\.mjs/.test(read('.github/workflows/lab-windows.yml')),
+    'unit-diagnostics-palette.mjs in CI; the Windows lab job runs diagnostics-lab.mjs');
 }
 
 // ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──

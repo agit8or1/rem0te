@@ -5,6 +5,143 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.76.0] — 2026-11-20 · *Litmus*
+
+**The read-only diagnostics palette: thirteen more checks in Security, Networking and Maintenance groups, a DNS
+lookup and a TCP port test with typed parameters, and every result read as findings marked Healthy, Warning,
+Critical, Unknown or Unsupported, stamped with the evidence time.** The P0 item *Remote PowerShell: start with an
+approved, noninteractive command palette for common read-only diagnostics* (row 3 of docs/rmm-expansion-audit.md's
+roadmap, planned as 0.77.0 and shipped as 0.76.0 because the Tools panel took 0.75.0). No new execution path: the
+same diagnostics catalog, request route, heartbeat delivery, device secret, scope, capability, containment, audit,
+expiry and limits. No new action, nothing signed, no new route, and nothing that changes the computer.
+check-security-invariants §86 is new and §20 is amended for the parameters.
+
+### What it adds
+
+| Group | Checks |
+|---|---|
+| Security | **Windows support** (server-side, from the inventory and a static end-of-servicing table), **Microsoft Defender** (real-time, tamper protection, signature age, last scan; Security Center's antivirus list on a desktop), **Windows Firewall** (each profile from the active store, default actions, the categories in use), **BitLocker** (volumes and protector *kinds*), **Secure Boot and TPM**, **Local administrators** (names, kinds and sources only) |
+| Networking | **DNS lookup** of a name you give, **TCP port test** to a host and port you give, **Routes** (default route and gateway) |
+| Maintenance | **Time sync** (`w32tm /query /status`), **Windows activation**, **Unexpected shutdowns** (System events 41, 6008, 1001 with the bugcheck code), **Scheduled tasks** (non-Microsoft, with last result), **Signed-in users**; the existing **Reboot status** is now interpreted too |
+
+On the Diagnostics tab the list is grouped (Security, Networking, Maintenance, General). Security has **Run all
+security checks** (the five security keys, one request each). In the device's Tools panel (0.75) the Security
+group's "Antivirus, firewall, BitLocker, Secure Boot — coming later" placeholder is gone, replaced by the six real
+tools. *Flush DNS / renew DHCP* stays "coming later", because no approved action writes.
+
+**Never read:** BitLocker recovery passwords and protector ids, product keys (not even the partial key), scheduled
+task actions (commands and arguments), event message text for shutdowns, Defender exclusions, firewall rules,
+TPM owner authorisation, SIDs. The agent does not read them, and the server's sanitizer would drop them if it did.
+The unit suite plants each one in a stub and requires that none reaches a post.
+
+### Typed parameters (the decision)
+
+The catalog could not take parameters: §20 checked "a request carries a key and nothing else". A DNS test by name
+and a TCP test to a host and port are not useful without one, so the smallest closed schema was added rather than
+the checks deferred:
+
+- **Only two keys take parameters.** `dns_lookup { name }` and `tcp_port { host, port, timeoutSeconds }`. Every
+  other key still refuses any (400 `INVALID_DIAGNOSTIC_PARAMS`).
+- **The rules.** A host name is 1–253 characters of dot-separated labels (letters, digits, inner hyphens, at most
+  63 to a label, so an IPv4 literal passes); a port is an integer 1–65535; the timeout is 1, 2, 3, 5 or 10 seconds
+  (default 5).
+- **Checked four times.** By `parseDiagnosticParams` (`catalog.ts`) at request, before anything is read; again at
+  delivery, where a stored run that no longer parses is failed `bad_params` instead of handed out; by migration
+  0092's `DiagnosticRun_params_closed` CHECK (exact field sets, types, the same regex, `ELSE "params" IS NULL`); and
+  by the agent (`Test-Rem0tePalKeys`, `Test-Rem0tePalHost`), which fails the run before resolving or dialling.
+- **One regex, three places.** The host-name rule is the same text in `catalog.ts` (`HOSTNAME_RE_SOURCE`),
+  `windows-script.ts` (`PALETTE_HOSTNAME_RE`) and both of 0092's CHECK clauses; §86 and the unit suite compare them.
+  Line breaks are refused separately, because .NET's `$` matches before a trailing newline.
+- **Remote connect.** These two keys need `computers:connect`, not `computers:view`: they make the computer reach a
+  host the requester chooses, on its own network, which is what a remote session already allows. A view-only user
+  can run every other palette check.
+- **Deduplication** compares parameters: the same target returns the open run, a different target is a new run.
+  The request's audit entry records the parameters.
+
+### States
+
+`apps/api/src/diagnostics-catalog/interpret.ts` (new, pure, no imports) turns each result into findings
+`{ id, label, state, detail, evidenceAt }`, attached to a completed run as `interpretation`. The overall state is the
+worst finding in the order Critical > Warning > Unknown > Unsupported > Healthy, so **anything unread is never
+Healthy**: a missing date is Unknown, not "0 days"; an empty task, shutdown, route or session list counts as
+"none" only when the agent says it read one (`read: true`, set by the sanitizer from whether a list came back at
+all); Unknown and Unsupported get grey pills, never green. Thresholds are in one `THRESHOLDS` object; among them,
+Defender signatures are a Warning after 3 days and Critical after 7, time sync a Warning after 8 days and Critical
+after 30, and Windows support a Warning within 90 days of its end. The table is in docs/diagnostics.md.
+
+**Windows support** is computed on the server (`osSupport`), from the stored inventory's caption and build against a
+static table reviewed 2026-11-20 (Windows 7 SP1 through Windows 11 25H2, Server 2008 R2 through 2025, with separate
+consumer, Enterprise/Education, LTSC and Server dates). There is no network lookup. Once the table is more than a
+year old every answer is Unknown, so a stale table cannot keep saying Healthy. A build that is not in it is Unknown.
+An ended version is Critical, worded "unless this computer has Extended Security Updates, which cannot be seen from
+here".
+
+### Agent side: not a new agent build
+
+The checks are PowerShell functions in the served `heartbeat.ps1` (`apps/api/src/public/windows-script.ts`, the
+`# ---- Read-only palette (0.76)` block), the same template for the standard and signed variants. **There is no new
+Go agent binary.** A standard agent gets the checks when it is reinstalled or updated from this portal. A signed
+agent gets them with the next `rem0te-signed-publish` at or after 0.76.0, because its heartbeat script is part of the
+signed targets.
+
+- **Agent version.** Each palette entry has `minAgent: '0.76.0'`. A computer reporting an older agent is refused
+  with 409 `DIAGNOSTIC_NEEDS_NEWER_AGENT`, and the tab and Tools panel say "Needs agent 0.76.0 or later". A missing
+  or unparseable version is not refused.
+- **Older agents.** An older agent handed a palette key anyway (its version was unknown) reports the key as
+  `unknown`, which `report()` used to drop as `unknown_key`, leaving the run to expire after ten minutes as "never
+  started". Now `refusedByAgent` fails that device's own open run at once with "update the agent", audited as
+  `agent_unknown_key`. Any state other than `failed`, or another computer's run, changes nothing.
+- **What it runs.** Only `Get-*` cmdlets and CIM queries, `Confirm-SecureBootUEFI`, one `System.Net.Sockets.TcpClient`
+  for the port test, the system resolver for the lookup, and one process: System32's `w32tm.exe /query /status`,
+  by absolute path. Sessions come from the owners of `explorer.exe` rather than `quser`, which is missing on Home
+  editions and prints translated text.
+- **The build-time guard.** `assertPaletteBlockSafe` runs on every script the portal serves (`template()` returns
+  through it). It refuses:
+  - any command but `Get-*`, `Test-Path`, `Join-Path`, `Select-Object`, `Sort-Object`, `Confirm-SecureBootUEFI`,
+    `New-Object` and the block's own `Test-Rem0tePal*`; string literals are blanked first, so an event provider's
+    name is not a command;
+  - `Set-`, `Enable-`, `Disable-`, `Remove-`, `Start-`, `Stop-`, `Restart-`, `Register-` and the rest, and
+    `Invoke-*`, script blocks, `Add-Type`, downloads and `$env:`;
+  - any .NET static call or method not on a fixed list;
+  - a second `New-Object` or call operator, and a `w32tm` that is not System32's;
+  - reading `RecoveryPassword`, `KeyProtectorId`, `.PartialProductKey` or a task's `.Actions`;
+  - a host check that is not the portal's rule.
+  The unit suite proves 27 of those refusals by mutating the shipped script.
+- **Results** are re-shaped field by field by new `sanitizeResult` cases, with closed lists for every enum
+  (profiles, volume states, protector kinds, task states, TCP outcomes, shutdown kinds whose event id must match),
+  size-capped at 32 KB like the rest of the catalog. A dual-mode socket's `::ffff:127.0.0.1` is stored as
+  `127.0.0.1`.
+
+### Evidence
+
+- **Lab, Windows Server only.** A new `agent-lab-windows (diagnostics palette)` job (`tools/lab/windows/diagnostics-lab.mjs`)
+  runs the served block for real on `windows-latest` under Windows PowerShell 5.1, as the administrator and as
+  SYSTEM, through the agent's dispatcher with only `Invoke-RestMethod` replaced by a file write. It checks that a
+  configuration fingerprint taken before and after does not change, puts every result through the portal's own
+  sanitizer and interpreter, and keeps Windows Update pointed at a dead WSUS on 127.0.0.1:8530. Its results go into
+  the lab evidence (`diagnostics-evidence.jsonl`, merged by `tools/lab/merge-evidence.mjs`).
+- **The console says so.** Every palette check is labelled "Tested only on GitHub's Windows Server runner". **None
+  of it has run on Windows 10 or 11 or on the fleet**, and on a desktop Defender, BitLocker and the TPM answer
+  differently from Server.
+- **Unit.** `apps/api/scripts/unit-diagnostics-palette.mjs` (new, in CI) runs 301 checks: catalog, parameters,
+  sanitizers against hostile input, every threshold, OS support, the guard's mutations, and a pwsh parse plus stub
+  runs of every key in a desktop and a Server world. `unit-diagnostics-catalog.mjs`, `unit-system-inventory.mjs` and
+  `unit-device-tools.mjs` are updated.
+- **Behavioural.** `apps/api/scripts/e2e-diagnostics-palette.mjs` (new, port 4011, in `run-e2e.sh`) runs 62 checks:
+  catalog, OS support, refused parameters, the 0092 CHECK on direct inserts, Remote connect, the agent-version
+  refusal, delivery with parameters, sanitised and interpreted results, and the old-agent path.
+  `e2e-diagnostics-catalog.mjs` now expects 25 entries. `e2e-ui.mjs` drives the grouped tab, the forms, Run all
+  security checks and the Tools entries.
+
+### Upgrading
+
+- **Migration 0092** (`0092_diagnostics_palette`) redefines `DiagnosticRun_key_catalog` with the 25 keys, adds
+  `DiagnosticRun.params` (JSONB, null for every existing row) and its CHECK. Deploy with the schema steps:
+  `prisma migrate deploy`, rsync `prisma/`, and `prisma generate` at the target.
+- **Agents.** Reinstall or update standard agents to pick up the checks. For signed agents, run
+  `rem0te-signed-publish` after committing 0.76.0. Until then those computers show "Needs agent 0.76.0 or later"
+  on the palette rows; every older check keeps working.
+
 ## [0.75.1] — 2026-11-21 · *Spanner*
 
 **Admin → Security: hbbs's UDP socket is no longer an "unexpected public listener", the SSH ordering rule is
@@ -109,7 +246,6 @@ Apply migration 0093 and regenerate the Prisma client at the target (CLAUDE.md, 
 steps*). The first posture read after the deploy has fingerprints; nothing is accepted until someone accepts it.
 
 ---
-
 ## [0.75.0] — 2026-11-20 · *Spanner*
 
 **The device page's Tools panel: everything that can be done to one computer, in eight groups, each opening the flow

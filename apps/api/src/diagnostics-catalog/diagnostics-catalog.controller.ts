@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
-import { IsString, Length, Matches } from 'class-validator';
+import { IsObject, IsOptional, IsString, Length, Matches } from 'class-validator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CapabilitiesGuard } from '../common/guards/capabilities.guard';
 import { PlatformAdminGuard } from '../common/guards/platform-admin.guard';
@@ -10,12 +10,21 @@ import type { ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
 import { DiagnosticsCatalogService } from './diagnostics-catalog.service';
 
-/** A catalog key and nothing else. The service refuses keys not in the catalog. */
+/**
+ * A catalog key, and parameters only for a key with a closed schema (0.76:
+ * dns_lookup, tcp_port). The service refuses keys not in the catalog, and
+ * runs parseDiagnosticParams — exact fields, each checked — before anything
+ * else; any parameter for any other key is refused.
+ */
 export class RequestDiagnosticDto {
   @IsString()
   @Length(1, 64)
   @Matches(/^[a-z][a-z0-9_]{0,63}$/, { message: 'key must be a catalog key' })
   key!: string;
+
+  @IsOptional()
+  @IsObject()
+  params?: Record<string, unknown>;
 }
 
 /**
@@ -38,7 +47,7 @@ export class DiagnosticsCatalogController {
   @RequireCapability(CAP.COMPUTERS_VIEW)
   @RateLimit(30)
   async run(@Actor() actor: ActorContext, @Param('id') id: string, @Body() dto: RequestDiagnosticDto) {
-    return { success: true, data: await this.svc.request(actor, id, dto.key) };
+    return { success: true, data: await this.svc.request(actor, id, dto.key, dto.params) };
   }
 
   @Get('runs')

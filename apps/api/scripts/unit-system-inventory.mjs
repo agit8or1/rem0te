@@ -34,7 +34,8 @@ const bytes = (v) => Buffer.byteLength(JSON.stringify(v), 'utf8');
 
 // ── The catalog entries ─────────────────────────────────────────────────────
 {
-  check('the three snapshot keys are catalog keys, last, in order', JSON.stringify(c.DIAGNOSTIC_KEYS.slice(-3)) === JSON.stringify(SNAP) && SNAP.every((k) => c.isCatalogKey(k)));
+  // 0.76 appended the palette keys after them; the snapshot keys still follow the 0.31 nine, in order.
+  check('the three snapshot keys are catalog keys, after the 0.31 nine, in order', JSON.stringify(c.DIAGNOSTIC_KEYS.slice(9, 12)) === JSON.stringify(SNAP) && SNAP.every((k) => c.isCatalogKey(k)));
   check('SNAPSHOT_KEYS is exactly those three', JSON.stringify(c.SNAPSHOT_KEYS) === JSON.stringify(SNAP));
   const tabs = Object.fromEntries(SNAP.map((k) => [k, c.catalogEntry(k).tab]));
   check('each names its workspace tab', JSON.stringify(tabs) === '{"process_list":"processes","service_list":"services","network_adapters":"network"}', JSON.stringify(tabs));

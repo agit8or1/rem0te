@@ -143,9 +143,35 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  # Part 3 (0.76): the read-only diagnostics palette. The heartbeat's own
+  # diagnostics region, cut from the served installer, under Windows
+  # PowerShell 5.1 as the administrator and as SYSTEM (a scheduled task), with
+  # a configuration fingerprint before and after. Each result then goes
+  # through the portal's sanitizer and interpreter. Network: localhost only;
+  # Windows Update is pointed at a WSUS on 127.0.0.1:8530 that is not there.
+  agent-lab-windows-diagnostics:
+    name: agent-lab-windows (diagnostics palette)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Diagnostics palette
+        run: node --experimental-strip-types --no-warnings tools/lab/windows/diagnostics-lab.mjs --part "${{ runner.temp }}\lab-part" --work "${{ runner.temp }}\diag"
+      - name: Keep the part
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lab-part-diagnostics
+          path: ${{ runner.temp }}/lab-part/
+          if-no-files-found: warn
+          retention-days: 30
+
   # The evidence: every part merged into one file, and a summary on the run.
   agent-lab-windows:
-    needs: [agent-lab-windows-rustdesk, agent-lab-windows-go]
+    needs: [agent-lab-windows-rustdesk, agent-lab-windows-go, agent-lab-windows-diagnostics]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -166,7 +192,8 @@ jobs:
           retention-days: 90
       - name: Verdict
         run: |
-          echo "rustdesk: ${{ needs.agent-lab-windows-rustdesk.result }}, go: ${{ needs.agent-lab-windows-go.result }}, merge failed: ${MERGE_FAILED:-0}"
+          echo "rustdesk: ${{ needs.agent-lab-windows-rustdesk.result }}, go: ${{ needs.agent-lab-windows-go.result }}, diagnostics: ${{ needs.agent-lab-windows-diagnostics.result }}, merge failed: ${MERGE_FAILED:-0}"
           test "${{ needs.agent-lab-windows-rustdesk.result }}" = success
           test "${{ needs.agent-lab-windows-go.result }}" = success
+          test "${{ needs.agent-lab-windows-diagnostics.result }}" = success
           test "${MERGE_FAILED:-0}" = 0

@@ -60,7 +60,7 @@ export function useToolFacts(endpointId: string, ep: Record<string, unknown>, pa
     retry: false,
   });
   // The Diagnostics tab's read and key (endpoint-diagnostics-catalog.tsx).
-  const diag = useQuery<{ agentBound: boolean }>({
+  const diag = useQuery<{ agentBound: boolean; items?: Array<{ key: string; allowed?: boolean; needsNewerAgent?: boolean }> }>({
     queryKey: ['diagnostics-catalog', endpointId],
     queryFn: () => api.get(`/endpoints/${endpointId}/diagnostics/catalog`).then((r) => r.data?.data),
     enabled: on,
@@ -94,6 +94,8 @@ export function useToolFacts(endpointId: string, ep: Record<string, unknown>, pa
     status: String(ep.status ?? ''),
     pooled: ep.tenantId == null || ep.customerId == null,
     agentBound: diag.data ? diag.data.agentBound : null,
+    diagAllowed: diag.data?.items ? Object.fromEntries(diag.data.items.map((i) => [i.key, i.allowed !== false])) : null,
+    diagNeedsNewer: diag.data?.items ? Object.fromEntries(diag.data.items.map((i) => [i.key, i.needsNewerAgent === true])) : null,
     connectivity: conn,
     // "Offline, last seen 3d ago": the age is the point when deciding whether a request will be picked up.
     connectivityText: conn === 'offline' ? `Offline, last seen ${ago(ep.lastSeenAt as string | null)}` : connectivityLabel(conn, ep.lastSeenAt),
