@@ -710,11 +710,31 @@ const SECTIONS: Section[] = [
           computer&apos;s own system: a Linux server&apos;s restart comes from its package manager, not Windows. The strip under it lists what needs
           attention: open alerts, a pending restart, pending updates with the age of
           the scan, and which agent it runs. Each opens the tab that explains it.
-          Connect, Diagnose, Run action and Patch sit beside it; Archive and the other
+          Connect, Tools, Diagnose, Run action and Patch sit beside it; Archive and the other
           rare actions are under More, each with a confirmation. The tabs are
           Overview, Performance, Monitoring, Software, Processes, Services, Network, Patches, Event logs,
           Diagnostics, Actions and History (sessions, notes, the AI-written summary and who can connect), and
           each can be linked with <code>?tab=</code>.
+        </p>
+        <p className="font-medium text-foreground">Tools (0.75)</p>
+        <p>
+          <strong className="text-foreground">Tools</strong>, beside Connect, lists what can be done to the computer in
+          eight groups — Diagnostics, PowerShell / Scripts, Services &amp; Processes, Software, Windows Updates,
+          Networking, Security and Maintenance — and opens the flow that already does each one: a Diagnostics check
+          with its row marked, an approved action already picked on Actions, the Services, Processes, Network,
+          Software or Patches tab, the Security log on Event logs, or the script library. Nothing runs from the
+          panel; the tab&apos;s own button and confirmation do that, and the server checks your access, containment
+          and the approval signer again.
+        </p>
+        <p>
+          Each tool says whether it can work here: <em>Available</em>, <em>Needs approval</em> (two approvers on the
+          approval page; in direct mode it is signed when you ask, after a fresh sign-in), <em>Needs a newer
+          agent</em> (including the standard agent, where an action needs the full agent), <em>Unsupported here</em>{' '}
+          (Linux, macOS, RustDesk only), <em>Paused</em> (containment), <em>Not reporting</em> (the request waits for
+          a check-in), <em>Not permitted</em> (shown without a button), <em>Not set up</em> (no approval signer) or{' '}
+          <em>Unavailable</em> (archived, not enrolled, unassigned). Flush DNS / renew DHCP and antivirus, firewall,
+          BitLocker and Secure Boot status are listed as <em>Coming later</em>: nothing collects them yet, and
+          nothing is shown in their place — unknown is never healthy.
         </p>
         <p className="font-medium text-foreground">Nothing here is live</p>
         <p>

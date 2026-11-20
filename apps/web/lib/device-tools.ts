@@ -1,0 +1,373 @@
+/**
+ * The device page's Tools panel (0.75): which existing flow each tool opens,
+ * and whether it can work on this computer for this person — with a reason.
+ *
+ * Pure: no imports, no fetching, no clock of its own (`now` is passed in), so
+ * apps/web/scripts/unit-device-tools.mjs runs it as it is. Everything it
+ * reads is data the console already has: the computer (GET /endpoints/:id),
+ * the action catalog (GET /actions/catalog?endpointId=), the diagnostics
+ * catalog (GET /endpoints/:id/diagnostics/catalog), the patch summary, the
+ * containment banner and the signed-in person (GET /auth/me).
+ *
+ * This decides only what the panel shows. It is not a control: every tool
+ * opens an existing tab or page, whose route checks scope, capability, fresh
+ * sign-in, containment and the approval signer again, and whose agent checks
+ * the signed plan again. Nothing here adds a route, an action or a parameter.
+ *
+ * States, in the order they are decided (the first that applies wins):
+ *
+ *   coming_later      no flow behind it yet — said plainly, never faked
+ *   unsupported       this OS or agent has nothing to run it (Linux, macOS,
+ *                     RustDesk only)
+ *   inactive          archived, not enrolled, or in the unassigned pool
+ *   not_permitted     the person's role does not allow it (the button would 403)
+ *   not_configured    the server has no approval signer, so no action can be
+ *                     approved
+ *   needs_newer_agent the agent does not report the action (or is older than
+ *                     the release that added it), or it is the standard
+ *                     agent and the action needs the full (signed) agent
+ *   contained         a containment pause stops it for this business
+ *   offline           not reporting; the request waits for a check-in
+ *   needs_approval    a signed action: two approvers authorize it first
+ *   available         opens and can be used now
+ *
+ * `offline`, `needs_approval` and `available` open their flow; the rest are
+ * shown disabled with their reason. Unknown is never reported as healthy:
+ * the restart-pending tool says "unknown" until a scan has answered.
+ */
+
+export type ToolGroup =
+  | 'diagnostics' | 'scripts' | 'services' | 'software' | 'updates' | 'networking' | 'security' | 'maintenance';
+
+export const TOOL_GROUPS: readonly { id: ToolGroup; label: string }[] = [
+  { id: 'diagnostics', label: 'Diagnostics' },
+  { id: 'scripts', label: 'PowerShell / Scripts' },
+  { id: 'services', label: 'Services & Processes' },
+  { id: 'software', label: 'Software' },
+  { id: 'updates', label: 'Windows Updates' },
+  { id: 'networking', label: 'Networking' },
+  { id: 'security', label: 'Security' },
+  { id: 'maintenance', label: 'Maintenance' },
+];
+
+export type ToolState =
+  | 'available' | 'needs_approval' | 'needs_newer_agent' | 'unsupported' | 'contained' | 'offline'
+  | 'not_permitted' | 'not_configured' | 'inactive' | 'coming_later' | 'checking';
+
+export const TOOL_STATES: readonly ToolState[] = [
+  'available', 'needs_approval', 'needs_newer_agent', 'unsupported', 'contained', 'offline',
+  'not_permitted', 'not_configured', 'inactive', 'coming_later', 'checking',
+];
+
+export const STATE_LABEL: Record<ToolState, string> = {
+  available: 'Available',
+  needs_approval: 'Needs approval',
+  needs_newer_agent: 'Needs a newer agent',
+  unsupported: 'Unsupported here',
+  contained: 'Paused',
+  offline: 'Not reporting',
+  not_permitted: 'Not permitted',
+  not_configured: 'Not set up',
+  inactive: 'Unavailable',
+  coming_later: 'Coming later',
+  checking: 'Checking…',
+};
+
+/** The states whose tool opens its flow when picked. */
+export const OPENS: readonly ToolState[] = ['available', 'needs_approval', 'offline'];
+export const opens = (s: ToolState) => OPENS.includes(s);
+
+/** The workspace tabs a tool can open (device-model.ts WorkspaceTab, the ones used here). */
+export type ToolTab = 'diagnostics' | 'actions' | 'processes' | 'services' | 'network' | 'software' | 'patches' | 'events';
+
+/** Where a tool goes: a tab with what to open in it, a page, or a download. */
+export type ToolTarget =
+  | { kind: 'tab'; tab: ToolTab; action?: string; check?: string; log?: string }
+  | { kind: 'href'; href: string }
+  | { kind: 'download'; href: string };
+
+/** What a tool needs, as data, so the rule is the same for every tool. */
+type Need =
+  /** Read-only, server side: works for anyone who can see the computer. */
+  | { kind: 'server' }
+  /** A read-only diagnostics-catalog key the heartbeat runs (Windows agents). */
+  | { kind: 'diagnostic'; key: string; eventLogs?: boolean; minAgent?: string }
+  /** A tab that shows what the agent reported (Windows agents). */
+  | { kind: 'view'; eventLogs?: boolean; minAgent?: string }
+  /** Asks every agent (any OS) to scan or re-collect: POST /endpoints/:id/inventory/refresh. */
+  | { kind: 'scan' }
+  /** What the last scan said, from any agent: nothing is asked of the computer. */
+  | { kind: 'status' }
+  /** An approved catalog action, by id@version, on the signed agent. */
+  | { kind: 'action'; action: string; version: number; eventLogs?: boolean }
+  /** Nothing behind it yet. */
+  | { kind: 'later' };
+
+export interface ToolDef {
+  id: string;
+  group: ToolGroup;
+  label: string;
+  /** What it does, in one line, and which existing flow it opens. */
+  description: string;
+  need: Need;
+  target: ToolTarget | null;
+}
+
+/**
+ * The tools, by group. Every target is an existing tab, page or link; every
+ * action is one of the approved catalog's twelve, by its existing id.
+ */
+export function toolCatalog(endpointId: string): ToolDef[] {
+  const e = encodeURIComponent(endpointId);
+  const diag = (check: string): ToolTarget => ({ kind: 'tab', tab: 'diagnostics', check });
+  const act = (action: string): ToolTarget => ({ kind: 'tab', tab: 'actions', action });
+  return [
+    // ── Diagnostics ──
+    { id: 'test-connection', group: 'diagnostics', label: 'Test connection', description: 'The server checks RustDesk, the relay and this computer’s last check-in. Diagnostics tab.', need: { kind: 'server' }, target: { kind: 'tab', tab: 'diagnostics', check: 'test-connection' } },
+    { id: 'refresh-inventory', group: 'diagnostics', label: 'Refresh inventory', description: 'Re-collect hardware, disks, adapters and installed software. Read-only.', need: { kind: 'diagnostic', key: 'refresh_inventory' }, target: diag('refresh_inventory') },
+    { id: 'disk-space', group: 'diagnostics', label: 'Disk space', description: 'Size and free space of every fixed volume. Read-only.', need: { kind: 'diagnostic', key: 'disk_space' }, target: diag('disk_space') },
+    { id: 'service-health', group: 'diagnostics', label: 'Service health', description: 'Automatic services that are not running. Read-only.', need: { kind: 'diagnostic', key: 'service_health' }, target: diag('service_health') },
+    { id: 'top-processes', group: 'diagnostics', label: 'Top processes', description: 'The ten processes using the most processor time and memory. Read-only.', need: { kind: 'diagnostic', key: 'top_processes' }, target: diag('top_processes') },
+    { id: 'recent-errors', group: 'diagnostics', label: 'Recent system errors', description: 'Critical and Error events from the last 24 hours, grouped. Read-only.', need: { kind: 'diagnostic', key: 'recent_system_errors', eventLogs: true }, target: diag('recent_system_errors') },
+    { id: 'diagnostics-report', group: 'diagnostics', label: 'Download diagnostics report', description: 'The connection checks and what the computer last reported, as one file.', need: { kind: 'server' }, target: { kind: 'download', href: `/api/v1/endpoints/${e}/diagnostics/report` } },
+
+    // ── PowerShell / Scripts ──
+    { id: 'run-script', group: 'scripts', label: 'Run an approved script', description: 'An approved version from the script library, with its typed arguments. Opens Automation → Scripts.', need: { kind: 'action', action: 'windows.script.run', version: 1 }, target: { kind: 'href', href: '/automation/scripts' } },
+
+    // ── Services & Processes ──
+    { id: 'services', group: 'services', label: 'Services', description: 'Every Windows service with its state and start mode; start, stop, restart or change its startup type from a row.', need: { kind: 'view', minAgent: '0.33.0' }, target: { kind: 'tab', tab: 'services' } },
+    { id: 'service-control', group: 'services', label: 'Start, stop or restart a service', description: 'From its row on the Services tab. Protected services are refused.', need: { kind: 'action', action: 'windows.service.control', version: 1 }, target: { kind: 'tab', tab: 'services' } },
+    { id: 'service-restart', group: 'services', label: 'Restart an allowlisted service', description: 'Windows Update, BITS, the spooler and the other services on the restart list. Actions tab.', need: { kind: 'action', action: 'windows.service.restart', version: 1 }, target: act('windows.service.restart') },
+    { id: 'spooler-start', group: 'services', label: 'Start the Print Spooler', description: 'Starts the spooler when it has stopped. Actions tab.', need: { kind: 'action', action: 'windows.service.start', version: 1 }, target: act('windows.service.start') },
+    { id: 'processes', group: 'services', label: 'Processes', description: 'Every running process with its owner and start time.', need: { kind: 'view', minAgent: '0.33.0' }, target: { kind: 'tab', tab: 'processes' } },
+    { id: 'process-stop', group: 'services', label: 'End a process', description: 'From its row on the Processes tab, checked against its start time.', need: { kind: 'action', action: 'windows.process.stop', version: 1 }, target: { kind: 'tab', tab: 'processes' } },
+
+    // ── Software ──
+    { id: 'software-list', group: 'software', label: 'Installed software', description: 'What the inventory lists, with versions and changes.', need: { kind: 'view' }, target: { kind: 'tab', tab: 'software' } },
+    { id: 'software-install', group: 'software', label: 'Install software', description: 'A catalog or winget package, as a one-computer deployment. Software tab.', need: { kind: 'action', action: 'windows.software.install', version: 1 }, target: { kind: 'tab', tab: 'software' } },
+    { id: 'software-remove', group: 'software', label: 'Remove a program', description: 'A program from the installed list, by its own silent uninstaller. Software tab.', need: { kind: 'action', action: 'windows.software.remove', version: 1 }, target: { kind: 'tab', tab: 'software' } },
+
+    // ── Windows Updates ──
+    { id: 'patch-scan', group: 'updates', label: 'Check for updates now', description: 'Asks the agent to scan and report pending updates at its next check-in. Patches tab.', need: { kind: 'scan' }, target: { kind: 'tab', tab: 'patches' } },
+    { id: 'restart-pending', group: 'updates', label: 'Restart pending?', description: 'What the last update scan said. Patches tab.', need: { kind: 'status' }, target: { kind: 'tab', tab: 'patches' } },
+    { id: 'reboot-status', group: 'updates', label: 'Restart signals', description: 'Which Windows signals say a restart is pending, and the last boot time. Read-only.', need: { kind: 'diagnostic', key: 'reboot_status' }, target: diag('reboot_status') },
+    { id: 'install-updates', group: 'updates', label: 'Install updates', description: 'Pick updates and install them on this computer as a one-computer deployment. Patches tab.', need: { kind: 'action', action: 'windows.update.install', version: 1 }, target: { kind: 'tab', tab: 'patches' } },
+
+    // ── Networking ──
+    { id: 'network', group: 'networking', label: 'Network adapters', description: 'Addresses, gateways, DNS servers and DHCP for every adapter.', need: { kind: 'view', minAgent: '0.33.0' }, target: { kind: 'tab', tab: 'network' } },
+    { id: 'network-connectivity', group: 'networking', label: 'Network connectivity', description: 'Whether the computer can reach this server, and which adapters are up. Read-only.', need: { kind: 'diagnostic', key: 'network_connectivity' }, target: diag('network_connectivity') },
+    { id: 'dns-resolution', group: 'networking', label: 'DNS resolution', description: 'Resolve this server’s name and one fixed public name, with timings. Read-only.', need: { kind: 'diagnostic', key: 'dns_resolution' }, target: diag('dns_resolution') },
+    { id: 'flush-dns', group: 'networking', label: 'Flush DNS / renew DHCP', description: 'No approved action does this yet.', need: { kind: 'later' }, target: null },
+
+    // ── Security ──
+    { id: 'security-log', group: 'security', label: 'Security event log', description: 'Sign-ins, account changes and audit entries from the Security log. Event logs tab.', need: { kind: 'view', eventLogs: true }, target: { kind: 'tab', tab: 'events', log: 'Security' } },
+    { id: 'security-posture', group: 'security', label: 'Antivirus, firewall, BitLocker, Secure Boot', description: 'Not collected yet, so nothing is shown — unknown is not healthy.', need: { kind: 'later' }, target: null },
+
+    // ── Maintenance ──
+    { id: 'restart-schedule', group: 'maintenance', label: 'Schedule a restart', description: 'With a 15-minute warning on screen; waits for an open RustDesk session. Actions tab.', need: { kind: 'action', action: 'windows.reboot.schedule', version: 1 }, target: act('windows.reboot.schedule') },
+    { id: 'restart-cancel', group: 'maintenance', label: 'Cancel a scheduled restart', description: 'Asks Windows to cancel a pending shutdown. Actions tab.', need: { kind: 'action', action: 'windows.reboot.cancel', version: 1 }, target: act('windows.reboot.cancel') },
+    { id: 'logs-collect', group: 'maintenance', label: 'Collect diagnostic logs', description: 'System and Application errors, the agent’s journal and the RustDesk log, redacted. Actions tab.', need: { kind: 'action', action: 'windows.logs.collect', version: 1, eventLogs: true }, target: act('windows.logs.collect') },
+  ];
+}
+
+// ── The facts the decision is made from ─────────────────────────────────────
+
+export type AgentKind = 'signed' | 'standard' | 'rustdesk-only' | 'unknown';
+
+export interface ToolFacts {
+  /** device-model.ts agentType(): which agent, and the read-only OS when there is one. */
+  agentKind: AgentKind;
+  readOnlyOs: 'Linux' | 'macOS' | null;
+  /** The label the computer reports, e.g. '0.69.0'; null when it never said. */
+  agentVersion: string | null;
+  /** What the agent reports it can run, as id@version (Endpoint.agentActions). */
+  agentActions: string[];
+  status: string;
+  /** tenantId or customerId null: the unassigned pool (§70). */
+  pooled: boolean;
+  /** The diagnostics catalog's agentBound; null while it has not been read. */
+  agentBound: boolean | null;
+  /** lib/connectivity.ts. */
+  connectivity: 'online' | 'agent_silent' | 'offline';
+  /** Already worded, e.g. "Offline since 3d ago". */
+  connectivityText: string;
+  signer: {
+    /** GET /actions/catalog: configured; null while it has not been read. */
+    configured: boolean | null;
+    /** The business's approval mode on the signer, or null when it did not answer. */
+    approval: 'direct' | 'signed' | null;
+  };
+  /** Containment kinds paused for this computer's business (or globally). */
+  paused: string[];
+  perms: {
+    view: boolean;
+    eventLogs: boolean;
+    /** May request approved actions of this risk on this computer (mayRequestActions()). */
+    requestLow: boolean;
+    requestHigh: boolean;
+  };
+  /**
+   * Each action's risk on this computer: the catalog's workstationRisk on a
+   * standard workstation, high on anything else (ActionsService). An action
+   * not listed counts as high.
+   */
+  actionRisk: Record<string, 'low' | 'high'>;
+  /** The last update scan's restart flag, and when it was taken; null when unknown. */
+  restartPending: boolean | null;
+}
+
+export interface ToolView extends ToolDef {
+  state: ToolState;
+  reason: string;
+}
+
+/** a.b.c compared as numbers; null when either is not a version. */
+export function compareVersions(a: string, b: string): number | null {
+  const p = (v: string) => (/^\d+\.\d+\.\d+/.test(v) ? v.split(/[.+-]/).slice(0, 3).map(Number) : null);
+  const x = p(a), y = p(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1;
+  return 0;
+}
+
+
+function unsupported(f: ToolFacts, need: Need): string | null {
+  if (need.kind === 'server' || need.kind === 'later') return null;
+  if (f.agentKind === 'rustdesk-only') return 'This computer has RustDesk only: no agent reports or runs anything on it.';
+  if (need.kind === 'scan' || need.kind === 'status') return null; // every agent scans, Linux and macOS included
+  if (f.readOnlyOs) return `The ${f.readOnlyOs} agent is read-only: it reports inventory and pending updates and runs nothing the console sends.`;
+  return null;
+}
+
+function inactive(f: ToolFacts, need: Need): string | null {
+  if (need.kind === 'later' || need.kind === 'server') return null;
+  if (f.status === 'ARCHIVED') return 'This computer is archived.';
+  if (f.status === 'PENDING_ENROLLMENT') return 'This computer has not finished enrolment.';
+  // Reading what it reported is how a pooled computer is inspected; nothing runs on it (§70).
+  if (f.pooled && (need.kind === 'action' || need.kind === 'diagnostic')) return 'This computer is in the unassigned pool: adopt it into a business first (Devices → Unassigned).';
+  if (need.kind === 'diagnostic' && f.agentBound === false) return 'This computer has never authenticated with a device secret, so it cannot be asked to run anything. Re-run the installer on it once.';
+  return null;
+}
+
+function notPermitted(f: ToolFacts, need: Need): string | null {
+  if (need.kind === 'later') return null;
+  if (!f.perms.view) return 'Your role does not include viewing this computer’s details.';
+  if ('eventLogs' in need && need.eventLogs && !f.perms.eventLogs) return 'Needs the “Read event logs” permission.';
+  if (need.kind === 'action') {
+    const risk = f.actionRisk[need.action] ?? 'high';
+    if (!(risk === 'low' ? f.perms.requestLow : f.perms.requestHigh)) {
+      return risk === 'high' ? 'Your role does not include requesting higher-risk actions on this computer.' : 'Your role does not include requesting actions on this computer.';
+    }
+  }
+  return null;
+}
+
+function newerAgent(f: ToolFacts, need: Need): string | null {
+  if (need.kind === 'action') {
+    if (f.agentKind !== 'signed') return 'Needs the full (signed) agent; this computer runs the standard agent. Upgrade it from the Agent card.';
+    if (!f.agentActions.includes(`${need.action}@${need.version}`)) return 'This computer’s agent does not report support for this action yet. Let it update first.';
+    return null;
+  }
+  if ((need.kind === 'view' || need.kind === 'diagnostic') && 'minAgent' in need && need.minAgent && f.agentVersion) {
+    const c = compareVersions(f.agentVersion, need.minAgent);
+    if (c !== null && c < 0) return `This computer’s agent (${f.agentVersion}) is older than ${need.minAgent}, which first collected this. Reinstall or update the agent.`;
+  }
+  return null;
+}
+
+export const PAUSE_LABEL: Record<string, string> = {
+  actions: 'approved actions', remote: 'remote connections and chat', updates: 'agent updates', integration: 'ClientSt0r jobs', notifications: 'notifications',
+};
+
+/** The one decision, for one tool. */
+export function toolState(def: ToolDef, f: ToolFacts): { state: ToolState; reason: string } {
+  const need = def.need;
+  if (need.kind === 'later') return { state: 'coming_later', reason: def.description };
+  const u = unsupported(f, need);
+  if (u) return { state: 'unsupported', reason: u };
+  const i = inactive(f, need);
+  if (i) return { state: 'inactive', reason: i };
+  const p = notPermitted(f, need);
+  if (p) return { state: 'not_permitted', reason: p };
+  if (need.kind === 'action') {
+    if (f.signer.configured === null) return { state: 'checking', reason: 'Reading the action catalog…' };
+    if (!f.signer.configured) return { state: 'not_configured', reason: 'No approval signer is configured on this server, so no action can be approved.' };
+  }
+  const n = newerAgent(f, need);
+  if (n) return { state: 'needs_newer_agent', reason: n };
+  if (need.kind === 'action' && f.paused.includes('actions')) {
+    return { state: 'contained', reason: 'Approved actions are paused by containment for this business (Settings → Security → Containment).' };
+  }
+  const reachesAgent = need.kind !== 'server' && need.kind !== 'status';
+  if (reachesAgent && f.connectivity !== 'online') {
+    return {
+      state: 'offline',
+      reason: need.kind === 'view'
+        ? `${f.connectivityText}: what is shown is from its last report.`
+        : need.kind === 'diagnostic'
+          ? `${f.connectivityText}: the request waits fifteen minutes for its next check-in, then expires.`
+          : `${f.connectivityText}: the request waits for its next check-in.`,
+    };
+  }
+  if (need.kind === 'action') {
+    if (f.signer.approval === 'direct') return { state: 'available', reason: 'Direct mode: signed when you request it, after a fresh sign-in, and run at its next check-in.' };
+    return { state: 'needs_approval', reason: 'Two approvers authorize it on the approval page before the computer runs it.' };
+  }
+  if (def.id === 'restart-pending') {
+    return {
+      state: 'available',
+      reason: f.restartPending === true ? 'Yes — the last scan says a restart is pending.'
+        : f.restartPending === false ? 'No — the last scan says no restart is pending.'
+          : 'Unknown — no scan has answered yet. Check for updates asks for one.',
+    };
+  }
+  return { state: 'available', reason: need.kind === 'server' ? 'Runs on the server; nothing is sent to the computer.' : need.kind === 'diagnostic' ? 'No approval needed; recorded in the audit log.' : 'Ready.' };
+}
+
+export function deviceTools(endpointId: string, f: ToolFacts): ToolView[] {
+  return toolCatalog(endpointId).map((d) => ({ ...d, ...toolState(d, f) }));
+}
+
+/** The tools of one group, in catalog order. */
+export const toolsIn = (tools: ToolView[], g: ToolGroup) => tools.filter((t) => t.group === g);
+
+// ── Who may request an approved action (mirrors AccessPolicyService) ────────
+
+export interface ToolUser {
+  isPlatformAdmin: boolean;
+  /** /auth/me capabilities. */
+  capabilities: string[];
+  roleType: string | null;
+  technician?: {
+    sources: unknown[];
+  } | null;
+}
+
+type Source = { capabilities?: unknown; endpointIds?: unknown; presetId?: unknown; presetPolicy?: { fixRequests?: unknown; standardWorkstationsOnly?: unknown } | null };
+
+const OWNER_ROLES = ['BUSINESS_OWNER', 'TENANT_OWNER', 'TENANT_ADMIN'];
+
+/**
+ * Whether this person may request a catalog action of this risk on this
+ * computer: AccessPolicyService.evaluateActionAccess, as far as /auth/me
+ * shows it. A Platform Admin; a member with actions:request or an owner
+ * role; a technician whose grant covering this computer is a custom one with
+ * actions:request, or a preset whose fix-request level covers the risk. The
+ * server also checks protected device classes and identity pauses, which the
+ * console cannot see, and says why when it refuses.
+ */
+export function mayRequestActions(u: ToolUser | null | undefined, endpointId: string, deviceClass: string, risk: 'low' | 'high'): boolean {
+  if (!u) return false;
+  if (!u.technician) {
+    if (u.isPlatformAdmin) return true;
+    return u.capabilities.includes('actions:request') || (!!u.roleType && OWNER_ROLES.includes(u.roleType));
+  }
+  const cover = (u.technician.sources as Source[]).filter((s) => s && (s.endpointIds == null || (Array.isArray(s.endpointIds) && s.endpointIds.includes(endpointId))));
+  if (cover.some((s) => !s.presetId && Array.isArray(s.capabilities) && s.capabilities.includes('actions:request'))) return true;
+  return cover.some((s) => {
+    const p = s.presetPolicy;
+    if (!p) return false;
+    const ok = p.fixRequests === 'higher_risk' || (risk === 'low' && p.fixRequests === 'low_risk');
+    return ok && (!p.standardWorkstationsOnly || deviceClass === 'WORKSTATION');
+  });
+}

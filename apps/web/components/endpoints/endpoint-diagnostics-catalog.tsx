@@ -245,7 +245,11 @@ function RunDetail({ run, now }: { run: Run; now: number }) {
   );
 }
 
-export function EndpointDiagnosticsCatalog({ endpointId }: { endpointId: string }) {
+export function EndpointDiagnosticsCatalog({ endpointId, focusKey }: {
+  endpointId: string;
+  /** 0.75: the check the Tools panel opened this tab for: its row is marked, brought into view and its Run button focused. Nothing runs until it is clicked. */
+  focusKey?: string | null;
+}) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [selected, setSelected] = useState<string | null>(null);
@@ -273,6 +277,14 @@ export function EndpointDiagnosticsCatalog({ endpointId }: { endpointId: string 
     },
     onError: (e) => toast({ title: 'Could not run the diagnostic', description: errText(e, 'The request was refused.'), variant: 'destructive' }),
   });
+
+  const ready = !!catalog.data;
+  useEffect(() => {
+    if (!focusKey || !ready) return;
+    const row = document.querySelector<HTMLElement>(`[data-diag-key="${CSS.escape(focusKey)}"]`);
+    row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row?.querySelector<HTMLButtonElement>('button[data-diag-run]')?.focus({ preventScroll: true });
+  }, [focusKey, ready]);
 
   const c = catalog.data;
   const history = runs.data ?? [];
@@ -311,7 +323,8 @@ export function EndpointDiagnosticsCatalog({ endpointId }: { endpointId: string 
               const last = latestByKey.get(item.key);
               const busy = !!last && OPEN.includes(last.status);
               return (
-                <li key={item.key} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between">
+                <li key={item.key} data-diag-key={item.key} data-focused={focusKey === item.key ? 'true' : undefined}
+                  className={`flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between ${focusKey === item.key ? '-mx-2 rounded-md bg-primary/5 px-2 ring-1 ring-primary/40' : ''}`}>
                   <div className="min-w-0 space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium">{item.label}</span>
@@ -327,7 +340,7 @@ export function EndpointDiagnosticsCatalog({ endpointId }: { endpointId: string 
                     )}
                   </div>
                   <Button
-                    size="sm" variant="outline" className="shrink-0"
+                    size="sm" variant="outline" className="shrink-0" data-diag-run=""
                     disabled={!item.allowed || !!blocked || busy || (run.isPending && run.variables === item.key)}
                     title={!item.allowed ? `Needs ${item.capability}` : undefined}
                     onClick={() => run.mutate(item.key)}

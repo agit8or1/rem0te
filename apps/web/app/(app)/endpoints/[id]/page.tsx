@@ -3,7 +3,7 @@
 import { EndpointDiagnosticsCatalog } from '@/components/endpoints/endpoint-diagnostics-catalog';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { endpointsApi, msaApi, offboardingApi } from '@/lib/api-client';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EndpointEventLog } from '@/components/endpoints/endpoint-event-log';
@@ -34,6 +34,8 @@ import {
   actionUnavailableReason, agentActionKeys, useActionCatalog, useInventory, useMonitoringView, usePatchStatus,
 } from '@/components/endpoints/workspace/use-device-data';
 import { usePermissions, CAP } from '@/lib/auth';
+import { ToolsPanel } from '@/components/endpoints/workspace/tools-panel';
+import type { ToolTarget } from '@/lib/device-tools';
 import { useToast } from '@/hooks/use-toast';
 
 /**
@@ -59,16 +61,30 @@ export default function EndpointDetailPage() {
 
   const [tab, setTabState] = useState<WorkspaceTab>('overview');
   const tabsRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  // 0.75: the Tools panel, and what it opened a tab for (an action to pick, a
+  // check to mark, a log to choose). `n` remounts the tab's component when the
+  // same tab is opened again for something else.
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [focus, setFocus] = useState<{ action?: string; check?: string; log?: string; n: number }>({ n: 0 });
   // ?tab= opens that tab (alert links, bookmarks and the docs screenshots use
   // it); old values from before the regrouping map to where their content went.
   useEffect(() => {
-    const t = parseTab(new URLSearchParams(window.location.search).get('tab'));
+    const q = new URLSearchParams(window.location.search);
+    const t = parseTab(q.get('tab'));
     if (t) setTabState(t);
+    // 0.75: ?tab=actions&action=…, ?tab=diagnostics&check=…, ?tab=events&log=… (the Tools panel's deep links).
+    const f = { action: q.get('action') ?? undefined, check: q.get('check') ?? undefined, log: q.get('log') ?? undefined };
+    if (f.action || f.check || f.log) setFocus({ ...f, n: 1 });
   }, []);
-  const setTab = useCallback((t: WorkspaceTab) => {
+  const setTab = useCallback((t: WorkspaceTab, f?: { action?: string; check?: string; log?: string }) => {
     setTabState(t);
     const url = new URL(window.location.href);
     if (t === 'overview') url.searchParams.delete('tab'); else url.searchParams.set('tab', t);
+    for (const k of ['action', 'check', 'log'] as const) {
+      if (f?.[k]) url.searchParams.set(k, f[k]!); else url.searchParams.delete(k);
+    }
+    setFocus((cur) => ({ ...(f ?? {}), n: cur.n + 1 }));
     window.history.replaceState(window.history.state, '', url);
     // From a link further down the Overview, bring the tab into view.
     tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -184,6 +200,15 @@ export default function EndpointDetailPage() {
   const msaOn = msaReadiness?.managedControls === true;
   const { data: msaManaged } = useMsaManagedView(id, msaOn);
   const managedConnect = useManagedConnect(id);
+  // 0.75: a tool opens its tab (with what to open in it) or its page; nothing runs from here.
+  const openTool = useCallback((target: ToolTarget) => {
+    if (target.kind === 'href') { router.push(target.href); return; }
+    if (target.kind !== 'tab') return;
+    setTab(target.tab, { action: target.action, check: target.check, log: target.log });
+    if (target.check === 'test-connection') {
+      setTimeout(() => document.getElementById('diag-test-connection')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
+    }
+  }, [router, setTab]);
   const viaGrant = msaOn && msaManaged?.state === 'verified';
   const startConnect = (mode?: 'view_only') => (viaGrant ? managedConnect.connect(mode) : launchMutation.mutate(mode));
 
@@ -248,6 +273,7 @@ export default function EndpointDetailPage() {
             onViewOnly={() => startConnect('view_only')}
             connecting={launchMutation.isPending || managedConnect.pending}
             onOpenTab={setTab}
+            onTools={canView ? () => setToolsOpen(true) : undefined}
             perms={{ view: canView, edit: canEdit, remove: can(CAP.COMPUTERS_REMOVE), technician: !!technician }}
             actionReason={actionReason}
             reportsInventory={acceptsQueuedWork(agent)}
@@ -263,6 +289,17 @@ export default function EndpointDetailPage() {
         onConnect={() => startConnect(undefined)}
       />
       {managedConnect.dialog}
+      {canView && (
+        <ToolsPanel
+          endpointId={id}
+          ep={ep}
+          patches={patches.data}
+          perms={{ view: canView, eventLogs: canEventLogs }}
+          open={toolsOpen}
+          onOpenChange={setToolsOpen}
+          onPick={openTool}
+        />
+      )}
 
       {canView && <DeviceTasks endpointId={id} />}
 
@@ -344,7 +381,7 @@ export default function EndpointDetailPage() {
 
         {tabs.includes('events') && (
           <TabsContent value="events" className="mt-4">
-            <EndpointEventLog endpointId={id} isOnline={isOnline} />
+            <EndpointEventLog key={`events-${focus.n}`} endpointId={id} isOnline={isOnline} initialLog={focus.log} />
           </TabsContent>
         )}
 
@@ -355,8 +392,10 @@ export default function EndpointDetailPage() {
                 opened. The catalog runs nothing until a check is clicked. */}
             {active === 'diagnostics' && (
               <>
-                <EndpointDiagnosticsCatalog endpointId={id} />
-                <DiagnosticsPanel endpointId={id} canConnect={can(CAP.COMPUTERS_CONNECT)} />
+                <EndpointDiagnosticsCatalog key={`diag-${focus.n}`} endpointId={id} focusKey={focus.check} />
+                <div id="diag-test-connection" className="scroll-mt-4" data-testid="diag-test-connection">
+                  <DiagnosticsPanel endpointId={id} canConnect={can(CAP.COMPUTERS_CONNECT)} />
+                </div>
               </>
             )}
           </TabsContent>
@@ -364,7 +403,7 @@ export default function EndpointDetailPage() {
 
         {tabs.includes('actions') && (
           <TabsContent value="actions" className="mt-4">
-            {active === 'actions' && <EndpointActions endpointId={id} isOnline={isOnline} unavailableReason={actionReason === 'Checking…' ? null : actionReason} agentActions={agentActionKeys(ep)} />}
+            {active === 'actions' && <EndpointActions key={`actions-${focus.n}`} initialAction={focus.action} endpointId={id} isOnline={isOnline} unavailableReason={actionReason === 'Checking…' ? null : actionReason} agentActions={agentActionKeys(ep)} />}
           </TabsContent>
         )}
 

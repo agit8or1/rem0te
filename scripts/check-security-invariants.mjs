@@ -7163,6 +7163,55 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /HOSTSEC_API_PORT \?\? 3991/.test(read('apps/api/scripts/e2e-host-security.mjs')));
 }
 
+// ── §85 (0.75): the device page's Tools panel only decides what it shows ─────
+//     Tools lists what can be done to a computer and opens the flow that
+//     already does it. It must stay a menu, never a second way in:
+//       - lib/device-tools.ts is pure: no import, no fetch, no clock of its own.
+//       - The panel (tools-panel.tsx) only reads, and only the reads the tabs
+//         already make: the action catalog, the diagnostics catalog and the
+//         containment banner. No useMutation, no post / put / patch / delete,
+//         and no Managed Secure Access route (§81–§83: gated, off).
+//       - Every action a tool names is one of the approved catalog's
+//         (actions/catalog.ts), by id; every diagnostic is a listed catalog
+//         key; the one link it builds is the existing diagnostics report.
+//       - It adds no route: no controller under apps/api/src names "tools".
+//       - Its rules are unit-tested in CI (unit-device-tools.mjs) and driven in
+//         the browser suite.
+{
+  console.log('\n§85 Device Tools panel (decides what it shows; opens existing flows)');
+  const lib = read('apps/web/lib/device-tools.ts');
+  const panel = read('apps/web/components/endpoints/workspace/tools-panel.tsx');
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  check('Tools: lib/device-tools.ts is pure — no import, no fetch, no Date.now()',
+    !/^\s*import\s/m.test(lib) && !/\brequire\(/.test(lib) && !/\bfetch\(|\baxios\b|\bapi\./.test(code(lib)) && !/Date\.now\(\)/.test(code(lib)),
+    'apps/web/lib/device-tools.ts');
+  const pc = code(panel);
+  const calls = [...pc.matchAll(/\b(actionsApi|api|containmentApi|endpointsApi|msaApi|patchingApi)\.(\w+)\(/g)].map((m) => `${m[1]}.${m[2]}`);
+  check('Tools: the panel only reads the action catalog, the diagnostics catalog and the containment banner',
+    JSON.stringify([...new Set(calls)].sort()) === JSON.stringify(['actionsApi.catalog', 'api.get', 'containmentApi.banner'])
+      && /api\.get\(`\/endpoints\/\$\{endpointId\}\/diagnostics\/catalog`\)/.test(pc)
+      && !/useMutation|\.(post|put|patch|delete)\(/.test(pc) && !/\/msa\b|msaApi/.test(pc + code(lib)),
+    `calls ${JSON.stringify([...new Set(calls)])}`);
+  const apiCatalog = read('apps/api/src/actions/catalog.ts');
+  const ids = new Set([...apiCatalog.matchAll(/^\s*id: '([a-z.]+)'/gm)].map((m) => m[1]));
+  const named = [...lib.matchAll(/action: '([a-z.]+)'/g)].map((m) => m[1]);
+  const diag = read('apps/api/src/diagnostics-catalog/catalog.ts');
+  const keys = [...lib.matchAll(/kind: 'diagnostic', key: '([a-z_]+)'/g)].map((m) => m[1]);
+  check('Tools: every action is an approved catalog action, every check a listed diagnostics key',
+    named.length >= 11 && named.every((a) => ids.has(a)) && keys.length >= 8 && keys.every((k) => new RegExp(`key: '${k}'[^\\n]*`).test(diag) && !new RegExp(`key: '${k}'[^\\n]*tab: '`).test(diag)),
+    `actions ${JSON.stringify(named.filter((a) => !ids.has(a)))} keys ${JSON.stringify(keys)}`);
+  const links = [...lib.matchAll(/href: `([^`]+)`/g)].map((m) => m[1]);
+  check('Tools: the only link it builds is the existing diagnostics report route',
+    JSON.stringify(links) === JSON.stringify(['/api/v1/endpoints/${e}/diagnostics/report'])
+      && /@Get\(':id\/diagnostics\/report'\)|'endpoints\/:id\/diagnostics\/report'|diagnostics\/report/.test(read('apps/api/src/diagnostics/diagnostics.controller.ts')),
+    JSON.stringify(links));
+  const ctrls = walk('apps/api/src').filter((f) => f.endsWith('.controller.ts')).filter((f) => /@(Get|Post|Put|Patch|Delete|Controller)\(['`][^'`]*\btools\b/.test(read(f)));
+  check('Tools: no API route was added for it (no controller path names "tools")', ctrls.length === 0, ctrls.join(', '));
+  check('Tools: the suites prove it',
+    /unit-device-tools\.mjs/.test(read('.github/workflows/ci.yml')) && /async function toolsPanel\(/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    'unit-device-tools.mjs in CI; toolsPanel() in e2e-ui.mjs');
+}
+
 // ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──
 //     A dozen suites fell back to http://127.0.0.1:3001 when API_BASE was
 //     unset. Run by hand with only DATABASE_URL set, one wrote its fixtures to

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import {
-  Archive, ArchiveRestore, ChevronDown, Link2, Copy, Download, Eye, Loader2, MoreHorizontal, PackageCheck, PlayCircle, ShieldCheck, Stethoscope, Wrench, FileDown,
+  Archive, ArchiveRestore, ChevronDown, Link2, Copy, Download, Eye, Loader2, MoreHorizontal, PackageCheck, PlayCircle, ShieldCheck, Stethoscope, Wrench, FileDown, LayoutGrid,
 } from 'lucide-react';
 import { endpointsApi, diagnosticsApi } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
@@ -20,7 +20,11 @@ import type { WorkspaceTab } from './device-model';
 import { AgentActionDialogs, UPGRADE_LABEL, UpgradeButton, upgradeView, type AgentActions } from './agent-actions';
 
 /**
- * CONNECT · DIAGNOSE · RUN ACTION · PATCH · MORE.
+ * CONNECT · TOOLS · DIAGNOSE · RUN ACTION · PATCH · MORE.
+ *
+ * 0.75: Tools opens the Tools panel (tools-panel.tsx), which lists every tool
+ * by group with whether it can work here and why, and opens the existing tab
+ * for it.
  *
  * A primary button that cannot work for this computer is disabled and the
  * reason is printed under the bar — a tooltip on a disabled button never
@@ -59,7 +63,7 @@ function apiMessage(e: unknown, fallback: string) {
 }
 
 export function DeviceActions({
-  endpointId, ep, onConnect, onViewOnly, connecting, onOpenTab, perms, actionReason, reportsInventory, agent,
+  endpointId, ep, onConnect, onViewOnly, connecting, onOpenTab, onTools, perms, actionReason, reportsInventory, agent,
 }: {
   endpointId: string;
   ep: Record<string, unknown>;
@@ -67,6 +71,8 @@ export function DeviceActions({
   onViewOnly: () => void;
   connecting: boolean;
   onOpenTab: (t: WorkspaceTab) => void;
+  /** 0.75: opens the Tools panel; absent without computers:view. */
+  onTools?: () => void;
   perms: { view: boolean; edit: boolean; remove: boolean; technician: boolean };
   /** Why RUN ACTION cannot work here, or null. */
   actionReason: string | null;
@@ -148,6 +154,11 @@ export function DeviceActions({
         <Button size="sm" onClick={onConnect} disabled={connecting || !!connectReason} data-testid="action-connect">
           <PlayCircle className="h-4 w-4 mr-1.5" />Connect
         </Button>
+        {perms.view && onTools && (
+          <Button size="sm" variant="outline" onClick={onTools} aria-haspopup="dialog" data-testid="action-tools">
+            <LayoutGrid className="h-4 w-4 mr-1.5" />Tools
+          </Button>
+        )}
         {perms.view && (
           <Button size="sm" variant="outline" onClick={() => onOpenTab('diagnostics')} data-testid="action-diagnose">
             <Stethoscope className="h-4 w-4 mr-1.5" />Diagnose

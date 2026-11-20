@@ -1607,6 +1607,16 @@ async function memberChecks(browser, f, vp, theme, label) {
     check(await hdr.isVisible() && offered === 0 && await cardBtn.count() === 1 && await cardBtn.isDisabled(),
       `${label}: a Business User (computers:view) gets no agent buttons in the header, and the card's Upgrade to full agent is disabled`, `header buttons ${offered}, card button ${await cardBtn.count()}`);
     await cleanCheck(page, `${label} Business User device header`);
+    // 0.75: Tools for a Business User (computers:view only): no action can be
+    // requested and the Security log is not theirs — shown, disabled, saying why.
+    const st = await openTools(page, f.main.id);
+    const notMine = [...ACTION_TOOLS, 'security-log'].filter((t) => st[t] !== 'not_permitted');
+    check(notMine.length === 0 && st['test-connection'] === 'available' && st['patch-scan'] === 'available',
+      `${label}: a Business User's Tools say Not permitted for every action and the Security log, and still offer the read-only ones`, notMine.join(', ') || JSON.stringify(st));
+    check(await page.getByTestId('tool-restart-schedule').getAttribute('data-disabled') === 'true' && await page.getByTestId('tool-restart-schedule').locator('button').count() === 0,
+      `${label}: a tool the Business User may not use has no button (it would 403)`);
+    await closeTools(page);
+    await cleanCheck(page, `${label} Business User Tools`);
   } finally { await ctx.close(); }
 }
 
@@ -1687,6 +1697,7 @@ async function combo(browser, f, vp, theme) {
     await fullAgentPage(page, f, vp, theme, label);
     await msaReadinessUi(page, f, vp, theme, label);
     await headerAgentUpgrade(page, f, vp, theme, label);
+    await toolsPanel(page, f, vp, theme, label);
     if (theme === 'light') await mainPagesSweep(page, f, vp, label);
   } finally { await ctx.close(); }
   await apiKeys(browser, f, vp, theme, label);
@@ -2210,6 +2221,173 @@ async function msaReadinessUi(page, f, vp, theme, label) {
   check(cur === 'Managed sessions', `${label}: Managed sessions is the current Devices tab`, String(cur));
   if (vp === 'phone') await noSideScroll(page, `${label} Managed sessions`);
   await cleanCheck(page, `${label} Managed sessions`);
+}
+
+// ── 0.75: the device page's Tools panel ────────────────────────────────────
+// A business of its own (no TAG in the names, so the list, palette and map
+// never meet them): a signed Windows agent reporting every catalog action, a
+// standard Windows agent, the read-only Linux and macOS agents, each with a
+// device secret and checking in now, and an offline standard one.
+async function seedTools(f) {
+  const D = await prisma.customer.create({ data: { tenantId: f.tenant.id, name: `TLS ${sfx} Tools` } });
+  created.businesses.push(D.id);
+  const ACTIONS = ['windows.service.start@1', 'windows.update.install@1', 'windows.service.restart@1', 'windows.reboot.schedule@1', 'windows.reboot.cancel@1',
+    'windows.logs.collect@1', 'windows.script.run@1', 'windows.software.install@1', 'windows.software.uninstall@1', 'windows.software.remove@1',
+    'windows.service.control@1', 'windows.process.stop@1'];
+  const mk = async (suffix, extra) => {
+    const e = await prisma.endpoint.create({ data: {
+      tenantId: f.tenant.id, customerId: D.id, name: `TLS-${sfx}-${suffix}`, hostname: `tls-${sfx}-${suffix.toLowerCase()}.corp.example.com`, platform: 'Windows', osVersion: 'Windows 11 Pro',
+      status: 'ACTIVE', isOnline: true, isManaged: true, accessMode: 'COMPANY_WIDE', lastSeenAt: new Date(), deviceClass: 'WORKSTATION', agentVersion: '0.73.0', ...extra,
+    } });
+    await prisma.rustdeskNode.create({ data: { tenantId: f.tenant.id, endpointId: e.id, rustdeskId: String(100000000 + ((Math.random() * 899999999) | 0)), agentSecretHash: sha256(randomBytes(24).toString('hex')) } });
+    return e;
+  };
+  return {
+    D,
+    signed: await mk('SIGNED', { updateChannel: 'signed', signedSeenAt: new Date(), agentActions: ACTIONS }),
+    standard: await mk('STANDARD', {}),
+    linux: await mk('LINUX', { platform: 'Linux', osVersion: 'Ubuntu 24.04', agentVersion: '0.33.0' }),
+    mac: await mk('MAC', { platform: 'macOS', osVersion: 'macOS 15.1', agentVersion: '0.33.0' }),
+    offline: await mk('OFFLINE', { isOnline: false, lastSeenAt: new Date(Date.now() - 3 * 86400_000) }),
+  };
+}
+
+/** The Tools panel on one computer: open it, and return each tool's state. */
+async function openTools(page, id) {
+  if (!new URL(page.url()).pathname.endsWith(`/endpoints/${id}`)) await go(page, `/endpoints/${id}`);
+  await page.getByTestId('action-tools').click();
+  const panel = page.getByTestId('tools-panel');
+  await panel.waitFor({ timeout: 15_000 });
+  // The catalog and diagnostics reads settle the actions' and diagnostics' states.
+  await page.waitForFunction(() => !document.querySelector('[data-testid="tools-panel"] [data-state="checking"]'), null, { timeout: 15_000 }).catch(() => {});
+  await settled(page, 10_000);
+  return Object.fromEntries(await panel.locator('li[data-testid^="tool-"][data-state]').evaluateAll((els) => els.map((e) => [e.getAttribute('data-testid').replace(/^tool-/, ''), e.getAttribute('data-state')])));
+}
+const closeTools = async (page) => { await page.keyboard.press('Escape'); await page.getByTestId('tools-panel').waitFor({ state: 'detached', timeout: 5_000 }).catch(() => {}); };
+
+const ACTION_TOOLS = ['run-script', 'service-control', 'service-restart', 'spooler-start', 'process-stop', 'software-install', 'software-remove', 'install-updates', 'restart-schedule', 'restart-cancel', 'logs-collect'];
+const DIAG_TOOLS = ['refresh-inventory', 'disk-space', 'service-health', 'top-processes', 'recent-errors', 'reboot-status', 'network-connectivity', 'dns-resolution'];
+const VIEW_TOOLS = ['services', 'processes', 'software-list', 'network', 'security-log'];
+const SERVER_TOOLS = ['test-connection', 'diagnostics-report'];
+const SCAN_TOOLS = ['patch-scan', 'restart-pending'];
+const LATER_TOOLS = ['flush-dns', 'security-posture'];
+/** What each fixture must show, tool by tool (lib/device-tools.ts; this suite has no approval signer). */
+function expectedTools(kind) {
+  const e = {};
+  for (const t of LATER_TOOLS) e[t] = 'coming_later';
+  for (const t of SERVER_TOOLS) e[t] = 'available';
+  const reads = kind === 'linux' || kind === 'mac' ? 'unsupported' : kind === 'offline' ? 'offline' : 'available';
+  for (const t of [...DIAG_TOOLS, ...VIEW_TOOLS]) e[t] = reads;
+  for (const t of SCAN_TOOLS) e[t] = kind === 'offline' && t === 'patch-scan' ? 'offline' : 'available';
+  // No approval signer here: every action says so, before the agent is looked at — except where the OS cannot run it at all.
+  for (const t of ACTION_TOOLS) e[t] = kind === 'linux' || kind === 'mac' ? 'unsupported' : 'not_configured';
+  return e;
+}
+
+/**
+ * The Tools panel (0.75) at both widths and in both themes, as the Platform
+ * Admin: opened from the header on a signed and a standard Windows agent, on
+ * Linux, on macOS and on an offline computer, every tool in its expected
+ * state, the eight groups in order, no sideways scroll, closed with Escape and
+ * the focus back on the Tools button. On desktop/light and phone/dark every
+ * tool that opens is picked, and must land in its flow: its tab selected, the
+ * diagnostic's row marked, the Security log chosen — and nothing runs on the
+ * way.
+ */
+async function toolsPanel(page, f, vp, theme, label) {
+  const T = f.tools;
+  for (const [kind, ep] of [['signed', T.signed], ['standard', T.standard], ['linux', T.linux], ['mac', T.mac], ['offline', T.offline]]) {
+    await go(page, `/endpoints/${ep.id}`);
+    const got = await openTools(page, ep.id);
+    const want = expectedTools(kind);
+    const wrong = Object.entries(want).filter(([t, s]) => got[t] !== s).map(([t, s]) => `${t}: ${got[t]} ≠ ${s}`);
+    check(wrong.length === 0 && Object.keys(got).length === Object.keys(want).length, `${label}: Tools on the ${kind} computer: all ${Object.keys(want).length} tools in their expected state`, wrong.join('; ') || JSON.stringify(got));
+    if (kind === 'signed') {
+      const groups = await page.getByTestId('tools-panel').locator('section h3').allInnerTexts();
+      check(groups.join('|').toLowerCase() === 'diagnostics|powershell / scripts|services & processes|software|windows updates|networking|security|maintenance',
+        `${label}: the eight groups, in order`, groups.join('|'));
+      const reason = await page.getByTestId('tool-restart-schedule').innerText();
+      check(/No approval signer is configured/.test(reason) && await page.getByTestId('tool-restart-schedule').getAttribute('data-disabled') === 'true',
+        `${label}: an action with no signer is shown disabled, saying why`, reason.slice(0, 200));
+      const later = await page.getByTestId('tool-security-posture').innerText();
+      check(/Coming later/i.test(later) && /unknown is not healthy/.test(later), `${label}: Security posture is labelled Coming later, and says unknown is not healthy`, later.slice(0, 200));
+      await themeCheck(page, theme, `${label} Tools panel`);
+      await shot(page, `${label}-tools-${kind}`);
+    }
+    if (kind === 'linux') {
+      const r = await page.getByTestId('tool-services').innerText();
+      check(/Linux agent is read-only/.test(r), `${label}: on Linux an unsupported tool says the agent is read-only`, r.slice(0, 200));
+    }
+    if (kind === 'mac') {
+      const r = await page.getByTestId('tool-services').innerText();
+      check(/macOS agent is read-only/.test(r), `${label}: on macOS an unsupported tool says the agent is read-only`, r.slice(0, 200));
+    }
+    if (kind === 'offline') {
+      const r = await page.getByTestId('tool-disk-space').innerText();
+      check(/Offline, last seen \d+[mhd] ago/.test(r) && /expires/.test(r), `${label}: offline says when it was last seen, and that a diagnostic would expire`, r.slice(0, 200));
+    }
+    if (vp === 'phone') {
+      const w = await page.getByTestId('tools-panel').evaluate((el) => ({ box: el.getBoundingClientRect().width, scroll: el.scrollWidth, client: el.clientWidth, vw: innerWidth }));
+      check(w.box <= w.vw && w.scroll <= w.client + 1, `${label}: Tools on the ${kind} computer fits 375 px with no sideways scroll`, JSON.stringify(w));
+    }
+    await closeTools(page);
+    // Radix returns the focus when the close animation ends, which on a slow
+    // runner is after the panel detaches: wait for it, bounded, not one sample.
+    await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'action-tools', null, { timeout: 3_000 }).catch(() => {});
+    const focused = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'));
+    check(focused === 'action-tools', `${label}: Escape closes Tools and gives the focus back to the Tools button (${kind})`, String(focused));
+    await cleanCheck(page, `${label} Tools on the ${kind} computer`);
+  }
+
+  if (!((vp === 'desktop' && theme === 'light') || (vp === 'phone' && theme === 'dark'))) return;
+  // Every tool that opens, picked on the signed computer, lands in its flow.
+  const ep = T.signed;
+  const landing = {
+    'test-connection': { tab: 'diagnostics', extra: async () => (await page.getByTestId('diag-test-connection').count()) === 1 },
+    'refresh-inventory': { tab: 'diagnostics', check: 'refresh_inventory' }, 'disk-space': { tab: 'diagnostics', check: 'disk_space' },
+    'service-health': { tab: 'diagnostics', check: 'service_health' }, 'top-processes': { tab: 'diagnostics', check: 'top_processes' },
+    'recent-errors': { tab: 'diagnostics', check: 'recent_system_errors' }, 'reboot-status': { tab: 'diagnostics', check: 'reboot_status' },
+    'network-connectivity': { tab: 'diagnostics', check: 'network_connectivity' }, 'dns-resolution': { tab: 'diagnostics', check: 'dns_resolution' },
+    services: { tab: 'services' }, processes: { tab: 'processes' }, 'software-list': { tab: 'software' }, network: { tab: 'network' },
+    'security-log': { tab: 'events', extra: async () => new URL(page.url()).searchParams.get('log') === 'Security'
+      && (await page.locator('[role="tabpanel"][data-state="active"] [role="combobox"]').first().innerText().catch(() => '')).trim() === 'Security' },
+    'patch-scan': { tab: 'patches' }, 'restart-pending': { tab: 'patches' },
+  };
+  const before = await prisma.diagnosticRun.count({ where: { endpointId: ep.id } });
+  for (const [tool, want] of Object.entries(landing)) {
+    await openTools(page, ep.id);
+    await page.getByTestId(`tool-${tool}`).locator('button').click();
+    await page.getByTestId('tools-panel').waitFor({ state: 'detached', timeout: 5_000 }).catch(() => {});
+    const tab = page.locator(`[data-testid="tab-${want.tab}"]`);
+    await page.waitForFunction((t) => document.querySelector(`[data-testid="tab-${t}"]`)?.getAttribute('aria-selected') === 'true', want.tab, { timeout: 10_000 }).catch(() => {});
+    await settled(page, 10_000);
+    let ok = await tab.getAttribute('aria-selected') === 'true' && new URL(page.url()).searchParams.get('tab') === want.tab;
+    if (ok && want.check) {
+      await page.locator(`[data-diag-key="${want.check}"][data-focused="true"]`).waitFor({ timeout: 10_000 }).catch(() => {});
+      ok = await page.locator(`[data-diag-key="${want.check}"][data-focused="true"]`).count() === 1 && new URL(page.url()).searchParams.get('check') === want.check;
+    }
+    if (ok && want.extra) ok = await want.extra();
+    check(ok, `${label}: ${tool} opens the ${want.tab} tab${want.check ? ` at ${want.check}` : ''}`, page.url());
+    await cleanCheck(page, `${label} ${tool} from Tools`);
+  }
+  check(await prisma.diagnosticRun.count({ where: { endpointId: ep.id } }) === before, `${label}: picking ${Object.keys(landing).length} tools ran nothing — a check runs only from its own Run button`);
+  // The report is a link to the existing route, not a click here.
+  await openTools(page, ep.id);
+  const href = await page.getByTestId('tool-diagnostics-report').locator('a').getAttribute('href');
+  check(href === `/api/v1/endpoints/${ep.id}/diagnostics/report`, `${label}: Download diagnostics report links to the existing route`, String(href));
+  // Keyboard: a focused tool opens with Enter.
+  await page.getByTestId('tool-disk-space').locator('button').focus();
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => new URL(location.href).searchParams.get('check') === 'disk_space', null, { timeout: 10_000 }).catch(() => {});
+  check(new URL(page.url()).searchParams.get('check') === 'disk_space', `${label}: a tool opens from the keyboard (Enter)`, page.url());
+  await settled(page, 10_000);
+  await cleanCheck(page, `${label} Tools from the keyboard`);
+  // A deep link opens the same place on a fresh load.
+  await go(page, `/endpoints/${ep.id}?tab=diagnostics&check=dns_resolution`);
+  await page.locator('[data-diag-key="dns_resolution"][data-focused="true"]').waitFor({ timeout: 10_000 }).catch(() => {});
+  check(await page.locator('[data-diag-key="dns_resolution"][data-focused="true"]').count() === 1, `${label}: ?tab=diagnostics&check=… marks that check on a fresh load`);
+  if (vp === 'phone') await noSideScroll(page, `${label} diagnostics opened from Tools`);
+  await cleanCheck(page, `${label} Tools deep link`);
 }
 
 /**
@@ -2824,6 +3002,7 @@ async function main() {
   const f = await seed();
   f.c = await seed035(f);
   f.msa = await seedMsa(f);
+  f.tools = await seedTools(f);
   if (process.env.UI_HOLD === '1') {
     // Debugging only: leave the stack and fixtures up until interrupted.
     console.log(`  holding: ${WEB}  admin ${f.admin.email} / owner ${f.owner.email}  password in UI_HOLD_PW_FILE`);

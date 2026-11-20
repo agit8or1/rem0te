@@ -261,7 +261,7 @@ export function DiagnosticsPanel({ endpointId, canConnect }: { endpointId: strin
                           {c.actions.filter((a) => actionAvailable(a.id)).length > 0 && (
                             <div className="flex flex-wrap gap-2 pt-1">
                               {c.actions.filter((a) => actionAvailable(a.id)).map((a) => (
-                                <Button key={a.id} size="sm" variant="outline" className="h-7 text-xs" onClick={() => runAction(a)}>
+                                <Button key={a.id} size="sm" variant="outline" className="h-auto min-h-7 max-w-full whitespace-normal py-1 text-left text-xs" onClick={() => runAction(a)}>
                                   {a.label}
                                 </Button>
                               ))}

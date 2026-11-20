@@ -1792,6 +1792,19 @@ Behavioural proof: `e2e-host-security.mjs` (ports 3991–3993, in
 `run-e2e.sh`); unit: `unit-host-security.mjs` (in CI); `e2e-ui.mjs` opens
 every tab against the fixture host.
 
+§85 (0.75) is the device page's **Tools** panel: a menu of what can be done to
+a computer that opens the flow that already does it, never a second way in.
+`apps/web/lib/device-tools.ts` is pure (no import, no fetch, no clock) and
+decides each tool's state (coming later, unsupported, inactive, not
+permitted, not configured, checking, needs a newer agent, paused, offline,
+needs approval, available). The panel (`tools-panel.tsx`) only reads what the
+tabs already read — the action catalog, the diagnostics catalog and the
+containment banner — with no mutation and no Managed Secure Access route.
+Every action it names is an approved catalog id and every check a listed
+diagnostics key; its one link is the existing diagnostics report. No API
+route names "tools"; the server stays the authority. Unit:
+`unit-device-tools.mjs` (in CI); browser: `e2e-ui.mjs`.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

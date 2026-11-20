@@ -5,6 +5,118 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.75.0] — 2026-11-20 · *Spanner*
+
+**The device page's Tools panel: everything that can be done to one computer, in eight groups, each opening the flow
+that already does it — with whether it can work here, and why not.** The P0 *Device Tools / Quick Actions* item of
+the RMM expansion directive (docs/rmm-expansion-audit.md). Existing flows only: no new agent build, no new action,
+no signer change, no new API route, and no invariant relaxed (check-security-invariants §85 is new).
+
+### Why
+
+Before this the device page had the flows but no map of them. Restarting a service was on Actions or on a Services
+row depending on which service; a diagnostic was a row on Diagnostics; a script run was on the library page; and
+*why* something could not be done here — the standard agent, no approval signer, a containment pause, the
+unassigned pool, a role without `actions:request` — was spread across four tabs, often only discovered as a refused
+request. The audit scored the item *Partial*: "No state per tool across the groups."
+
+### What it is
+
+- **Tools**, beside Connect in the device header (computers:view), opens one dialog: Diagnostics, PowerShell /
+  Scripts, Services & Processes, Software, Windows Updates, Networking, Security, Maintenance. 30 tools.
+- **Picking a tool opens its flow and runs nothing.** A Diagnostics check opens the Diagnostics tab with its row
+  marked and its Run button focused; an approved action opens Actions with that action already picked; a row
+  action (service control, End process, install, remove) opens its tab; the Security log opens Event logs with
+  Security and Information chosen (Security entries are level 0, so Critical/Error/Warning would return nothing);
+  a script run opens Automation → Scripts; the report is the existing download link. The tab's own button and
+  confirmation do the rest, and every route checks scope, capability, fresh sign-in, containment and the approval
+  signer exactly as before. The browser suite counts diagnostic runs across sixteen picks and requires zero.
+- **Deep links:** `?tab=diagnostics&check=<key>`, `?tab=actions&action=<id>`, `?tab=events&log=Security` open the
+  same place on a fresh load (`EndpointDiagnosticsCatalog.focusKey`, `EndpointActions.initialAction`,
+  `EndpointEventLog.initialLog`, each remounted when the panel opens the same tab again).
+
+| Group | Tools → backing flow |
+|---|---|
+| Diagnostics | Test connection (`GET /endpoints/:id/diagnostics`), Refresh inventory, Disk space, Service health, Top processes, Recent system errors (`POST …/diagnostics/runs`, from the row), Download diagnostics report |
+| PowerShell / Scripts | Run an approved script (`windows.script.run`, Automation → Scripts) |
+| Services & Processes | Services, Processes (snapshot tabs), service control (`windows.service.control`), Restart an allowlisted service (`windows.service.restart`), Start the Print Spooler (`windows.service.start`), End a process (`windows.process.stop`) |
+| Software | Installed software, Install software (`windows.software.install`), Remove a program (`windows.software.remove`) |
+| Windows Updates | Check for updates now (`POST …/inventory/refresh`), Restart pending?, Restart signals (`reboot_status`), Install updates (`windows.update.install`) |
+| Networking | Network adapters, Network connectivity, DNS resolution; *Flush DNS / renew DHCP — coming later* |
+| Security | Security event log; *Antivirus, firewall, BitLocker, Secure Boot — coming later* |
+| Maintenance | Schedule a restart, Cancel a scheduled restart, Collect diagnostic logs (`windows.reboot.*`, `windows.logs.collect`) |
+
+The two *coming later* rows are there so the gap is visible: no approved action flushes DNS or renews DHCP, and no
+agent collects Defender, firewall, BitLocker or Secure Boot state. Nothing is shown in their place — unknown is
+never healthy. *Restart pending?* says Yes, No or **Unknown** (never No) from the last update scan.
+
+### Availability, and where it is decided
+
+`apps/web/lib/device-tools.ts`, pure (no import; §85 checks it), decides each tool's state from data the console
+already has. The first that applies wins:
+
+1. **Coming later** — nothing behind it.
+2. **Unsupported here** — Linux and macOS (read-only agents) for anything that runs on the computer; RustDesk only
+   for everything but the server's own checks. Scans and *Restart pending?* work on every agent.
+3. **Unavailable** — archived, not enrolled; the unassigned pool (§70) for actions and diagnostics (reading what it
+   reported still works); an agent never bound to a device secret for diagnostics.
+4. **Not permitted** — no computers:view; Read event logs for Recent system errors, the Security log and Collect
+   logs; for actions, `mayRequestActions` mirrors `AccessPolicyService.evaluateActionAccess`: Platform Admin,
+   `actions:request` or an owner role, or a technician grant covering this computer (custom with
+   `actions:request`, or a preset whose fix-request level covers the action's risk — the catalog's
+   `workstationRisk` on a workstation, high elsewhere — and `standardWorkstationsOnly`). Shown **without a button**,
+   so nothing you can click would be refused. Protected device classes and identity pauses are the server's alone,
+   and it says so if it refuses.
+5. **Not set up** — no approval signer, for actions.
+6. **Needs a newer agent** — the standard agent for any action (the full agent is the fix); a signed agent not
+   reporting `id@1` in `agentActions`; an agent older than 0.33.0 for the snapshot tabs.
+7. **Paused** — an `actions` containment pause on this business or global.
+8. **Not reporting** — offline or agent silent: the flow still opens, and says a request waits for the next
+   check-in (a diagnostic expires after fifteen minutes) or that a view shows the last report.
+9. **Needs approval** — a signed action in two-approver mode (or when the signer did not answer the mode: never
+   assumed direct).
+10. **Available** — including an action in direct mode, which says it is signed at once after a fresh sign-in.
+
+The panel's reads are the tabs' own, under the same query keys, and only while it is open: `GET
+/actions/catalog?endpointId=` (approval mode), `GET /endpoints/:id/diagnostics/catalog` (agentBound) and the shell's
+`GET /containment/banner`. It asks no Managed Secure Access route.
+
+### Fixed on the way
+
+- Diagnostics → Test connection: a check's suggested-fix buttons were `whitespace-nowrap`, so *Check this computer
+  (download read-only helper)* pushed the page 2 px sideways at 375 px on a computer whose check suggested it. They
+  now wrap. The browser suite found it opening Diagnostics from Tools at phone width.
+
+### API
+
+- `GET /containment/banner` rows now carry `businessId` (the pause's business, or null for a global one), so the
+  panel can tell which pause covers this computer without matching business names. Nothing else changed in the
+  API; `docs/API-REFERENCE.md` is unchanged (no route was added).
+
+### Tests
+
+- `apps/web/scripts/unit-device-tools.mjs` (in CI, 1,598 checks): every tool in every state across 24 scenarios
+  (signed, direct, approval unknown, standard, a missing action, an `@2`-only agent, Linux, macOS, RustDesk only,
+  containment, other pauses, offline, agent silent, no view, no event logs, low-risk-only, no requests, no signer,
+  catalog not read, archived, not enrolled, pooled, unbound, agent 0.32.4), every state reached, the decision order,
+  the restart-pending wording, `mayRequestActions` against the API's rule (read from source), and that every
+  action id, diagnostics key, tab and page it names exists in the API's catalogs and the device page.
+- `e2e-ui.mjs` (`toolsPanel`): a business of its own with a signed, a standard, a Linux, a macOS and an offline
+  computer; at both widths and in both themes every tool's state on each, the eight groups in order, 375 px with no
+  sideways scroll, Escape returning focus to Tools; on desktop/light and phone/dark all sixteen opening tools
+  picked and landing in their flow, nothing run, the report link, Enter from the keyboard, and a deep link. The
+  Business User sees *Not permitted*, with no button, on every action and the Security log. The suite's
+  "no gated MSA request" check covers all of it.
+- `check-security-invariants.mjs` §85: the module is pure; the panel only reads those three routes and no MSA route;
+  every action is a catalog action and every check a listed key; the only link is the existing report; no
+  controller path names `tools`; the suites run.
+
+### Deploy
+
+- API and web only (`dist`, the standalone build, `public/`). No migration, no agent, no signer, no dependency.
+
+---
+
 ## [0.74.0] — 2026-11-20 · *Bastion*
 
 **Admin → Security, rewritten: a posture score that never counts unknown as OK, every host change audited and
@@ -117,7 +229,6 @@ update and upgrade* is confirmed, audited when it starts and finishes, and strea
   fix` / ESLint / semgrep / Caddy reload, every off switch listed, and no release-host path or command (§56).
 
 ---
-
 ## [0.73.2] — 2026-11-20 · *Warden*
 
 **Documentation only: an audit of the owner's *Full RMM Functionality Expansion* directive, and a prioritised
@@ -199,6 +310,8 @@ one, its entry goes directly below this one. This audit is against **0.73.0 *War
 
 `node scripts/check-versions.mjs`, `node scripts/check-security-invariants.mjs` and
 `apps/web/scripts/gen-docs-bundle.mjs` (the new page is in `ORDER`; the bundle was regenerated).
+
+---
 
 ## [0.73.1] — 2026-11-20 · *Warden*
 

@@ -75,6 +75,13 @@ jobs:
       - name: Session mutation tests
         run: node apps/api/scripts/unit-session-mutations.mjs
 
+      # The device page's Tools panel (0.75): every tool in every state it can
+      # reach, the order the states are decided in, who may request an action
+      # (mirroring AccessPolicyService), and that every action, diagnostics key
+      # and tab it names exists. Pure TypeScript, transpiled; no build needed.
+      - name: Device Tools tests
+        run: node apps/web/scripts/unit-device-tools.mjs
+
       # Contract ticket-rmm-v1: the JSON Schemas ClientSt0r validates against are
       # generated from the runtime zod schemas; drift between them, or a fixture
       # that no longer parses, fails here. Then the signing, trust-file and

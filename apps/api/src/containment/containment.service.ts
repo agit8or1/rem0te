@@ -155,6 +155,7 @@ export class ContainmentService {
       where: { clearedAt: null, OR: [{ scope: 'GLOBAL' }, ...(actor.businessId ? [{ customerId: actor.businessId }] : []), ...(this.isMsp(actor) && !actor.businessId ? [{ scope: 'BUSINESS' as const }] : [])] },
       orderBy: { createdAt: 'desc' }, take: 10, include: { customer: { select: { name: true } } },
     });
-    return rows.map((p) => ({ id: p.id, scope: p.scope.toLowerCase(), businessName: p.customer?.name ?? null, kinds: p.kinds, reason: p.reason, setBy: p.setBy, createdAt: p.createdAt }));
+    // 0.75: businessId, so a computer's Tools panel can tell which pause is its business's.
+    return rows.map((p) => ({ id: p.id, scope: p.scope.toLowerCase(), businessId: p.customerId ?? null, businessName: p.customer?.name ?? null, kinds: p.kinds, reason: p.reason, setBy: p.setBy, createdAt: p.createdAt }));
   }
 }
