@@ -6,6 +6,7 @@ import { AuditService } from '../audit/audit.service';
 import type { ActorContext } from '../rbac/access-control.service';
 import { TrustChangeService } from '../security-controls/trust-change.service';
 import { agentVersionView, servedVersionOf, type AgentVersionFacts, type AgentVersionView, type ServedAgentBuild } from '../common/agent-version-view';
+import { MSA_GRANT_KEYS_SCHEMA, MSA_GRANT_KEYS_TARGET } from '../msa/grant-key-commands';
 
 /**
  * The portal's side of the signed update chain: a read-only mirror.
@@ -174,6 +175,27 @@ export class UpdateTrustService {
     return agentVersionView(f, served);
   }
   trayTarget() { return this.targetFile(TRAY_TARGET); }
+
+  /**
+   * 0.72 (Managed Secure Access): the grant key ids in the published
+   * msa/grant-keys.json, read as served and unverified — the console's
+   * "is it published yet" and the cutover gate. Agents verify the file
+   * through the signed chain themselves; nothing here is trusted by them.
+   * Strict: anything that is not the schema yields no ids.
+   */
+  publishedMsaGrantKeyIds(): string[] {
+    const t = this.targetFile(MSA_GRANT_KEYS_TARGET);
+    if (!t || t.length > 16_384) return [];
+    try {
+      const doc = JSON.parse(fs.readFileSync(t.path, 'utf8')) as { schema?: unknown; keys?: unknown };
+      if (doc.schema !== MSA_GRANT_KEYS_SCHEMA || !Array.isArray(doc.keys)) return [];
+      return doc.keys
+        .map((k) => (k && typeof k === 'object' ? (k as { keyId?: unknown }).keyId : null))
+        .filter((k): k is string => typeof k === 'string' && /^[0-9a-f]{16}$/.test(k));
+    } catch {
+      return [];
+    }
+  }
 
   /** Signed RustDesk builds, newest first, from targets custom metadata or name. */
   signedRustdeskVersions(): string[] {

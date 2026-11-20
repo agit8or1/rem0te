@@ -82,6 +82,8 @@ if (cmd === 'summary') {
   lines.INSTALLER_SHA256 = SHA_RE.test(inst?.hashes?.sha256 ?? '') ? inst.hashes.sha256 : '';
   const ak = entry('approval/keys.json');
   lines.APPROVAL_KEYS_SHA256 = SHA_RE.test(ak?.hashes?.sha256 ?? '') ? ak.hashes.sha256 : '';
+  const mk = entry('msa/grant-keys.json');
+  lines.MSA_GRANT_KEYS_SHA256 = SHA_RE.test(mk?.hashes?.sha256 ?? '') ? mk.hashes.sha256 : '';
   lines.RUSTDESK_VERSIONS = Object.keys(c.targets?.signed?.targets ?? {})
     .map((n) => /^windows\/rustdesk\/rustdesk-(\d+\.\d+\.\d+)-x86_64\.exe$/.exec(n)?.[1]).filter(Boolean).join(',');
   for (const [k, val] of Object.entries(lines)) console.log(`${k}=${val}`);

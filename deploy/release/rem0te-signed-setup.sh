@@ -231,13 +231,13 @@ R=$BUILD/src/deploy/release
 [[ -f $R/lib.sh ]] || die "HEAD has no deploy/release (commit it first: the installed commands come from HEAD, like everything else)"
 for f in lib.sh promote-stage.sh repo-info.mjs rustdesk-asset.mjs portal-pin.mjs; do install -m 0755 "$R/$f" "$LIB_DIR/$f"; done
 esc() { printf '%s' "$1" | sed 's/[&|\\]/\\&/g'; }
-for c in rem0te-signed-publish rem0te-signed-status rem0te-signed-export-root rem0te-signed-refresh; do
+for c in rem0te-signed-publish rem0te-signed-status rem0te-signed-export-root rem0te-signed-refresh rem0te-signed-grant-key; do
   sed -e "s|@LIB_DIR@|$(esc "$LIB_DIR")|" -e "s|@CONF@|$(esc "$CONF_PATH")|" "$R/$c" > "$BIN_DIR/.$c.new"
   chmod 0755 "$BIN_DIR/.$c.new"
   mv -f "$BIN_DIR/.$c.new" "$BIN_DIR/$c"
 done
 LIB=$LIB_DIR
-say "  installed rem0te-signed-publish, -status, -export-root, -refresh in $BIN_DIR"
+say "  installed rem0te-signed-publish, -status, -export-root, -refresh, -grant-key in $BIN_DIR"
 
 # ── 3. Keys and the signing repository ─────────────────────────────────────
 present=0 missing=()

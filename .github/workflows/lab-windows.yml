@@ -76,6 +76,24 @@ jobs:
           $env:REM0TE_LAB_AGENT_EXE = "$env:RUNNER_TEMP\rem0te-agent.exe"
           go test -tags labwindows -count=1 -v -timeout 15m -run '^TestLabRustdeskPreflight$' .
           exit $LASTEXITCODE
+      # Managed Secure Access enforcement (0.72): the agent's enforcement exec
+      # site against the real RustDesk — save, apply a view-only grant and
+      # read every setting back, the one-time password ("Done"), end the
+      # session (random password, stop-service Y then N), restore — as the
+      # administrator and as SYSTEM in session 0. It changes RustDesk's
+      # settings on this throwaway runner and puts them back.
+      - name: Agent MSA enforcement ${{ matrix.version }} (apply, readback, end, restore)
+        if: matrix.version != '1.3.9'
+        working-directory: tools/windows-installer
+        shell: powershell
+        env:
+          REM0TE_LAB: '1'
+          REM0TE_LAB_RUSTDESK: ${{ matrix.version }}
+          REM0TE_LAB_EVIDENCE: ${{ runner.temp }}\lab-part\enforce-evidence-${{ matrix.version }}.jsonl
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\lab-part" | Out-Null
+          go test -tags labwindows -count=1 -v -timeout 20m -run '^TestLabRustdeskEnforce$' .
+          exit $LASTEXITCODE
       - name: Keep the part
         if: always()
         uses: actions/upload-artifact@v7

@@ -228,7 +228,7 @@ async function main() {
       'state and key directories 0700, every key 0600', `${mode(STATE)} ${mode(KEYS)}`);
     check(mode(PUB) === '2750', 'published directory 2750 (setgid: files take the portal group)', mode(PUB));
     check(mode(CONF) === '644' && /^PUB_DIR=/m.test(readFileSync(CONF, 'utf8')), 'configuration written, 0644', mode(CONF));
-    check(['rem0te-signed-publish', 'rem0te-signed-status', 'rem0te-signed-export-root', 'rem0te-signed-refresh'].every((c) => existsSync(path.join(BIN, c))) && existsSync(TOOL),
+    check(['rem0te-signed-publish', 'rem0te-signed-status', 'rem0te-signed-export-root', 'rem0te-signed-refresh', 'rem0te-signed-grant-key'].every((c) => existsSync(path.join(BIN, c))) && existsSync(TOOL),
       'commands and the release tool installed', readdirSync(BIN).join(' '));
     check(readFileSync(ENVF, 'utf8').includes(`\nUPDATE_REPO_DIR=${PUB}\n`), '--apply-env adds UPDATE_REPO_DIR to the portal env file', readFileSync(ENVF, 'utf8'));
     const root = JSON.parse(readFileSync(path.join(STATE, 'repo/metadata/1.root.json'), 'utf8'));
@@ -389,6 +389,43 @@ async function main() {
     check(st.out.includes(`approval/keys.json ${sha(readFileSync(good)).slice(0, 12)}`), 'rem0te-signed-status shows the published approval keys', st.out.slice(-1200));
     const r2 = note(await publish(['--republish']));
     check(r2.code === 0 && servedTargets()['approval/keys.json']?.hashes?.sha256 === sha(readFileSync(good)), 'a later publish signs it again from the kept copy', r2.out.slice(-600));
+  }
+
+  section('0.72: rem0te-signed-grant-key records Managed Secure Access grant public keys, and publish signs them in as msa/grant-keys.json');
+  {
+    const gk = (args) => run(path.join(BIN, 'rem0te-signed-grant-key'), args);
+    const raw = generateKeyPairSync('ed25519').publicKey.export({ format: 'der', type: 'spki' }).subarray(-32);
+    const pubB64 = raw.toString('base64');
+    const kid = sha(raw).slice(0, 16);
+    const before = tree(PUB);
+    let r = note(await gk(['list']));
+    check(r.code === 0 && /no grant keys/.test(r.out), 'list with nothing recorded: says agents refuse every grant', r.out.slice(-400));
+    r = note(await gk(['add', '--key-id', kid, '--public-key', '-----BEGIN PRIVATE KEY-----']));
+    check(r.code !== 0 && /looks like key material/.test(r.out), 'key material is refused', r.out.slice(-400));
+    r = note(await gk(['add', '--key-id', '0'.repeat(16), '--public-key', pubB64]));
+    check(r.code !== 0 && /not the id of that key/.test(r.out), 'a key id that is not the key\'s own SHA-256 prefix is refused', r.out.slice(-400));
+    r = note(await gk(['add', '--key-id', kid, '--public-key', 'short']));
+    check(r.code !== 0 && /32-byte Ed25519 public key/.test(r.out), 'something that is not 32 bytes of base64 is refused', r.out.slice(-400));
+    check(sameTree(before, tree(PUB)) && !existsSync(path.join(STATE, 'msa-grant-keys.json')), 'refusals record and publish nothing', '');
+    r = note(await gk(['add', '--key-id', kid, '--public-key', pubB64]));
+    check(r.code === 0 && /done\. Publish it: sudo rem0te-signed-publish --republish/.test(r.out), 'add records the key and names the publish command', r.out.slice(-400));
+    check(sameTree(before, tree(PUB)), 'add alone publishes nothing', '');
+    r = note(await gk(['add', '--key-id', kid, '--public-key', pubB64]));
+    check(r.code === 0 && /already listed; nothing changed/.test(r.out), 'adding it again changes nothing', r.out.slice(-400));
+    r = note(await gk(['list']));
+    check(r.code === 0 && r.out.includes(`${kid}  ${pubB64}`), 'list shows the key id and public key', r.out.slice(-400));
+    r = note(await publish(['--republish']));
+    const want = { schema: 'rem0te-msa-grant-keys/1', keys: [{ keyId: kid, publicKey: pubB64 }] };
+    const t = servedTargets()['msa/grant-keys.json'];
+    check(r.code === 0 && t?.hashes?.sha256 === sha(Buffer.from(`${JSON.stringify(want)}\n`)), 'publish signs msa/grant-keys.json in with the recorded list\'s digest', JSON.stringify(t ?? null) + r.out.slice(-800));
+    check(/verified: root v1/.test(verifyMirror()), 'verify -mirror accepts the release that carries it');
+    const st = note(await run(path.join(BIN, 'rem0te-signed-status')));
+    check(st.out.includes(`msa/grant-keys.json ${t?.hashes?.sha256?.slice(0, 12)}`), 'rem0te-signed-status shows the published grant keys', st.out.slice(-1200));
+    r = note(await gk(['retire', '--key-id', kid]));
+    check(r.code === 0 && /retire [0-9a-f]{16}: done/.test(r.out), 'retire removes it from the list', r.out.slice(-400));
+    r = note(await publish(['--republish']));
+    const t2 = servedTargets()['msa/grant-keys.json'];
+    check(r.code === 0 && t2?.hashes?.sha256 === sha(Buffer.from(`${JSON.stringify({ schema: 'rem0te-msa-grant-keys/1', keys: [] })}\n`)), 'the next publish signs the empty list: agents refuse grants under the retired key', JSON.stringify(t2 ?? null) + r.out.slice(-600));
   }
 
   section('The daily refresh: a new timestamp, and nothing else');

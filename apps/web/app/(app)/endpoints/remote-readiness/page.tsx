@@ -62,7 +62,7 @@ export default function RemoteReadinessPage() {
       />
       {!allowed ? <p className="text-sm text-muted-foreground">This page needs the View computers permission.</p> : (
         <>
-          <MsaNote text={MSA_FLEET_NOTE} testId="msa-fleet-note" />
+          <MsaNote text={data?.note ?? MSA_FLEET_NOTE} testId="msa-fleet-note" />
           {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
           {isError && <p className="text-sm text-destructive">Readiness could not be loaded.</p>}
           {data && (

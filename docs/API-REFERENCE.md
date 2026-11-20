@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **616** of them across
-**93** controllers.
+integration, under `/api/integration/v1`). There are **623** of them across
+**94** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -606,6 +606,7 @@ Admins and Business Owners are not confined by it; see
 | Method | Path | Access | Capability |
 |---|---|---|---|
 | `POST` | `/api/v1/msa/agent/poll` | public, throttled | — |
+| `POST` | `/api/v1/msa/agent/report` | public, throttled | — |
 
 ## Msa grant msagrants
 
@@ -615,7 +616,20 @@ Admins and Business Owners are not confined by it; see
 |---|---|---|---|
 | `GET` | `/api/v1/msa/grants/endpoint/:endpointId` | signed in | `COMPUTERS_VIEW` |
 | `GET` | `/api/v1/msa/grants/keys` | Platform Admin | — |
+| `POST` | `/api/v1/msa/grants/keys` | Platform Admin, throttled | — |
 | `POST` | `/api/v1/msa/grants/test/:endpointId` | Platform Admin, throttled | — |
+
+## Msa managed
+
+`apps/api/src/msa/msa-managed.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/msa/managed/:endpointId` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/msa/managed/:endpointId/confirm` | Platform Admin, throttled | — |
+| `POST` | `/api/v1/msa/managed/:endpointId/cutover` | Platform Admin, throttled | — |
+| `POST` | `/api/v1/msa/managed/:endpointId/rollback` | Platform Admin, throttled | — |
+| `POST` | `/api/v1/msa/managed/grants/:grantId/reveal` | Platform Admin, throttled | — |
 
 ## Notes
 

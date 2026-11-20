@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { CardHeading } from '@/components/endpoints/card-heading';
 import { cn, formatDate } from '@/lib/utils';
+import { MsaManagedControls } from '@/components/endpoints/msa-managed';
 
 /**
  * Managed Secure Access readiness (0.69): what the signed agent's read-only
@@ -19,7 +20,7 @@ import { cn, formatDate } from '@/lib/utils';
 export type MsaState = 'unsupported' | 'upgrade_available' | 'compatible' | 'unknown' | 'managed' | 'managed_verified' | 'enforcement_failure';
 
 export interface MsaReadiness {
-  state: MsaState; label: string; reasons: string[]; verified: false;
+  state: MsaState; label: string; reasons: string[]; verified: boolean;
   checkedAt: string | null; rustdeskVersion: string | null; labTested: boolean | null;
 }
 export interface MsaEndpointView {
@@ -32,6 +33,8 @@ export interface MsaEndpointView {
   note: string;
   labTested: { versions: string[]; min: string; max: string };
   minAgent: string;
+  /** 0.72: MSA_GRANTS is on, so the managed routes exist. Absent or false: never ask them. */
+  managedControls?: boolean;
 }
 
 /** The one sentence every readiness view leads with (the API's READINESS_NOTE). */
@@ -43,8 +46,8 @@ const TONE: Record<MsaState, string> = {
   upgrade_available: 'border-amber-600/40 text-amber-800 dark:text-amber-300',
   unsupported: 'border-muted-foreground/40 text-muted-foreground',
   unknown: 'border-muted-foreground/40 text-muted-foreground',
-  managed: 'border-muted-foreground/40',
-  managed_verified: 'border-muted-foreground/40',
+  managed: 'border-sky-600/40 text-sky-800 dark:text-sky-300',
+  managed_verified: 'border-emerald-600/40 text-emerald-800 dark:text-emerald-300',
   enforcement_failure: 'border-destructive/50 text-destructive',
 };
 
@@ -81,7 +84,7 @@ export function MsaReadinessCard({ endpointId }: { endpointId: string }) {
         aside={<Link href="/endpoints/remote-readiness" className="text-xs text-muted-foreground underline-offset-2 hover:underline" data-testid="msa-card-fleet-link">All computers</Link>}
       />
       <CardContent className="space-y-2.5 text-sm">
-        <MsaNote testId="msa-card-note" />
+        <MsaNote testId="msa-card-note" text={data?.note ?? MSA_NOTE} />
         {isLoading && <p className="text-muted-foreground">Loading…</p>}
         {isError && <p className="text-muted-foreground">Readiness could not be loaded.</p>}
         {r && (
@@ -106,11 +109,14 @@ export function MsaReadinessCard({ endpointId }: { endpointId: string }) {
               </dl>
             )}
             <p className="text-xs text-muted-foreground">
-              The signed agent reads RustDesk&apos;s settings with its own command line every 6 hours, and whenever RustDesk changes. It never writes one.
-              Compatible means it could be managed later; it is not managed now.
+              The signed agent reads RustDesk&apos;s settings with its own command line every 6 hours, and whenever RustDesk changes. That read never writes one.
+              {r.state === 'managed' || r.state === 'managed_verified' || r.state === 'enforcement_failure'
+                ? ' A Platform Admin moved this computer into Managed Secure Access.'
+                : ' Compatible means it could be managed; it is not managed now.'}
             </p>
           </>
         )}
+        {data?.managedControls === true && <MsaManagedControls endpointId={endpointId} />}
       </CardContent>
     </Card>
   );

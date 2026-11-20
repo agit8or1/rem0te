@@ -1030,7 +1030,9 @@ export class EnrollmentService {
           where: { id: node.id }, select: { pendingPassword: true },
         })
       : null;
-    if (refreshed?.pendingPassword) {
+    // 0.72 (§82): a managed computer's RustDesk password is the agent's. A
+    // staged rotation waits while msa/managed.ts rotationHeld says so.
+    if (refreshed?.pendingPassword && !(await this.msa.rotationHeld(node.endpointId))) {
       try {
         const plain = this.decryptPassword(refreshed.pendingPassword);
         const sha = createHash('sha256').update(plain).digest('hex');
@@ -1295,6 +1297,19 @@ export class EnrollmentService {
       }
     }
 
+    // Managed Secure Access (0.72, §82): only an authenticated signed
+    // heartbeat that may act, with MSA_GRANTS on and the computer in a
+    // managed state, is told to run the grant poller. Never anyone else: an
+    // older agent ignores the field, and a Legacy computer never sees it.
+    let msaPoll = false;
+    if (authenticated && mayAct && kind === 'signed') {
+      try {
+        msaPoll = await this.msa.pollWanted(node.endpointId);
+      } catch (e) {
+        this.logger.warn(`MSA step failed for endpoint ${node.endpointId}: ${String(e)}`);
+      }
+    }
+
     // Chat (0.34): whether a conversation is open, so the signed agent starts
     // its chat host. A flag only — no names, no text: the host fetches those
     // over /enrollment/chat/poll with the device secret. Asked only of an
@@ -1332,6 +1347,7 @@ export class EnrollmentService {
       patchPostureAck,
       patchScan,
       ...(rustdeskPreflightAck ? { rustdeskPreflightAck } : {}),
+      ...(msaPoll ? { msaPoll: true } : {}),
       monitor,
       diagnostics,
       chat,

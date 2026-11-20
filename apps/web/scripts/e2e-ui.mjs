@@ -255,6 +255,9 @@ function startApi() {
     RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off', TRAY_SWEEP: 'off', AUTO_MIGRATION_SWEEP: 'off', WINGET_INDEX_SWEEP: 'off', WARRANTY_SWEEP: 'off', AUTOMATION_SWEEP: 'off', RESTART_WINDOW_SWEEP: 'off',
     // 0.59: the SSO session safety-net.
     SSO_SESSION_SWEEP: 'off',
+    // 0.72: Managed Secure Access is off, as in production; the suite checks
+    // the console asks no gated /msa/managed or /msa/grants route.
+    MSA_GRANTS: 'off',
     // 0.35: the agent-silent fixture is reachable (isOnline) with an old heartbeat; with no hbbs here the stale sweep would take it offline within a minute.
     STALE_SWEEP: 'off',
     // 0.35 automatic snapshots: the fixtures' snapshots are the only ones, and
@@ -476,8 +479,19 @@ const VIEWPORTS = {
  * the request itself is what is judged (with its status and code), so only
  * the echo is dropped.
  */
+// 0.72: this suite's API runs with MSA_GRANTS unset (off). The console must
+// then make no request at all to a gated Managed Secure Access route — each
+// would be a 404 on every device page view.
+const msaGated = [];
+let msaReadinessReads = 0;
 function instrument(page) {
   page.problems = [];
+  page.on('request', (r) => {
+    if (!r.url().startsWith(WEB)) return;
+    const u = r.url().slice(WEB.length);
+    if (/\/api\/v1\/msa\/(managed|grants)(\/|\?|$)/.test(u)) msaGated.push(`${r.method()} ${u}`);
+    if (/\/api\/v1\/msa\/readiness\//.test(u)) msaReadinessReads++;
+  });
   page.on('console', (m) => {
     if (m.type() !== 'error') return;
     const t = m.text();
@@ -2792,6 +2806,9 @@ async function main() {
 main()
   .catch((e) => { fail++; failures.push(`fatal: ${e.stack ?? e.message}`); console.error(e); })
   .finally(async () => {
+    check(msaReadinessReads > 0 && msaGated.length === 0,
+      'MSA_GRANTS off: device pages read readiness but the console requested no /msa/managed or /msa/grants route',
+      `readiness reads ${msaReadinessReads}; gated: ${[...new Set(msaGated)].slice(0, 10).join(', ')}`);
     await cleanup035();
     await cleanup();
     await prisma.$disconnect();

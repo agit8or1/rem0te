@@ -7,14 +7,15 @@ import { isWindowsPlatform, osName } from '../common/platform';
  * MSA state from facts already stored. It imports two constants-and-regex
  * modules and nothing that reads a database, a file or the network.
  *
- * READINESS ONLY. Managed Secure Access is not built: nothing here, or
- * anywhere in 0.69, changes a setting, a password or a session on any
- * computer. `managed`, `managed_verified` and `enforcement_failure` are in
- * the type so the console and the API speak the design's whole vocabulary,
- * and NOTHING can produce them yet: `decideReadiness` returns only
- * PRODUCIBLE_STATES, and unit-msa-readiness.mjs and check-security-invariants
- * (§80) assert it. A saved or assumed state is never shown as verified:
- * `verified` is the literal `false` on every answer.
+ * Readiness, and since 0.72 the managed states. Nothing here changes a
+ * computer. `managed` (Managed (pending)), `managed_verified` and
+ * `enforcement_failure` are produced ONLY from the caller's `managed` fact —
+ * the MsaManagedComputer row a Platform Admin's cutover wrote, as the agent's
+ * reports moved it — and only while the computer is reporting now (rules 1–3
+ * first: an Unknown computer is never shown as managed). Managed and verified
+ * also needs the agent's own readback of every managed setting within
+ * REPORT_MAX_AGE_MS; a saved state alone is never shown as verified, and
+ * `verified` is true on that answer alone (unit-msa-readiness.mjs, §80).
  *
  * The rules, in order (the first that applies decides):
  *   1. Platform unknown → unknown. Linux or macOS → unsupported.
@@ -35,6 +36,11 @@ import { isWindowsPlatform, osName } from '../common/platform';
  *      the lab covers it.
  *   9. Service not running, or any `--option` read unanswered → unknown.
  *  10. Otherwise → compatible. Still Legacy: compatible changes nothing.
+ *
+ * With a `managed` fact (0.72), after rule 3: rollback_pending → managed
+ * (rolling back), enforcement_failure → enforcement_failure, pending →
+ * managed, verified → managed_verified when the agent read every setting
+ * back within REPORT_MAX_AGE_MS, else unknown.
  */
 
 export const MSA_STATES = [
@@ -42,15 +48,19 @@ export const MSA_STATES = [
   'upgrade_available',
   'compatible',
   'unknown',
-  // Later build steps (grants, enforcement, readback). Not producible in 0.69.
+  // 0.72: only from a managed fact (the MsaManagedComputer row) — never from a preflight.
   'managed',
   'managed_verified',
   'enforcement_failure',
 ] as const;
 export type MsaState = (typeof MSA_STATES)[number];
 
-/** The only states decideReadiness can return in this release. */
-export const PRODUCIBLE_STATES = ['unsupported', 'upgrade_available', 'compatible', 'unknown'] as const satisfies readonly MsaState[];
+/** What a preflight alone can produce: never a managed state. */
+export const READINESS_STATES = ['unsupported', 'upgrade_available', 'compatible', 'unknown'] as const satisfies readonly MsaState[];
+/** The managed states (0.72): only from a managed fact. */
+export const MANAGED_READINESS_STATES = ['managed', 'managed_verified', 'enforcement_failure'] as const satisfies readonly MsaState[];
+/** Every state decideReadiness can return. */
+export const PRODUCIBLE_STATES = [...READINESS_STATES, ...MANAGED_READINESS_STATES] as const;
 export type ProducibleState = (typeof PRODUCIBLE_STATES)[number];
 
 export const STATE_LABEL: Record<MsaState, string> = {
@@ -65,6 +75,8 @@ export const STATE_LABEL: Record<MsaState, string> = {
 
 /** The first signed agent that runs the preflight. */
 export const MIN_REPORTING_AGENT = '0.69.0';
+/** The first signed agent that enforces a grant (0.72): cutover needs it. */
+export const MIN_ENFORCING_AGENT = '0.72.0';
 /** RustDesk releases the Windows lab ran as SYSTEM (0.68.3, docs/lab-testing.md). */
 export const LAB_TESTED_RUSTDESK = ['1.4.1', '1.4.6', '1.4.7', '1.4.9', '1.5.3'] as const;
 export const LAB_TESTED_MIN = '1.4.1';
@@ -78,6 +90,12 @@ export const READINESS_NOTE =
   'Readiness only — Managed Secure Access is not available yet; nothing has changed on this computer.';
 export const READINESS_FLEET_NOTE =
   'Readiness only — Managed Secure Access is not available yet; nothing has changed on any computer.';
+/** 0.72: the fleet note while MSA_GRANTS is on (a test server). */
+export const READINESS_FLEET_MANAGED_NOTE =
+  'Managed Secure Access is switched on for testing: a Platform Admin can move one computer at a time. It has run only in the Windows lab.';
+/** 0.72: the note for a computer a Platform Admin moved into Managed Secure Access. */
+export const MANAGED_NOTE =
+  'Managed Secure Access (build step 4) has run only in the Windows lab: never on a Windows 10 or 11 desktop or on the fleet.';
 
 export interface PreflightFacts {
   checkedAt: Date | string;
@@ -90,6 +108,16 @@ export interface PreflightFacts {
   keysOk: number;
 }
 
+/** The MsaManagedComputer row (0.72), as the caller read it. No row is Legacy. */
+export interface ManagedFacts {
+  state: 'pending' | 'verified' | 'enforcement_failure' | 'rollback_pending';
+  requestedAt: Date | string;
+  verifiedAt: Date | string | null;
+  readbackOkAt: Date | string | null;
+  failReason: string | null;
+  failedKeys: string[];
+}
+
 export interface ReadinessFacts {
   platform: string | null;
   /** runsSignedAgent(...) — computed by the caller from stored facts. */
@@ -98,6 +126,8 @@ export interface ReadinessFacts {
   isOnline: boolean;
   lastSeenAt: Date | string | null;
   preflight: PreflightFacts | null;
+  /** 0.72: the managed row, or null / absent for Legacy. */
+  managed?: ManagedFacts | null;
 }
 
 export interface Readiness {
@@ -105,8 +135,8 @@ export interface Readiness {
   label: string;
   /** Plain sentences, the deciding one first. */
   reasons: string[];
-  /** Always false: readiness is a report, never verified enforcement. */
-  verified: false;
+  /** True only for managed_verified: a Platform Admin's confirmation AND the agent's recent readback. */
+  verified: boolean;
   checkedAt: string | null;
   rustdeskVersion: string | null;
   /** True for an exact lab-tested release, false otherwise, null when unknown. */
@@ -154,7 +184,7 @@ export function decideReadiness(f: ReadinessFacts, now: number = Date.now()): Re
   const checkedAt = iso(pf?.checkedAt ?? null);
   const rd = pf?.version ?? null;
   const out = (state: ProducibleState, reasons: string[], labTested: boolean | null = null): Readiness => ({
-    state, label: STATE_LABEL[state], reasons, verified: false, checkedAt, rustdeskVersion: rd, labTested,
+    state, label: STATE_LABEL[state], reasons, verified: state === 'managed_verified', checkedAt, rustdeskVersion: rd, labTested,
   });
 
   // 1. Platform.
@@ -175,6 +205,35 @@ export function decideReadiness(f: ReadinessFacts, now: number = Date.now()): Re
     return out('unknown', [Number.isFinite(seen)
       ? `The agent is not reporting (last heartbeat ${ageText(now - seen)}), so nothing current is known.`
       : 'The agent has never reported.']);
+  }
+
+  // 0.72: a computer a Platform Admin moved into Managed Secure Access.
+  const m = f.managed;
+  if (m) {
+    const keys = m.failedKeys.length ? ` (${m.failedKeys.join(', ')})` : '';
+    if (m.state === 'rollback_pending') {
+      return out('managed', ['Rolling back to Legacy: the agent restores the RustDesk settings it saved before it first applied a grant, then the portal hands it a new permanent password.']);
+    }
+    if (m.state === 'enforcement_failure') {
+      return out('enforcement_failure', [
+        `The agent could not enforce Managed Secure Access: ${m.failReason ?? 'a setting did not read back'}${keys}. Nothing weaker was substituted.`,
+        m.verifiedAt ? 'Connect stays refused until a test grant applies and reads back again, or the computer is rolled back.' : 'Legacy Connect still works (the computer was never verified).',
+      ]);
+    }
+    if (m.state === 'pending') {
+      return out('managed', [
+        'Moved to Managed (pending) by a Platform Admin. Legacy Connect still works until a managed test session succeeds and a Platform Admin confirms it.',
+        m.readbackOkAt ? `The agent last read every managed setting back ${ageText(now - new Date(m.readbackOkAt).getTime())}.` : 'No test grant has been applied yet.',
+      ]);
+    }
+    const rb = m.readbackOkAt ? new Date(m.readbackOkAt).getTime() : NaN;
+    if (!Number.isFinite(rb) || now - rb > REPORT_MAX_AGE_MS) {
+      return out('unknown', ['Verified as managed, but the agent has not read the managed settings back within 7 days, so it is not shown as enforced.']);
+    }
+    return out('managed_verified', [
+      `The agent read every managed setting back ${ageText(now - rb)}, a managed test session connected, and a Platform Admin confirmed it.`,
+      'Its RustDesk password is one nobody is told; the legacy password no longer connects.',
+    ]);
   }
 
   // 4. An agent that can report.

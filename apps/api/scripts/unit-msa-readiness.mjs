@@ -134,42 +134,77 @@ const is = (name, f, state, re) => {
   is('checkedAt as a string', { preflight: pf({ checkedAt: new Date(NOW - 3600_000).toISOString() }) }, 'compatible');
 }
 
-// ── Nothing can be managed yet ──────────────────────────────────────────────
+// ── Managed states only from a managed fact (0.72) ──────────────────────────
 {
   const managed = ['managed', 'managed_verified', 'enforcement_failure'];
   check('the type names every state of the design', J([...r.MSA_STATES]) === J(['unsupported', 'upgrade_available', 'compatible', 'unknown', ...managed]));
-  check('the producible states exclude every managed state', r.PRODUCIBLE_STATES.length === 4 && managed.every((m) => !r.PRODUCIBLE_STATES.includes(m)));
-  // Every combination of facts the function reads.
+  check('a preflight alone produces only the four readiness states', J([...r.READINESS_STATES]) === J(['unsupported', 'upgrade_available', 'compatible', 'unknown']));
+  check('the managed states are exactly the three', J([...r.MANAGED_READINESS_STATES]) === J(managed) && r.PRODUCIBLE_STATES.length === 7);
+  // Every combination of facts the function reads, with no managed fact: never a managed state.
   const seen = new Set();
   let n = 0;
   let verifiedEver = false;
-  for (const platform of ['windows', 'Windows 11', 'linux', 'macos', null, 'solaris'])
-    for (const signedAgent of [true, false])
-      for (const agentVersion of ['0.69.0', '0.68.3', null, '1.0.0', 'garbage'])
-        for (const isOnline of [true, false])
-          for (const lastSeen of [60_000, 3600_000, null])
-            for (const pre of [null, 'fresh', 'old'])
-              for (const version of ['1.4.7+65', '1.3.9', '1.6.0', null])
-                for (const build of ['flutter', 'sciter', 'unknown'])
-                  for (const service of ['running', 'stopped', 'missing', 'other'])
-                    for (const cli of ['ok', 'partial', 'failed', 'not_run'])
-                      for (const placed of [[true, true], [true, false], [false, false]]) {
-                        const x = r.decideReadiness({
-                          platform, signedAgent, agentVersion, isOnline, lastSeenAt: lastSeen === null ? null : new Date(NOW - lastSeen),
-                          preflight: pre === null ? null : { checkedAt: new Date(NOW - (pre === 'old' ? 9 * 86400_000 : 600_000)), installed: placed[0], expectedPath: placed[1], version, build, service, cli, keysOk: cli === 'ok' ? 11 : cli === 'partial' ? 5 : 0 },
-                        }, NOW);
-                        n++; seen.add(x.state);
-                        if (x.verified !== false) verifiedEver = true;
-                        if (!r.PRODUCIBLE_STATES.includes(x.state)) failures.push(`produced ${x.state} for ${J({ platform, signedAgent, agentVersion, pre, version, build, service, cli })}`);
-                        if (!x.reasons.length || x.label !== r.STATE_LABEL[x.state]) failures.push(`no reason or wrong label: ${J(x)}`);
-                      }
-  check(`${n} combinations: none managed, managed_verified or enforcement_failure`, managed.every((m) => !seen.has(m)) && seen.size === 4, J([...seen]));
-  check('verified is false on every answer', !verifiedEver);
-  // And the source has no path to one.
+  const combos = function* () {
+    for (const platform of ['windows', 'Windows 11', 'linux', 'macos', null, 'solaris'])
+      for (const signedAgent of [true, false])
+        for (const agentVersion of ['0.69.0', '0.68.3', null, '1.0.0', 'garbage'])
+          for (const isOnline of [true, false])
+            for (const lastSeen of [60_000, 3600_000, null])
+              for (const pre of [null, 'fresh', 'old'])
+                for (const version of ['1.4.7+65', '1.3.9', '1.6.0', null])
+                  for (const build of ['flutter', 'sciter', 'unknown'])
+                    for (const service of ['running', 'stopped', 'missing', 'other'])
+                      for (const cli of ['ok', 'partial', 'failed', 'not_run'])
+                        for (const placed of [[true, true], [true, false], [false, false]])
+                          yield {
+                            platform, signedAgent, agentVersion, isOnline, lastSeenAt: lastSeen === null ? null : new Date(NOW - lastSeen),
+                            preflight: pre === null ? null : { checkedAt: new Date(NOW - (pre === 'old' ? 9 * 86400_000 : 600_000)), installed: placed[0], expectedPath: placed[1], version, build, service, cli, keysOk: cli === 'ok' ? 11 : cli === 'partial' ? 5 : 0 },
+                          };
+  };
+  for (const f of combos()) {
+    for (const m of [undefined, null]) {
+      const x = r.decideReadiness({ ...f, managed: m }, NOW);
+      n++; seen.add(x.state);
+      if (x.verified !== false) verifiedEver = true;
+      if (!r.READINESS_STATES.includes(x.state)) failures.push(`produced ${x.state} with no managed fact for ${J({ ...f, preflight: !!f.preflight })}`);
+      if (!x.reasons.length || x.label !== r.STATE_LABEL[x.state]) failures.push(`no reason or wrong label: ${J(x)}`);
+    }
+  }
+  check(`${n} combinations without a managed fact: none managed, managed_verified or enforcement_failure`, managed.every((m) => !seen.has(m)) && seen.size === 4, J([...seen]));
+  check('verified is false on every one of them', !verifiedEver);
+
+  // With a managed fact.
+  const reporting = { platform: 'windows', signedAgent: true, agentVersion: '0.72.0', isOnline: true, lastSeenAt: new Date(NOW - 60_000),
+    preflight: { checkedAt: new Date(NOW - 600_000), installed: true, expectedPath: true, version: '1.4.7+65', build: 'flutter', service: 'running', cli: 'ok', keysOk: 11 } };
+  const m = (over) => ({ state: 'pending', requestedAt: new Date(NOW - 3600_000), verifiedAt: null, readbackOkAt: null, failReason: null, failedKeys: [], ...over });
+  const d = (managedFact, base = reporting) => r.decideReadiness({ ...base, managed: managedFact }, NOW);
+  let x = d(m({}));
+  check('pending: Managed (pending), not verified', x.state === 'managed' && x.verified === false && x.label === 'Managed (pending)' && /Legacy Connect still works/.test(x.reasons[0]), J(x));
+  x = d(m({ state: 'rollback_pending', }));
+  check('rolling back: still managed until the agent restores', x.state === 'managed' && x.verified === false && /Rolling back/.test(x.reasons[0]), J(x));
+  x = d(m({ state: 'enforcement_failure', failReason: 'readback_mismatch', failedKeys: ['access-mode'] }));
+  check('enforcement failure names the reason and keys', x.state === 'enforcement_failure' && x.verified === false && /readback_mismatch \(access-mode\)/.test(x.reasons[0]), J(x));
+  x = d(m({ state: 'verified', verifiedAt: new Date(NOW - 7200_000), readbackOkAt: new Date(NOW - 600_000) }));
+  check('verified with a readback this week: managed_verified, verified true', x.state === 'managed_verified' && x.verified === true, J(x));
+  x = d(m({ state: 'verified', verifiedAt: new Date(NOW - 7200_000), readbackOkAt: new Date(NOW - 8 * 86400_000) }));
+  check('verified but no readback for 8 days: unknown, never shown as enforced', x.state === 'unknown' && x.verified === false, J(x));
+  x = d(m({ state: 'verified', verifiedAt: new Date(NOW - 7200_000), readbackOkAt: null }));
+  check('verified with no readback at all: unknown', x.state === 'unknown' && x.verified === false, J(x));
+  x = d(m({ state: 'verified', verifiedAt: new Date(NOW - 7200_000), readbackOkAt: new Date(NOW - 600_000) }), { ...reporting, platform: 'linux' });
+  check('a managed fact never overrides rules 1–3 (not Windows)', x.state === 'unsupported' && x.verified === false, J(x));
+  x = d(m({ state: 'verified', verifiedAt: new Date(NOW - 7200_000), readbackOkAt: new Date(NOW - 600_000) }), { ...reporting, isOnline: false, lastSeenAt: null });
+  check('a managed fact never overrides rules 1–3 (not reporting)', !managed.includes(x.state) && x.verified === false, J(x));
+  // Only one line in decideReadiness produces managed_verified, from the verified row.
   const src = readFileSync(join(here, '..', 'src', 'msa', 'readiness.ts'), 'utf8');
   const body = src.slice(src.indexOf('export function decideReadiness'));
-  check('decideReadiness names no managed state', !/'managed'|'managed_verified'|'enforcement_failure'/.test(body));
-  check('the note says nothing changed', /nothing has changed on this computer/.test(r.READINESS_NOTE) && /not available yet/.test(r.READINESS_NOTE));
+  check('managed states appear only inside the managed-fact branch', (() => {
+    const branch = body.slice(body.indexOf('const m = f.managed;'), body.indexOf('// 4. An agent that can report.'));
+    // The one other mention: `verified` is true exactly for managed_verified.
+    const rest = body.replace(branch, '').replace("verified: state === 'managed_verified'", '');
+    return branch.length > 0 && !/'managed'|'managed_verified'|'enforcement_failure'/.test(rest);
+  })());
+  check('the readiness note still says nothing changed', /nothing has changed on this computer/.test(r.READINESS_NOTE));
+  check('the managed note says where it has run', /only in the Windows lab/.test(r.MANAGED_NOTE) && /never on a Windows 10 or 11 desktop or on the fleet/.test(r.MANAGED_NOTE));
 }
 
 // ── Versions ────────────────────────────────────────────────────────────────

@@ -1,0 +1,110 @@
+#!/bin/bash
+# rem0te-signed-grant-key — the Managed Secure Access grant public keys the
+# signed release carries (0.72).
+#
+#   sudo rem0te-signed-grant-key add --key-id ID --public-key BASE64 [--conf FILE]
+#   sudo rem0te-signed-grant-key retire --key-id ID [--conf FILE]
+#   sudo rem0te-signed-grant-key list [--conf FILE]
+#
+# The portal signs every session grant with its own Ed25519 key. Agents
+# trust that key only when it is in msa/grant-keys.json, a target in the
+# signed release metadata — never because the portal sent it. The console
+# (Managed Secure Access, Platform Admin) shows this command line with the
+# key id and the PUBLIC key filled in; this command records it under the
+# release user's state directory, and the next
+#
+#   sudo rem0te-signed-publish --republish
+#
+# signs it into the release. `retire` removes a key from the list (agents
+# then refuse grants signed with it after the next publish).
+#
+# Public keys only: a key id is the first 16 hex characters of the SHA-256 of
+# the 32-byte key, and both are checked here. Anything that looks like key
+# material (PRIVATE, -----BEGIN) is refused. At most 8 keys.
+set -euo pipefail
+LIB=@LIB_DIR@
+[[ $LIB == @*@ ]] && LIB=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+CONF=@CONF@
+[[ $CONF == @*@ ]] && CONF=/etc/rem0te-release/release.conf
+# shellcheck source=lib.sh
+source "$LIB/lib.sh"
+
+cmd=${1:-}; [[ $# -gt 0 ]] && shift
+key_id='' public_key=''
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --conf) CONF=$2; shift 2 ;;
+    --key-id) key_id=$2; shift 2 ;;
+    --public-key) public_key=$2; shift 2 ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    *) die "unknown argument $1" ;;
+  esac
+done
+case $cmd in
+  add|retire|list) ;;
+  -h|--help|'') sed -n '2,24p' "$0"; exit 0 ;;
+  *) die "usage: rem0te-signed-grant-key add|retire|list" ;;
+esac
+load_conf "$CONF"
+if [[ -n $RELEASE_USER && $EUID -ne 0 && $(id -un) != "$RELEASE_USER" ]]; then die "run with sudo"; fi
+
+FILE=$STATE_DIR/msa-grant-keys.json
+[[ $key_id == '' || $key_id =~ ^[0-9a-f]{16}$ ]] || die "--key-id wants 16 lowercase hex characters"
+if [[ $public_key == *PRIVATE* || $public_key == *-----BEGIN* ]]; then
+  die "--public-key looks like key material. Only the PUBLIC key (32 bytes, base64) ever leaves the portal."
+fi
+[[ $public_key == '' || $public_key =~ ^[A-Za-z0-9+/]{43}=$ ]] || die "--public-key wants a 32-byte Ed25519 public key in standard base64 (44 characters)"
+
+# The JSON is read and written by node with fixed code; the arguments reach
+# it only as argv, after the checks above.
+EDIT='
+const fs = require("fs"), crypto = require("crypto");
+const [cmd, file, keyId, pub] = process.argv.slice(1);
+const SCHEMA = "rem0te-msa-grant-keys/1";
+let doc = { schema: SCHEMA, keys: [] };
+if (fs.existsSync(file)) {
+  doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (doc.schema !== SCHEMA || !Array.isArray(doc.keys) || Object.keys(doc).length !== 2) { console.error("error: " + file + " is not a grant key list"); process.exit(3); }
+}
+const idOf = (b64) => crypto.createHash("sha256").update(Buffer.from(b64, "base64")).digest("hex").slice(0, 16);
+for (const k of doc.keys) {
+  if (Object.keys(k).length !== 2 || !/^[0-9a-f]{16}$/.test(k.keyId) || Buffer.from(k.publicKey, "base64").length !== 32 || idOf(k.publicKey) !== k.keyId) {
+    console.error("error: " + file + " holds an entry that is not a key and its id"); process.exit(3);
+  }
+}
+if (cmd === "list") {
+  if (!doc.keys.length) console.log("  (no grant keys: Managed Secure Access grants are refused by every agent)");
+  for (const k of doc.keys) console.log("  " + k.keyId + "  " + k.publicKey);
+  process.exit(0);
+}
+if (cmd === "add") {
+  if (Buffer.from(pub, "base64").length !== 32 || Buffer.from(pub, "base64").toString("base64") !== pub) { console.error("error: --public-key is not 32 bytes of standard base64"); process.exit(4); }
+  if (idOf(pub) !== keyId) { console.error("error: --key-id is not the id of that key (the first 16 hex characters of its SHA-256 are " + idOf(pub) + ")"); process.exit(4); }
+  if (doc.keys.some((k) => k.keyId === keyId)) { console.log("  " + keyId + " is already listed; nothing changed"); process.exit(0); }
+  if (doc.keys.length >= 8) { console.error("error: 8 keys are listed; retire one first"); process.exit(4); }
+  doc.keys.push({ keyId, publicKey: pub });
+} else {
+  const n = doc.keys.length;
+  doc.keys = doc.keys.filter((k) => k.keyId !== keyId);
+  if (doc.keys.length === n) { console.log("  " + keyId + " is not listed; nothing changed"); process.exit(0); }
+}
+fs.writeFileSync(file + ".new", JSON.stringify(doc) + "\n", { mode: 0o640 });
+fs.renameSync(file + ".new", file);
+console.log("  " + cmd + " " + keyId + ": done. Publish it: sudo rem0te-signed-publish --republish");
+'
+case $cmd in
+  list)
+    as_release 027 "$NODE" -e "$EDIT" list "$FILE" '' '' ;;
+  add)
+    [[ -n $key_id && -n $public_key ]] || die "add needs --key-id and --public-key"
+    exec 9>>"$STATE_DIR/publish.lock"; flock -n 9 || die "a publish is running; try again when it finishes"
+    start_log "grant-key add $key_id"
+    as_release 027 "$NODE" -e "$EDIT" add "$FILE" "$key_id" "$public_key"
+    log "grant key $key_id added" ;;
+  retire)
+    [[ -n $key_id ]] || die "retire needs --key-id"
+    exec 9>>"$STATE_DIR/publish.lock"; flock -n 9 || die "a publish is running; try again when it finishes"
+    start_log "grant-key retire $key_id"
+    as_release 027 "$NODE" -e "$EDIT" retire "$FILE" "$key_id" ''
+    log "grant key $key_id retired" ;;
+esac

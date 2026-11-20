@@ -249,13 +249,15 @@ async function all() {
   const gB = r.data;
   check(await prisma.msaGrantKey.count({ where: { retiredAt: null } }) === 1, 'still one active key');
   const ia = await prisma.activityLog.findFirst({ where: { action: 'MSA_GRANT_ISSUED', resourceId: A1.id }, orderBy: { createdAt: 'desc' } });
-  check(!!ia && ia.actorId === admin.id && ia.customerId === bizA.id && J(Object.keys(ia.metadata).sort()) === J(['consent', 'endpointId', 'grantId', 'keyId', 'mode', 'source'])
+  check(!!ia && ia.actorId === admin.id && ia.customerId === bizA.id && J(Object.keys(ia.metadata).sort()) === J(['consent', 'endpointId', 'grantId', 'keyId', 'managed', 'mode', 'source'])
     && ia.metadata.grantId === g1.grantId && ia.metadata.keyId === g1.keyId, 'MSA_GRANT_ISSUED: filed under the business, ids, mode, consent and key id only', J(ia?.metadata));
 
   r = await req('GET', '/msa/grants/keys', { s: SAdmin });
   const pub = (r.data ?? []).find((k) => k.active);
   check(ok(r) && pub && pub.keyId === keyRow.keyId && G.keyIdOf(Buffer.from(pub.publicKey, 'base64')) === pub.keyId && !J(r.data).includes(keyRow.privateKeyEnc)
-    && J(Object.keys(pub).sort()) === J(['active', 'algorithm', 'createdAt', 'keyId', 'publicKey', 'retiredAt']), 'GET /msa/grants/keys: the public key, its id its SHA-256 prefix, nothing private', msg(r));
+    && J(Object.keys(pub).sort()) === J(['active', 'algorithm', 'commands', 'createdAt', 'keyId', 'publicKey', 'published', 'retiredAt'])
+    && pub.published === false && pub.commands.length === 2 && pub.commands[0] === `sudo rem0te-signed-grant-key add --key-id ${pub.keyId} --public-key ${pub.publicKey}`,
+    'GET /msa/grants/keys: the public key, its id its SHA-256 prefix, not published (no repository), the owner\'s two commands, nothing private', msg(r));
   r = await req('GET', '/msa/grants/keys', { s: SA });
   check(r.status === 403, 'and a Business Owner may not read it', msg(r));
   const keys = new Map([[pub.keyId, Buffer.from(pub.publicKey, 'base64')]]);
@@ -378,7 +380,8 @@ async function all() {
     } catch { return true; }
   };
   check(await tryInsert({ notAfter: new Date(Date.now() + 6 * 60_000) }), 'a six-minute window is refused (CHECK)');
-  check(await tryInsert({ state: 'applied' }), 'state "applied" (step 4) is refused (CHECK)');
+  check(await tryInsert({ state: 'bogus' }), 'an unknown state is refused (CHECK)');
+  check(await tryInsert({ state: 'applied', deliveredAt: new Date() }), 'state "applied" without appliedAt is refused (CHECK, 0.72)');
   check(await tryInsert({ state: 'delivered' }), 'delivered without deliveredAt is refused (CHECK)');
   check(await tryInsert({ envelopeEnc: '{"keyId":"x"}' }), 'an unsealed envelope is refused (CHECK)');
   check(await tryInsert({ permissions: { ...view.permissions, keyboard: true } }), 'an unknown permission is refused (CHECK)');

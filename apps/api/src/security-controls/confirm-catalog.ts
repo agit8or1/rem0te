@@ -112,7 +112,14 @@ export const CONFIRM_CATALOG = [
     description: "Revealing a computer's stored RustDesk password, or connecting with it." },
   { key: 'msa.grant', group: 'Devices & enrolment', label: 'Managed Secure Access test grants', default: 'off',
     prompt: 'issue a test session grant',
-    description: 'Issuing a Managed Secure Access test grant to a computer (Platform Admin; only while the server runs with MSA_GRANTS=on, which is off by default).' },
+    description: 'Issuing a Managed Secure Access test grant to a computer, or making the grant key (Platform Admin; only while the server runs with MSA_GRANTS=on, which is off by default).' },
+  // 0.72: Managed Secure Access build step 4.
+  { key: 'msa.cutover', group: 'Devices & enrolment', label: 'Managed Secure Access cutover', default: 'off',
+    prompt: 'move a computer into Managed Secure Access',
+    description: 'Moving one computer from Legacy into Managed Secure Access, or confirming it verified after a managed test session (Platform Admin; only with MSA_GRANTS=on). Rolling back never asks.' },
+  { key: 'msa.reveal', group: 'Devices & enrolment', label: 'Managed test session password', default: 'off',
+    prompt: 'see the one-time password',
+    description: "Showing a managed test grant's one-time RustDesk password, once (Platform Admin; only with MSA_GRANTS=on)." },
   // 0.57: discovery and adoption.
   { key: 'devices.adopt', group: 'Devices & enrolment', label: 'Adopting unassigned computers', default: 'off',
     prompt: 'assign or forget unassigned computers',

@@ -394,6 +394,20 @@ enum ActivityAction {
   // and key id only — never the password or the envelope).
   MSA_GRANT_KEY_CREATED
   MSA_GRANT_ISSUED
+  // 0.72 Managed Secure Access build step 4 (behind MSA_GRANTS, off): ids,
+  // states, closed codes and key names only — never a password.
+  MSA_GRANT_KEY_ENSURED
+  MSA_CUTOVER
+  MSA_VERIFIED
+  MSA_ROLLBACK_REQUESTED
+  MSA_ROLLED_BACK
+  MSA_GRANT_APPLIED
+  MSA_GRANT_FAILED
+  MSA_SESSION_CONNECTED
+  MSA_SESSION_ENDED
+  MSA_ENFORCEMENT_FAILURE
+  MSA_LEGACY_SECURED
+  MSA_PASSWORD_REVEALED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -894,6 +908,8 @@ model Endpoint {
   /// 0.69: the signed agent's read-only RustDesk preflight (Managed Secure Access readiness).
   rustdeskPreflight RustdeskPreflight?
   msaGrants         MsaGrant[]
+  /// 0.72: the Managed Secure Access mode, when not Legacy (no row = Legacy).
+  msaManaged        MsaManagedComputer?
   /// 0.67: false-positive reports about this computer's alerts, and rules scoped to it.
   falsePositiveReports AlertFalsePositiveReport[]
   alertQualityRules    AlertQualityRule[]
@@ -4832,13 +4848,54 @@ model MsaGrant {
   notAfter     DateTime
   maxMinutes   Int
   idleMinutes  Int
-  /// issued | delivered | expired | cancelled (0088 CHECK). Step 4 adds applied / failed / revoked.
+  /// issued | delivered | expired | cancelled (0088); applied | failed | ended (0089).
   state        String      @default("issued")
   envelopeEnc  String
   passwordEnc  String
   deliveredAt  DateTime?
   createdAt    DateTime    @default(now())
+  /// 0.72: the agent read every setting back and set the one-time password.
+  appliedAt    DateTime?
+  /// 0.72: the agent saw a RustDesk connection (`rustdesk.exe --cm`) while it was applied.
+  connectedAt  DateTime?
+  /// 0.72: the agent ended the session (random password nobody is told, stop-service Y then N).
+  endedAt      DateTime?
+  /// 0.72: why it ended or failed — a closed code, never text from the computer.
+  outcome      String?
+  /// 0.72: the keys whose readback disagreed (closed key names only).
+  failedKeys   String[]    @default([])
+  /// 0.72: the one-time password was shown, once, to this Platform Admin.
+  revealedAt   DateTime?
+  revealedById String?
 
   @@index([endpointId, state])
   @@index([endpointId, createdAt])
+}
+
+/// A computer's Managed Secure Access mode (0.72, build step 4 of
+/// docs/managed-secure-access.md). No row is Legacy. A row is written only by
+/// MsaManagedService: a Platform Admin's cutover of ONE computer (pending),
+/// the agent's reports (enforcement_failure, the rolled-back delete), a
+/// Platform Admin's confirmation (verified) and rollback (rollback_pending).
+model MsaManagedComputer {
+  endpointId            String    @id
+  endpoint              Endpoint  @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  /// pending | verified | enforcement_failure | rollback_pending (0089 CHECK).
+  state                 String
+  requestedById         String
+  requestedAt           DateTime  @default(now())
+  verifiedAt            DateTime?
+  verifiedById          String?
+  /// The agent set a random permanent password nobody is told (after verification).
+  legacySecuredAt       DateTime?
+  failedAt              DateTime?
+  /// A closed code, never text from the computer.
+  failReason            String?
+  failedKeys            String[]  @default([])
+  rollbackRequestedAt   DateTime?
+  rollbackRequestedById String?
+  /// The agent's last successful readback of every managed setting.
+  readbackOkAt          DateTime?
+  lastReportAt          DateTime?
+  updatedAt             DateTime  @updatedAt
 }

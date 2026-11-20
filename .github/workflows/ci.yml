@@ -184,7 +184,8 @@ jobs:
       # Managed Secure Access readiness (0.69): the heartbeat block's parser
       # (closed keys and values, cli agreeing with the keys, nothing that is
       # not the installed exe) and the readiness decision — every rule, and
-      # 622,080 combinations of facts with no managed state among them.
+      # 1,244,160 combinations of facts with no managed fact and no managed
+      # state among them (0.72: the managed states only from a managed fact).
       - name: MSA readiness tests
         run: node apps/api/scripts/unit-msa-readiness.mjs
 
@@ -194,6 +195,13 @@ jobs:
       # as the Go verifier's tests assert it (internal/msa/grant).
       - name: MSA grant tests
         run: node apps/api/scripts/unit-msa-grants.mjs
+
+      # Managed Secure Access enforcement (0.72): the vocabulary the portal and
+      # the agent share (keys, outcomes, events, the view-only ceiling), the
+      # rotation hold, the strict report body, and the grant-key target's one
+      # name and schema across the portal, the agent and the release host.
+      - name: MSA managed tests
+        run: node apps/api/scripts/unit-msa-managed.mjs
 
       # Diagnostics catalog (0.31): the closed catalog, result sanitising,
       # redaction and the size cap against the compiled module, the agent's

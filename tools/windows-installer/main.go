@@ -25,6 +25,7 @@
 //	rem0te-agent.exe patch-scan                          read-only Windows Update posture (heartbeat, v0.27)
 //	rem0te-agent.exe tray-host                           the tray host: starts rem0te-tray.exe in each session and speaks for it (heartbeat, v0.36)
 //	rem0te-agent.exe rustdesk-preflight                  read-only RustDesk readiness preflight for Managed Secure Access (heartbeat, v0.69)
+//	rem0te-agent.exe msa-poller                          Managed Secure Access grant poller; only on a computer the portal says is managed (heartbeat msaPoll, v0.72)
 //
 // `chat` (the 0.34 chat host) is kept as another name for `tray-host`, for a
 // heartbeat written by an older portal. The 0.34 chat window (`chat-window`)
@@ -215,6 +216,9 @@ func subcommand(args []string) int {
 	}
 	if args[0] == "rustdesk-preflight" {
 		return cmdRustdeskPreflight(args[1:])
+	}
+	if args[0] == "msa-poller" {
+		return cmdMsaPoller(args[1:])
 	}
 	if args[0] == "tray-host" || args[0] == "chat" {
 		return cmdTrayHost(args[1:])

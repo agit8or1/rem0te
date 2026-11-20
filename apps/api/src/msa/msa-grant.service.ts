@@ -16,6 +16,9 @@ import {
   type Envelope, type Grant,
 } from './grant';
 import { msaGrantsEnabled, MSA_NOT_ENABLED } from './msa-grants-flag';
+import { withinCeiling, type ManagedState } from './managed';
+import { UpdateTrustService } from '../update-trust/update-trust.service';
+import { MSA_GRANT_KEY_ADD_COMMAND, MSA_GRANT_KEY_PUBLISH_COMMAND } from './grant-key-commands';
 
 /** How long a poll is held when nothing is waiting. Under the 30 s most proxies allow. */
 export const POLL_HOLD_MS_DEFAULT = 25_000;
@@ -73,6 +76,7 @@ export class MsaGrantService implements OnModuleDestroy {
     private readonly audit: AuditService,
     private readonly acl: AccessControlService,
     private readonly enrollment: EnrollmentService,
+    private readonly updateTrust: UpdateTrustService,
     config: ConfigService,
   ) {
     this.encKey = config.get<string>('ENCRYPTION_KEY');
@@ -128,11 +132,45 @@ export class MsaGrantService implements OnModuleDestroy {
     return { keyId: k.keyId, privatePem: k.privatePem };
   }
 
-  /** Public keys only: what step 4 will publish in the signed release metadata. Platform Admin. */
+  /**
+   * Public keys only, and whether each is in the signed release metadata
+   * the agents verify (msa/grant-keys.json, read as served — the agent
+   * verifies it itself). For a key not yet published, the two commands the
+   * owner runs on the release host (§56: text the portal shows, never runs).
+   * Platform Admin.
+   */
   async publicKeys() {
     this.assertEnabled();
     const rows = await this.prisma.msaGrantKey.findMany({ orderBy: { createdAt: 'desc' }, select: { keyId: true, publicKey: true, createdAt: true, retiredAt: true } });
-    return rows.map((r) => ({ keyId: r.keyId, algorithm: 'ed25519', publicKey: r.publicKey, createdAt: r.createdAt, retiredAt: r.retiredAt, active: r.retiredAt === null }));
+    const published = new Set(this.updateTrust.publishedMsaGrantKeyIds());
+    return rows.map((r) => ({
+      keyId: r.keyId, algorithm: 'ed25519', publicKey: r.publicKey, createdAt: r.createdAt, retiredAt: r.retiredAt, active: r.retiredAt === null,
+      published: published.has(r.keyId),
+      commands: r.retiredAt === null && !published.has(r.keyId)
+        ? [`${MSA_GRANT_KEY_ADD_COMMAND} --key-id ${r.keyId} --public-key ${r.publicKey}`, MSA_GRANT_KEY_PUBLISH_COMMAND]
+        : [],
+    }));
+  }
+
+  /**
+   * 0.72: make the grant key now (Platform Admin, a fresh confirmation,
+   * msa.grant), so it can be published before any computer is cut over.
+   * Returns the active key's public half; an existing key is returned as is.
+   */
+  async ensureKey(actor: ActorContext) {
+    this.assertEnabled();
+    const k = await this.activeKey(actor);
+    await this.audit.log({
+      action: 'MSA_GRANT_KEY_ENSURED', actorId: actor.userId, actorIp: actor.ip, resource: 'msa_grant_key', resourceId: k.keyId, meta: { keyId: k.keyId },
+    });
+    return (await this.publicKeys()).find((x) => x.keyId === k.keyId);
+  }
+
+  /** 0.72: the active key id, when it is in the published signed metadata; else null. */
+  async activePublishedKeyId(): Promise<string | null> {
+    this.assertEnabled();
+    const row = await this.prisma.msaGrantKey.findFirst({ where: { retiredAt: null }, select: { keyId: true } });
+    return row && this.updateTrust.publishedMsaGrantKeyIds().includes(row.keyId) ? row.keyId : null;
   }
 
   // ── Issuing ───────────────────────────────────────────────────────────────
@@ -177,6 +215,20 @@ export class MsaGrantService implements OnModuleDestroy {
     const pause = await activePause(this.prisma, 'remote', ep.customerId);
     if (pause) throw new ForbiddenException({ code: 'CONTAINED', message: 'Remote connections are paused for this computer: no grant was issued.', pauseId: pause.id, scope: pause.scope.toLowerCase() });
 
+    // 0.72: a managed computer's agent ACTS on a grant. It may not exceed the
+    // managed ceiling (view-only, nothing beyond), not while it rolls back,
+    // and not under a key the agents cannot verify.
+    const managed = await this.prisma.msaManagedComputer.findUnique({ where: { endpointId: ep.id }, select: { state: true } });
+    if (managed) {
+      if ((managed.state as ManagedState) === 'rollback_pending') throw new ConflictException({ code: 'MSA_ROLLBACK_PENDING', message: 'This computer is rolling back to Legacy: no grant was issued.' });
+      const perms = {
+        clipboard: b.permissions?.clipboard ?? false, files: b.permissions?.files ?? false, audio: b.permissions?.audio ?? false,
+        tunnel: b.permissions?.tunnel ?? false, restart: b.permissions?.restart ?? false,
+      };
+      if (!withinCeiling(b.mode ?? 'view', perms)) throw new ConflictException({ code: 'MSA_ABOVE_CEILING', message: 'A managed computer allows view-only sessions with nothing beyond in this release: no grant was issued.' });
+      if (!(await this.activePublishedKeyId())) throw new ConflictException({ code: 'MSA_GRANT_KEY_NOT_PUBLISHED', message: 'The grant key is not in the signed release metadata yet, so the agent would refuse the grant: no grant was issued.' });
+    }
+
     const key = await this.activeKey(actor);
     const nb = Math.floor(now / 1000) * 1000;
     const grant: Grant = {
@@ -197,7 +249,7 @@ export class MsaGrantService implements OnModuleDestroy {
     await this.audit.logOrFail({
       action: 'MSA_GRANT_ISSUED', actorId: actor.userId, actorIp: actor.ip, tenantId: ep.tenantId ?? undefined, customerId: ep.customerId ?? undefined,
       resource: 'endpoint', resourceId: ep.id,
-      meta: { grantId: grant.grantId, endpointId: ep.id, mode: grant.mode, consent: grant.consent, keyId: key.keyId, source: 'test' },
+      meta: { grantId: grant.grantId, endpointId: ep.id, mode: grant.mode, consent: grant.consent, keyId: key.keyId, source: 'test', managed: !!managed },
     });
     await this.prisma.$transaction([
       // A newer grant replaces any earlier one not yet delivered to this computer.
@@ -239,6 +291,7 @@ export class MsaGrantService implements OnModuleDestroy {
       select: {
         id: true, endpointId: true, technicianId: true, keyId: true, mode: true, permissions: true, consent: true,
         notBefore: true, notAfter: true, maxMinutes: true, idleMinutes: true, state: true, deliveredAt: true, createdAt: true,
+        appliedAt: true, connectedAt: true, endedAt: true, outcome: true, failedKeys: true, revealedAt: true,
       },
     });
     return rows.map(({ id, ...r }) => ({ grantId: id, ...r }));
@@ -279,10 +332,18 @@ export class MsaGrantService implements OnModuleDestroy {
         })).count
       : 0;
 
+    // 0.72: the computer's managed state rides on every answer. The agent
+    // runs only while it has one, and rolls back when it says so.
+    const managedNow = async () => {
+      const m = await this.prisma.msaManagedComputer.findUnique({ where: { endpointId: ep.id }, select: { state: true } });
+      return m ? { state: m.state as ManagedState, rollback: m.state === 'rollback_pending' } : null;
+    };
     const answer = async () => {
       const t = Date.now();
       await this.expireDue(ep.id, t);
       if (await activePause(this.prisma, 'remote', ep.customerId)) return { grants: [] as Envelope[], paused: true };
+      // Nothing is handed to a computer that is rolling back.
+      if ((await managedNow())?.rollback) return { grants: [] as Envelope[], paused: false };
       const rows = await this.prisma.msaGrant.findMany({
         where: { endpointId: ep.id, state: 'issued', notAfter: { gte: new Date(t) } },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], take: POLL_MAX_GRANTS, select: { id: true, envelopeEnc: true },
@@ -299,9 +360,11 @@ export class MsaGrantService implements OnModuleDestroy {
     };
 
     let out = await answer();
-    if (out.grants.length || out.paused || dto.wait === false) return { ...out, acked, holdMs: 0 };
+    const managed = await managedNow();
+    // A computer rolling back is answered at once.
+    if (out.grants.length || out.paused || dto.wait === false || managed?.rollback) return { ...out, acked, holdMs: 0, endpointId: ep.id, managed };
 
-    if (!this.waiters.has(ep.id) && this.waiters.size >= this.maxPolls) return { ...out, acked, holdMs: 0, retryAfterMs: 5_000 };
+    if (!this.waiters.has(ep.id) && this.waiters.size >= this.maxPolls) return { ...out, acked, holdMs: 0, retryAfterMs: 5_000, endpointId: ep.id, managed };
     this.waiters.get(ep.id)?.wake('superseded');
     const started = Date.now();
     const why = await new Promise<'grant' | 'superseded' | 'shutdown' | 'timeout'>((resolve) => {
@@ -324,8 +387,47 @@ export class MsaGrantService implements OnModuleDestroy {
       this.waiters.set(ep.id, me);
     });
     // A superseded poll hands nothing over: grants go only to the newest poll.
-    if (why === 'superseded') return { grants: [], paused: false, acked, holdMs: Date.now() - started, superseded: true };
+    if (why === 'superseded') return { grants: [], paused: false, acked, holdMs: Date.now() - started, superseded: true, endpointId: ep.id, managed: await managedNow() };
     out = await answer();
-    return { ...out, acked, holdMs: Date.now() - started };
+    return { ...out, acked, holdMs: Date.now() - started, endpointId: ep.id, managed: await managedNow() };
+  }
+
+  /** 0.72: wake a held poll for this computer (its managed state changed: confirmed, rolled back). */
+  wake(endpointId: string) {
+    this.waiters.get(endpointId)?.wake('grant');
+  }
+
+  /**
+   * 0.72: the managed test session's one-time password, shown ONCE to the
+   * Platform Admin (a fresh confirmation, msa.reveal, in the controller).
+   * Only for a grant the agent reported applied, not ended, on a computer
+   * this person can see. The reveal is audited first (logOrFail, ids only),
+   * then claimed by one conditional write, and only then is the password
+   * opened. It is never shown again.
+   */
+  async reveal(actor: ActorContext, grantId: string) {
+    this.assertEnabled();
+    if (!GRANT_ID_RE.test(grantId)) throw new NotFoundException('Grant not found');
+    const g = await this.prisma.msaGrant.findUnique({ where: { id: grantId }, select: { id: true, endpointId: true, state: true, revealedAt: true } });
+    if (!g) throw new NotFoundException('Grant not found');
+    await this.acl.assertEndpointInScope(actor, g.endpointId, 'computers:view');
+    const ep = await this.prisma.endpoint.findFirst({ where: { AND: [{ id: g.endpointId }, this.acl.endpointVisibilityWhere(actor)] }, select: { id: true, tenantId: true, customerId: true } });
+    if (!ep) throw new NotFoundException('Grant not found');
+    if (g.state !== 'applied') throw new ConflictException({ code: 'MSA_GRANT_NOT_APPLIED', message: 'The agent has not reported this grant applied (or its session ended): there is no password to show.' });
+    if (g.revealedAt) throw new ConflictException({ code: 'MSA_PASSWORD_ALREADY_REVEALED', message: 'This one-time password was already shown once. Send a new test grant.' });
+    await this.audit.logOrFail({
+      action: 'MSA_PASSWORD_REVEALED', actorId: actor.userId, actorIp: actor.ip, tenantId: ep.tenantId ?? undefined, customerId: ep.customerId ?? undefined,
+      resource: 'endpoint', resourceId: ep.id, meta: { grantId: g.id, endpointId: ep.id },
+    });
+    const claimed = await this.prisma.msaGrant.updateMany({
+      where: { id: g.id, state: 'applied', revealedAt: null }, data: { revealedAt: new Date(), revealedById: actor.userId },
+    });
+    if (claimed.count !== 1) throw new ConflictException({ code: 'MSA_PASSWORD_ALREADY_REVEALED', message: 'This one-time password was already shown once. Send a new test grant.' });
+    const row = await this.prisma.msaGrant.findUnique({ where: { id: g.id }, select: { passwordEnc: true } });
+    try {
+      return { grantId: g.id, oneTimePassword: openSecret(this.encKey, 'rem0te-msa-grant-pw-v1', row!.passwordEnc), shownOnce: true };
+    } catch {
+      throw new ServiceUnavailableException({ code: 'MSA_GRANT_KEY_UNAVAILABLE', message: 'The password could not be opened (ENCRYPTION_KEY changed?).' });
+    }
   }
 }

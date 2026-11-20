@@ -67,6 +67,7 @@ try {
   meta('3.targets.json', { version: 3, expires: far, targets: {
     'windows/rem0te-agent.exe': tgt(s('3'), { version: '1.2.3; rm -rf /', commit: 'nothex' }),
     'windows/rustdesk/rustdesk-1.4.9-x86_64.exe': tgt(s('b'), { version: '1.4.9' }),
+    'msa/grant-keys.json': tgt(s('c')),
   } });
   meta('2.targets.json', { version: 2, expires: far, targets: { 'windows/rem0te-agent.exe': tgt(s('2')) } });
   meta('1.targets.json', { version: 1, expires: far, targets: { 'windows/rem0te-agent.exe': tgt(s('1')) } });
@@ -77,6 +78,7 @@ try {
   const kv = Object.fromEntries(r.stdout.trim().split('\n').map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
   check(kv.CONFIGURED === '1' && kv.TIMESTAMP_VERSION === '9' && kv.TARGETS_VERSION === '3' && kv.RUSTDESK_VERSIONS === '1.4.9', 'summary follows timestamp → snapshot → targets', r.stdout);
   check(kv.AGENT_VERSION === '' && kv.AGENT_COMMIT === '' && kv.AGENT_SHA256 === s('3'), 'a version or commit outside its charset is reported as empty, never passed to the shell', JSON.stringify(kv));
+  check(kv.MSA_GRANT_KEYS_SHA256 === s('c'), '0.72: the Managed Secure Access grant-key target is reported by its signed digest', kv.MSA_GRANT_KEYS_SHA256);
   check(Number(kv.TIMESTAMP_LEFT_H) >= 167 && Number(kv.TIMESTAMP_LEFT_H) <= 168, 'hours left computed from expires', kv.TIMESTAMP_LEFT_H);
   r = node('repo-info.mjs', [repo, 'prune-list']);
   const stale = r.stdout.trim().split('\n').sort();
