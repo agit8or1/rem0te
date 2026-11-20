@@ -5,6 +5,119 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.74.0] — 2026-11-20 · *Bastion*
+
+**Admin → Security, rewritten: a posture score that never counts unknown as OK, every host change audited and
+confirmed, and the checks that reported "no issues" without checking anything removed.** (docs/server-security.md;
+check-security-invariants §84.)
+
+Nothing in sudoers changed: the page uses only the lines `deploy/scripts/install.sh` already grants (the
+`rem0te-f2b` wrapper, `apt-get update|upgrade|install -y fail2ban`, `systemctl enable|start fail2ban`), now with
+`sudo -n` so a missing grant fails at once instead of hanging on a password prompt.
+
+### Changed — the Caddy template (`deploy/caddy/Caddyfile`)
+
+- **Plain HTTP no longer announces `Server: Caddy`.** Caddy's automatic HTTP→HTTPS redirect ignores the site
+  block's `-Server`, so port 80 still sent it; an explicit `http://` block now redirects with `header -Server`
+  (ACME HTTP-01 challenges are still answered first).
+- **`Permissions-Policy`** denies camera, microphone, geolocation, payment, USB, serial, HID, Bluetooth, MIDI and
+  motion sensors on the console and the approval signer. Nothing in the console uses any of them; passkeys
+  (`publickey-credentials-*`) and the clipboard keep their defaults.
+- Applied by hand to this host's `/etc/caddy/Caddyfile` on 2026-11-20 (backup `Caddyfile.bak-20261120`), with
+  the same change for the LAN-address redirect. An existing install picks it up only by editing its Caddyfile.
+
+### Fixed — each one was on the production page
+
+- **Code audit said "no issues" without auditing anything.** ESLint ran on the deployed `dist/`
+  (`/opt/reboot-remote/api/dist`), outside its base path, so every file was ignored and the empty result showed as
+  clean. semgrep is a snap under `/snap/bin`, which is not on the service's `PATH`, and snap cannot create
+  `/home/reboot` under `ProtectHome=true`, so it never started — also shown as clean. The hard-coded
+  `/home/administrator/reboot-remote` checkout is invisible to the service for the same reason. Both are removed;
+  source scanning is CI's job. The new **Dependencies** tab runs `npm audit --omit=dev --json` on the deployed
+  manifest and lock (it works as `reboot`: 244 production packages, 0 advisories on 2026-11-20) and says
+  *Unknown* with the reason when it cannot.
+- **"Fix" ran `npm audit fix` inside production's `node_modules`**, outside the generated manifest (`pnpm
+  deploy:manifest`), which is exactly the drift `CLAUDE.md` warns about. Removed; the fix is a dependency bump and
+  a deploy.
+- **"Renew" did nothing.** It posted Caddy's current configuration back to `/load`; Caddy ignores an unchanged
+  config. Removed; the TLS tab explains that under 20 days left means renewal has been failing and where to look
+  (`journalctl -u caddy | grep -i acme`). Certificates are now read with Node's `tls.connect` over loopback with
+  each site's name instead of an `openssl s_client` shell pipeline; Caddy's certificate directory is not readable
+  by `reboot`.
+- **Failures looked healthy.** A loading or failed fail2ban read showed *Stopped* (and "no jails"); an `apt list`
+  error showed *System up to date*; no certificates showed a green dot; the Overview was green while its queries
+  were still loading. Every panel now has loading, error and *Unknown* states, and an unknown is grey with a
+  question mark, never OK.
+- **fail2ban changes were unaudited and unconfirmed, and failures were successes.** Ban, unban, never-ban and
+  jail settings wrote no audit row and asked for no step-up; never-ban and jail settings ignored a non-zero exit;
+  the install returned success whatever `apt-get` did. Each change is now `HOST_SECURITY_CHANGED` with its inputs
+  and outcome (a refused ban is recorded `ok: false` with the wrapper's message and answered `502
+  HOST_COMMAND_FAILED`), asks *Server security changes* (`server.security`) when that key asks, and runs its steps
+  in order, stopping at the first failure. You cannot ban the address you are connected from (`409 BAN_SELF`).
+  The page says changes last until fail2ban restarts, which they always did.
+- **GeoIP blocking and the IP allow / block lists were saved and never enforced.** Nothing in the API read them
+  (`docs/SECURITY-AUDIT.md` already said so). They can no longer be set; stored values are an Overview finding
+  and can be cleared. The sign-in lockout, which *is* enforced, stays, audited as `LOGIN_POLICY_CHANGED`
+  (before and after); weakening it asks *Sign-in lockout policy* (`login.lockout`), tightening never does.
+
+### Added — the posture
+
+One Overview with a score out of 100 over the checks that could be read, their coverage, and each finding's
+severity, evidence, the time it was read, a fix and a link to the setting where one exists:
+
+- **This server:** SSH root login, password authentication, empty passwords and X11 forwarding, parsed from
+  `sshd_config` and its includes first-value-wins (`sshd -T` needs root); a setting an unreadable include could
+  decide is *Unknown*. ufw enabled and active. Pending updates and security updates, package-list age, unattended
+  upgrades, a pending restart and the packages that asked. fail2ban, and whether its sshd jail watches the unit
+  that actually runs.
+- **Network:** public listening sockets against what a Rem0te server should listen on.
+- **Web and TLS:** each Caddy site's certificate (renewal failing under 20 days, urgent under 7), https public URL,
+  HSTS / CSP / framing / nosniff / Referrer-Policy / Permissions-Policy, software disclosure, plain HTTP redirecting.
+- **Rem0te:** Platform Admins without MFA (named), accounts without MFA (counts), break-glass accounts without both
+  factors, API keys with no expiry or unused for 90 days, the audit chain (the existing verifier) and its export,
+  the lockout, the unenforced rules, signed-release metadata, the approval signer. Release root keys are always
+  *Unknown*: the portal cannot read `/var/lib/rem0te-release` (§56), so the page shows `sudo rem0te-signed-status`.
+- **API process:** `MSA_GRANTS`, `NODE_ENV=test` (critical), and every `*_SWEEP` / `*_SEALER` / test switch set to
+  `off`, each with what it stops.
+
+The OS updates tab also shows the list age, the running kernel, unattended upgrades and the restart; *Run apt-get
+update and upgrade* is confirmed, audited when it starts and finishes, and streams its output.
+
+### What it found on this server (read-only, as `reboot`, 2026-11-20) — for the owner
+
+- `PermitRootLogin yes` in `/etc/ssh/sshd_config`; `50-cloud-init.conf` is unreadable, so the effective value is
+  unknown. Check with `sudo sshd -T | grep -i permitrootlogin`.
+- fail2ban's `sshd` jail matches `_SYSTEMD_UNIT=sshd.service`, but Ubuntu 24.04 runs `ssh.service`, so the jail has
+  seen 0 failures. Set `journalmatch = _SYSTEMD_UNIT=ssh.service + _COMM=sshd` under `[sshd]` in
+  `/etc/fail2ban/jail.local` and restart fail2ban.
+- A public UDP socket on 33344 that no Rem0te component should own.
+- A restart is pending (running 6.8.0-147; libc6 and newer kernels installed).
+- The port-80 response discloses `Server: Caddy`; the console sends no `Permissions-Policy`.
+
+### Deploy
+
+- **Schema change.** Migration `0091_server_security_audit` adds `HOST_SECURITY_CHANGED` and
+  `LOGIN_POLICY_CHANGED` to `ActivityAction`: `prisma migrate deploy`, rsync `prisma/`, and `prisma generate` at the
+  target (CLAUDE.md), or every change on the page fails to audit.
+- Two catalog keys, `server.security` and `login.lockout`, default `off` like every key (0.64).
+- No agent, signer or sudoers change.
+
+### Tests
+
+- `unit-host-security.mjs` (80 checks, in CI): every parser against fixtures from this host, the closed command
+  list against the installer's sudoers lines word for word, headers, npm audit, the score, the switch list.
+- `e2e-host-security.mjs` (104 checks, ports 3991–3993, in `run-e2e.sh`): Platform Admin only (401/403 on every
+  route), the posture from the fixture host, an unreadable host where nothing passes, every change confirmed,
+  validated, audited with its outcome, failures as 502, and a test process without a fixture changing nothing
+  (`503 HOST_CHANGES_OFF_IN_TEST`). The API reads a fixture host only under `NODE_ENV=test`
+  (`SECURITY_HOST_FIXTURE`).
+- `e2e-ui.mjs` opens every tab in each viewport and theme against the fixture host; nothing Unknown is labelled OK.
+- Security invariant §84: one exec site with `shell: false`, every sudo command granted by the installer, every
+  mutating route Platform Admin then `assertFresh`, every host change audited, the fixture test-only, no `npm audit
+  fix` / ESLint / semgrep / Caddy reload, every off switch listed, and no release-host path or command (§56).
+
+---
+
 ## [0.73.2] — 2026-11-20 · *Warden*
 
 **Documentation only: an audit of the owner's *Full RMM Functionality Expansion* directive, and a prioritised

@@ -1,123 +1,189 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, UseGuards, ForbiddenException } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import type { Request } from 'express';
+import { IsBoolean, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { SecurityService } from './security.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import type { JwtPayload } from '../auth/strategies/jwt.strategy';
+import { Actor } from '../common/decorators/actor.decorator';
+import { RateLimit } from '../common/throttling';
+import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
+import { StepUpService } from '../auth/step-up.service';
+import { assertFresh } from '../security-controls/review';
 
+class LockoutDto {
+  // 0 turns the lockout off (auth.service.ts recordLoginFailure).
+  @IsOptional() @IsInt() @Min(0) @Max(100) maxLoginAttempts?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(1440) lockoutMinutes?: number;
+  // Clears the stored GeoIP / IP rules that nothing ever enforced.
+  @IsOptional() @IsBoolean() clearUnenforced?: boolean;
+}
+class AddressDto { @IsString() @MaxLength(64) ip!: string }
+class JailAddressDto { @IsString() @MaxLength(64) jail!: string; @IsString() @MaxLength(64) ip!: string }
+class JailConfigDto {
+  // fail2ban's own units: seconds, and a count. The wrapper accepts 0–999999999.
+  @IsOptional() @IsInt() @Min(60) @Max(31_536_000) bantime?: number;
+  @IsOptional() @IsInt() @Min(60) @Max(604_800) findtime?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(100) maxretry?: number;
+}
+
+/**
+ * Admin → Security (0.74). Platform Admin only, checked first on every
+ * route. Reads never change the host. Every route that changes the host or
+ * the lockout policy names its step-up key (§62: `server.security`,
+ * `login.lockout`) and is audited in SecurityService. §84 holds this list.
+ *
+ * Removed in 0.74: `POST audit/fix` (`npm audit fix` in the deployed API's
+ * node_modules, bypassing the generated manifest) and `POST tls/renew`
+ * (re-posting Caddy's own config to its admin API, which Caddy ignores when
+ * nothing changed, so the button never renewed anything).
+ */
 @Controller('admin/security')
 @UseGuards(JwtAuthGuard)
 export class SecurityController {
-  constructor(private readonly securityService: SecurityService) {}
+  constructor(
+    private readonly security: SecurityService,
+    private readonly acl: AccessControlService,
+    private readonly stepUp: StepUpService,
+  ) {}
 
-  private assertAdmin(user: JwtPayload) {
-    if (!user.isPlatformAdmin) throw new ForbiddenException('Platform admin access required');
+  private fresh(req: Request): string | null {
+    const u = req.user as { sub?: string; iat?: number } | undefined;
+    return u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null;
   }
 
+  private ok<T>(data: T) { return { success: true, data }; }
+
+  // ── Overview ──────────────────────────────────────────────────────────────
+
+  @Get('posture')
+  @RateLimit(20)
+  async posture(@Actor() a: ActorContext, @Query('refresh') refresh?: string) {
+    this.acl.assertPlatformAdmin(a);
+    return this.ok(await this.security.getPosture(refresh === '1'));
+  }
+
+  // ── Access rules (the lockout policy) ─────────────────────────────────────
+
   @Get('config')
-  async getConfig(@CurrentUser() user: JwtPayload) {
-    this.assertAdmin(user);
-    return { success: true, data: await this.securityService.getConfig() };
+  async getConfig(@Actor() a: ActorContext) {
+    this.acl.assertPlatformAdmin(a);
+    return this.ok(await this.security.getConfig());
   }
 
   @Patch('config')
-  async updateConfig(@CurrentUser() user: JwtPayload, @Body() body: Record<string, unknown>) {
-    this.assertAdmin(user);
-    return { success: true, data: await this.securityService.updateConfig(body as Parameters<SecurityService['updateConfig']>[0]) };
+  async updateConfig(@Actor() a: ActorContext, @Body() dto: LockoutDto, @Req() req: Request) {
+    this.acl.assertPlatformAdmin(a);
+    return this.ok(await this.security.updateConfig(a, dto, (weakens) => {
+      if (weakens) assertFresh(this.fresh(req), { action: 'login.lockout' });
+    }));
   }
+
+  // ── fail2ban ──────────────────────────────────────────────────────────────
 
   @Get('fail2ban')
-  async getFail2ban(@CurrentUser() user: JwtPayload) {
-    this.assertAdmin(user);
-    return { success: true, data: await this.securityService.getFail2ban() };
-  }
-
-  @Post('fail2ban/unban')
-  async unbanIp(@CurrentUser() user: JwtPayload, @Body() body: { jail: string; ip: string }) {
-    this.assertAdmin(user);
-    return { success: true, data: await this.securityService.unbanIp(body.jail, body.ip) };
+  async getFail2ban(@Actor() a: ActorContext, @Query('refresh') refresh?: string) {
+    this.acl.assertPlatformAdmin(a);
+    return this.ok(await this.security.getFail2ban(refresh === '1'));
   }
 
   @Post('fail2ban/ban')
-  async banIp(@CurrentUser() user: JwtPayload, @Body() body: { jail: string; ip: string }) {
-    this.assertAdmin(user);
-    return { success: true, data: await this.securityService.banIp(body.jail, body.ip) };
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(30)
+  async banIp(@Actor() a: ActorContext, @Body() dto: JailAddressDto, @Req() req: Request) {
+    this.acl.assertPlatformAdmin(a);
+    assertFresh(this.fresh(req), { action: 'server.security' });
+    return this.ok(await this.security.banIp(a, dto.jail, dto.ip));
+  }
+
+  @Post('fail2ban/unban')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(30)
+  async unbanIp(@Actor() a: ActorContext, @Body() dto: JailAddressDto, @Req() req: Request) {
+    this.acl.assertPlatformAdmin(a);
+    assertFresh(this.fresh(req), { action: 'server.security' });
+    return this.ok(await this.security.unbanIp(a, dto.jail, dto.ip));
   }
 
   @Get('fail2ban/ignore')
-  async getIgnoreList(@CurrentUser() user: JwtPayload) {
-    this.assertAdmin(user);
-    return { success: true, data: await this.securityService.getIgnoreList() };
+  async getIgnoreList(@Actor() a: ActorContext) {
+    this.acl.assertPlatformAdmin(a);
+    return this.ok(await this.security.getIgnoreList());
   }
 
   @Post('fail2ban/ignore')
-  async addIgnoreIp(@CurrentUser() user: JwtPayload, @Body() body: { ip: string }) {
-    this.assertAdmin(user);
-    return { success: true, data: await this.securityService.addIgnoreIp(body.ip) };
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(30)
+  async addIgnoreIp(@Actor() a: ActorContext, @Body() dto: AddressDto, @Req() req: Request) {
+    this.acl.assertPlatformAdmin(a);
+    assertFresh(this.fresh(req), { action: 'server.security' });
+    return this.ok(await this.security.addIgnoreIp(a, dto.ip));
   }
 
   @Delete('fail2ban/ignore/:ip')
-  async removeIgnoreIp(@CurrentUser() user: JwtPayload, @Param('ip') ip: string) {
-    this.assertAdmin(user);
-    return { success: true, data: await this.securityService.removeIgnoreIp(ip) };
+  @RateLimit(30)
+  async removeIgnoreIp(@Actor() a: ActorContext, @Param('ip') ip: string, @Req() req: Request) {
+    this.acl.assertPlatformAdmin(a);
+    assertFresh(this.fresh(req), { action: 'server.security' });
+    return this.ok(await this.security.removeIgnoreIp(a, ip));
   }
 
   @Get('fail2ban/jail/:jail/config')
-  async getJailConfig(@CurrentUser() user: JwtPayload, @Param('jail') jail: string) {
-    this.assertAdmin(user);
-    return { success: true, data: await this.securityService.getJailConfig(jail) };
+  async getJailConfig(@Actor() a: ActorContext, @Param('jail') jail: string) {
+    this.acl.assertPlatformAdmin(a);
+    return this.ok(await this.security.getJailConfig(jail));
   }
 
   @Patch('fail2ban/jail/:jail/config')
-  async updateJailConfig(@CurrentUser() user: JwtPayload, @Param('jail') jail: string, @Body() body: { bantime?: number; findtime?: number; maxretry?: number }) {
-    this.assertAdmin(user);
-    return { success: true, data: await this.securityService.updateJailConfig(jail, body.bantime, body.findtime, body.maxretry) };
+  @RateLimit(20)
+  async updateJailConfig(@Actor() a: ActorContext, @Param('jail') jail: string, @Body() dto: JailConfigDto, @Req() req: Request) {
+    this.acl.assertPlatformAdmin(a);
+    assertFresh(this.fresh(req), { action: 'server.security' });
+    return this.ok(await this.security.updateJailConfig(a, jail, dto));
   }
 
   @Post('fail2ban/install')
-  async installFail2ban(@CurrentUser() user: JwtPayload) {
-    this.assertAdmin(user);
-    return { success: true, data: await this.securityService.installFail2ban() };
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(3)
+  async installFail2ban(@Actor() a: ActorContext, @Req() req: Request) {
+    this.acl.assertPlatformAdmin(a);
+    assertFresh(this.fresh(req), { action: 'server.security' });
+    return this.ok(await this.security.installFail2ban(a));
   }
 
+  // ── OS updates ────────────────────────────────────────────────────────────
+
   @Get('os-updates')
-  async getOsUpdates(@CurrentUser() user: JwtPayload) {
-    this.assertAdmin(user);
-    return { success: true, data: await this.securityService.getOsUpdates() };
+  async getOsUpdates(@Actor() a: ActorContext, @Query('refresh') refresh?: string) {
+    this.acl.assertPlatformAdmin(a);
+    return this.ok(await this.security.getOsUpdates(refresh === '1'));
   }
 
   @Post('os-updates/run')
-  runOsUpdate(@CurrentUser() user: JwtPayload) {
-    this.assertAdmin(user);
-    return { success: true, data: this.securityService.runOsUpdate() };
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(3)
+  async runOsUpdate(@Actor() a: ActorContext, @Req() req: Request) {
+    this.acl.assertPlatformAdmin(a);
+    assertFresh(this.fresh(req), { action: 'server.security' });
+    return this.ok(await this.security.runOsUpdate(a));
   }
 
   @Get('os-updates/status')
-  getOsUpdateStatus(@CurrentUser() user: JwtPayload) {
-    this.assertAdmin(user);
-    return { success: true, data: this.securityService.getOsUpdateStatus() };
+  getOsUpdateStatus(@Actor() a: ActorContext) {
+    this.acl.assertPlatformAdmin(a);
+    return this.ok(this.security.getOsUpdateStatus());
   }
+
+  // ── Dependencies and TLS (read only) ──────────────────────────────────────
 
   @Get('audit')
-  async runAudit(@CurrentUser() user: JwtPayload) {
-    this.assertAdmin(user);
-    return { success: true, data: await this.securityService.runAudit() };
-  }
-
-  @Post('audit/fix')
-  async runAuditFix(@CurrentUser() user: JwtPayload, @Body() body: { force?: boolean }) {
-    this.assertAdmin(user);
-    return { success: true, data: await this.securityService.runAuditFix(body.force ?? false) };
+  @RateLimit(10)
+  async dependencyAudit(@Actor() a: ActorContext, @Query('refresh') refresh?: string) {
+    this.acl.assertPlatformAdmin(a);
+    return this.ok(await this.security.getDependencyAudit(refresh === '1'));
   }
 
   @Get('tls')
-  async getTls(@CurrentUser() user: JwtPayload) {
-    this.assertAdmin(user);
-    return { success: true, data: await this.securityService.getTls() };
-  }
-
-  @Post('tls/renew')
-  async renewTls(@CurrentUser() user: JwtPayload) {
-    this.assertAdmin(user);
-    return { success: true, data: await this.securityService.renewTls() };
+  async getTls(@Actor() a: ActorContext, @Query('refresh') refresh?: string) {
+    this.acl.assertPlatformAdmin(a);
+    return this.ok(await this.security.getTls(refresh === '1'));
   }
 }

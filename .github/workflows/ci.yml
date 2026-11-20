@@ -210,6 +210,13 @@ jobs:
       - name: MSA session tests
         run: node apps/api/scripts/unit-msa-sessions.mjs
 
+      # Admin → Security (0.74): every host parser (sshd config with includes,
+      # ufw, ss, apt, fail2ban, Caddyfile, certificate dates, headers, npm
+      # audit) against fixtures, the closed command list against the sudoers
+      # lines the installer grants, the score and the off-switch list.
+      - name: Server security tests
+        run: node apps/api/scripts/unit-host-security.mjs
+
       # Diagnostics catalog (0.31): the closed catalog, result sanitising,
       # redaction and the size cap against the compiled module, the agent's
       # dispatch switch against the catalog — and, with the runner's pwsh, both

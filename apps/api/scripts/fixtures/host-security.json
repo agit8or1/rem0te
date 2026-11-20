@@ -1,0 +1,164 @@
+{
+ "_comment": "Server security fixture (0.74): what an Ubuntu 24.04 host showed its service user on 2026-11-20, addresses moved to documentation ranges. Used by unit-host-security.mjs, and by e2e-host-security.mjs and e2e-ui.mjs as SECURITY_HOST_FIXTURE (NODE_ENV=test only) so no test touches the real host.",
+ "commands": {
+  "/usr/bin/systemctl is-active fail2ban": {
+   "stdout": "active\n",
+   "stderr": "",
+   "status": 0
+  },
+  "/usr/bin/systemctl is-active caddy": {
+   "stdout": "active\n",
+   "stderr": "",
+   "status": 0
+  },
+  "/usr/bin/systemctl is-active ufw": {
+   "stdout": "active\n",
+   "stderr": "",
+   "status": 0
+  },
+  "/usr/bin/systemctl is-active nftables": {
+   "stdout": "inactive\n",
+   "stderr": "",
+   "status": 3
+  },
+  "/usr/bin/systemctl is-active unattended-upgrades": {
+   "stdout": "active\n",
+   "stderr": "",
+   "status": 0
+  },
+  "/usr/bin/systemctl is-active ssh": {
+   "stdout": "active\n",
+   "stderr": "",
+   "status": 0
+  },
+  "sudo -n /usr/local/sbin/rem0te-f2b status": {
+   "stdout": "Status\n|- Number of jail:\t2\n`- Jail list:\tsshd, www\n",
+   "stderr": "",
+   "status": 0
+  },
+  "sudo -n /usr/local/sbin/rem0te-f2b status sshd": {
+   "stdout": "Status for the jail: sshd\n|- Filter\n|  |- Currently failed:\t3\n|  |- Total failed:\t118\n|  `- Journal matches:\t_SYSTEMD_UNIT=sshd.service + _COMM=sshd\n`- Actions\n   |- Currently banned:\t2\n   |- Total banned:\t41\n   `- Banned IP list:\t198.51.100.7 203.0.113.9\n",
+   "stderr": "",
+   "status": 0
+  },
+  "sudo -n /usr/local/sbin/rem0te-f2b status www": {
+   "stdout": "Status for the jail: www\n|- Filter\n|  |- Currently failed:\t0\n|  |- Total failed:\t12\n|  `- File list:\t/var/log/caddy/reboot-remote.log\n`- Actions\n   |- Currently banned:\t0\n   |- Total banned:\t1\n   `- Banned IP list:\t\n",
+   "stderr": "",
+   "status": 0
+  },
+  "sudo -n /usr/local/sbin/rem0te-f2b get sshd ignoreip": {
+   "stdout": "These IP addresses/networks are ignored:\n|- 127.0.0.0/8\n`- ::1\n",
+   "stderr": "",
+   "status": 0
+  },
+  "sudo -n /usr/local/sbin/rem0te-f2b get www ignoreip": {
+   "stdout": "These IP addresses/networks are ignored:\n`- 127.0.0.0/8\n",
+   "stderr": "",
+   "status": 0
+  },
+  "sudo -n /usr/local/sbin/rem0te-f2b get sshd bantime": {
+   "stdout": "600\n",
+   "stderr": "",
+   "status": 0
+  },
+  "sudo -n /usr/local/sbin/rem0te-f2b get sshd findtime": {
+   "stdout": "600\n",
+   "stderr": "",
+   "status": 0
+  },
+  "sudo -n /usr/local/sbin/rem0te-f2b get sshd maxretry": {
+   "stdout": "5\n",
+   "stderr": "",
+   "status": 0
+  },
+  "sudo -n /usr/local/sbin/rem0te-f2b get www bantime": {
+   "stdout": "3600\n",
+   "stderr": "",
+   "status": 0
+  },
+  "sudo -n /usr/local/sbin/rem0te-f2b get www findtime": {
+   "stdout": "300\n",
+   "stderr": "",
+   "status": 0
+  },
+  "sudo -n /usr/local/sbin/rem0te-f2b get www maxretry": {
+   "stdout": "5\n",
+   "stderr": "",
+   "status": 0
+  },
+  "sudo -n /usr/local/sbin/rem0te-f2b set sshd banip 192.0.2.66": {
+   "stdout": "",
+   "stderr": "rem0te-f2b: refused\n",
+   "status": 64
+  },
+  "apt list --upgradable": {
+   "stdout": "Listing...\nlibnss-systemd/noble-updates 255.4-1ubuntu8.19 amd64 [upgradable from: 255.4-1ubuntu8.18]\nlibpam-systemd/noble-updates 255.4-1ubuntu8.19 amd64 [upgradable from: 255.4-1ubuntu8.18]\nlibsystemd-shared/noble-updates 255.4-1ubuntu8.19 amd64 [upgradable from: 255.4-1ubuntu8.18]\nlibsystemd0/noble-updates 255.4-1ubuntu8.19 amd64 [upgradable from: 255.4-1ubuntu8.18]\nlibudev1/noble-updates 255.4-1ubuntu8.19 amd64 [upgradable from: 255.4-1ubuntu8.18]\nsystemd-dev/noble-updates 255.4-1ubuntu8.19 all [upgradable from: 255.4-1ubuntu8.18]\nsystemd-resolved/noble-updates 255.4-1ubuntu8.19 amd64 [upgradable from: 255.4-1ubuntu8.18]\nsystemd-sysv/noble-updates 255.4-1ubuntu8.19 amd64 [upgradable from: 255.4-1ubuntu8.18]\nsystemd-timesyncd/noble-updates 255.4-1ubuntu8.19 amd64 [upgradable from: 255.4-1ubuntu8.18]\nsystemd/noble-updates 255.4-1ubuntu8.19 amd64 [upgradable from: 255.4-1ubuntu8.18]\nudev/noble-updates 255.4-1ubuntu8.19 amd64 [upgradable from: 255.4-1ubuntu8.18]\n",
+   "stderr": "",
+   "status": 0
+  },
+  "ss -Htlnu": {
+   "stdout": "udp UNCONN 0      0              127.0.0.54:53    0.0.0.0:*\nudp UNCONN 0      0           127.0.0.53%lo:53    0.0.0.0:*\nudp UNCONN 0      0      192.0.2.10%eth0:68    0.0.0.0:*\nudp UNCONN 0      0                       *:443         *:*\nudp UNCONN 0      0                       *:33344       *:*\nudp UNCONN 0      0                       *:21116       *:*\ntcp LISTEN 0      511             127.0.0.1:6379  0.0.0.0:*\ntcp LISTEN 0      511             127.0.0.1:3000  0.0.0.0:*\ntcp LISTEN 0      511             127.0.0.1:3001  0.0.0.0:*\ntcp LISTEN 0      4096              0.0.0.0:22    0.0.0.0:*\ntcp LISTEN 0      511             127.0.0.1:3201  0.0.0.0:*\ntcp LISTEN 0      511             127.0.0.1:3202  0.0.0.0:*\ntcp LISTEN 0      200             127.0.0.1:5432  0.0.0.0:*\ntcp LISTEN 0      4096           127.0.0.54:53    0.0.0.0:*\ntcp LISTEN 0      4096        127.0.0.53%lo:53    0.0.0.0:*\ntcp LISTEN 0      4096            127.0.0.1:2019  0.0.0.0:*\ntcp LISTEN 0      511                 [::1]:6379     [::]:*\ntcp LISTEN 0      128                     *:21115       *:*\ntcp LISTEN 0      128                     *:21118       *:*\ntcp LISTEN 0      128                     *:21119       *:*\ntcp LISTEN 0      128                     *:21116       *:*\ntcp LISTEN 0      128                     *:21117       *:*\ntcp LISTEN 0      4096                    *:443         *:*\ntcp LISTEN 0      4096                    *:80          *:*\ntcp LISTEN 0      4096                 [::]:22       [::]:*\n",
+   "stderr": "",
+   "status": 0
+  },
+  "npm.audit:*": {
+   "stdout": "{\"auditReportVersion\": 2, \"vulnerabilities\": {\"example-lib\": {\"name\": \"example-lib\", \"severity\": \"high\", \"isDirect\": true, \"via\": [{\"title\": \"Example advisory (fixture)\"}], \"fixAvailable\": true}}, \"metadata\": {\"vulnerabilities\": {\"info\": 0, \"low\": 0, \"moderate\": 0, \"high\": 1, \"critical\": 0, \"total\": 1}, \"dependencies\": {\"prod\": 244, \"total\": 244}}}",
+   "stderr": "",
+   "status": 0
+  }
+ },
+ "files": {
+  "/usr/local/sbin/rem0te-f2b": "#!/bin/bash\n",
+  "/etc/ssh/sshd_config": "Include /etc/ssh/sshd_config.d/*.conf\nPermitRootLogin yes\nPubkeyAuthentication yes\nPasswordAuthentication yes\nKbdInteractiveAuthentication no\nUsePAM yes\nX11Forwarding yes\nPrintMotd no\nAcceptEnv LANG LC_*\nSubsystem\tsftp\t/usr/lib/openssh/sftp-server\n",
+  "/etc/ssh/sshd_config.d/50-cloud-init.conf": null,
+  "/etc/ssh/sshd_config.d/60-cloudimg-settings.conf": "PasswordAuthentication no\n",
+  "/etc/ufw/ufw.conf": "# /etc/ufw/ufw.conf\n#\n\n# Set to yes to start on boot.\nENABLED=yes\n\nLOGLEVEL=low\n",
+  "/etc/apt/apt.conf.d/20auto-upgrades": "APT::Periodic::Update-Package-Lists \"1\";\nAPT::Periodic::Unattended-Upgrade \"1\";\n",
+  "/var/run/reboot-required": "*** System restart required ***\n",
+  "/var/run/reboot-required.pkgs": "linux-image-6.8.0-149-generic\nlinux-base\nlibc6\nlinux-image-6.8.0-151-generic\nlinux-base\n",
+  "/etc/caddy/Caddyfile": "# LAN access via IP: redirect to the domain. This used to serve the whole\n# console and API over plain HTTP, which put LAN sign-ins on the wire in\n# cleartext (security review, 0.18.22).\nhttp://192.0.2.10 {\n    redir https://remote.example.com{uri} permanent\n}\n\n# External access via domain (HTTPS with auto TLS)\nremote.example.com {\n    # Uploaded branding. Served as inert files: a logo has no business running\n    # script, and these are same-origin with the console.\n    handle /uploads/* {\n        root * /opt/reboot-remote\n        header Content-Security-Policy \"default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox\"\n        header X-Content-Type-Options nosniff\n        file_server\n    }\n\n    # RustDesk over 443. The client (allow-websocket=Y, api-server=https://\u2026)\n    # resolves a domain rendezvous/relay to wss://<host>/ws/id and\n    # wss://<host>/ws/relay on 443 \u2014 see hbb_common check_ws(). Proxying those\n    # to hbbs 21118 / hbbr 21119 lets endpoints on networks that only permit\n    # 443 egress reach the server without opening 21115-21119.\n    handle /ws/id {\n        reverse_proxy localhost:21118\n    }\n\n    handle /ws/relay {\n        reverse_proxy localhost:21119\n    }\n\n    handle /api/* {\n        reverse_proxy localhost:3001 {\n            transport http {\n                response_header_timeout 300s\n            }\n            lb_retries 1\n        }\n    }\n\n    handle /* {\n        reverse_proxy localhost:3000 {\n            header_up Host {http.request.header.host}\n        }\n    }\n\n    header {\n        Strict-Transport-Security \"max-age=31536000; includeSubDomains; preload\"\n        X-Content-Type-Options nosniff\n        X-Frame-Options DENY\n        Referrer-Policy strict-origin-when-cross-origin\n        -Server\n    }\n\n    encode gzip\n\n    log {\n        output file /var/log/caddy/reboot-remote.log\n        format json\n    }\n}\n\n# Approval signer, its own origin.\napprove.example.com {\n    handle {\n        respond 404\n    }\n}\n"
+ },
+ "mtimes": {
+  "/var/lib/apt/periodic/update-success-stamp": "2026-11-20T14:58:31Z"
+ },
+ "dirs": {
+  "/etc/ssh/sshd_config.d": [
+   "60-cloudimg-settings.conf",
+   "50-cloud-init.conf"
+  ]
+ },
+ "certs": {
+  "remote.example.com": {
+   "validTo": "Jan 22 09:43:00 2027 GMT",
+   "issuer": "Let's Encrypt E7",
+   "authorized": true,
+   "nameMatches": true
+  },
+  "approve.example.com": {
+   "validTo": "Dec  2 18:17:12 2026 GMT",
+   "issuer": "Let's Encrypt E8",
+   "authorized": true,
+   "nameMatches": true
+  }
+ },
+ "https": {
+  "status": 200,
+  "headers": {
+   "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+   "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+   "x-content-type-options": "nosniff",
+   "x-frame-options": "DENY",
+   "referrer-policy": "strict-origin-when-cross-origin",
+   "via": "1.1 Caddy"
+  }
+ },
+ "http": {
+  "status": 308,
+  "headers": {
+   "location": "https://remote.example.com/",
+   "server": "Caddy"
+  },
+  "location": "https://remote.example.com/"
+ },
+ "apiDir": "/opt/fixture/api"
+}

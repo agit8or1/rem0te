@@ -110,6 +110,9 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[containment.md](containment.md)** — stopping writes during an incident (0.28): a global write pause and
   per-business suspension, enforced by the portal, the approval signer and a signed pause the agents obey; the
   tamper-evident audit log, its off-host export and verification; watching from outside.
+- **[server-security.md](server-security.md)** — Admin → Security (0.74): a posture score over SSH, firewall,
+  listening ports, updates, restarts, fail2ban, certificates, security headers, MFA coverage, API keys, the audit
+  chain and the API's own off switches; audited, confirmed fail2ban and OS-update actions; unknown is never OK.
 - **[incident-recovery.md](incident-recovery.md)** — the runbook: a compromised account, portal or database; key
   rotation; restoring from backup and checking the audit chain against the export.
 - **[technician-access.md](technician-access.md)** — technician presets (L1/L2/L3),

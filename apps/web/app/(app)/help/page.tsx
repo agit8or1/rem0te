@@ -1644,6 +1644,15 @@ const SECTIONS: Section[] = [
           and <Link href="/docs/containment" className="underline text-foreground">Containment</Link>.
         </p>
         <p>
+          <strong className="text-foreground">The server itself.</strong> Platform Admins see the server&apos;s security
+          posture under <Link href="/admin/security" className="underline text-foreground">Admin → Security</Link> (0.74): a
+          score over SSH, the firewall, listening ports, pending updates and restarts, fail2ban, certificates, security
+          headers, MFA coverage, API keys, the audit chain and the API&apos;s own off switches. A check that could not be
+          read says <em>Unknown</em>, never OK. Bans, never-ban entries, jail settings, installing fail2ban and OS upgrades
+          are audited and may ask you to confirm it is you. See{' '}
+          <Link href="/docs/server-security" className="underline text-foreground">Server security</Link>.
+        </p>
+        <p>
           <strong className="text-foreground">What Connect does and does not control.</strong> Rem0te decides who may
           launch a session to which computer and records it; RustDesk carries the session. Once connected, clipboard,
           file transfer and RustDesk&apos;s in-session chat are RustDesk&apos;s own defaults (the Chat tab is separate), a computer installed by Rem0te accepts its password

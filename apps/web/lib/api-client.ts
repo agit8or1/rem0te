@@ -575,25 +575,27 @@ export const updateApi = {
 };
 
 // ─── Admin Security ───────────────────────────────────────────────────────
+// Admin → Security (0.74). Platform Admin only. Every change may answer
+// 403 STEP_UP_REQUIRED (server.security, or login.lockout when the lockout is
+// weakened), which the interceptor below answers.
 export const securityApi = {
+  getPosture: (refresh = false) => api.get('/admin/security/posture', { params: refresh ? { refresh: 1 } : {} }),
   getConfig: () => api.get('/admin/security/config'),
-  updateConfig: (data: Record<string, unknown>) => api.patch('/admin/security/config', data),
-  getFail2ban: () => api.get('/admin/security/fail2ban'),
+  updateConfig: (data: { maxLoginAttempts?: number; lockoutMinutes?: number; clearUnenforced?: boolean }) => api.patch('/admin/security/config', data),
+  getFail2ban: (refresh = false) => api.get('/admin/security/fail2ban', { params: refresh ? { refresh: 1 } : {} }),
   unbanIp: (jail: string, ip: string) => api.post('/admin/security/fail2ban/unban', { jail, ip }),
   banIp: (jail: string, ip: string) => api.post('/admin/security/fail2ban/ban', { jail, ip }),
   getIgnoreList: () => api.get('/admin/security/fail2ban/ignore'),
   addIgnoreIp: (ip: string) => api.post('/admin/security/fail2ban/ignore', { ip }),
   removeIgnoreIp: (ip: string) => api.delete(`/admin/security/fail2ban/ignore/${encodeURIComponent(ip)}`),
-  getJailConfig: (jail: string) => api.get(`/admin/security/fail2ban/jail/${jail}/config`),
-  updateJailConfig: (jail: string, cfg: { bantime?: number; findtime?: number; maxretry?: number }) => api.patch(`/admin/security/fail2ban/jail/${jail}/config`, cfg),
+  getJailConfig: (jail: string) => api.get(`/admin/security/fail2ban/jail/${encodeURIComponent(jail)}/config`),
+  updateJailConfig: (jail: string, cfg: { bantime?: number; findtime?: number; maxretry?: number }) => api.patch(`/admin/security/fail2ban/jail/${encodeURIComponent(jail)}/config`, cfg),
   installFail2ban: () => api.post('/admin/security/fail2ban/install'),
-  getOsUpdates: () => api.get('/admin/security/os-updates'),
+  getOsUpdates: (refresh = false) => api.get('/admin/security/os-updates', { params: refresh ? { refresh: 1 } : {} }),
   runOsUpdate: () => api.post('/admin/security/os-updates/run'),
   getOsUpdateStatus: () => api.get('/admin/security/os-updates/status'),
-  runAudit: () => api.get('/admin/security/audit'),
-  runAuditFix: (force = false) => api.post('/admin/security/audit/fix', { force }),
-  getTls: () => api.get('/admin/security/tls'),
-  renewTls: () => api.post('/admin/security/tls/renew'),
+  getDependencyAudit: (refresh = false) => api.get('/admin/security/audit', { params: refresh ? { refresh: 1 } : {} }),
+  getTls: (refresh = false) => api.get('/admin/security/tls', { params: refresh ? { refresh: 1 } : {} }),
 };
 
 // ─── Notes ───────────────────────────────────────────────────────────────────

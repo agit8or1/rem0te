@@ -418,6 +418,11 @@ enum ActivityAction {
   MSA_CUTOVER_RUN_CONFIRMED
   MSA_CUTOVER_RUN_HALTED
   MSA_CUTOVER_RUN_ROLLED_BACK
+  // 0.74 Server security (Admin → Security, migration 0091): every change the
+  // page makes to this host (fail2ban, install, OS upgrade), and the sign-in
+  // lockout policy. Meta carries the operation, its inputs and the outcome.
+  HOST_SECURITY_CHANGED
+  LOGIN_POLICY_CHANGED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────

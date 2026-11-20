@@ -4511,6 +4511,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   // step-up, or moving one to another key, changes this list in the same commit.
   const SITE_KEYS = {
     'actions/actions.service.ts': ['actions.direct'],
+    'admin/security.controller.ts': ['login.lockout', 'server.security'],
     'adoption/adoption.service.ts': ['adoption.mappings', 'devices.adopt'],
     'adoption/deployment-keys.service.ts': ['deployment.keys'],
     'agent-auto-migration/agent-auto-migration.service.ts': ['agent.automigrate'],
@@ -7074,6 +7075,92 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && JSON.parse(read(`${goDir}/internal/msa/testdata/msa-revocations.json`)).cases.length >= 30
       && read('apps/web/scripts/e2e-ui.mjs').includes('msa\\/(managed|grants|sessions|cutover-runs)'),
     'e2e-msa-sessions.mjs in run-e2e.sh, unit-msa-sessions.mjs in CI, the Go session tests, the shared revocation fixture, the browser suite\'s gated-route check');
+}
+
+// ─── §84 (0.74): Admin → Security runs a closed list of host commands ────────
+//     The pre-0.74 page ran ESLint and semgrep on a hard-coded home directory,
+//     `npm audit fix` inside production's node_modules, fail2ban changes with
+//     no audit row and no step-up, and showed failures as healthy. Now:
+//       - one exec site, host-security/host-runner.ts: spawn with shell:false,
+//         argv only from argvFor's closed switch; nothing else in the security
+//         module imports child_process;
+//       - every sudo command is a NOPASSWD line deploy/scripts/install.sh grants,
+//         word for word; fail2ban changes go only through the root-owned
+//         rem0te-f2b wrapper; the runner never names fail2ban-client;
+//       - every mutating route is Platform Admin, then assertFresh naming
+//         server.security (the lockout: login.lockout, only when it weakens);
+//       - every host change is recorded as HOST_SECURITY_CHANGED with its
+//         outcome, every lockout change as LOGIN_POLICY_CHANGED;
+//       - a fixture is read only under NODE_ENV=test, and a test process with
+//         none changes nothing;
+//       - no npm audit fix, no eslint/semgrep, no Caddy /load renew;
+//       - the posture's OFF_SWITCHES name every *_SWEEP / *_SEALER the API reads;
+//       - the security module names no release-host path or command (§56).
+{
+  console.log('\n§84 Admin → Security: closed host commands, audited and confirmed changes');
+  const SRC = 'apps/api/src';
+  const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const runner = read(`${SRC}/admin/host-security/host-runner.ts`);
+  const svc = read(`${SRC}/admin/security.service.ts`);
+  const ctl = read(`${SRC}/admin/security.controller.ts`);
+  const posture = read(`${SRC}/admin/host-security/posture.ts`);
+  const parsers = read(`${SRC}/admin/host-security/parsers.ts`);
+  const mod = [svc, ctl, posture, parsers];
+  check('server security: one exec site (host-runner.ts), shell:false, nothing else in the module imports child_process',
+    (strip(runner).match(/\bspawn\(/g) ?? []).length === 1 && /shell: false/.test(runner) && !/shell: true|execSync|execFile/.test(runner)
+      && mod.every((s) => !/child_process/.test(s)));
+  const install = read('deploy/scripts/install.sh');
+  const granted = [...install.matchAll(/^reboot ALL=\(root\) NOPASSWD: (\/\S+(?: [^\n!]+)?)$/gm)].map((m) => m[1].replace(/\\:/g, ':').replace(/\\=/g, '='));
+  const sudoLines = [...runner.matchAll(/\['sudo', '-n', ([^\]]+)\]/g)].map((m) => m[1].split(', ').map((t) => {
+    if (t === 'APT_GET') return '/usr/bin/apt-get';
+    if (t === 'SYSTEMCTL') return '/usr/bin/systemctl';
+    if (t === 'F2B_WRAPPER') return '/usr/local/sbin/rem0te-f2b';
+    if (t.startsWith('...')) return '*';
+    return t.replace(/^'|'$/g, '');
+  }).join(' '));
+  const notGranted = sudoLines.filter((l) => (l.endsWith(' *') ? !granted.some((g) => g.startsWith(l.slice(0, -2))) : !granted.includes(l)));
+  check('server security: every sudo command the runner builds is a NOPASSWD line the installer grants, word for word',
+    sudoLines.length === 7 && notGranted.length === 0 && !/'sudo', (?!'-n')/.test(runner) && !/fail2ban-client/.test(strip(runner)),
+    `${sudoLines.length} sudo commands; not granted: ${JSON.stringify(notGranted)}`);
+  check('server security: argvFor is a closed switch and fail2ban changes pass f2bArgsOk',
+    /export function argvFor\(/.test(runner) && /switch \(c\.id\)/.test(runner) && /f2bArgsOk\(/.test(runner)
+      && /CHANGE_IDS: ReadonlySet<string> = new Set\(\['f2b\.change', 'f2b\.install', 'f2b\.enable', 'f2b\.start', 'apt\.update', 'apt\.upgrade'\]\)/.test(runner));
+  // Every mutating route: assertPlatformAdmin, then assertFresh naming its key, before (or, for the lockout, inside) the service call.
+  const routes = [...ctl.matchAll(/@(Post|Patch|Delete)\('([^']+)'\)[\s\S]*?\n  async (\w+)\(.*\) \{([\s\S]*?)\n  \}/g)];
+  const badRoutes = routes.filter(([, , p, , body]) => {
+    const admin = body.indexOf('assertPlatformAdmin');
+    const fresh = body.indexOf(`assertFresh(this.fresh(req), { action: '${p === 'config' ? 'login.lockout' : 'server.security'}' })`);
+    const call = body.indexOf('this.security.');
+    return admin < 0 || fresh < 0 || call < 0 || admin > call || (p !== 'config' && fresh > call);
+  }).map((m) => m[2]);
+  check('server security: every mutating route is Platform Admin, then assertFresh (server.security; login.lockout when weakening)',
+    routes.length === 8 && badRoutes.length === 0 && (ctl.match(/assertPlatformAdmin\(a\)/g) ?? []).length === (ctl.match(/@(Get|Post|Patch|Delete)\(/g) ?? []).length
+      && /static weakens\(/.test(svc),
+    `${routes.length} routes; bad: ${badRoutes.join(', ')}`);
+  const methods = svc.split(/\n  (?=(?:private )?(?:static )?async \w+\()/);
+  const unaudited = methods.filter((m) => /this\.host\.change\(/.test(m) && !/this\.record\(actor, 'HOST_SECURITY_CHANGED'/.test(m)).map((m) => m.trim().slice(0, 60));
+  check('server security: every host change records HOST_SECURITY_CHANGED with its outcome, every lockout change LOGIN_POLICY_CHANGED',
+    unaudited.length === 0 && /this\.record\(actor, 'LOGIN_POLICY_CHANGED'/.test(svc) && /ok: false/.test(svc)
+      && /'HOST_SECURITY_CHANGED'/.test(read('apps/api/prisma/migrations/0091_server_security_audit/migration.sql')),
+    unaudited.join(' | '));
+  check('server security: a fixture only under NODE_ENV=test, and a test process without one changes nothing',
+    /process\.env\.NODE_ENV === 'test' && f\)/.test(runner) && /HOST_CHANGES_OFF_IN_TEST/.test(svc + runner)
+      && walk(SRC).filter((f) => /SECURITY_HOST_FIXTURE/.test(read(f)) && !f.endsWith('host-runner.ts')).length === 0);
+  check('server security: no npm audit fix, no eslint or semgrep, no Caddy reload in the module',
+    mod.concat(runner).every((s) => !/'audit', 'fix'|audit fix'|eslint|semgrep|localhost:2019/.test(strip(s)))
+      && !/@Post\('audit\/fix'\)|@Post\('tls\/renew'\)/.test(ctl));
+  const readSwitches = new Set();
+  for (const f of walk(SRC)) for (const m of read(f).matchAll(/process\.env\.([A-Z_]+_(?:SWEEP|SEALER))\b/g)) readSwitches.add(m[1]);
+  const named = new Set([...posture.matchAll(/name: '([A-Z_]+)'/g)].map((m) => m[1]));
+  const missingSw = [...readSwitches].filter((s) => !named.has(s));
+  check('server security: the posture flags every *_SWEEP / *_SEALER off switch the API reads',
+    readSwitches.size >= 10 && missingSw.length === 0, `not in OFF_SWITCHES: ${missingSw.join(', ')}`);
+  check('server security: the module names no release-host path or command (§56); the web shows the status command instead',
+    mod.concat(runner).every((s) => !/\/var\/lib\/rem0te-|rem0te-signed-/.test(s))
+      && /sudo rem0te-signed-status/.test(read('apps/web/app/(app)/admin/security/page.tsx')));
+  check('server security: unit and behavioural proof are wired (unit in CI, e2e in run-e2e.sh)',
+    /unit-host-security\.mjs/.test(read('.github/workflows/ci.yml')) && /\bhost-security\b/.test(read('scripts/run-e2e.sh'))
+      && /HOSTSEC_API_PORT \?\? 3991/.test(read('apps/api/scripts/e2e-host-security.mjs')));
 }
 
 // ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──

@@ -78,6 +78,7 @@ const ORDER = [
   ['break-glass.md', 'Break-glass accounts', 'People and access', 'The two accounts that can always sign in, how to set them up, and what to do when one is used.'],
   ['offboarding.md', 'Access review and offboarding', 'People and access', 'Reviewing who can reach what, and removing someone cleanly.'],
   ['containment.md', 'Containment and audit integrity', 'Security and incidents', 'Stop writes during an incident; the sealed, verifiable audit log.'],
+  ['server-security.md', 'Server security', 'Security and incidents', 'Admin → Security: the server\'s posture score, SSH, firewall, ports, updates, fail2ban, certificates, headers, lockout and Rem0te\'s own safeguards, with unknown never shown as OK.'],
   ['incident-recovery.md', 'Incident recovery', 'Security and incidents', 'What to do, in order, when you suspect a compromise.'],
   ['update-signing.md', 'Update signing', 'Security and incidents', 'The offline-signed update chain and what a compromised portal cannot do.'],
   ['SECURITY-AUDIT.md', 'Security', 'Security and incidents', 'Security review findings and how each was addressed.'],

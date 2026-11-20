@@ -3,7 +3,7 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **637** of them across
+integration, under `/api/integration/v1`). There are **636** of them across
 **96** controllers.
 
 For request and response shapes, worked examples and error codes, see
@@ -942,24 +942,23 @@ Admins and Business Owners are not confined by it; see
 
 | Method | Path | Access | Capability |
 |---|---|---|---|
-| `GET` | `/api/v1/admin/security/audit` | signed in | — |
-| `POST` | `/api/v1/admin/security/audit/fix` | signed in | — |
+| `GET` | `/api/v1/admin/security/audit` | signed in, throttled | — |
 | `GET` | `/api/v1/admin/security/config` | signed in | — |
 | `PATCH` | `/api/v1/admin/security/config` | signed in | — |
 | `GET` | `/api/v1/admin/security/fail2ban` | signed in | — |
-| `POST` | `/api/v1/admin/security/fail2ban/ban` | signed in | — |
+| `POST` | `/api/v1/admin/security/fail2ban/ban` | signed in, throttled | — |
 | `GET` | `/api/v1/admin/security/fail2ban/ignore` | signed in | — |
-| `POST` | `/api/v1/admin/security/fail2ban/ignore` | signed in | — |
-| `DELETE` | `/api/v1/admin/security/fail2ban/ignore/:ip` | signed in | — |
-| `POST` | `/api/v1/admin/security/fail2ban/install` | signed in | — |
+| `POST` | `/api/v1/admin/security/fail2ban/ignore` | signed in, throttled | — |
+| `DELETE` | `/api/v1/admin/security/fail2ban/ignore/:ip` | signed in, throttled | — |
+| `POST` | `/api/v1/admin/security/fail2ban/install` | signed in, throttled | — |
 | `GET` | `/api/v1/admin/security/fail2ban/jail/:jail/config` | signed in | — |
-| `PATCH` | `/api/v1/admin/security/fail2ban/jail/:jail/config` | signed in | — |
-| `POST` | `/api/v1/admin/security/fail2ban/unban` | signed in | — |
+| `PATCH` | `/api/v1/admin/security/fail2ban/jail/:jail/config` | signed in, throttled | — |
+| `POST` | `/api/v1/admin/security/fail2ban/unban` | signed in, throttled | — |
 | `GET` | `/api/v1/admin/security/os-updates` | signed in | — |
-| `POST` | `/api/v1/admin/security/os-updates/run` | signed in | — |
+| `POST` | `/api/v1/admin/security/os-updates/run` | signed in, throttled | — |
 | `GET` | `/api/v1/admin/security/os-updates/status` | signed in | — |
+| `GET` | `/api/v1/admin/security/posture` | signed in, throttled | — |
 | `GET` | `/api/v1/admin/security/tls` | signed in | — |
-| `POST` | `/api/v1/admin/security/tls/renew` | signed in | — |
 
 ## Security controls
 
