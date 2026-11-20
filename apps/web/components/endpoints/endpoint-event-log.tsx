@@ -137,19 +137,23 @@ function EventRowView({ row, endpointId, commandId, index }: { row: EventRow; en
 export function EndpointEventLog({
   endpointId,
   isOnline,
+  initialLog,
 }: {
   endpointId: string;
   isOnline: boolean;
+  /** 0.75: the log the Tools panel opened this tab for (Security: with Information, where its entries are). */
+  initialLog?: string | null;
 }) {
   const { toast } = useToast();
   // 0.48: whether Ask AI and Create ticket can be offered, said once above the rows.
   const { data: aiStatus } = useAiStatus();
   const { data: ticketStatus } = useTicketStatus(endpointId);
 
-  const [logName, setLogName] = useState<string>('System');
+  const opened = initialLog && (LOGS as readonly string[]).includes(initialLog) ? initialLog : null;
+  const [logName, setLogName] = useState<string>(opened ?? 'System');
   const [sinceHours, setSinceHours] = useState<number>(24);
   const [maxEvents, setMaxEvents] = useState<number>(50);
-  const [levels, setLevels] = useState<number[]>([1, 2, 3]);
+  const [levels, setLevels] = useState<number[]>(opened === 'Security' ? [4, 0] : [1, 2, 3]);
   const [provider, setProvider] = useState('');
   const [commandId, setCommandId] = useState<string | null>(null);
 

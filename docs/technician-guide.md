@@ -372,12 +372,55 @@ and removed in place. The Overview's **Notes** card shows the latest three notes
 and takes a new one; all of them, and editing, are on History. All of it needs
 *Rename/edit computers*, and renames and alias changes are in the audit log.
 
-**The actions:** **Connect**, **Diagnose** (opens Diagnostics), **Run action**
+**The actions:** **Connect**, **Tools** (below), **Diagnose** (opens Diagnostics), **Run action**
 (opens Actions; disabled, with the reason printed underneath, when the computer
 lacks the signed agent or no approval signer is configured), **Patch** (opens
 Patches) and **More**: view-only connect (technicians), the diagnostics report,
 *Reinstall agent* and *Archive computer*, each behind a confirmation that says
 what it does.
+
+**Tools (0.75).** **Tools**, beside Connect, opens one panel listing what can be
+done to this computer, in eight groups: Diagnostics, PowerShell / Scripts,
+Services & Processes, Software, Windows Updates, Networking, Security and
+Maintenance. Every tool is a way into a flow that already exists — picking one
+opens its tab with the right thing chosen (the diagnostic's row marked, the
+action picked, the Security log selected) or, for scripts, the script library.
+Nothing runs from the panel itself: the tab's own button and confirmation do
+that, and the server checks your access, containment and the approval signer
+again exactly as before.
+
+| Group | Tools, and the flow each opens |
+|---|---|
+| Diagnostics | Test connection (Diagnostics tab), Refresh inventory, Disk space, Service health, Top processes, Recent system errors (Diagnostics checks), Download diagnostics report |
+| PowerShell / Scripts | Run an approved script (Automation → Scripts; `windows.script.run`) |
+| Services & Processes | Services and Processes (their tabs), Start/stop/restart a service (`windows.service.control`, from a row), Restart an allowlisted service and Start the Print Spooler (Actions), End a process (`windows.process.stop`, from a row) |
+| Software | Installed software, Install software (`windows.software.install`), Remove a program (`windows.software.remove`) — the Software tab |
+| Windows Updates | Check for updates now and Restart pending? (Patches), Restart signals (a Diagnostics check), Install updates (`windows.update.install`, Patches) |
+| Networking | Network adapters (Network tab), Network connectivity and DNS resolution (Diagnostics checks), *Flush DNS / renew DHCP — coming later* |
+| Security | Security event log (Event logs, with Security and Information chosen), *Antivirus, firewall, BitLocker, Secure Boot — coming later* |
+| Maintenance | Schedule a restart, Cancel a scheduled restart, Collect diagnostic logs (Actions) |
+
+Each tool says whether it can work here, and why not:
+
+| State | Means |
+|---|---|
+| Available | Opens and can be used now (in direct mode an action is signed when you request it, after a fresh sign-in) |
+| Needs approval | An approved action: two approvers authorize it on the approval page before the computer runs it |
+| Needs a newer agent | The computer's agent does not report the action, is older than the release that added it, or is the standard agent and the action needs the full (signed) agent |
+| Unsupported here | Linux, macOS (read-only agents) or RustDesk only: nothing on the computer can run it |
+| Paused | A containment pause on approved actions covers this business |
+| Not reporting | The computer is offline or its agent is silent: the request waits for its next check-in (a diagnostic expires after fifteen minutes) |
+| Not permitted | Your role does not allow it — it is shown without a button, so nothing you can click would be refused |
+| Not set up | No approval signer is configured on this server, so no action can be approved |
+| Unavailable | Archived, not enrolled, in the unassigned pool, or never bound to a device secret |
+| Coming later | No flow does it yet; it is listed so the gap is visible, and nothing is shown in its place — unknown is never healthy |
+
+*Restart pending?* says **Yes**, **No** or **Unknown** from the last update scan;
+it says Unknown until a scan has answered. The panel decides only what it shows
+(`apps/web/lib/device-tools.ts`, unit-tested by
+`apps/web/scripts/unit-device-tools.mjs`); it adds no route and no action. Its
+links can be shared: `?tab=diagnostics&check=dns_resolution`,
+`?tab=actions&action=windows.logs.collect`, `?tab=events&log=Security`.
 
 ![A device's page: status, actions, the attention strip and the tabs, on Overview](screenshots/guide/device-overview.png)
 

@@ -148,8 +148,10 @@ function apiMessage(e: unknown, fallback: string) {
   return (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message?.toString() ?? fallback;
 }
 
-export function EndpointActions({ endpointId, isOnline, unavailableReason, agentActions = [] }: {
+export function EndpointActions({ endpointId, isOnline, unavailableReason, agentActions = [], initialAction }: {
   endpointId: string; isOnline: boolean;
+  /** 0.75: the action the Tools panel opened this tab for; it is picked, and the form brought into view. */
+  initialAction?: string | null;
   /** Why this computer cannot run any action (0.31, from the device workspace); the server still decides. */
   unavailableReason?: string | null;
   /** What this computer's agent reports it can run, as id@version (0.32: per-action availability). */
@@ -159,7 +161,7 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
   const qc = useQueryClient();
   const [reason, setReason] = useState('');
   const [confirmed, setConfirmed] = useState(false);
-  const [picked, setPicked] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string | null>(initialAction ?? null);
   const [choice, setChoice] = useState<string>('');
   // 0.54: a restart's time, only-if-required and the RustDesk exception (never ticked by default).
   const [restartOpts, setRestartOpts] = useState<RestartValue>(() => defaultRestart({}));
@@ -210,6 +212,15 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
     onSuccess: refresh,
     onError: (e) => toast({ title: 'Not canceled', description: apiMessage(e, 'Could not cancel.'), variant: 'destructive' }),
   });
+
+  // 0.75: opened from the Tools panel: bring the chosen action's button into view and focus it.
+  const loaded = !!catalog;
+  useEffect(() => {
+    if (!initialAction || !loaded) return;
+    const el = document.querySelector<HTMLElement>(`[data-testid="pick-${CSS.escape(initialAction)}"]`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el?.focus({ preventScroll: true });
+  }, [initialAction, loaded]);
 
   if (catalog && !catalog.configured) {
     return (
