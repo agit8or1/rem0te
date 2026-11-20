@@ -1,0 +1,24 @@
+{
+  "agent": "macos",
+  "tag": "v0.73.0",
+  "name": "installer-claim",
+  "evidence": "captured",
+  "source": "the v0.73.0 installer's registration block, run under bash with a recording curl",
+  "identity": "claimed",
+  "request": {
+    "method": "POST",
+    "path": "/enrollment/claim",
+    "body": {
+      "token": "{{token}}",
+      "rustdeskId": "{{rustdeskId}}",
+      "hostname": "wire-fixture-mac",
+      "platform": "macos",
+      "password": "{{password}}",
+      "agentSecret": "{{agentSecret}}"
+    }
+  },
+  "raw": "{\"token\":\"{{token}}\",\"rustdeskId\":\"{{rustdeskId}}\",\"hostname\":\"wire-fixture-mac\",\"platform\":\"macos\",\"password\":\"{{password}}\",\"agentSecret\":\"{{agentSecret}}\"}",
+  "expect": {
+    "status": 200
+  }
+}

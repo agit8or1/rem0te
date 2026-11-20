@@ -1,0 +1,49 @@
+{
+  "agent": "macos",
+  "tag": "v0.73.0",
+  "name": "command-result-inventory-refresh",
+  "evidence": "captured",
+  "source": "the v0.73.0 agent (rem0te-agent), run under dash against a loopback stub",
+  "identity": "claimed",
+  "request": {
+    "method": "POST",
+    "path": "/enrollment/command-result",
+    "body": {
+      "rustdeskId": "{{rustdeskId}}",
+      "agentSecret": "{{agentSecret}}",
+      "commandId": "{{commandId:INVENTORY_REFRESH}}",
+      "ok": true,
+      "inventory": {
+        "osCaption": "macOS 14.5",
+        "osBuild": "23F79, Darwin 23.5.0",
+        "osArch": "arm64",
+        "timezone": "Etc/UTC",
+        "manufacturer": "Apple Inc.",
+        "model": "MacBook Pro (Mac14,10)",
+        "serialNumber": "WIRESERIAL03",
+        "chassisType": "Laptop",
+        "biosVersion": "10151.121.1",
+        "cpuModel": "Apple M2 Pro",
+        "cpuCores": 10,
+        "cpuThreads": 12,
+        "cpuMhz": 3504,
+        "memoryTotalMb": 16384,
+        "memoryFreeMb": 3125,
+        "disks": [
+          {
+            "drive": "/",
+            "label": "/dev/disk3s1s1",
+            "fsType": "apfs",
+            "totalBytes": 494384795648,
+            "freeBytes": 307200000000
+          }
+        ]
+      }
+    }
+  },
+  "raw": "{\"rustdeskId\":\"{{rustdeskId}}\",\"agentSecret\":\"{{agentSecret}}\",\"commandId\":\"{{commandId:INVENTORY_REFRESH}}\",\"ok\":true,\"inventory\":{\"osCaption\":\"macOS 14.5\",\"osBuild\":\"23F79, Darwin 23.5.0\",\"osArch\":\"arm64\",\"timezone\":\"Etc/UTC\",\"manufacturer\":\"Apple Inc.\",\"model\":\"MacBook Pro (Mac14,10)\",\"serialNumber\":\"WIRESERIAL03\",\"chassisType\":\"Laptop\",\"biosVersion\":\"10151.121.1\",\"cpuModel\":\"Apple M2 Pro\",\"cpuCores\":10,\"cpuThreads\":12,\"cpuMhz\":3504,\"memoryTotalMb\":16384,\"memoryFreeMb\":3125,\"disks\":[{\"drive\":\"/\",\"label\":\"/dev/disk3s1s1\",\"fsType\":\"apfs\",\"totalBytes\":494384795648,\"freeBytes\":307200000000}]}}",
+  "commandType": "INVENTORY_REFRESH",
+  "expect": {
+    "status": 200
+  }
+}

@@ -671,6 +671,59 @@ jobs:
           path: ${{ runner.temp }}/compat/${{ matrix.tag }}/evidence.json
           if-no-files-found: warn
 
+  # Older released standard agents' wire bodies against this server (0.73.1,
+  # docs/compatibility.md). One leg per agent in scripts/compat/wire/agents.json:
+  # every release's captured heartbeat, enrolment and result bodies, replayed
+  # against this checkout's API with the answers read the way that release
+  # reads them. The fixtures are committed; capturing them (pwsh, git tags) is
+  # scripts/compat/capture-wire.mjs, run when a release is added. Wire
+  # evidence, not real Windows, Linux or macOS. Not a required check: the
+  # owner's call once it has run stably.
+  compat-wire:
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rem0te
+          POSTGRES_PASSWORD: rem0te-ci-only
+          POSTGRES_DB: rem0te_wire_scratch
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U rem0te" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://rem0te:rem0te-ci-only@127.0.0.1:5432/rem0te_wire_scratch
+    name: compat-wire (${{ matrix.agent }})
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Generate Prisma client and build the API
+        run: |
+          pnpm db:generate
+          pnpm --filter @reboot-remote/api build
+      - name: ${{ matrix.agent }} standard agents' wire bodies against this server
+        env:
+          COMPAT_OUT: ${{ runner.temp }}/compat
+        run: scripts/compat-wire.sh "${{ matrix.agent }}"
+      - name: Evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: compat-wire-evidence-${{ matrix.agent }}
+          path: ${{ runner.temp }}/compat/wire/evidence.json
+          if-no-files-found: warn
+
   agent-real-os:
     strategy:
       fail-fast: false

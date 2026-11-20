@@ -1,0 +1,26 @@
+{
+  "agent": "windows",
+  "tag": "v0.68.3",
+  "agentVersion": "0.68.3",
+  "evidence": "captured",
+  "contract": {
+    "heartbeat": {
+      "reads": [
+        "chat",
+        "commands",
+        "diagnostics",
+        "monitor",
+        "reinstallAgent",
+        "retireStandard",
+        "rotate",
+        "tray",
+        "updateRustdesk"
+      ]
+    },
+    "trayPair": {
+      "trayKeyPattern": "^tk_[a-z0-9]{24}[.][A-Za-z0-9_-]{43}$"
+    }
+  },
+  "capturedFrom": "git archive v0.68.3 apps/api/src/public (232c21a3c2a4da5cbedb17be52f6015694794aed)",
+  "fixtures": 23
+}

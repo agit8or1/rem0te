@@ -1,0 +1,16 @@
+{
+  "agent": "linux",
+  "tag": "v0.68.3",
+  "agentVersion": "0.68.3",
+  "evidence": "captured",
+  "contract": {
+    "heartbeat": {
+      "rawContains": [
+        "\"authenticated\":true"
+      ],
+      "commandPattern": "\\{\"id\":\"[A-Za-z0-9_-]{1,64}\",\"type\":\"(INVENTORY_REFRESH|UPDATE_SCAN|EVENT_LOG_QUERY)\""
+    }
+  },
+  "capturedFrom": "git archive v0.68.3 apps/api/src/public (232c21a3c2a4da5cbedb17be52f6015694794aed)",
+  "fixtures": 6
+}

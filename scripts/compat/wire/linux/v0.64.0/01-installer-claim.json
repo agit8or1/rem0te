@@ -1,0 +1,24 @@
+{
+  "agent": "linux",
+  "tag": "v0.64.0",
+  "name": "installer-claim",
+  "evidence": "captured",
+  "source": "the v0.64.0 installer's registration block, run under bash with a recording curl",
+  "identity": "claimed",
+  "request": {
+    "method": "POST",
+    "path": "/enrollment/claim",
+    "body": {
+      "token": "{{token}}",
+      "rustdeskId": "{{rustdeskId}}",
+      "hostname": "wire-fixture-linux",
+      "platform": "linux",
+      "password": "{{password}}",
+      "agentSecret": "{{agentSecret}}"
+    }
+  },
+  "raw": "{\"token\":\"{{token}}\",\"rustdeskId\":\"{{rustdeskId}}\",\"hostname\":\"wire-fixture-linux\",\"platform\":\"linux\",\"password\":\"{{password}}\",\"agentSecret\":\"{{agentSecret}}\"}",
+  "expect": {
+    "status": 200
+  }
+}

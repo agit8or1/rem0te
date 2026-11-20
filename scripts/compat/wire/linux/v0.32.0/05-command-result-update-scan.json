@@ -1,0 +1,35 @@
+{
+  "agent": "linux",
+  "tag": "v0.32.0",
+  "name": "command-result-update-scan",
+  "evidence": "captured",
+  "source": "the v0.32.0 agent (rem0te-agent), run under dash against a loopback stub",
+  "identity": "claimed",
+  "request": {
+    "method": "POST",
+    "path": "/enrollment/command-result",
+    "body": {
+      "rustdeskId": "{{rustdeskId}}",
+      "agentSecret": "{{agentSecret}}",
+      "commandId": "{{commandId:UPDATE_SCAN}}",
+      "ok": true,
+      "updates": {
+        "pending": [
+          {
+            "title": "openssl 3.0.13-0ubuntu3.5 (installed 3.0.13-0ubuntu3.4)",
+            "severity": "Security"
+          },
+          {
+            "title": "curl 8.5.0-2ubuntu10.6 (installed 8.5.0-2ubuntu10.5)"
+          }
+        ],
+        "rebootRequired": false
+      }
+    }
+  },
+  "raw": "{\"rustdeskId\":\"{{rustdeskId}}\",\"agentSecret\":\"{{agentSecret}}\",\"commandId\":\"{{commandId:UPDATE_SCAN}}\",\"ok\":true,\"updates\":{\"pending\":[{\"title\":\"openssl 3.0.13-0ubuntu3.5 (installed 3.0.13-0ubuntu3.4)\",\"severity\":\"Security\"},{\"title\":\"curl 8.5.0-2ubuntu10.6 (installed 8.5.0-2ubuntu10.5)\"}],\"rebootRequired\":false}}",
+  "commandType": "UPDATE_SCAN",
+  "expect": {
+    "status": 200
+  }
+}

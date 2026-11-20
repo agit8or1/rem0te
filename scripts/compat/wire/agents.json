@@ -1,0 +1,102 @@
+{
+  "_doc": "docs/compatibility.md (wire fixtures, 0.73.1). The standard agents whose request bodies are replayed against the server under test. The standard agents are written by the server that installed them, so a tag is here when it changed what an agent sends, or is a supported release. Removing one is a support decision: move it to `retired` with the date and the reason, never just delete it.",
+  "agents": {
+    "windows": {
+      "what": "the standard (PowerShell) Windows agent: the installer's Register function, retry-enroll.ps1, and heartbeat.ps1 (the Rem0teHeartbeat task)",
+      "tags": [
+        {
+          "tag": "v0.42.0",
+          "why": "the oldest standard heartbeat kept: 0.42 added the removal kind to the software inventory"
+        },
+        {
+          "tag": "v0.51.0",
+          "why": "0.51 changed the standard heartbeat (the retireStandard hand-over)"
+        },
+        {
+          "tag": "v0.64.0",
+          "why": "running on production computers (2026-11-19)"
+        },
+        {
+          "tag": "v0.66.0",
+          "why": "0.66 changed the monitor report (five samples)"
+        },
+        {
+          "tag": "v0.67.0",
+          "why": "the previous minor release before 0.68"
+        },
+        {
+          "tag": "v0.68.3",
+          "why": "0.68 changed the heartbeat (first inventory without waiting); the previous supported release"
+        },
+        {
+          "tag": "v0.69.0",
+          "why": "0.69 changed the installer script"
+        },
+        {
+          "tag": "v0.71.0",
+          "why": "the last release before 0.72 changed the heartbeat (the MSA poll hook, inert on the standard agent)"
+        },
+        {
+          "tag": "v0.73.0",
+          "why": "the latest tagged release; carries 0.72's heartbeat change"
+        }
+      ]
+    },
+    "linux": {
+      "what": "the standard Linux agent (rem0te-agent, the systemd timer) and the Linux installer's registration",
+      "tags": [
+        {
+          "tag": "v0.32.0",
+          "why": "the first Linux agent"
+        },
+        {
+          "tag": "v0.33.0",
+          "why": "0.33 moved the agent onto the shared POSIX fragments, unchanged since"
+        },
+        {
+          "tag": "v0.64.0",
+          "why": "the production release (2026-11-19); no Linux computer is enrolled there, kept for the support window"
+        },
+        {
+          "tag": "v0.68.3",
+          "why": "the previous supported release"
+        },
+        {
+          "tag": "v0.71.0",
+          "why": "the release before 0.72 and 0.73"
+        },
+        {
+          "tag": "v0.73.0",
+          "why": "the latest tagged release"
+        }
+      ]
+    },
+    "macos": {
+      "what": "the standard macOS agent (rem0te-agent, the LaunchDaemon) and the macOS installer's registration",
+      "tags": [
+        {
+          "tag": "v0.33.0",
+          "why": "the first macOS agent"
+        },
+        {
+          "tag": "v0.64.0",
+          "why": "the production release (2026-11-19); no Mac is enrolled there, kept for the support window"
+        },
+        {
+          "tag": "v0.68.3",
+          "why": "the previous supported release"
+        },
+        {
+          "tag": "v0.71.0",
+          "why": "the release before 0.72 and 0.73"
+        },
+        {
+          "tag": "v0.73.0",
+          "why": "the latest tagged release"
+        }
+      ]
+    }
+  },
+  "knownIncompatible": [],
+  "retired": []
+}

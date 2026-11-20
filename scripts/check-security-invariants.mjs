@@ -8,7 +8,7 @@
  *
  * Run: node scripts/check-security-invariants.mjs
  */
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7092,6 +7092,53 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /const REFUSED_PORTS = new Set\(\['3000', '3001', '3201', '3202', '443', '4000', '4001'\]\);/.test(guard)
       && /if \(!raw\) \{/.test(guard) && /u\.protocol !== 'http:'/.test(guard),
     defaulting.length ? `default to production: ${defaulting.join(', ')}` : 'lib/test-api-base.mjs: no default, loopback http only, production ports refused');
+}
+
+// ─── §18 addendum (0.73.1): the wire replay and its capture stay off production ──
+//     compat-wire.mjs starts an API and writes computers, claim tokens,
+//     commands and diagnostic runs; capture-wire.mjs runs released agent
+//     scripts. Both are scratch-only by construction, and the fixtures they
+//     share carry placeholders where a secret would be.
+{
+  const wire = read('scripts/compat-wire.mjs');
+  const sh = read('scripts/compat-wire.sh');
+  const cap = read('scripts/compat/capture-wire.mjs');
+  check('wire replay: scratch database only, its own loopback API on 3981–3988, production ports and GeoIP file refused',
+    /const PRODUCTION_PORTS = \[3000, 3001, 3201, 3202, 443, 4000, 4001\];/.test(wire)
+      && /if \(PRODUCTION_PORTS\.includes\(PORT\) \|\| !\(PORT >= 3981 && PORT <= 3988\)\)/.test(wire)
+      && /if \(!\/scratch\|test\/\.test\(dbName\)\)/.test(wire)
+      && /const API = `http:\/\/127\.0\.0\.1:\$\{PORT\}\/api\/v1`;/.test(wire)
+      && /GEOIP_DB_PATH: path\.join\(OUT, 'no-geoip\.mmdb'\)/.test(wire)
+      && /! "\$name" =~ \(scratch\|test\)/.test(sh),
+    'scripts/compat-wire.mjs, scripts/compat-wire.sh');
+  check('wire capture: release scripts from git archive, a loopback capture server on 3981–3989, nothing sent anywhere else',
+    /'archive', tag, 'apps\/api\/src\/public'/.test(cap) && !/readFileSync\(path\.join\(ROOT, 'apps', 'api', 'src'/.test(cap)
+      && /if \(CAPTURE_PORT < 3981 \|\| CAPTURE_PORT > 3989\)/.test(cap) && /srv\.listen\(CAPTURE_PORT, '127\.0\.0\.1'/.test(cap)
+      && /function Invoke-RestMethod \{/.test(read('scripts/compat/capture/windows-prelude.ps1')),
+    'scripts/compat/capture-wire.mjs, capture/windows-prelude.ps1');
+  const wireDir = join(ROOT, 'scripts', 'compat', 'wire');
+  const leaks = [];
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) { walk(p); continue; }
+      if (!e.name.endsWith('.json') || e.name === 'agents.json' || e.name === 'manifest.json') continue;
+      const fx = JSON.parse(readFileSync(p, 'utf8'));
+      const seen = (v) => {
+        if (Array.isArray(v)) return v.forEach(seen);
+        if (!v || typeof v !== 'object') return;
+        for (const [k, x] of Object.entries(v)) {
+          if (['agentSecret', 'password', 'token', 'sha256', 'rustdeskId', 'trayKey'].includes(k) && !(typeof x === 'string' && /^\{\{[A-Za-z0-9:_]+\}\}$/.test(x))) leaks.push(`${p.slice(ROOT.length + 1)}: ${k}`);
+          seen(x);
+        }
+      };
+      seen(fx.request?.body);
+      if (/"(agentSecret|password|token|sha256|rustdeskId)":"(?!\{\{)/.test(fx.raw ?? '')) leaks.push(`${p.slice(ROOT.length + 1)}: raw`);
+    }
+  };
+  if (existsSync(wireDir)) walk(wireDir);
+  check('wire fixtures: every secret, identifier and token is a {{placeholder}} filled at replay',
+    existsSync(wireDir) && leaks.length === 0, leaks.slice(0, 5).join('; ') || 'scripts/compat/wire');
 }
 
 if (failures.length > 0) {

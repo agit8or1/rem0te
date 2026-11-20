@@ -5,6 +5,76 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.73.1] — 2026-11-20 · *Warden*
+
+**Wire compatibility for the standard agents: what every released standard Windows, Linux and macOS agent sends
+is now replayed against the server under test on every pull request.** (docs/compatibility.md "Wire fixtures";
+docs/managed-secure-access.md §5's last open item; check-security-invariants §18, 0.73.1 addendum.) Test and CI
+only — no route, DTO, migration, agent or console change. Nothing to deploy beyond the version.
+
+### Why this was missing
+
+0.68.2's `compat (agent vX.Y.Z)` jobs build older **signed** agents from their tags. The standard agents have no
+build to keep: the server *writes* them at install time (`windows-script.ts`, `linux-agent.ts`,
+`macos-agent.ts`), so a computer runs whatever its installing server wrote, possibly many releases ago. And the
+API's global `ValidationPipe` runs with `forbidNonWhitelisted`, so a field that leaves a DTO, or tightens its
+bounds, turns every older agent that still sends it into `400` on every heartbeat — the computer goes quiet,
+then "agent silent", and no test said so. Likewise the POSIX agents do not parse JSON: they `grep -oE` the raw
+response for `{"id":"…","type":"…"` and `"authenticated":true`, so the server's key order is a wire contract
+that nothing checked.
+
+### What it is
+
+- **Fixtures, captured, never hand-written**: `scripts/compat/wire/<agent>/<tag>/NN-<name>.json` (one request
+  each, the agent's exact bytes in `raw`, secrets and ids as `{{placeholders}}`) and `manifest.json` (what that
+  release reads back). `scripts/compat/capture-wire.mjs` takes `apps/api/src/public` from `git archive <tag>`,
+  transpiles the release's builders, and runs the generated scripts:
+  - Windows: the installer's `Register` (claim, unclaimed heartbeat), `retry-enroll.ps1`, and `heartbeat.ps1`
+    twice, under PowerShell 7 with `scripts/compat/capture/windows-prelude.ps1` standing in for CIM, the
+    registry, Windows Update, event logs and `Invoke-RestMethod` (which records).
+  - Linux and macOS: the installer's registration block under bash with a recording `curl`, and the agent under
+    dash with real `curl` to a loopback stub (127.0.0.1:3989), OS commands stubbed and absolute reads rerooted.
+- **Coverage**: Windows v0.42.0, v0.51.0, v0.64.0, v0.66.0, v0.67.0, v0.68.3, v0.69.0, v0.71.0, v0.73.0 (23 requests
+  each: claim, unclaimed heartbeat, retry claim, two heartbeats, three command results, twelve diagnostic results,
+  monitor report, rotation confirm, tray pairing); Linux v0.32.0, v0.33.0, v0.64.0, v0.68.3, v0.71.0, v0.73.0 and macOS
+  v0.33.0, v0.64.0, v0.68.3, v0.71.0, v0.73.0 (6 each: claim, unclaimed heartbeat, heartbeat, three command results).
+  `scripts/compat/wire/agents.json` says why each tag is there. All captured; none constructed.
+- **The replay**, `scripts/compat-wire.sh` → `scripts/compat-wire.mjs`: migrates and seeds a scratch database,
+  starts this checkout's API on 127.0.0.1:3981 (3981–3988 only; production's ports, https, a database not
+  named *scratch*/*test* and production's GeoIP file refused) with every sweep off, and for each agent × release
+  replays the fixtures as fresh computers in a fresh business. Before a heartbeat it stages what the captured
+  answer carried (commands, diagnostic runs, a rotation). It checks: every request `200`/`success`; the effect
+  (claim → business, bound secret, consumed token; unclaimed heartbeat → pool; heartbeat → `lastSeenAt`, agent
+  version, hostname, platform, live sample, RustDesk version; results close their command or run; inventory,
+  disks, software and updates land; rotation confirmed; tray key recognised next beat); and the answer read as
+  that release reads it — for Linux and macOS the release's own grep pattern must find every command the server
+  handed out, for Windows every `$resp.data.<field>` the release reads has a usable shape and nothing asks it to
+  reinstall, update RustDesk or retire. The server hands out two commands a beat, so a result whose command has
+  not come yet re-sends the same heartbeat (at most three times), as the computer would.
+- **CI**: `compat-wire (windows | linux | macos)`, one leg per agent, on every push and pull request, evidence
+  uploaded as `compat-wire-evidence-<agent>`. **Not a required check** — the owner's call once it has run
+  stably, as with `compat (agent …)`.
+- **§18 addendum (0.73.1)**: the replay's scratch-only guards, the capture's `git archive` source and loopback
+  stub, and that every `agentSecret`, `password`, `token`, `sha256` and `rustdeskId` in a fixture is a
+  placeholder.
+
+### Result
+
+20 agent × release sets, 273 requests, **1,869 checks, none failed**, none known incompatible. No real
+incompatibility was found: every request each release sends is still accepted with its effect, and every answer
+is still readable by the release that asks. The harness was checked against two mutations: an extra field in an
+old heartbeat (refused by `forbidNonWhitelisted`, ten failures) and a command pattern the answer does not match
+(every hand-out reported unseen).
+
+### Not covered
+
+The standard tray's own `/tray/*` calls (Go, tray key), the reinstall hooks (`irm | iex`), re-capture in CI
+(fixtures are replayed, not regenerated), and the OS side of every agent: the bodies are built by the real
+scripts from stand-in values, so this is wire evidence, not evidence that a release's CIM, `/proc` or
+`sw_vers` reads work on a real computer.
+
+---
+
 ## [0.73.0] — 2026-11-20 · *Warden*
 
 **Managed Secure Access build step 5: Connect through grants, revocation, session evidence and group or business
