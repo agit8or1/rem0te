@@ -25,6 +25,12 @@
 # directory once the publish succeeds, and every later publish signs it again.
 # A file holding anything that looks like a private key is refused.
 #
+# Managed Secure Access (0.72): when rem0te-signed-grant-key has recorded any
+# grant public keys (STATE_DIR/msa-grant-keys.json), every publish signs that
+# list in as msa/grant-keys.json, which is the only place agents learn which
+# grant key to trust. After `rem0te-signed-grant-key add|retire`, run
+# `sudo rem0te-signed-publish --republish`.
+#
 # Refuses a version older than the one published. The same version and commit
 # again is a no-op unless --republish (e.g. to add a newly pinned RustDesk).
 # Everything is logged to LOG_FILE (under the release user's state directory).
@@ -86,6 +92,16 @@ if [[ -n $approval_src ]]; then
   as_release 027 /bin/sh -c 'cat > "$0"' "$approval_build" < "$approval_src"
 elif as_release 077 test -f "$APPROVAL_KEYS"; then
   approval_build=$APPROVAL_KEYS
+fi
+# Managed Secure Access grant keys (0.72), recorded by rem0te-signed-grant-key.
+MSA_KEYS=$STATE_DIR/msa-grant-keys.json
+msa_build=''
+if as_release 077 test -f "$MSA_KEYS"; then
+  msa_build=$BUILD/msa-grant-keys.json
+  as_release 027 cp "$MSA_KEYS" "$msa_build"
+  if grep -qiE 'PRIVATE|-----BEGIN' "$msa_build"; then die "$MSA_KEYS looks like it holds key material; it must list public keys only"; fi
+  "$NODE" -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if(d.schema!=="rem0te-msa-grant-keys/1"||!Array.isArray(d.keys)||d.keys.length>8||!d.keys.every(k=>/^[0-9a-f]{16}$/.test(k.keyId)&&/^[A-Za-z0-9+\/]{43}=$/.test(k.publicKey)))process.exit(3)' "$msa_build" \
+    || die "$MSA_KEYS is not a grant key list (rem0te-signed-grant-key list)"
 fi
 VERSION=$(json_version "$BUILD/src/version.json") || die "HEAD's version.json has no x.y.z version"
 say "building $VERSION from commit $COMMIT"
@@ -171,6 +187,7 @@ args=(release -repo "$BUILD/repo"
   -add "windows/rem0te-tray.exe=$BUILD/out/rem0te-tray.exe" -custom "windows/rem0te-tray.exe=$custom"
   -add "windows/install.ps1=$BUILD/out/install.ps1")
 [[ -n $approval_build ]] && args+=(-add "approval/keys.json=$approval_build")
+[[ -n $msa_build ]] && args+=(-add "msa/grant-keys.json=$msa_build")
 if [[ $(repo_info "$WORK_REPO" target "windows/rustdesk/$rd_name") != "${A[SHA256]}" ]]; then
   args+=(-add "windows/rustdesk/$rd_name=$cache/$rd_name" -custom "windows/rustdesk/$rd_name={\"version\":\"$RD\"}")
 fi

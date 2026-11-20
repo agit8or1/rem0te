@@ -7,9 +7,11 @@ import type { ServedAgentBuild } from '../common/agent-version-view';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { parsePreflight, PREFLIGHT_KEYS } from './preflight';
 import {
-  decideReadiness, LAB_TESTED_MAX, LAB_TESTED_MIN, LAB_TESTED_RUSTDESK, MIN_REPORTING_AGENT, PRODUCIBLE_STATES,
-  READINESS_FLEET_NOTE, READINESS_NOTE, STATE_LABEL, type ProducibleState, type Readiness,
+  decideReadiness, LAB_TESTED_MAX, LAB_TESTED_MIN, LAB_TESTED_RUSTDESK, MANAGED_NOTE, MIN_REPORTING_AGENT, PRODUCIBLE_STATES,
+  READINESS_FLEET_NOTE, READINESS_NOTE, STATE_LABEL, type ManagedFacts, type ProducibleState, type Readiness,
 } from './readiness';
+import { msaGrantsEnabled } from './msa-grants-flag';
+import { rotationHeld, type ManagedState } from './managed';
 
 /** The fleet view's ceiling: the same as the Full agent page's. */
 export const FLEET_MAX = 5000;
@@ -19,6 +21,7 @@ const READ_SELECT = {
   id: true, name: true, hostname: true, platform: true, agentVersion: true, updateChannel: true, signedSeenAt: true, agentSha256: true,
   isOnline: true, lastSeenAt: true, customer: { select: { id: true, name: true } },
   rustdeskPreflight: { select: { checkedAt: true, installed: true, expectedPath: true, version: true, build: true, service: true, cli: true, keysOk: true, keys: true } },
+  msaManaged: { select: { state: true, requestedAt: true, verifiedAt: true, readbackOkAt: true, failReason: true, failedKeys: true } },
 } satisfies Prisma.EndpointSelect;
 type ReadRow = Prisma.EndpointGetPayload<{ select: typeof READ_SELECT }>;
 
@@ -71,8 +74,9 @@ export class MsaService {
     return p.checkedAt;
   }
 
-  private decide(r: ReadRow, now: number, served: ServedAgentBuild | null): Readiness {
+  private decide(r: ReadRow, now: number, served: ServedAgentBuild | null, withManaged = true): Readiness {
     return decideReadiness({
+      managed: withManaged && r.msaManaged ? { ...r.msaManaged, state: r.msaManaged.state as ManagedFacts['state'] } : null,
       platform: r.platform,
       signedAgent: runsSignedAgent({ updateChannel: r.updateChannel, signedSeenAt: r.signedSeenAt }, new Date(now)),
       // 0.70.1: the version the console shows. A signed agent on the published
@@ -98,10 +102,49 @@ export class MsaService {
         checkedAt: pf.checkedAt.toISOString(), installed: pf.installed, expectedPath: pf.expectedPath, version: pf.version,
         build: pf.build, service: pf.service, cli: pf.cli, keysOk: pf.keysOk, keysTotal: PREFLIGHT_KEYS.length,
       } : null,
-      note: READINESS_NOTE,
+      note: r.msaManaged ? MANAGED_NOTE : READINESS_NOTE,
       labTested: { versions: [...LAB_TESTED_RUSTDESK], min: LAB_TESTED_MIN, max: LAB_TESTED_MAX },
       minAgent: MIN_REPORTING_AGENT,
     };
+  }
+
+  /**
+   * 0.72: what the preflight alone says about a computer (never a managed
+   * state), and the agent version the console shows — the cutover gate.
+   * The caller has already scope-checked the computer.
+   */
+  async preflightReadiness(endpointId: string, now = Date.now()): Promise<{ readiness: Readiness; agentVersion: string | null } | null> {
+    const r = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: READ_SELECT });
+    if (!r) return null;
+    const served = this.updateTrust.servedAgent();
+    return { readiness: this.decide(r, now, served, false), agentVersion: this.updateTrust.agentVersionOf(r, served).label };
+  }
+
+  /**
+   * 0.72 (§82): whether the heartbeat tells this computer's signed agent to
+   * run the grant poller. Only with MSA_GRANTS on and the computer in a
+   * managed state; the caller has already decided the heartbeat is
+   * authenticated, signed and may act. With the switch off, no row is read.
+   */
+  async pollWanted(endpointId: string): Promise<boolean> {
+    if (!msaGrantsEnabled()) return false;
+    return !!(await this.prisma.msaManagedComputer.findUnique({ where: { endpointId }, select: { endpointId: true } }));
+  }
+
+  /** 0.72 (§82): whether a staged legacy password rotation waits (msa/managed.ts rotationHeld). Read whatever the switch says: a row is a row. */
+  async rotationHeld(endpointId: string): Promise<boolean> {
+    const row = await this.prisma.msaManagedComputer.findUnique({ where: { endpointId }, select: { state: true } });
+    if (!row) return false;
+    const inFlight = row.state === 'pending'
+      // In flight: handed out and still inside its start window, or applied
+      // within the longest session a grant allows (a session the agent never
+      // reported ending stops holding the rotation then).
+      ? (await this.prisma.msaGrant.count({ where: { endpointId, OR: [
+          { state: { in: ['issued', 'delivered'] }, notAfter: { gte: new Date() } },
+          { state: 'applied', appliedAt: { gte: new Date(Date.now() - 9 * 3_600_000) } },
+        ] } })) > 0
+      : true;
+    return rotationHeld({ state: row.state as ManagedState }, inFlight);
   }
 
   /**

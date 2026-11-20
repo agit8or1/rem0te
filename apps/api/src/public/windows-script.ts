@@ -470,6 +470,15 @@ try {
             Start-Process -FilePath $agentExe -ArgumentList @('rustdesk-preflight') -WindowStyle Hidden
         }
     }
+} catch {}
+try {
+    # Managed Secure Access (0.72): the grant poller runs only when the portal
+    # says msaPoll (MSA_GRANTS on AND a Platform Admin moved this computer
+    # into Managed). Never otherwise. A second start while one runs leaves at
+    # once (it holds a lock).
+    if ($resp.data.msaPoll -eq $true -and (Test-Path -LiteralPath $agentExe)) {
+        Start-Process -FilePath $agentExe -ArgumentList @('msa-poller') -WindowStyle Hidden
+    }
 } catch {}`,
     // The tray (0.36): the signed agent installs rem0te-tray.exe itself (a
     // signed target, verified like the agent), and its tray host starts it in

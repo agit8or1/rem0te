@@ -1049,6 +1049,20 @@ export const msaApi = {
   forEndpoint: (endpointId: string) => api.get(`/msa/readiness/${endpointId}`),
 };
 
+// Managed Secure Access cutover (0.72, build step 4), behind MSA_GRANTS: every
+// route answers 404 MSA_NOT_ENABLED while the switch is off, and the card
+// then shows nothing new. Changes are a Platform Admin's, one computer at a
+// time; cutover, confirm, the test grant and the reveal need fresh
+// authentication (the interceptor prompts and retries); rollback never does.
+export const msaManagedApi = {
+  view: (endpointId: string) => api.get(`/msa/managed/${endpointId}`),
+  cutover: (endpointId: string) => api.post(`/msa/managed/${endpointId}/cutover`),
+  testGrant: (endpointId: string) => api.post(`/msa/grants/test/${endpointId}`, { mode: 'view', consent: 'required', maxMinutes: 30, idleMinutes: 10 }),
+  reveal: (grantId: string) => api.post(`/msa/managed/grants/${grantId}/reveal`),
+  confirm: (endpointId: string) => api.post(`/msa/managed/${endpointId}/confirm`),
+  rollback: (endpointId: string, force = false) => api.post(`/msa/managed/${endpointId}/rollback`, force ? { force: true } : {}),
+};
+
 export const agentSigningApi = {
   overview: (businessId?: string) => api.get('/agent-signing/overview', { params: businessId ? { businessId } : undefined }),
   putAuto: (body: { mode?: 'off' | 'canary_then_all'; soakMinutes?: number }) => api.put('/admin/agent-auto-migration', body),

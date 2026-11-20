@@ -238,13 +238,16 @@ async function all() {
   check(ok(r) && [A1, A2, A3, A4].every((e) => ids.includes(e.id)) && !ids.includes(B1.id) && !ids.includes(P1.id), 'owner A: A1–A4, not B1, not the pooled computer', msg(r));
   const sum = Object.values(r.data?.counts ?? {}).reduce((a, b) => a + b, 0);
   check(sum === r.data?.total && r.data.total === ids.length && r.data.counts.compatible >= 1 && r.data.counts.unsupported >= 1 && r.data.counts.upgrade_available >= 1, 'counts add up to the list', JSON.stringify(r.data?.counts));
-  check(JSON.stringify(r.data?.states?.map((s) => s.state)) === JSON.stringify(['unsupported', 'upgrade_available', 'compatible', 'unknown']), 'four states, none managed', JSON.stringify(r.data?.states));
+  check(JSON.stringify(r.data?.states?.map((s) => s.state)) === JSON.stringify(['unsupported', 'upgrade_available', 'compatible', 'unknown', 'managed', 'managed_verified', 'enforcement_failure']),
+    'the seven states (0.72: the managed three come only from a Platform Admin\'s cutover)', JSON.stringify(r.data?.states));
   check((r.data?.computers ?? []).every((c) => !['managed', 'managed_verified', 'enforcement_failure'].includes(c.state)), 'no computer is managed');
   check(/not available yet; nothing has changed on any computer|not available yet; nothing has changed on this computer/.test(r.data?.note ?? ''), 'the note is there', r.data?.note);
   r = await req('GET', '/msa/readiness?state=compatible', { s: SA });
   check(ok(r) && r.data.computers.length >= 1 && r.data.computers.every((c) => c.state === 'compatible') && r.data.computers.some((c) => c.id === A1.id), '?state=compatible lists only compatible ones', msg(r));
   r = await req('GET', '/msa/readiness?state=managed', { s: SA });
-  check(ok(r) && r.data.computers.length === r.data.total, '?state=managed is not a filter (ignored), never an error', msg(r));
+  check(ok(r) && r.data.computers.length === 0, '?state=managed is a filter (0.72) and lists none: nothing was cut over', msg(r));
+  r = await req('GET', '/msa/readiness?state=bogus', { s: SA });
+  check(ok(r) && r.data.computers.length === r.data.total, '?state=bogus is not a filter (ignored), never an error', msg(r));
   r = await req('GET', '/msa/readiness', { s: SU });
   const uids = (r.data?.computers ?? []).map((c) => c.id);
   check(ok(r) && uids.includes(A1.id) && !uids.includes(A2.id) && !uids.includes(A3.id) && !uids.includes(B1.id), 'a Business User granted A1: only A1', JSON.stringify(uids));

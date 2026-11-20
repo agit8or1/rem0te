@@ -96,6 +96,29 @@ running, build `flutter`, a version beginning with the release (`1.4.7+65`), and
 (`flutter_windows.dll` or `sciter.dll` beside the exe): the lab can confirm only the Flutter half, since every
 official x64 build is Flutter.
 
+### The agent's Managed Secure Access enforcement (0.72, in the same RustDesk jobs)
+
+After the preflight, on the same releases, the job runs `TestLabRustdeskEnforce` (same tag and gates). Unlike the
+preflight it **changes RustDesk's settings** on the throwaway runner, and puts them back. Through the agent's own
+enforcement exec site (`enforceRunner`, the only code that may pass a value to `--option` or name `--password`) and
+`enforce.Enforcer`, one cycle:
+
+1. save every one of the eleven settings;
+2. apply a view-only grant: every setting written and read back, then the one-time password, which must print
+   `Done`;
+3. read every setting back again;
+4. end the session: a random password nobody is told, `stop-service Y`, a pause, `N`, and `stop-service` read back
+   as `N`;
+5. restore the saved settings and read every one back.
+
+- **`admin`**: in the test process, as the runner's elevated administrator.
+- **`system`**: the same test binary started by a scheduled task as SYSTEM in session 0 with
+  `-lab-enforce-out`, which writes the cycle's result to `C:\ProgramData\Rem0te\lab-msa-enforce.json`.
+
+Ids: `agent/msa-enforce/<version>/admin` and `…/system`, in `enforce-evidence-<version>.jsonl`; a release whose
+download verified but has no such file is a broken lab. It does not cover the portal, the long-poll, grant
+verification (the `internal/msa/enforce` unit tests) or a real remote connection.
+
 ### The agent's Windows code (`agent-lab-windows (agent Go tests)`)
 
 Go tests tagged `windows && labwindows` — never built by `go test ./...` — and skipped again unless

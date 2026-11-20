@@ -55,6 +55,8 @@ if [[ ${P[CONFIGURED]} == 1 ]]; then
   line "  RustDesk" "${P[RUSTDESK_VERSIONS]:-none}"
   if [[ -n ${P[APPROVAL_KEYS_SHA256]} ]]; then line "  approval keys" "approval/keys.json ${P[APPROVAL_KEYS_SHA256]:0:12}"
   else line "  approval keys" "none (approved actions are off: rem0te-signed-publish --approval-keys FILE)"; fi
+  if [[ -n ${P[MSA_GRANT_KEYS_SHA256]} ]]; then line "  grant keys" "msa/grant-keys.json ${P[MSA_GRANT_KEYS_SHA256]:0:12}; rem0te-signed-grant-key list shows the keys"
+  else line "  grant keys" "none (Managed Secure Access grants are refused: rem0te-signed-grant-key add)"; fi
   for r in TIMESTAMP SNAPSHOT TARGETS ROOT; do
     h=${P[${r}_LEFT_H]}
     line "  ${r,,}" "v${P[${r}_VERSION]} expires ${P[${r}_EXPIRES]} ($(human "$h"))"

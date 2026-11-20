@@ -25,6 +25,7 @@ import { EndpointInventoryService } from '../endpoint-inventory/endpoint-invento
 import { likeEscape } from '../common/like';
 import { EndpointListService } from './endpoint-list.service';
 import { connectivityOf } from '../common/connectivity';
+import { LEGACY_REFUSED_MESSAGE, legacyRefused } from '../msa/managed';
 
 /**
  * Computers.
@@ -626,6 +627,7 @@ export class EndpointsService {
   async setPassword(actor: ActorContext, id: string, password: string | null): Promise<void> {
     await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
+    await this.refuseMsaManaged(id);
     await this.assertComputerReachable(actor, id);
     await this.admitWrite(actor, id);
 
@@ -645,9 +647,25 @@ export class EndpointsService {
   async assertPasswordAccess(actor: ActorContext, id: string) {
     const endpoint = await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
+    await this.refuseMsaManaged(id);
     await this.assertComputerReachable(actor, id);
     await this.admitWrite(actor, id);
     return endpoint;
+  }
+
+  /**
+   * 0.72 (Managed Secure Access, §82): once a Platform Admin verified a
+   * computer as managed, its RustDesk password is one nobody is told, and
+   * the stored legacy password is not a way in. Reveal and the legacy
+   * Connect paths refuse it (409 MSA_MANAGED); rolling it back to Legacy
+   * restores both. A computer that is only Managed (pending) keeps Legacy.
+   */
+  async msaLegacyRefused(endpointId: string): Promise<boolean> {
+    return legacyRefused(await this.prisma.msaManagedComputer.findUnique({ where: { endpointId }, select: { verifiedAt: true } }));
+  }
+
+  private async refuseMsaManaged(endpointId: string) {
+    if (await this.msaLegacyRefused(endpointId)) throw new ConflictException({ code: 'MSA_MANAGED', message: LEGACY_REFUSED_MESSAGE });
   }
 
   /** Whether this person has an active authenticator (TOTP) enrolled. */
@@ -717,20 +735,53 @@ export class EndpointsService {
       );
     }
 
-    const rnd = crypto.randomBytes(24).toString('base64')
-      .replace(/[+/=]/g, '')
-      .slice(0, 20);
+    // 0.72: a managed computer's RustDesk password is the agent's (§82).
+    const managed = await this.prisma.msaManagedComputer.findUnique({ where: { endpointId }, select: { state: true } });
+    if (managed && managed.state !== 'pending') {
+      throw new ConflictException({ code: 'MSA_MANAGED', message: 'This computer is in Managed Secure Access: its password is set by the agent. Roll it back to Legacy to rotate it.' });
+    }
 
-    await this.prisma.rustdeskNode.update({
-      where: { id: node.id },
-      data: { pendingPassword: this.encryptPassword(rnd), pendingPasswordAt: new Date() },
-    });
+    await this.stagePendingPassword(node.id);
     await this.audit.log({
       tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
       actorId: actor.userId, actorIp: actor.ip,
       action: 'ENDPOINT_CREDENTIAL_ROTATION_STAGED', resource: 'endpoint', resourceId: endpointId,
     });
     return { success: true, status: 'PENDING' };
+  }
+
+  /** The one place a rotation is staged: a fresh password, sealed, parked as pendingPassword for the heartbeat. */
+  private async stagePendingPassword(nodeId: string) {
+    const rnd = crypto.randomBytes(24).toString('base64')
+      .replace(/[+/=]/g, '')
+      .slice(0, 20);
+    await this.prisma.rustdeskNode.update({
+      where: { id: nodeId },
+      data: { pendingPassword: this.encryptPassword(rnd), pendingPasswordAt: new Date() },
+    });
+  }
+
+  /**
+   * 0.72 (Managed Secure Access): the existing rotation path, staged by the
+   * system rather than a person — on rollback to Legacy, and when a managed
+   * test session on a computer still in Managed (pending) ended with a
+   * password nobody is told. The heartbeat holds it until the computer's
+   * managed state allows it (msa/managed.ts rotationHeld), then hands it
+   * over and the computer confirms it exactly as for a console rotation.
+   * Audited as ENDPOINT_CREDENTIAL_ROTATION_STAGED with the reason.
+   */
+  async stageRotationForMsa(endpointId: string, actorId: string | null, reason: 'msa_rollback' | 'msa_session_ended'): Promise<boolean> {
+    const ep = await this.prisma.endpoint.findUnique({
+      where: { id: endpointId },
+      select: { tenantId: true, customerId: true, rustdeskNode: { select: { id: true, agentSecretHash: true } } },
+    });
+    if (!ep?.rustdeskNode?.agentSecretHash) return false;
+    await this.stagePendingPassword(ep.rustdeskNode.id);
+    await this.audit.log({
+      tenantId: ep.tenantId ?? undefined, customerId: ep.customerId ?? undefined, actorId: actorId ?? undefined,
+      action: 'ENDPOINT_CREDENTIAL_ROTATION_STAGED', resource: 'endpoint', resourceId: endpointId, meta: { source: reason },
+    });
+    return true;
   }
 
   // ── Connecting ────────────────────────────────────────────────────────────
@@ -771,6 +822,10 @@ export class EndpointsService {
     }
 
     if (endpoint.status === 'ARCHIVED') return { ok: false, reason: 'endpoint_archived' };
+
+    // 0.72 (§82): a verified Managed Secure Access computer has no legacy
+    // password to launch with. Connect for managed computers is step 5.
+    if (await this.msaLegacyRefused(endpoint.id)) return { ok: false, reason: 'msa_managed', status: 'denied', message: LEGACY_REFUSED_MESSAGE };
 
     // Business members and admins need computers:connect, as before. A
     // technician is decided by the launch policy below: a preset grants no

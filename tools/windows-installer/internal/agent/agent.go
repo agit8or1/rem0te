@@ -17,6 +17,7 @@
 package agent
 
 import (
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -33,6 +34,7 @@ import (
 
 	"github.com/agit8or1/rem0te/windows-installer/internal/action"
 	"github.com/agit8or1/rem0te/windows-installer/internal/chat"
+	"github.com/agit8or1/rem0te/windows-installer/internal/msa/grant"
 	"github.com/agit8or1/rem0te/windows-installer/internal/trust"
 )
 
@@ -603,6 +605,42 @@ func actionTrust(o Options, p Platform) ([]action.Key, *action.Pause, error) {
 	}
 	return keys, signedPause(c, dir, nil), nil
 }
+
+// MsaTrust (0.72) is the Managed Secure Access grant keys plus the signed
+// pause, from one refresh of the signed metadata: msa/grant-keys.json is a
+// TUF target the release owner publishes, so a grant key is trusted only
+// through the update chain, never because the portal sent it. A key file
+// that is not listed, cannot be fetched or does not parse is an error and
+// the poller trusts no grant (no_keys).
+func MsaTrust(o Options, p Platform) (map[string]ed25519.PublicKey, *action.Pause, error) {
+	if !ValidPortal(o.PortalHost) {
+		return nil, nil, fmt.Errorf("%w: portal host %q is not a hostname", ErrRefuse, o.PortalHost)
+	}
+	c, err := o.trustClient(p)
+	if err != nil {
+		return nil, nil, err
+	}
+	dir := filepath.Join(o.Paths.StateDir, "msa")
+	if err := p.SecureDir(dir); err != nil {
+		return nil, nil, err
+	}
+	dst := filepath.Join(dir, "grant-keys.json")
+	if _, err := c.Fetch(grant.KeysTarget, dst); err != nil {
+		return nil, nil, err
+	}
+	raw, err := os.ReadFile(dst)
+	if err != nil {
+		return nil, nil, err
+	}
+	keys, err := grant.ParseKeys(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	return keys, signedPause(c, dir, nil), nil
+}
+
+// APIBase is the portal's API root for a pinned portal ("https://HOST/api/v1").
+func (o *Options) APIBase() string { return o.base() }
 
 // RevocationsPath is where the portal relays the approval signer's signed
 // revocation statement (v0.36).

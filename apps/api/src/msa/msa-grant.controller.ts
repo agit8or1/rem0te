@@ -13,6 +13,7 @@ import { CAP } from '../rbac/capabilities';
 import { StepUpService } from '../auth/step-up.service';
 import { assertFresh } from '../security-controls/review';
 import { MsaGrantService } from './msa-grant.service';
+import { MsaManagedService } from './msa-managed.service';
 
 /**
  * Managed Secure Access grants (0.71, build step 3), console side. Every
@@ -35,11 +36,21 @@ export class MsaGrantsController {
     return { success: true, data: await this.grants.issueTest(a, endpointId, body) };
   }
 
-  /** The grant public keys (what step 4 publishes in the signed release metadata). Platform Admin. */
+  /** The grant public keys, whether each is in the signed release metadata, and the owner's commands to publish it. Platform Admin. */
   @Get('keys')
   @UseGuards(PlatformAdminGuard)
   async keys() {
     return { success: true, data: await this.grants.publicKeys() };
+  }
+
+  /** 0.72: make the grant key now, so it can be published before a cutover. Platform Admin, a fresh confirmation (msa.grant). */
+  @Post('keys')
+  @UseGuards(PlatformAdminGuard)
+  @RateLimit(10)
+  async ensureKey(@Actor() a: ActorContext, @Req() req: Request) {
+    const u = req.user as { sub?: string; iat?: number } | undefined;
+    assertFresh(u?.sub ? this.stepUp.read(req, u.sub, u.iat)?.method ?? null : null, { action: 'msa.grant', message: 'Confirm it is you to make the grant key.' });
+    return { success: true, data: await this.grants.ensureKey(a) };
   }
 
   /** A computer's recent grants: no envelope, no password. View computers, in scope. */
@@ -66,7 +77,7 @@ export class MsaPollDto {
  */
 @Controller('msa/agent')
 export class MsaAgentController {
-  constructor(private readonly grants: MsaGrantService) {}
+  constructor(private readonly grants: MsaGrantService, private readonly managed: MsaManagedService) {}
 
   @Post('poll')
   @Public()
@@ -74,5 +85,19 @@ export class MsaAgentController {
   @HttpCode(HttpStatus.OK)
   async poll(@Body() dto: MsaPollDto) {
     return { success: true, data: await this.grants.poll(dto) };
+  }
+
+  /**
+   * 0.72: what a managed computer's signed agent did — applied, failed,
+   * connected, ended, drift, checked, secured, restored, restore_failed.
+   * Public, but the device secret is checked before anything else is read
+   * (after a strict parse: events, closed codes and key names only).
+   */
+  @Post('report')
+  @Public()
+  @RateLimit(120)
+  @HttpCode(HttpStatus.OK)
+  async report(@Body() body: unknown) {
+    return { success: true, data: await this.managed.report(body) };
   }
 }
