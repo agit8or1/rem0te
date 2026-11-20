@@ -1761,6 +1761,37 @@ shared fixture `internal/msa/testdata/msa-revocations.json`, and the Go
 ceiling's apply and readback. **It has run only on Windows Server in the
 lab**, never on a desktop, with a real remote connection, or on the fleet.
 
+§84 (0.74) is Admin → Security (`docs/server-security.md`). The page reads
+this host as `reboot` and changes it only through the sudoers lines the
+installer already grants.
+
+- **One exec site**, `admin/host-security/host-runner.ts`: `spawn` with
+  `shell: false`, argv only from `argvFor`'s closed switch, fail2ban
+  arguments through `f2bArgsOk` (the `rem0te-f2b` wrapper's own shapes).
+  Nothing else in the module imports `child_process`.
+- **Every sudo command** is `sudo -n` and a NOPASSWD line of
+  `deploy/scripts/install.sh`, word for word; the runner never names
+  `fail2ban-client`.
+- **Every mutating route** is `assertPlatformAdmin`, then `assertFresh`
+  naming `server.security` before the service call (the lockout:
+  `login.lockout`, only when it weakens).
+- **Every host change** records `HOST_SECURITY_CHANGED` with its outcome;
+  a failed command is `502 HOST_COMMAND_FAILED`, never success. Lockout
+  changes record `LOGIN_POLICY_CHANGED`.
+- **Tests never touch the host.** `SECURITY_HOST_FIXTURE` is read only
+  under `NODE_ENV=test`; a test process without one refuses every change
+  (`503 HOST_CHANGES_OFF_IN_TEST`).
+- **Removed for good**: `npm audit fix`, ESLint / semgrep on the server, the
+  Caddy `/load` "renew". The posture's `OFF_SWITCHES` must name every
+  `*_SWEEP` / `*_SEALER` the API reads, so a new switch adds a line there.
+- Unknown is never OK: a check whose source cannot be read is `unknown`,
+  and the score counts only decided checks. Release root keys are always
+  unknown (§56); the web shows `sudo rem0te-signed-status`.
+
+Behavioural proof: `e2e-host-security.mjs` (ports 3991–3993, in
+`run-e2e.sh`); unit: `unit-host-security.mjs` (in CI); `e2e-ui.mjs` opens
+every tab against the fixture host.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

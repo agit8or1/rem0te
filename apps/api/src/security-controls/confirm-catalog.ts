@@ -207,6 +207,12 @@ export const CONFIRM_CATALOG = [
   { key: 'platform.configure', group: 'Security & access', label: 'Public address', default: 'off',
     prompt: "change the server's public address",
     description: "Changing the server's public address, which every agent and link is built from." },
+  { key: 'server.security', group: 'Security & access', label: 'Server security changes', default: 'off',
+    prompt: 'change this server from Admin → Security',
+    description: 'Banning or unbanning an address, the fail2ban never-ban list and jail settings, installing fail2ban, and running OS updates on this server (0.74).' },
+  { key: 'login.lockout', group: 'Security & access', label: 'Sign-in lockout policy', default: 'off',
+    prompt: 'weaken the sign-in lockout policy',
+    description: 'Allowing more failed sign-ins before an account locks, a shorter lockout, or turning the lockout off. Tightening it never asks (0.74).' },
 ] as const satisfies readonly ConfirmFunction[];
 
 export type ConfirmKey = (typeof CONFIRM_CATALOG)[number]['key'];

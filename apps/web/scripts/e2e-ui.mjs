@@ -270,6 +270,8 @@ function startApi() {
     SMTP_ALLOW_LOCAL_RELAY: 'loopback', INTEGRATION_PEERS_FILE: peer.file, INTEGRATION_CAPABILITIES_TTL_MS: '0',
     // 0.36: the map's fixture GeoIP database (documentation networks only).
     GEOIP_DB_PATH: GEOIP_FILE,
+    // 0.74: Admin → Security reads a fixture host, never the runner's own (and never changes it).
+    SECURITY_HOST_FIXTURE: path.join(API_DIR, 'scripts', 'fixtures', 'host-security.json'),
     // 0.37: the suite's own signed repository (see SIGNED), never a real one.
     ...(SIGNED ? { UPDATE_REPO_DIR: SIGNED.repo } : { UPDATE_REPO_DIR: '' }),
   };
@@ -1078,6 +1080,45 @@ async function systemStatus(page, label, vp) {
   await cleanCheck(page, `${label} System status`);
 }
 
+/**
+ * 0.74: Admin → Security against the fixture host. Every tab renders its
+ * content (not an error card); a finding whose source could not be read says
+ * Unknown and never OK; nothing on the page shows OK for an unknown status.
+ */
+async function serverSecurity(page, label, vp) {
+  await go(page, '/admin/security');
+  const score = page.locator('[data-testid="security-score"]');
+  await score.waitFor({ timeout: 30_000 }).catch(() => {});
+  check(await score.isVisible() && (await score.getAttribute('data-grade')) === 'poor', `${label}: Security overview shows a score (poor: the fixture host fails a critical check)`, await page.locator('main').innerText().catch(() => ''));
+  const root = page.locator('[data-testid="finding-host.ssh.root_login"]');
+  check(await root.count() === 1 && (await root.getAttribute('data-status')) === 'unknown' && /Unknown/.test(await root.innerText()) && !/\bOK\b/.test(await root.innerText()),
+    `${label}: SSH root login behind an unreadable include is Unknown, not OK`, await root.innerText().catch(() => '(missing)'));
+  await page.locator('[data-testid="findings-all"]').click();
+  const unknownOk = await page.locator('[data-status="unknown"]').evaluateAll((els) => els.filter((e) => /(^|\s)OK(\s|$)/.test(e.querySelector('span')?.innerText ?? '')).length);
+  check(unknownOk === 0 && await page.locator('[data-status="unknown"]').count() > 0, `${label}: no Unknown finding is labelled OK`, `${unknownOk} labelled OK`);
+  if (vp === 'phone') await noSideScroll(page, `${label} Security overview`);
+  await shot(page, `${label}-security`);
+  const tabs = [
+    ['access-rules', '[data-testid="unenforced-rules"]'],
+    ['fail2ban', '[data-testid="jail-sshd"]'],
+    ['tls', '[data-testid="cert-remote.example.com"]'],
+    ['os-updates', '[data-testid="os-updates-state"][data-state="ok"]'],
+    ['dependencies', '[data-testid="deps-state"][data-state="ok"]'],
+    ['features', 'main table, main [role="table"], main li'],
+  ];
+  for (const [tab, sel] of tabs) {
+    await page.locator(`[data-testid="security-tab-${tab}"]`).click();
+    const ok = await page.locator(sel).first().waitFor({ timeout: 60_000 }).then(() => true).catch(() => false);
+    const err = await page.locator('[data-testid="security-error"]').count();
+    check(ok && err === 0, `${label}: Security → ${tab} renders`, ok ? 'an error card is shown' : (await page.locator('main').innerText()).slice(0, 600));
+    if (vp === 'phone') await noSideScroll(page, `${label} Security ${tab}`);
+  }
+  await page.locator('[data-testid="security-tab-tls"]').click();
+  const failing = page.locator('[data-testid="cert-approve.example.com"]');
+  check(await failing.count() === 1 && (await failing.getAttribute('data-status')) === 'fail', `${label}: the certificate with under 20 days is not shown as valid`);
+  await cleanCheck(page, `${label} Security`);
+}
+
 // ── 0.35 ────────────────────────────────────────────────────────────────────
 
 /** The drawer's close button and the brand header on a pale and a dark accent, and the default one. */
@@ -1641,6 +1682,7 @@ async function combo(browser, f, vp, theme) {
     await reports(page, label, vp);
     await scheduleLinks(page, f, label);
     await systemStatus(page, label, vp);
+    await serverSecurity(page, label, vp);
     await coverage035(page, f, vp, label);
     await fullAgentPage(page, f, vp, theme, label);
     await msaReadinessUi(page, f, vp, theme, label);

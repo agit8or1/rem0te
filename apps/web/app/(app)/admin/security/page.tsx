@@ -1,735 +1,449 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+/**
+ * Admin → Security (rewritten in 0.74). Platform Admin only.
+ *
+ * Every panel shows three states apart: what was read and is fine, what was
+ * read and is not, and what could not be read. "Could not be read" is always
+ * Unknown, in grey with a question mark, and never green: before 0.74 a
+ * loading or failed fail2ban read showed "Stopped", a failed apt read "System
+ * up to date", no certificates a green dot, and an ESLint run that linted
+ * nothing "no issues".
+ *
+ * Settings that live elsewhere are linked, not repeated: Confirm it is you
+ * (Settings), audit integrity (Containment), signed releases (Update
+ * signing), SSO and break-glass (Admin → SSO), API keys.
+ */
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  AlertTriangle, CheckCircle2, CircleHelp, Info, Loader2, Lock, Package, RefreshCw, ShieldAlert, ShieldCheck, XCircle,
+} from 'lucide-react';
 import { securityApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  ShieldCheck,
-  ShieldAlert,
-  Globe,
-  RefreshCw,
-  Lock,
-  Package,
-  AlertTriangle,
-  CheckCircle,
-  XCircle,
-  Loader2,
-} from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SecurityFeaturesTab } from '@/components/security-controls/security-features';
+import { apiError, Chip, CHIP } from '@/components/security-controls/shared';
+import { cn } from '@/lib/utils';
 
-// ─── Country list ────────────────────────────────────────────────────────────
+// ─── Shapes (apps/api/src/admin/security.service.ts) ─────────────────────────
 
-const COUNTRIES = [
-  { code: 'CN', name: 'China' },
-  { code: 'RU', name: 'Russia' },
-  { code: 'KP', name: 'North Korea' },
-  { code: 'IR', name: 'Iran' },
-  { code: 'US', name: 'United States' },
-  { code: 'GB', name: 'United Kingdom' },
-  { code: 'DE', name: 'Germany' },
-  { code: 'FR', name: 'France' },
-  { code: 'CA', name: 'Canada' },
-  { code: 'AU', name: 'Australia' },
-  { code: 'IN', name: 'India' },
-  { code: 'BR', name: 'Brazil' },
-  { code: 'JP', name: 'Japan' },
-  { code: 'KR', name: 'South Korea' },
-  { code: 'NL', name: 'Netherlands' },
-  { code: 'UA', name: 'Ukraine' },
-  { code: 'TR', name: 'Turkey' },
-  { code: 'PL', name: 'Poland' },
-  { code: 'SE', name: 'Sweden' },
-  { code: 'MX', name: 'Mexico' },
-  { code: 'NG', name: 'Nigeria' },
-  { code: 'PK', name: 'Pakistan' },
-  { code: 'BD', name: 'Bangladesh' },
-  { code: 'VN', name: 'Vietnam' },
-  { code: 'ID', name: 'Indonesia' },
-  { code: 'TH', name: 'Thailand' },
-  { code: 'ZA', name: 'South Africa' },
-  { code: 'EG', name: 'Egypt' },
-  { code: 'IT', name: 'Italy' },
-  { code: 'ES', name: 'Spain' },
-  { code: 'AR', name: 'Argentina' },
-  { code: 'RO', name: 'Romania' },
-  { code: 'HK', name: 'Hong Kong' },
-  { code: 'SG', name: 'Singapore' },
-  { code: 'MY', name: 'Malaysia' },
-  { code: 'PH', name: 'Philippines' },
-];
+type FindingStatus = 'pass' | 'fail' | 'unknown' | 'info';
+type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
+interface Finding {
+  id: string; area: 'host' | 'network' | 'web' | 'portal' | 'process'; title: string; status: FindingStatus; severity: Severity;
+  evidence: string; checkedAt: string; fix?: string; link?: string;
+}
+interface Posture {
+  generatedAt: string;
+  summary: { score: number | null; grade: 'good' | 'fair' | 'poor' | 'unknown'; counts: Record<FindingStatus, number>; failing: Record<Severity, number>; coverage: number };
+  findings: Finding[];
+}
+interface Jail { jail: string; error: string | null; currentFailed?: number | null; totalFailed?: number | null; currentBanned?: number; totalBanned?: number; bannedIps?: string[]; journalMatches?: string | null; fileList?: string | null }
+interface Fail2ban { state: 'running' | 'stopped' | 'not_installed' | 'unavailable'; reason: string | null; checkedAt: string; jails: Jail[] }
+interface AptPackage { name: string; suites: string[]; version: string; from: string | null; security: boolean }
+interface OsUpdates {
+  state: 'ok' | 'unavailable'; reason: string | null; checkedAt: string; total: number | null; security: number | null; packages: AptPackage[];
+  listsUpdatedAt: string | null; rebootRequired: boolean; rebootPackages: string[]; kernel: string;
+  unattended: { configured: { updateLists: boolean; unattended: boolean } | null; serviceActive: boolean | null };
+}
+interface UpdateJob { running: boolean; phase: string | null; lines: string[]; exitCode: number | null; startedAt: string | null; finishedAt: string | null }
+interface Tls { checkedAt: string; caddyActive: boolean | null; caddyfileReadable: boolean; certs: Array<{ domain: string; expiresAt: string | null; daysLeft: number | null; level: string; issuer: string | null; trusted: boolean; nameMatches: boolean; error: string | null }> }
+interface DepAudit {
+  state: 'ok' | 'unavailable'; reason: string | null; scannedAt: string; scope: string;
+  audit: { counts: Record<'critical' | 'high' | 'moderate' | 'low' | 'info', number>; dependencies: number | null; packages: Array<{ name: string; severity: string; direct: boolean; fixAvailable: boolean; titles: string[] }> } | null;
+}
+interface Config {
+  maxLoginAttempts: number; lockoutMinutes: number;
+  unenforced: { geoipBlockEnabled: boolean; ipAllowlistEnabled: boolean; blockedCountries: string[]; blockedIpRanges: string[]; allowedIpRanges: string[] };
+}
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Small pieces ────────────────────────────────────────────────────────────
 
-function StatusDot({ ok }: { ok: boolean }) {
+const data = <T,>(p: Promise<{ data?: { data?: T } }>) => p.then((r) => r.data?.data as T);
+const when = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : 'never');
+
+/** One status vocabulary for the whole page. Unknown is grey with a question mark, never green. */
+const STATUS_UI: Record<FindingStatus, { label: string; chip: string; Icon: typeof CheckCircle2 }> = {
+  pass: { label: 'OK', chip: CHIP.on, Icon: CheckCircle2 },
+  fail: { label: 'Needs attention', chip: CHIP.bad, Icon: XCircle },
+  unknown: { label: 'Unknown', chip: CHIP.off, Icon: CircleHelp },
+  info: { label: 'Info', chip: CHIP.request, Icon: Info },
+};
+const SEV_CHIP: Record<Severity, string> = { critical: CHIP.bad, high: CHIP.bad, medium: CHIP.warn, low: CHIP.request, info: CHIP.off };
+
+function StatusChip({ status, label }: { status: FindingStatus; label?: string }) {
+  const s = STATUS_UI[status];
+  return <Chip className={s.chip}><s.Icon className="h-3 w-3" aria-hidden />{label ?? s.label}</Chip>;
+}
+
+function ErrorCard({ what, error, onRetry }: { what: string; error: unknown; onRetry?: () => void }) {
   return (
-    <span
-      className={cn(
-        'inline-block h-2 w-2 rounded-full',
-        ok ? 'bg-green-500' : 'bg-red-500',
-      )}
-    />
+    <Card role="alert" data-testid="security-error">
+      <CardContent className="flex flex-col gap-3 py-6 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-2 text-sm">
+          <CircleHelp className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+          <span><span className="font-medium">Could not load {what}.</span> <span className="text-muted-foreground">{apiError(error).message}</span> Nothing here is shown as fine until it loads.</span>
+        </div>
+        {onRetry && <Button size="sm" variant="outline" onClick={onRetry}>Try again</Button>}
+      </CardContent>
+    </Card>
   );
 }
 
-function SeverityBadge({ level }: { level: string }) {
-  const colors: Record<string, string> = {
-    critical: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
-    high: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
-    moderate: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
-    low: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-    info: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
-  };
+function Loading({ what }: { what: string }) {
+  return <p className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="security-loading"><Loader2 className="h-4 w-4 animate-spin" aria-hidden />Reading {what}…</p>;
+}
+
+function Checked({ at, onRefresh, busy }: { at?: string | null; onRefresh?: () => void; busy?: boolean }) {
   return (
-    <span
-      className={cn(
-        'text-xs px-2 py-0.5 rounded-full font-medium capitalize',
-        colors[level.toLowerCase()] ?? 'bg-gray-100 text-gray-700',
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <span>Read {when(at)}</span>
+      {onRefresh && (
+        <Button variant="outline" size="sm" className="h-7 px-2" onClick={onRefresh} disabled={busy} aria-label="Read again">
+          <RefreshCw className={cn('h-3.5 w-3.5', busy && 'animate-spin')} aria-hidden />
+        </Button>
       )}
-    >
-      {level}
-    </span>
+    </div>
   );
 }
 
-// ─── Overview Tab ─────────────────────────────────────────────────────────────
+function Mutation({ m, ok }: { m: { isError: boolean; isSuccess: boolean; error: unknown }; ok?: string }) {
+  if (m.isError) return <p className="text-sm text-destructive" role="alert">{apiError(m.error).message}</p>;
+  if (m.isSuccess && ok) return <p className="text-sm text-green-700 dark:text-green-400">{ok}</p>;
+  return null;
+}
+
+/** The command for a check the portal is deliberately unable to make (§56: the API never names the release host's keys or commands). */
+const MANUAL: Record<string, string> = {
+  'portal.release_root_keys': 'sudo rem0te-signed-status',
+};
+
+// ─── Overview ────────────────────────────────────────────────────────────────
+
+const AREAS: Array<[Finding['area'], string]> = [['host', 'This server'], ['network', 'Network'], ['web', 'Web and TLS'], ['portal', 'Rem0te'], ['process', 'API process']];
 
 function OverviewTab() {
-  const { data: fail2banData } = useQuery({
-    queryKey: ['security-fail2ban'],
-    queryFn: () => securityApi.getFail2ban().then((r) => r.data?.data),
-    staleTime: 30_000,
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['security-posture'], queryFn: () => data<Posture>(securityApi.getPosture()), staleTime: 60_000 });
+  const refresh = useMutation({
+    mutationFn: () => data<Posture>(securityApi.getPosture(true)),
+    onSuccess: (d) => qc.setQueryData(['security-posture'], d),
   });
-  const { data: tlsData } = useQuery({
-    queryKey: ['security-tls'],
-    queryFn: () => securityApi.getTls().then((r) => r.data?.data),
-    staleTime: 120_000,
-  });
-  const { data: osData } = useQuery({
-    queryKey: ['security-os-updates'],
-    queryFn: () => securityApi.getOsUpdates().then((r) => r.data?.data),
-    staleTime: 600_000,
-  });
-  const queryClient = useQueryClient();
-  // Audit is expensive (~9s) — only show cached result, don't auto-fetch on page load
-  const auditData = queryClient.getQueryData<Record<string, unknown>>(['security-audit']);
+  const [filter, setFilter] = useState<'attention' | 'all'>('attention');
 
-  const installMutation = useMutation({
-    mutationFn: () => securityApi.installFail2ban(),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['security-fail2ban'] }),
-  });
-
-  const f2bRunning = fail2banData?.running ?? false;
-  const secUpdateCount = osData?.securityUpdates ?? 0;
-  const totalUpdateCount = osData?.total ?? 0;
-
-  // Find soonest-expiring cert
-  const certs = Array.isArray(tlsData?.certs) ? (tlsData.certs as Array<{ domain: string; daysLeft: number; expiresAt: string }>) : [];
-  const soonestCert = certs.length > 0 ? certs.reduce((a, b) => (a.daysLeft < b.daysLeft ? a : b)) : null;
-  const certOk = soonestCert ? soonestCert.daysLeft > 14 : tlsData !== undefined;
-
-  // Audit summary
-  const auditPackages = Array.isArray(auditData?.packages) ? auditData.packages : [];
-  const critCount = auditPackages.filter((p: Record<string, unknown>) =>
-    (p.summary as string)?.toLowerCase().includes('critical'),
-  ).length;
+  if (q.isLoading) return <Loading what="this server's security posture" />;
+  if (q.isError || !q.data) return <ErrorCard what="the security posture" error={q.error} onRetry={() => q.refetch()} />;
+  const { summary, findings } = q.data;
+  const shown = filter === 'all' ? findings : findings.filter((f) => f.status === 'fail' || f.status === 'unknown');
+  const grade = summary.grade;
+  const gradeChip = grade === 'good' ? CHIP.on : grade === 'fair' ? CHIP.warn : grade === 'poor' ? CHIP.bad : CHIP.off;
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* fail2ban card */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs text-muted-foreground flex items-center gap-1">
-              <ShieldCheck className="h-3 w-3" /> fail2ban
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="flex items-center gap-2">
-              <StatusDot ok={f2bRunning} />
-              <span className="text-sm font-medium">{f2bRunning ? 'Running' : 'Stopped'}</span>
+      <Card data-testid="security-score" data-grade={grade}>
+        <CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4">
+            <div className={cn('flex h-16 w-16 shrink-0 items-center justify-center rounded-full text-xl font-semibold', gradeChip)} aria-label="Security score">
+              {summary.score ?? '?'}
             </div>
-            {!f2bRunning && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => installMutation.mutate()}
-                disabled={installMutation.isPending}
-                className="w-full text-xs"
-              >
-                {installMutation.isPending ? (
-                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                ) : null}
-                Install fail2ban
-              </Button>
-            )}
-            {f2bRunning && (
+            <div className="min-w-0 space-y-1">
+              <p className="text-sm font-medium">
+                {grade === 'unknown' ? 'Not enough could be read to score this server' : `Posture: ${grade}`}
+              </p>
               <p className="text-xs text-muted-foreground">
-                {Array.isArray(fail2banData?.jails) ? fail2banData.jails.length : 0} active jail(s)
+                {summary.counts.fail} need attention · {summary.counts.unknown} unknown · {summary.counts.pass} OK.
+                {' '}The score counts only what could be read ({summary.coverage}% of the checks); unknown is never counted as OK.
               </p>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* TLS card */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs text-muted-foreground flex items-center gap-1">
-              <Lock className="h-3 w-3" /> TLS Certificates
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-1">
-            <div className="flex items-center gap-2">
-              <StatusDot ok={certOk} />
-              <span className="text-sm font-medium">
-                {certs.length === 0 ? 'No certs' : certOk ? 'Valid' : 'Expiring soon'}
-              </span>
+              {summary.failing.critical > 0 && <p className="text-xs font-medium text-red-700 dark:text-red-400">{summary.failing.critical} critical finding{summary.failing.critical === 1 ? '' : 's'}.</p>}
             </div>
-            {soonestCert && (
-              <p className="text-xs text-muted-foreground">
-                Soonest: {(soonestCert as { domain: string; daysLeft: number }).domain} ({(soonestCert as { domain: string; daysLeft: number }).daysLeft}d)
-              </p>
-            )}
-            {!tlsData?.caddyActive && (
-              <p className="text-xs text-muted-foreground">Caddy not active</p>
-            )}
-          </CardContent>
-        </Card>
+          </div>
+          <Checked at={q.data.generatedAt} onRefresh={() => refresh.mutate()} busy={refresh.isPending} />
+        </CardContent>
+      </Card>
+      {refresh.isError && <ErrorCard what="a fresh reading" error={refresh.error} />}
 
-        {/* OS Updates card */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs text-muted-foreground flex items-center gap-1">
-              <Package className="h-3 w-3" /> OS Updates
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-1">
-            <div className="flex items-center gap-2">
-              <StatusDot ok={totalUpdateCount === 0} />
-              <span className="text-sm font-medium">
-                {totalUpdateCount === 0 ? 'Up to date' : `${totalUpdateCount} pending`}
-              </span>
-            </div>
-            {secUpdateCount > 0 && (
-              <p className="text-xs text-orange-600 dark:text-orange-400">
-                {secUpdateCount} security update{secUpdateCount !== 1 ? 's' : ''}
-              </p>
-            )}
-          </CardContent>
-        </Card>
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Show">
+        <Button size="sm" variant={filter === 'attention' ? 'default' : 'outline'} onClick={() => setFilter('attention')} data-testid="findings-attention">Needs attention or unknown ({summary.counts.fail + summary.counts.unknown})</Button>
+        <Button size="sm" variant={filter === 'all' ? 'default' : 'outline'} onClick={() => setFilter('all')} data-testid="findings-all">All checks ({findings.length})</Button>
+      </div>
 
-        {/* Code Audit card */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs text-muted-foreground flex items-center gap-1">
-              <ShieldAlert className="h-3 w-3" /> Code Audit
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-1">
-            <div className="flex items-center gap-2">
-              <StatusDot ok={critCount === 0} />
-              <span className="text-sm font-medium">
-                {auditData ? (critCount === 0 ? 'No critical' : `${critCount} critical`) : 'Not run'}
-              </span>
-            </div>
-            {!!auditData?.scannedAt && (
-              <p className="text-xs text-muted-foreground">
-                Scanned: {new Date(auditData!.scannedAt as string).toLocaleDateString()}
-              </p>
-            )}
-          </CardContent>
-        </Card>
+      {AREAS.map(([area, label]) => {
+        const rows = shown.filter((f) => f.area === area);
+        if (!rows.length) return null;
+        return (
+          <Card key={area}>
+            <CardHeader className="pb-2"><CardTitle className="text-sm">{label}</CardTitle></CardHeader>
+            <CardContent className="divide-y p-0">
+              {rows.map((f) => <FindingRow key={f.id} f={f} />)}
+            </CardContent>
+          </Card>
+        );
+      })}
+      {!shown.length && <Card><CardContent className="py-6 text-sm text-muted-foreground">Nothing needs attention and nothing is unknown. Choose All checks to see what was checked.</CardContent></Card>}
+
+      <Card>
+        <CardContent className="space-y-1 py-4 text-xs text-muted-foreground">
+          <p className="font-medium text-foreground">Kept elsewhere, not repeated here</p>
+          <p>
+            Which actions ask you to confirm it is you: <Link className="underline" href="/settings">Settings → Confirm it is you</Link>.
+            {' '}Audit integrity and containment: <Link className="underline" href="/settings/security/containment">Settings → Security → Containment</Link>.
+            {' '}Signed agent releases: <Link className="underline" href="/settings/security/update-signing">Update signing</Link>.
+            {' '}Single sign-on and break-glass accounts: <Link className="underline" href="/admin/sso">Admin → SSO</Link>.
+            {' '}API keys: <Link className="underline" href="/settings/api-keys">Settings → API keys</Link>.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function FindingRow({ f }: { f: Finding }) {
+  return (
+    <div className="space-y-1 px-4 py-3 sm:px-6" data-testid={`finding-${f.id}`} data-status={f.status}>
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusChip status={f.status} />
+        {(f.status === 'fail' || f.status === 'unknown') && f.severity !== 'info' && <Chip className={SEV_CHIP[f.severity]}>{f.severity}</Chip>}
+        <span className="text-sm font-medium break-words">{f.title}</span>
+      </div>
+      <p className="text-xs text-muted-foreground break-words">{f.evidence}</p>
+      {f.fix && f.status !== 'pass' && <p className="text-xs break-words"><span className="font-medium">Fix:</span> {f.fix}</p>}
+      {MANUAL[f.id] && (
+        <p className="text-xs">Run on the server: <code className="rounded bg-muted px-1 py-0.5 font-mono">{MANUAL[f.id]}</code></p>
+      )}
+      <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+        <span>Read {when(f.checkedAt)}</span>
+        {f.link && <Link href={f.link} className="underline">Open the setting</Link>}
       </div>
     </div>
   );
 }
 
-// ─── Access Rules Tab ─────────────────────────────────────────────────────────
+// ─── Access rules ────────────────────────────────────────────────────────────
 
 function AccessRulesTab() {
-  const queryClient = useQueryClient();
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['security-config'], queryFn: () => data<Config>(securityApi.getConfig()) });
+  const [max, setMax] = useState('');
+  const [minutes, setMinutes] = useState('');
+  useEffect(() => { if (q.data) { setMax(String(q.data.maxLoginAttempts)); setMinutes(String(q.data.lockoutMinutes)); } }, [q.data]);
+  const done = (d: Config) => { qc.setQueryData(['security-config'], d); qc.invalidateQueries({ queryKey: ['security-posture'] }); };
+  const save = useMutation({ mutationFn: () => data<Config>(securityApi.updateConfig({ maxLoginAttempts: Number(max), lockoutMinutes: Number(minutes) })), onSuccess: done });
+  const clear = useMutation({ mutationFn: () => data<Config>(securityApi.updateConfig({ clearUnenforced: true })), onSuccess: done });
 
-  const { data: config, isLoading } = useQuery({
-    queryKey: ['security-config'],
-    queryFn: () => securityApi.getConfig().then((r) => r.data?.data),
-  });
-
-  const [geoipEnabled, setGeoipEnabled] = useState<boolean>(false);
-  const [ipAllowlistEnabled, setIpAllowlistEnabled] = useState<boolean>(false);
-  const [blockedCountries, setBlockedCountries] = useState<string[]>([]);
-  const [blockedIpRanges, setBlockedIpRanges] = useState<string>('');
-  const [allowedIpRanges, setAllowedIpRanges] = useState<string>('');
-  const [maxLoginAttempts, setMaxLoginAttempts] = useState<number>(5);
-  const [lockoutMinutes, setLockoutMinutes] = useState<number>(15);
-  const [initialized, setInitialized] = useState(false);
-
-  if (config && !initialized) {
-    setGeoipEnabled(config.geoipBlockEnabled ?? false);
-    setIpAllowlistEnabled(config.ipAllowlistEnabled ?? false);
-    setBlockedCountries(Array.isArray(config.blockedCountries) ? config.blockedCountries : []);
-    setBlockedIpRanges(Array.isArray(config.blockedIpRanges) ? config.blockedIpRanges.join('\n') : '');
-    setAllowedIpRanges(Array.isArray(config.allowedIpRanges) ? config.allowedIpRanges.join('\n') : '');
-    setMaxLoginAttempts(config.maxLoginAttempts ?? 5);
-    setLockoutMinutes(config.lockoutMinutes ?? 15);
-    setInitialized(true);
-  }
-
-  const saveMutation = useMutation({
-    mutationFn: () =>
-      securityApi.updateConfig({
-        geoipBlockEnabled: geoipEnabled,
-        ipAllowlistEnabled,
-        blockedCountries,
-        blockedIpRanges: blockedIpRanges
-          .split('\n')
-          .map((s) => s.trim())
-          .filter(Boolean),
-        allowedIpRanges: allowedIpRanges
-          .split('\n')
-          .map((s) => s.trim())
-          .filter(Boolean),
-        maxLoginAttempts,
-        lockoutMinutes,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['security-config'] });
-    },
-  });
-
-  function toggleCountry(code: string) {
-    setBlockedCountries((prev) =>
-      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code],
-    );
-  }
-
-  if (isLoading) {
-    return <p className="text-sm text-muted-foreground">Loading config…</p>;
-  }
+  if (q.isLoading) return <Loading what="the access rules" />;
+  if (q.isError || !q.data) return <ErrorCard what="the access rules" error={q.error} onRetry={() => q.refetch()} />;
+  const u = q.data.unenforced;
+  const stored = u.geoipBlockEnabled || u.ipAllowlistEnabled || u.blockedCountries.length + u.blockedIpRanges.length + u.allowedIpRanges.length > 0;
+  const valid = /^\d+$/.test(max) && Number(max) <= 100 && /^\d+$/.test(minutes) && Number(minutes) >= 1 && Number(minutes) <= 1440;
 
   return (
-    <div className="space-y-6">
-      {/* Login protection */}
+    <div className="space-y-4">
       <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Login Rate Limiting</CardTitle>
-        </CardHeader>
+        <CardHeader><CardTitle className="text-sm">Sign-in lockout</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <p className="text-xs text-muted-foreground">
+            Enforced by the API for every account, in the database, so a restart forgets nothing. Allowing more attempts,
+            a shorter lockout or turning it off (0) may ask you to confirm it is you; tightening never does.
+          </p>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1">
-              <Label className="text-xs">Max Login Attempts</Label>
-              <input
-                type="number"
-                min={1}
-                max={100}
-                value={maxLoginAttempts}
-                onChange={(e) => setMaxLoginAttempts(Number(e.target.value))}
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              />
+              <Label htmlFor="max-attempts" className="text-xs">Failed attempts before an account locks (0 turns it off)</Label>
+              <Input id="max-attempts" inputMode="numeric" value={max} onChange={(e) => setMax(e.target.value.trim())} />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Lockout Duration (minutes)</Label>
-              <input
-                type="number"
-                min={1}
-                max={1440}
-                value={lockoutMinutes}
-                onChange={(e) => setLockoutMinutes(Number(e.target.value))}
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              />
+              <Label htmlFor="lockout-minutes" className="text-xs">Lockout, in minutes (1–1440)</Label>
+              <Input id="lockout-minutes" inputMode="numeric" value={minutes} onChange={(e) => setMinutes(e.target.value.trim())} />
             </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={() => save.mutate()} disabled={!valid || save.isPending} data-testid="save-lockout">
+              {save.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />}Save
+            </Button>
+            {!valid && <span className="text-xs text-destructive">Attempts 0–100, minutes 1–1440.</span>}
+            <Mutation m={save} ok="Saved." />
           </div>
         </CardContent>
       </Card>
 
-      {/* GeoIP blocking */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Globe className="h-4 w-4" />
-              GeoIP Country Blocking
+      <Card data-testid="unenforced-rules">
+        <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><AlertTriangle className="h-4 w-4 text-amber-600" aria-hidden />GeoIP blocking and IP allow / block lists: not enforced</CardTitle></CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          <p className="text-muted-foreground">
+            Earlier versions of this page let you save country blocks and IP lists. Nothing in Rem0te ever read them, so they
+            protected nothing. They cannot be set any more. Block addresses in the server&apos;s firewall (ufw) or in Caddy, or
+            ban them in fail2ban, where they are actually refused.
+          </p>
+          {stored ? (
+            <div className="space-y-2">
+              <p className="text-xs">
+                Stored here and doing nothing: GeoIP blocking {u.geoipBlockEnabled ? 'on' : 'off'}
+                {u.blockedCountries.length ? ` (${u.blockedCountries.join(', ')})` : ''}; allowlist {u.ipAllowlistEnabled ? 'on' : 'off'}
+                {u.allowedIpRanges.length ? ` (${u.allowedIpRanges.join(', ')})` : ''}{u.blockedIpRanges.length ? `; blocked: ${u.blockedIpRanges.join(', ')}` : ''}.
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button size="sm" variant="outline" onClick={() => clear.mutate()} disabled={clear.isPending} data-testid="clear-unenforced">Clear them</Button>
+                <Mutation m={clear} ok="Cleared." />
+              </div>
             </div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <span className="text-xs text-muted-foreground font-normal">
-                {geoipEnabled ? 'Enabled' : 'Disabled'}
-              </span>
-              <input
-                type="checkbox"
-                checked={geoipEnabled}
-                onChange={(e) => setGeoipEnabled(e.target.checked)}
-                className="h-4 w-4"
-              />
-            </label>
-          </CardTitle>
-        </CardHeader>
-        {geoipEnabled && (
-          <CardContent>
-            <p className="text-xs text-muted-foreground mb-3">
-              Select countries to block. Requests from these countries will be rejected.
-            </p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-              {COUNTRIES.map((country) => {
-                const selected = blockedCountries.includes(country.code);
-                return (
-                  <label
-                    key={country.code}
-                    className={cn(
-                      'flex items-center gap-2 rounded border px-2 py-1.5 text-xs cursor-pointer transition-colors',
-                      selected
-                        ? 'border-destructive bg-destructive/10 text-destructive'
-                        : 'border-border hover:bg-accent',
-                    )}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selected}
-                      onChange={() => toggleCountry(country.code)}
-                      className="h-3 w-3"
-                    />
-                    <span className="font-mono text-xs text-muted-foreground">{country.code}</span>
-                    {country.name}
-                  </label>
-                );
-              })}
-            </div>
-          </CardContent>
-        )}
-      </Card>
-
-      {/* IP Allowlist */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm flex items-center justify-between">
-            IP Allowlist
-            <label className="flex items-center gap-2 cursor-pointer">
-              <span className="text-xs text-muted-foreground font-normal">
-                {ipAllowlistEnabled ? 'Enabled' : 'Disabled'}
-              </span>
-              <input
-                type="checkbox"
-                checked={ipAllowlistEnabled}
-                onChange={(e) => setIpAllowlistEnabled(e.target.checked)}
-                className="h-4 w-4"
-              />
-            </label>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-1.5">
-            <Label className="text-xs">Allowed IP Ranges (one CIDR per line)</Label>
-            <Textarea
-              value={allowedIpRanges}
-              onChange={(e) => setAllowedIpRanges(e.target.value)}
-              placeholder="192.168.1.0/24&#10;10.0.0.0/8"
-              rows={4}
-              className="font-mono text-xs"
-            />
-            <p className="text-xs text-muted-foreground">
-              When allowlist is enabled, only these ranges can access the system.
-            </p>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-xs">Blocked IP Ranges (one CIDR per line)</Label>
-            <Textarea
-              value={blockedIpRanges}
-              onChange={(e) => setBlockedIpRanges(e.target.value)}
-              placeholder="203.0.113.0/24"
-              rows={4}
-              className="font-mono text-xs"
-            />
-            <p className="text-xs text-muted-foreground">
-              These ranges are always blocked regardless of allowlist status.
-            </p>
-          </div>
+          ) : <p className="text-xs text-muted-foreground">None are stored.</p>}
         </CardContent>
       </Card>
-
-      <div className="flex justify-end">
-        <Button
-          onClick={() => saveMutation.mutate()}
-          disabled={saveMutation.isPending}
-          className="gap-2"
-        >
-          {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-          Save Access Rules
-        </Button>
-      </div>
-
-      {saveMutation.isSuccess && (
-        <p className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1">
-          <CheckCircle className="h-4 w-4" />
-          Configuration saved.
-        </p>
-      )}
-      {saveMutation.isError && (
-        <p className="text-sm text-destructive flex items-center gap-1">
-          <XCircle className="h-4 w-4" />
-          Failed to save configuration.
-        </p>
-      )}
     </div>
   );
 }
 
-// ─── fail2ban Tab ──────────────────────────────────────────────────────────────
+// ─── fail2ban ────────────────────────────────────────────────────────────────
 
-interface Fail2banJail {
-  jail: string;
-  totalBanned: number;
-  currentBanned: number;
-  bannedIps: string[];
-}
+const ADDR_RE = /^[0-9A-Fa-f.:/]{2,64}$/;
 
-function JailConfigPanel({ jail, onClose }: { jail: string; onClose: () => void }) {
-  const queryClient = useQueryClient();
-  const { data, isLoading } = useQuery({
-    queryKey: ['jail-config', jail],
-    queryFn: () => securityApi.getJailConfig(jail).then((r) => r.data?.data?.config),
+function JailSettings({ jail, onDone }: { jail: string; onDone: () => void }) {
+  const q = useQuery({ queryKey: ['jail-config', jail], queryFn: () => data<{ bantime: number; findtime: number; maxretry: number }>(securityApi.getJailConfig(jail)), staleTime: 0 });
+  const [v, setV] = useState({ bantime: '', findtime: '', maxretry: '' });
+  useEffect(() => { if (q.data) setV({ bantime: String(q.data.bantime), findtime: String(q.data.findtime), maxretry: String(q.data.maxretry) }); }, [q.data]);
+  const save = useMutation({
+    mutationFn: () => securityApi.updateJailConfig(jail, Object.fromEntries((['bantime', 'findtime', 'maxretry'] as const).filter((k) => q.data && v[k] !== String(q.data[k])).map((k) => [k, Number(v[k])]))),
+    onSuccess: () => { q.refetch(); onDone(); },
   });
-  const [bantime, setBantime] = useState('');
-  const [findtime, setFindtime] = useState('');
-  const [maxretry, setMaxretry] = useState('');
-
-  useEffect(() => {
-    if (data) {
-      setBantime(data.bantime ?? '');
-      setFindtime(data.findtime ?? '');
-      setMaxretry(data.maxretry ?? '');
-    }
-  }, [data]);
-
-  const saveMutation = useMutation({
-    mutationFn: () => securityApi.updateJailConfig(jail, {
-      bantime: bantime ? Number(bantime) : undefined,
-      findtime: findtime ? Number(findtime) : undefined,
-      maxretry: maxretry ? Number(maxretry) : undefined,
-    }),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['security-fail2ban'] }); onClose(); },
-  });
-
-  if (isLoading) return <div className="text-xs text-muted-foreground p-3">Loading config…</div>;
-
+  if (q.isLoading) return <Loading what="the jail's settings" />;
+  if (q.isError) return <ErrorCard what="the jail's settings" error={q.error} />;
   return (
-    <div className="p-3 bg-muted/30 rounded-md space-y-3">
-      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Edit jail: {jail}</p>
-      <div className="grid grid-cols-3 gap-3">
-        {[
-          { label: 'Ban Time (s)', value: bantime, set: setBantime, hint: 'e.g. 3600' },
-          { label: 'Find Time (s)', value: findtime, set: setFindtime, hint: 'e.g. 300' },
-          { label: 'Max Retry', value: maxretry, set: setMaxretry, hint: 'e.g. 5' },
-        ].map(({ label, value, set, hint }) => (
-          <div key={label} className="space-y-1">
-            <label className="text-xs text-muted-foreground">{label}</label>
-            <input
-              className="w-full text-sm border rounded px-2 py-1 bg-background font-mono"
-              value={value}
-              onChange={e => set(e.target.value)}
-              placeholder={hint}
-            />
+    <div className="space-y-3 rounded-md bg-muted/40 p-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {([['bantime', 'Ban time (s, 60+)'], ['findtime', 'Find time (s, 60+)'], ['maxretry', 'Max retry (1–100)']] as const).map(([k, label]) => (
+          <div key={k} className="space-y-1">
+            <Label htmlFor={`${jail}-${k}`} className="text-xs">{label}</Label>
+            <Input id={`${jail}-${k}`} inputMode="numeric" className="font-mono" value={v[k]} onChange={(e) => setV({ ...v, [k]: e.target.value.trim() })} />
           </div>
         ))}
       </div>
-      <div className="flex gap-2">
-        <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="gap-1.5">
-          {saveMutation.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
-          Save
-        </Button>
-        <Button size="sm" variant="outline" onClick={onClose}>Cancel</Button>
-        {saveMutation.isSuccess && <span className="text-xs text-green-600 self-center">Saved</span>}
+      <p className="text-xs text-muted-foreground">Applies to the running fail2ban until it restarts. To keep it, set it in /etc/fail2ban/jail.local too.</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending || !(['bantime', 'findtime', 'maxretry'] as const).every((k) => /^\d+$/.test(v[k]))}>Apply</Button>
+        <Mutation m={save} ok="Applied." />
       </div>
     </div>
   );
 }
 
 function Fail2banTab() {
-  const queryClient = useQueryClient();
-  const [manualBanJail, setManualBanJail] = useState('');
-  const [manualBanIp, setManualBanIp] = useState('');
-  const [ignoreIpInput, setIgnoreIpInput] = useState('');
-  const [editingJail, setEditingJail] = useState<string | null>(null);
-
-  const { data, isLoading, refetch } = useQuery({
-    queryKey: ['security-fail2ban'],
-    queryFn: () => securityApi.getFail2ban().then((r) => r.data?.data),
-    staleTime: 30_000,
-  });
-
-  const { data: ignoreData, refetch: refetchIgnore } = useQuery({
-    queryKey: ['security-fail2ban-ignore'],
-    queryFn: () => securityApi.getIgnoreList().then((r) => r.data?.data),
-    enabled: !!data?.running,
-    staleTime: 30_000,
-  });
-
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ['security-fail2ban'] });
-    queryClient.invalidateQueries({ queryKey: ['security-fail2ban-ignore'] });
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['security-fail2ban'], queryFn: () => data<Fail2ban>(securityApi.getFail2ban()), staleTime: 30_000 });
+  const running = q.data?.state === 'running';
+  const ig = useQuery({ queryKey: ['security-fail2ban-ignore'], queryFn: () => data<{ ips: string[]; unreadable: string[]; checkedAt: string }>(securityApi.getIgnoreList()), enabled: running });
+  const [banIp, setBanIp] = useState<Record<string, string>>({});
+  const [ignoreIp, setIgnoreIp] = useState('');
+  const [editing, setEditing] = useState<string | null>(null);
+  const reread = async () => {
+    const d = await data<Fail2ban>(securityApi.getFail2ban(true));
+    qc.setQueryData(['security-fail2ban'], d);
+    qc.invalidateQueries({ queryKey: ['security-fail2ban-ignore'] });
+    qc.invalidateQueries({ queryKey: ['security-posture'] });
   };
+  const ban = useMutation({ mutationFn: ({ jail, ip }: { jail: string; ip: string }) => securityApi.banIp(jail, ip), onSuccess: (_d, v) => { setBanIp((s) => ({ ...s, [v.jail]: '' })); void reread(); } });
+  const unban = useMutation({ mutationFn: ({ jail, ip }: { jail: string; ip: string }) => securityApi.unbanIp(jail, ip), onSuccess: () => void reread() });
+  const addIg = useMutation({ mutationFn: () => securityApi.addIgnoreIp(ignoreIp), onSuccess: () => { setIgnoreIp(''); void reread(); } });
+  const delIg = useMutation({ mutationFn: (ip: string) => securityApi.removeIgnoreIp(ip), onSuccess: () => void reread() });
+  const install = useMutation({ mutationFn: () => securityApi.installFail2ban(), onSuccess: () => void reread() });
 
-  const unbanMutation = useMutation({
-    mutationFn: ({ jail, ip }: { jail: string; ip: string }) => securityApi.unbanIp(jail, ip),
-    onSuccess: invalidate,
-  });
+  if (q.isLoading) return <Loading what="fail2ban" />;
+  if (q.isError || !q.data) return <ErrorCard what="fail2ban's status" error={q.error} onRetry={() => q.refetch()} />;
+  const d = q.data;
 
-  const banMutation = useMutation({
-    mutationFn: () => securityApi.banIp(manualBanJail, manualBanIp),
-    onSuccess: () => { setManualBanIp(''); invalidate(); },
-  });
-
-  const addIgnoreMutation = useMutation({
-    mutationFn: () => securityApi.addIgnoreIp(ignoreIpInput),
-    onSuccess: () => { setIgnoreIpInput(''); refetchIgnore(); },
-  });
-
-  const removeIgnoreMutation = useMutation({
-    mutationFn: (ip: string) => securityApi.removeIgnoreIp(ip),
-    onSuccess: () => refetchIgnore(),
-  });
-
-  const installMutation = useMutation({
-    mutationFn: () => securityApi.installFail2ban(),
-    onSuccess: invalidate,
-  });
-
-  if (isLoading) return <p className="text-sm text-muted-foreground">Loading fail2ban status…</p>;
-
-  if (!data?.running) {
+  if (d.state !== 'running') {
     return (
-      <Card>
-        <CardContent className="py-8 flex flex-col items-center gap-4">
-          <ShieldAlert className="h-10 w-10 text-muted-foreground" />
-          <div className="text-center">
-            <p className="font-medium">fail2ban is not running</p>
-            <p className="text-sm text-muted-foreground mt-1">Install fail2ban to protect against brute-force attacks.</p>
+      <Card data-testid="fail2ban-state" data-state={d.state}>
+        <CardContent className="space-y-3 py-6">
+          <div className="flex items-center gap-2">
+            <StatusChip status={d.state === 'unavailable' ? 'unknown' : 'fail'} label={d.state === 'unavailable' ? 'Unknown' : d.state === 'stopped' ? 'Stopped' : 'Not installed'} />
+            <span className="text-sm font-medium">fail2ban</span>
           </div>
-          <Button onClick={() => installMutation.mutate()} disabled={installMutation.isPending} className="gap-2">
-            {installMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-            Install fail2ban
-          </Button>
-          {installMutation.isError && <p className="text-sm text-destructive">Installation failed.</p>}
+          {d.reason && <p className="text-sm text-muted-foreground break-words">{d.reason}</p>}
+          {d.state !== 'unavailable' && (
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={() => install.mutate()} disabled={install.isPending}>
+                {install.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />}
+                {d.state === 'stopped' ? 'Enable and start fail2ban' : 'Install, enable and start fail2ban'}
+              </Button>
+              <Mutation m={install} ok="fail2ban is installed and started." />
+            </div>
+          )}
+          <Checked at={d.checkedAt} onRefresh={() => void reread()} />
         </CardContent>
       </Card>
     );
   }
 
-  const jails: Fail2banJail[] = Array.isArray(data.jails) ? data.jails : [];
-  const ignoreIps: string[] = Array.isArray(ignoreData?.ips) ? ignoreData.ips : [];
-
   return (
     <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <StatusDot ok={true} />
-          <span className="text-sm font-medium">fail2ban running</span>
-          <span className="text-xs text-muted-foreground">({jails.length} jail{jails.length !== 1 ? 's' : ''})</span>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => { refetch(); refetchIgnore(); }}>
-          <RefreshCw className="h-4 w-4" />
-        </Button>
+      <div className="flex flex-wrap items-center justify-between gap-2" data-testid="fail2ban-state" data-state={d.state}>
+        <div className="flex items-center gap-2"><StatusChip status="pass" label="Running" /><span className="text-sm">{d.jails.length} jail{d.jails.length === 1 ? '' : 's'}</span></div>
+        <Checked at={d.checkedAt} onRefresh={() => void reread()} />
       </div>
-
-      {/* Jails */}
-      {jails.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No active jails.</p>
-      ) : (
-        jails.map((jail) => (
-          <Card key={jail.jail}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center justify-between">
-                <span className="font-mono">{jail.jail}</span>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground font-normal">
-                    {jail.currentBanned} banned · {jail.totalBanned} total
-                  </span>
-                  <Button variant="ghost" size="sm" className="h-6 text-xs px-2"
-                    onClick={() => setEditingJail(editingJail === jail.jail ? null : jail.jail)}>
-                    Settings
-                  </Button>
-                </div>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 space-y-2">
-              {editingJail === jail.jail && (
-                <JailConfigPanel jail={jail.jail} onClose={() => setEditingJail(null)} />
-              )}
-              {/* Manual ban for this jail */}
-              <div className="flex gap-2">
-                <input
-                  className="flex-1 text-sm border rounded px-2 py-1 bg-background font-mono"
-                  placeholder="IP to ban (e.g. 1.2.3.4)"
-                  value={manualBanJail === jail.jail ? manualBanIp : ''}
-                  onChange={e => { setManualBanJail(jail.jail); setManualBanIp(e.target.value); }}
-                />
-                <Button size="sm" variant="destructive"
-                  onClick={() => { setManualBanJail(jail.jail); banMutation.mutate(); }}
-                  disabled={banMutation.isPending || !manualBanIp || manualBanJail !== jail.jail}>
-                  Ban IP
-                </Button>
+      <p className="text-xs text-muted-foreground">Bans, never-ban entries and jail settings made here apply to the running fail2ban and last until it restarts. Each one is audited.</p>
+      <Mutation m={ban} /><Mutation m={unban} />
+      {d.jails.length === 0 && <Card><CardContent className="py-6 text-sm text-muted-foreground">fail2ban is running with no jails, so it bans nothing.</CardContent></Card>}
+      {d.jails.map((j) => (
+        <Card key={j.jail} data-testid={`jail-${j.jail}`}>
+          <CardHeader className="pb-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle className="font-mono text-sm">{j.jail}</CardTitle>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                {j.error ? <StatusChip status="unknown" /> : <span>{j.currentBanned} banned now · {j.totalBanned} total · {j.totalFailed ?? '?'} failures seen</span>}
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setEditing(editing === j.jail ? null : j.jail)}>Settings</Button>
               </div>
-              {/* Banned IPs */}
-              {jail.bannedIps.length > 0 ? (
-                <div className="space-y-1">
-                  {jail.bannedIps.map((ip) => (
-                    <div key={ip} className="flex items-center justify-between py-1 px-2 rounded bg-muted/50">
-                      <span className="font-mono text-xs">{ip}</span>
-                      <Button variant="ghost" size="sm" className="h-6 text-xs text-destructive hover:text-destructive"
-                        onClick={() => unbanMutation.mutate({ jail: jail.jail, ip })}
-                        disabled={unbanMutation.isPending}>
-                        Unban
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground italic">No IPs currently banned in this jail.</p>
-              )}
-            </CardContent>
-          </Card>
-        ))
-      )}
-
-      {/* IP Whitelist (ignore list) */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm">IP Whitelist (Never Ban)</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex gap-2">
-            <input
-              className="flex-1 text-sm border rounded px-2 py-1 bg-background font-mono"
-              placeholder="IP or CIDR to whitelist (e.g. 192.168.1.0/24)"
-              value={ignoreIpInput}
-              onChange={e => setIgnoreIpInput(e.target.value)}
-            />
-            <Button size="sm" onClick={() => addIgnoreMutation.mutate()}
-              disabled={addIgnoreMutation.isPending || !ignoreIpInput}>
-              {addIgnoreMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Add'}
-            </Button>
-          </div>
-          {ignoreIps.length > 0 ? (
-            <div className="space-y-1">
-              {ignoreIps.map((ip) => (
-                <div key={ip} className="flex items-center justify-between py-1 px-2 rounded bg-muted/50">
-                  <span className="font-mono text-xs">{ip}</span>
-                  <Button variant="ghost" size="sm" className="h-6 text-xs text-destructive hover:text-destructive"
-                    onClick={() => removeIgnoreMutation.mutate(ip)}
-                    disabled={removeIgnoreMutation.isPending}>
-                    Remove
-                  </Button>
-                </div>
-              ))}
             </div>
-          ) : (
-            <p className="text-xs text-muted-foreground italic">No whitelisted IPs.</p>
+          </CardHeader>
+          <CardContent className="space-y-3 pt-0">
+            {j.error && <p className="text-xs text-muted-foreground break-words">{j.error}</p>}
+            {(j.journalMatches || j.fileList) && <p className="text-[11px] text-muted-foreground break-all">Reads: {j.journalMatches ? `journal ${j.journalMatches}` : j.fileList}</p>}
+            {editing === j.jail && <JailSettings jail={j.jail} onDone={() => void reread()} />}
+            <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(e) => { e.preventDefault(); ban.mutate({ jail: j.jail, ip: banIp[j.jail] ?? '' }); }}>
+              <Input aria-label={`Address to ban in ${j.jail}`} className="font-mono" placeholder="Address to ban, e.g. 203.0.113.9" value={banIp[j.jail] ?? ''} onChange={(e) => setBanIp((s) => ({ ...s, [j.jail]: e.target.value.trim() }))} />
+              <Button type="submit" size="sm" variant="destructive" disabled={ban.isPending || !ADDR_RE.test(banIp[j.jail] ?? '')}>Ban</Button>
+            </form>
+            {(j.bannedIps ?? []).length > 0 ? (
+              <ul className="space-y-1">
+                {(j.bannedIps ?? []).map((ip) => (
+                  <li key={ip} className="flex items-center justify-between gap-2 rounded bg-muted/50 px-2 py-1">
+                    <span className="font-mono text-xs break-all">{ip}</span>
+                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => unban.mutate({ jail: j.jail, ip })} disabled={unban.isPending}>Unban</Button>
+                  </li>
+                ))}
+              </ul>
+            ) : !j.error && <p className="text-xs italic text-muted-foreground">Nothing banned in this jail now.</p>}
+          </CardContent>
+        </Card>
+      ))}
+
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-sm">Never ban (every jail)</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(e) => { e.preventDefault(); addIg.mutate(); }}>
+            <Input aria-label="Address or range never to ban" className="font-mono" placeholder="Address or CIDR, e.g. 192.0.2.0/24" value={ignoreIp} onChange={(e) => setIgnoreIp(e.target.value.trim())} />
+            <Button type="submit" size="sm" disabled={addIg.isPending || !ADDR_RE.test(ignoreIp)}>Add</Button>
+          </form>
+          <Mutation m={addIg} /><Mutation m={delIg} />
+          {ig.isLoading ? <Loading what="the never-ban list" /> : ig.isError ? <ErrorCard what="the never-ban list" error={ig.error} /> : (
+            <>
+              {(ig.data?.unreadable ?? []).length > 0 && <p className="text-xs text-muted-foreground">Could not read the list of: {ig.data?.unreadable.join(', ')}.</p>}
+              {(ig.data?.ips ?? []).length ? (
+                <ul className="space-y-1">
+                  {ig.data!.ips.map((ip) => (
+                    <li key={ip} className="flex items-center justify-between gap-2 rounded bg-muted/50 px-2 py-1">
+                      <span className="font-mono text-xs break-all">{ip}</span>
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => delIg.mutate(ip)} disabled={delIg.isPending}>Remove</Button>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="text-xs italic text-muted-foreground">No addresses are exempt.</p>}
+            </>
           )}
         </CardContent>
       </Card>
@@ -737,881 +451,177 @@ function Fail2banTab() {
   );
 }
 
-// ─── TLS Tab ──────────────────────────────────────────────────────────────────
+// ─── TLS and web ─────────────────────────────────────────────────────────────
 
-interface TlsCert {
-  domain: string;
-  expiresAt: string;
-  daysLeft: number;
-}
+const CERT_LABEL: Record<string, { label: string; status: FindingStatus }> = {
+  ok: { label: 'Valid', status: 'pass' }, renewal_failing: { label: 'Renewal failing', status: 'fail' },
+  urgent: { label: 'Expires within a week', status: 'fail' }, expired: { label: 'Expired', status: 'fail' }, unknown: { label: 'Unknown', status: 'unknown' },
+};
 
 function TlsTab() {
-  const { data, isLoading, refetch } = useQuery({
-    queryKey: ['security-tls'],
-    queryFn: () => securityApi.getTls().then((r) => r.data?.data),
-  });
-
-  // After renewal: poll every 3s until cert appears (up to 90s)
-  const [polling, setPolling] = useState(false);
-  const [pollSeconds, setPollSeconds] = useState(0);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const stopPolling = () => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    setPolling(false);
-    setPollSeconds(0);
-  };
-
-  const startPolling = () => {
-    setPolling(true);
-    setPollSeconds(0);
-    let elapsed = 0;
-    pollRef.current = setInterval(async () => {
-      elapsed += 3;
-      setPollSeconds(elapsed);
-      const res = await securityApi.getTls().catch(() => null);
-      const tlsData = res?.data?.data;
-      if (tlsData?.hasTls || elapsed >= 90) { refetch(); stopPolling(); }
-    }, 3000);
-  };
-
-  useEffect(() => () => stopPolling(), []);
-
-  const renewMutation = useMutation({
-    mutationFn: () => securityApi.renewTls(),
-    onSuccess: () => startPolling(),
-  });
-
-  if (isLoading) return <p className="text-sm text-muted-foreground">Loading TLS info…</p>;
-
-  const certs: TlsCert[] = Array.isArray(data?.certs) ? data.certs : [];
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['security-tls'], queryFn: () => data<Tls>(securityApi.getTls()) });
+  const posture = useQuery({ queryKey: ['security-posture'], queryFn: () => data<Posture>(securityApi.getPosture()), staleTime: 60_000 });
+  const reread = useMutation({ mutationFn: () => data<Tls>(securityApi.getTls(true)), onSuccess: (d) => qc.setQueryData(['security-tls'], d) });
+  if (q.isLoading) return <Loading what="the certificates" />;
+  if (q.isError || !q.data) return <ErrorCard what="the certificates" error={q.error} onRetry={() => q.refetch()} />;
+  const d = q.data;
+  const web = (posture.data?.findings ?? []).filter((f) => f.id.startsWith('web.header.') || f.id === 'web.http_redirect' || f.id === 'web.public_https');
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-3 text-sm">
-          <div className="flex items-center gap-1.5">
-            <StatusDot ok={!!data?.caddyActive} />
-            <span className="text-muted-foreground">Caddy:</span>
-            <span className="font-medium">{data?.caddyActive ? 'Active' : 'Inactive'}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <StatusDot ok={!!data?.hasTls} />
-            <span className="text-muted-foreground">TLS:</span>
-            <span className="font-medium">{data?.hasTls ? 'Enabled' : 'Disabled'}</span>
-          </div>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <StatusChip status={d.caddyActive === null ? 'unknown' : d.caddyActive ? 'pass' : 'fail'} label={d.caddyActive === null ? 'Unknown' : d.caddyActive ? 'Caddy active' : 'Caddy not active'} />
+          {!d.caddyfileReadable && <span className="text-xs text-muted-foreground">The Caddyfile is not readable by the API user, so its sites are unknown.</span>}
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => renewMutation.mutate()}
-            disabled={renewMutation.isPending || polling || !data?.caddyActive}
-            className="gap-1.5"
-          >
-            {renewMutation.isPending ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5" />
-            )}
-            {certs.length === 0 ? 'Request Certificate' : 'Renew Certificate'}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => refetch()} disabled={polling}>
-            <RefreshCw className="h-4 w-4" />
-          </Button>
-        </div>
+        <Checked at={d.checkedAt} onRefresh={() => reread.mutate()} busy={reread.isPending} />
       </div>
-
-      {polling && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 rounded-md px-3 py-2">
-          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-          <span>Waiting for certificate from Let&apos;s Encrypt… ({pollSeconds}s)</span>
-          <span className="text-xs opacity-60">This can take up to 90 seconds</span>
-        </div>
-      )}
-      {!polling && renewMutation.isSuccess && data?.hasTls && (
-        <p className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1">
-          <CheckCircle className="h-4 w-4" />
-          Certificate provisioned successfully.
-        </p>
-      )}
-      {!polling && renewMutation.isSuccess && !data?.hasTls && pollSeconds >= 90 && (
-        <p className="text-sm text-amber-600 dark:text-amber-400 flex items-center gap-1">
-          <AlertTriangle className="h-4 w-4" />
-          Certificate not yet visible. Check DNS points to this server, then try again.
-        </p>
-      )}
-      {renewMutation.isError && (
-        <p className="text-sm text-destructive flex items-center gap-1">
-          <XCircle className="h-4 w-4" />
-          Failed to renew certificate.
-        </p>
-      )}
-
-      {certs.length === 0 ? (
-        <Card>
-          <CardContent className="py-8 text-center space-y-2">
-            <p className="text-sm text-muted-foreground">No TLS certificates found.</p>
-            {data?.caddyActive && (
-              <p className="text-xs text-muted-foreground">
-                Caddy automatically provisions Let&apos;s Encrypt certificates when accessed via a public domain name.
-                Make sure your domain&apos;s DNS points to this server, then click <strong>Request Certificate</strong>.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Certificates ({certs.length})</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b">
-                  <th className="py-2 text-left text-xs text-muted-foreground font-medium">Domain</th>
-                  <th className="py-2 text-left text-xs text-muted-foreground font-medium">Expires</th>
-                  <th className="py-2 text-left text-xs text-muted-foreground font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {certs.map((cert) => {
-                  const expiring = cert.daysLeft <= 30;
-                  const expired = cert.daysLeft <= 0;
-                  return (
-                    <tr key={cert.domain} className="border-b last:border-0">
-                      <td className="py-2 pr-4 font-mono text-xs">{cert.domain}</td>
-                      <td className="py-2 pr-4 text-xs text-muted-foreground">
-                        {new Date(cert.expiresAt).toLocaleDateString()} ({cert.daysLeft}d)
-                      </td>
-                      <td className="py-2">
-                        {expired ? (
-                          <Badge variant="destructive" className="text-xs">Expired</Badge>
-                        ) : expiring ? (
-                          <Badge variant="secondary" className="text-xs bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
-                            Expiring soon
-                          </Badge>
-                        ) : (
-                          <Badge variant="default" className="text-xs">Valid</Badge>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
-      )}
+      <Card>
+        <CardHeader><CardTitle className="text-sm">Certificates Caddy serves</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Read over loopback with each site&apos;s name, as a browser would see it. Caddy renews a Let&apos;s Encrypt
+            certificate about 30 days before it expires, so fewer than 20 days left means renewal has been failing:
+            check <code className="font-mono">journalctl -u caddy | grep -i acme</code>. There is no renew button: Caddy ignores a
+            reload that changes nothing, and renews on its own once the cause is fixed.
+          </p>
+          {d.certs.length === 0 ? (
+            <p className="text-sm text-muted-foreground" data-testid="no-certs"><StatusChip status="unknown" /> No certificate could be read.</p>
+          ) : (
+            <ul className="divide-y">
+              {d.certs.map((c) => {
+                const l = CERT_LABEL[c.level] ?? CERT_LABEL.unknown;
+                const status: FindingStatus = c.daysLeft === null ? 'unknown' : !c.trusted || !c.nameMatches ? 'fail' : l.status;
+                return (
+                  <li key={c.domain} className="space-y-1 py-2" data-testid={`cert-${c.domain}`} data-status={status}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusChip status={status} label={c.daysLeft === null ? 'Unknown' : !c.trusted ? 'Not trusted' : !c.nameMatches ? 'Wrong name' : l.label} />
+                      <span className="font-mono text-sm break-all">{c.domain}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground break-words">
+                      {c.expiresAt ? `Expires ${new Date(c.expiresAt).toLocaleDateString()} (${c.daysLeft} days)` : 'No expiry read'}{c.issuer ? ` · ${c.issuer}` : ''}{c.error ? ` · ${c.error}` : ''}
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader><CardTitle className="text-sm">The console&apos;s security headers</CardTitle></CardHeader>
+        <CardContent className="p-0">
+          {posture.isLoading ? <div className="px-6 pb-4"><Loading what="the headers" /></div>
+            : posture.isError ? <div className="px-6 pb-4"><ErrorCard what="the headers" error={posture.error} /></div>
+            : web.length ? <div className="divide-y">{web.map((f) => <FindingRow key={f.id} f={f} />)}</div>
+            : <p className="px-6 pb-4 text-sm text-muted-foreground">No header checks were made.</p>}
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
-// ─── OS Updates Tab ───────────────────────────────────────────────────────────
+// ─── OS updates ──────────────────────────────────────────────────────────────
 
 function OsUpdatesTab() {
-  const queryClient = useQueryClient();
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [jobRunning, setJobRunning] = useState(false);
-  const [jobLines, setJobLines] = useState<string[]>([]);
-  const [jobExitCode, setJobExitCode] = useState<number | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const outputRef = useRef<HTMLDivElement>(null);
-
-  const { data, isLoading, refetch } = useQuery({
-    queryKey: ['security-os-updates'],
-    queryFn: () => securityApi.getOsUpdates().then((r) => r.data?.data),
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['security-os-updates'], queryFn: () => data<OsUpdates>(securityApi.getOsUpdates()) });
+  const job = useQuery({
+    queryKey: ['security-os-update-job'], queryFn: () => data<UpdateJob>(securityApi.getOsUpdateStatus()),
+    refetchInterval: (query) => ((query.state.data as UpdateJob | undefined)?.running ? 1500 : false),
   });
-
-  const stopJobPolling = () => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-  };
-
-  const startJobPolling = () => {
-    stopJobPolling();
-    pollRef.current = setInterval(async () => {
-      const res = await securityApi.getOsUpdateStatus().catch(() => null);
-      const status = res?.data?.data;
-      if (!status) return;
-      setJobLines(status.lines ?? []);
-      if (!status.running) {
-        setJobRunning(false);
-        setJobExitCode(status.exitCode ?? null);
-        stopJobPolling();
-        queryClient.invalidateQueries({ queryKey: ['security-os-updates'] });
-        refetch();
-      }
-    }, 1500);
-  };
-
+  const [confirm, setConfirm] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const out = useRef<HTMLDivElement>(null);
+  const run = useMutation({ mutationFn: () => securityApi.runOsUpdate(), onSuccess: () => { setConfirm(false); job.refetch(); } });
+  const reread = useMutation({ mutationFn: () => data<OsUpdates>(securityApi.getOsUpdates(true)), onSuccess: (d) => qc.setQueryData(['security-os-updates'], d) });
+  const wasRunning = useRef(false);
   useEffect(() => {
-    if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
-  }, [jobLines]);
+    if (out.current) out.current.scrollTop = out.current.scrollHeight;
+    if (wasRunning.current && job.data && !job.data.running) { reread.mutate(); qc.invalidateQueries({ queryKey: ['security-posture'] }); }
+    wasRunning.current = !!job.data?.running;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job.data]);
 
-  useEffect(() => () => stopJobPolling(), []);
-
-  const runUpdateMutation = useMutation({
-    mutationFn: () => securityApi.runOsUpdate(),
-    onSuccess: () => {
-      setConfirmOpen(false);
-      setJobRunning(true);
-      setJobLines([]);
-      setJobExitCode(null);
-      startJobPolling();
-    },
-  });
-
-  if (isLoading) return <p className="text-sm text-muted-foreground">Loading OS updates…</p>;
-
-  const packages: Array<{ name: string; version: string }> = Array.isArray(data?.packages)
-    ? data.packages
-    : [];
-  const total = data?.total ?? 0;
-  const securityUpdates = data?.securityUpdates ?? 0;
+  if (q.isLoading) return <Loading what="pending updates" />;
+  if (q.isError || !q.data) return <ErrorCard what="pending updates" error={q.error} onRetry={() => q.refetch()} />;
+  const d = q.data;
+  const j = job.data;
+  const pkgs = showAll ? d.packages : d.packages.slice(0, 25);
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <StatusDot ok={total === 0} />
-            <span className="text-sm font-medium">
-              {total === 0 ? 'System up to date' : `${total} package${total !== 1 ? 's' : ''} upgradable`}
-            </span>
-          </div>
-          {securityUpdates > 0 && (
-            <Badge variant="destructive" className="text-xs">
-              {securityUpdates} security
-            </Badge>
-          )}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2" data-testid="os-updates-state" data-state={d.state}>
+          {d.state !== 'ok' ? <StatusChip status="unknown" />
+            : d.total === 0 ? <StatusChip status="pass" label="No updates pending" />
+            : <StatusChip status="fail" label={`${d.total} pending${d.security ? `, ${d.security} security` : ''}`} />}
+          {d.rebootRequired && <Chip className={CHIP.warn}>Restart pending</Chip>}
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => refetch()} disabled={jobRunning}>
-            <RefreshCw className="h-4 w-4" />
-          </Button>
-          {total > 0 && (
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={() => setConfirmOpen(true)}
-              disabled={jobRunning}
-            >
-              Run System Update
-            </Button>
-          )}
-        </div>
+        <Checked at={d.checkedAt} onRefresh={() => reread.mutate()} busy={reread.isPending || !!j?.running} />
       </div>
-
-      {/* Confirmation */}
-      {confirmOpen && !jobRunning && (
-        <Card className="border-destructive">
-          <CardContent className="py-4 space-y-3">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium">Are you sure you want to run system updates?</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  This will run <code className="bg-muted px-1 rounded">apt upgrade</code> on the
-                  server. Some services may restart. This cannot be undone.
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={() => runUpdateMutation.mutate()}
-                disabled={runUpdateMutation.isPending}
-                className="gap-2"
-              >
-                {runUpdateMutation.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
-                Yes, run updates
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setConfirmOpen(false)}>
-                Cancel
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Live output */}
-      {(jobRunning || jobLines.length > 0) && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              {jobRunning ? (
-                <><Loader2 className="h-4 w-4 animate-spin" /> Running system update…</>
-              ) : jobExitCode === 0 ? (
-                <><CheckCircle className="h-4 w-4 text-green-500" /> Update completed successfully</>
-              ) : (
-                <><XCircle className="h-4 w-4 text-destructive" /> Update finished (exit code {jobExitCode})</>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div
-              ref={outputRef}
-              className="bg-black text-green-400 font-mono text-xs rounded p-3 h-64 overflow-y-auto"
-            >
-              {jobLines.length === 0 ? (
-                <span className="text-green-600">Starting…</span>
-              ) : (
-                jobLines.map((line, i) => <div key={i}>{line}</div>)
-              )}
-              {jobRunning && <span className="animate-pulse">▋</span>}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {packages.length > 0 && !jobRunning && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">
-              Upgradable Packages (showing {Math.min(packages.length, 20)} of {total})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="divide-y">
-              {packages.slice(0, 20).map((pkg) => (
-                <div key={pkg.name} className="py-2 flex items-center justify-between">
-                  <span className="text-sm font-mono">{pkg.name}</span>
-                  <span className="text-xs text-muted-foreground">{pkg.version}</span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  );
-}
-
-// ─── Code Audit Tab ───────────────────────────────────────────────────────────
-
-interface AuditPackage {
-  label: string;
-  total: number;
-  summary: string;
-  vulnerabilities: Array<{ severity: string; title?: string }>;
-}
-
-interface StaticIssue { file: string; line: number; rule: string; severity: string; message: string; }
-
-// Fix guidance for known ESLint security rules
-const ESLINT_FIX_GUIDANCE: Record<string, string> = {
-  'security/detect-non-literal-fs-filename': 'Validate or whitelist the filename value before passing to fs methods. Avoid user-controlled paths.',
-  'security/detect-non-literal-regexp': 'Use a literal regex or validate the pattern string before passing to new RegExp().',
-  'security/detect-unsafe-regex': 'Rewrite the regex to avoid catastrophic backtracking. Use tools like safe-regex or recheck.',
-  'security/detect-eval-with-expression': 'Replace eval() with safer alternatives — JSON.parse for data, or Function constructor is still risky. Avoid dynamic code evaluation.',
-  'security/detect-new-buffer': 'Replace new Buffer() with Buffer.alloc() or Buffer.from() to avoid uninitialized memory.',
-  'security/detect-no-csrf-before-method-override': 'Ensure CSRF middleware runs before method-override middleware.',
-  'security/detect-possible-timing-attacks': 'Use a constant-time comparison function like crypto.timingSafeEqual() instead of === for secrets.',
-  'security/detect-child-process': 'Sanitize all arguments before passing to child_process. Avoid passing user input directly.',
-  'security/detect-object-injection': "Validate the key before using obj[key] — check it's in a known set with Object.prototype.hasOwnProperty or a Map.",
-  'security/detect-pseudoRandomBytes': 'Replace Math.random() or pseudoRandomBytes with crypto.randomBytes() for security-sensitive randomness.',
-  'security/detect-disable-mustache-escape': 'Do not disable Mustache escaping — this prevents XSS.',
-  'security/detect-buffer-noassert': 'Remove the noAssert parameter from Buffer read operations.',
-};
-
-// Fix guidance for known semgrep rules
-const SEMGREP_FIX_GUIDANCE: Record<string, string> = {
-  'no-eval': 'Remove eval(). Parse JSON with JSON.parse(), execute known operations via a whitelist, or restructure the code.',
-  'no-new-function': 'Replace new Function() with a proper function definition or a safe expression evaluator.',
-  'child-process-exec-dynamic': 'Use execFile() with an argument array instead of exec() with a string, or sanitize all inputs strictly.',
-  'hardcoded-password': 'Move the credential to an environment variable or a secrets manager. Never commit credentials.',
-  'hardcoded-secret': 'Move the secret to an environment variable or secrets manager (e.g. HashiCorp Vault, AWS Secrets Manager).',
-  'weak-crypto-md5': 'Replace MD5 with SHA-256 or better (crypto.createHash("sha256")). MD5 is broken for security use.',
-  'weak-crypto-sha1': 'Replace SHA-1 with SHA-256 or better. SHA-1 is deprecated for security use.',
-  'no-disable-tls-validation': 'Remove rejectUnauthorized: false. Fix the certificate instead of disabling validation.',
-  'prototype-pollution': 'Validate that user-supplied keys are not __proto__, constructor, or prototype before assigning.',
-  'regex-dos': 'Rewrite the regex to avoid nested quantifiers on overlapping patterns. Use a linear-time regex engine or input length limits.',
-};
-
-// Legal citations for security rules — mapped to regulation references
-const RULE_LEGAL_CITATIONS: Record<string, string[]> = {
-  // Credential / secret exposure
-  'hardcoded-password': [
-    'GDPR Art. 32 — obligation to implement appropriate technical measures to protect personal data',
-    'CCPA §1798.150 — private right of action for exposure of personal information',
-    'HIPAA §164.312(a)(2)(i) — unique user identification; §164.312(d) — authentication safeguards',
-    'NY SHIELD Act (N.Y. Gen. Bus. Law §899-bb) — reasonable safeguards for private information',
-    'TX Bus. & Com. Code §521.052 — requirement to implement reasonable security procedures',
-    'PCI DSS Req. 8.2 — proper identification and authentication of all system components',
-  ],
-  'hardcoded-secret': [
-    'GDPR Art. 32 — obligation to implement appropriate technical measures to protect personal data',
-    'CCPA §1798.150 — private right of action for exposure of personal information',
-    'HIPAA §164.312(a)(2)(i) — unique user identification requirements',
-    'NY SHIELD Act (N.Y. Gen. Bus. Law §899-bb) — reasonable safeguards for private information',
-    'TX Bus. & Com. Code §521.052 — requirement to implement reasonable security procedures',
-    'PCI DSS Req. 8.2.1 — passwords/passphrases must not be embedded in application source',
-    'NIST SP 800-53 IA-5(7) — no embedded unencrypted static authenticators',
-  ],
-
-  // Cryptographic weaknesses
-  'weak-crypto-md5': [
-    'HIPAA §164.312(e)(2)(ii) — encryption and decryption must use NIST-approved algorithms',
-    'PCI DSS Req. 4.2.1 — strong cryptography required; MD5 is explicitly prohibited',
-    'NIST SP 800-131A Rev. 2 — MD5 disallowed for all security applications',
-    'GDPR Art. 32 — pseudonymisation and encryption of personal data using appropriate measures',
-    'FTC Act §5 — unfair or deceptive practices; use of broken crypto may constitute negligence',
-  ],
-  'weak-crypto-sha1': [
-    'HIPAA §164.312(e)(2)(ii) — NIST-approved algorithms required for PHI encryption',
-    'PCI DSS Req. 4.2.1 — strong cryptography only; SHA-1 deprecated for digital signatures',
-    'NIST SP 800-131A Rev. 2 — SHA-1 disallowed for digital signatures after 2013',
-    'GDPR Art. 32 — encryption must be appropriate to risk; deprecated algorithms are not',
-    'CA SB 327 — reasonable security for connected devices; weak crypto fails this standard',
-  ],
-
-  // Injection / code execution
-  'no-eval': [
-    'OWASP Top 10 A03 — Injection: eval with user data is a primary injection vector',
-    'GDPR Art. 32 — security of processing; code injection can lead to data breach',
-    'CCPA §1798.150 — private right of action where breach results from security failures',
-    'FTC Act §5 — failure to protect against known vulnerability classes (eval injection)',
-    'NY SHIELD Act — reasonable safeguards must address known attack vectors',
-  ],
-  'no-new-function': [
-    'OWASP Top 10 A03 — Injection; new Function() is equivalent to eval()',
-    'GDPR Art. 32 — obligation to prevent unauthorised data processing',
-    'FTC Act §5 — unfair practice where known vulnerability class causes consumer harm',
-  ],
-  'child-process-exec-dynamic': [
-    'OWASP Top 10 A03 — Injection (OS Command Injection)',
-    'GDPR Art. 32 — security of processing; command injection can cause full system compromise',
-    'HIPAA §164.312(a)(1) — access control; OS injection bypasses all access controls',
-    'PCI DSS Req. 6.2.4 — prevent common software attacks including OS command injection',
-    'NY SHIELD Act — reasonable safeguards include protection against injection attacks',
-    'FTC Act §5 — failure to guard against well-known vulnerability class',
-  ],
-  'security/detect-child-process': [
-    'OWASP Top 10 A03 — Injection (OS Command Injection)',
-    'GDPR Art. 32 — security of processing obligations',
-    'PCI DSS Req. 6.2.4 — prevent common software attacks including OS command injection',
-    'FTC Act §5 — failure to guard against well-known vulnerability class',
-  ],
-  'security/detect-eval-with-expression': [
-    'OWASP Top 10 A03 — Injection',
-    'GDPR Art. 32 — security of processing; eval injection can expose personal data',
-    'FTC Act §5 — unfair or deceptive practices via known security failures',
-  ],
-
-  // Timing attacks / authentication
-  'security/detect-possible-timing-attacks': [
-    'GDPR Art. 32 — ongoing confidentiality of processing systems',
-    'HIPAA §164.312(d) — authentication; timing attacks can bypass authentication',
-    'PCI DSS Req. 8.3.6 — authentication mechanisms must be resistant to attack',
-    'NIST SP 800-63B §5.2.3 — verifiers shall use approved cryptographic algorithms resistant to timing attacks',
-  ],
-
-  // Memory / buffer issues
-  'security/detect-new-buffer': [
-    'GDPR Art. 32 — preventing unauthorised disclosure through memory safety issues',
-    'PCI DSS Req. 6.2.4 — protect against memory-related vulnerabilities',
-    'FTC Act §5 — failure to use safe language constructs where alternatives exist',
-  ],
-  'security/detect-buffer-noassert': [
-    'PCI DSS Req. 6.2.4 — protect against memory-related vulnerabilities',
-    'GDPR Art. 32 — integrity and confidentiality of processing',
-  ],
-
-  // Denial of service
-  'regex-dos': [
-    'GDPR Art. 32 — ensuring ongoing availability of processing systems',
-    'HIPAA §164.312(a)(2)(ii) — emergency access and availability procedures',
-    'PCI DSS Req. 6.2.4 — protect against denial of service attacks',
-    'SLA / Uptime commitments — ReDoS can cause full service outage',
-  ],
-  'security/detect-unsafe-regex': [
-    'GDPR Art. 32 — ensuring availability and resilience of processing systems',
-    'PCI DSS Req. 6.2.4 — protect against denial of service via input attacks',
-  ],
-
-  // Path traversal / file access
-  'security/detect-non-literal-fs-filename': [
-    'OWASP Top 10 A01 — Broken Access Control (path traversal)',
-    'GDPR Art. 32 — prevent unauthorised access to personal data stored on filesystem',
-    'HIPAA §164.312(a)(1) — access control safeguards for electronic PHI',
-    'PCI DSS Req. 6.2.4 — protect against path traversal attacks',
-    'NY SHIELD Act — reasonable safeguards include input validation to prevent directory traversal',
-  ],
-
-  // Injection / object safety
-  'prototype-pollution': [
-    'OWASP Top 10 A03 — Injection; prototype pollution can lead to RCE',
-    'GDPR Art. 32 — security of processing; prototype pollution can bypass access controls',
-    'PCI DSS Req. 6.2.4 — prevent common software attacks',
-    'FTC Act §5 — known vulnerability class with demonstrated real-world exploits',
-  ],
-  'security/detect-object-injection': [
-    'OWASP Top 10 A03 — Injection',
-    'GDPR Art. 32 — integrity and confidentiality of processing',
-    'PCI DSS Req. 6.2.4 — prevent common software attacks',
-  ],
-
-  // Randomness
-  'security/detect-pseudoRandomBytes': [
-    'GDPR Art. 32 — pseudonymisation must use cryptographically secure methods',
-    'PCI DSS Req. 3.7 — cryptographic key management must use approved RNG',
-    'NIST SP 800-90A — deterministic random bit generators must meet NIST standards',
-    'HIPAA §164.312(a)(2)(iv) — encryption/decryption requires secure key generation',
-  ],
-
-  // XSS / template injection
-  'security/detect-disable-mustache-escape': [
-    'OWASP Top 10 A03 — Injection (XSS)',
-    'GDPR Art. 32 — preventing data theft through client-side injection attacks',
-    'CCPA §1798.150 — XSS can expose personal information triggering private right of action',
-    'PCI DSS Req. 6.2.4 — protect against XSS attacks',
-  ],
-
-  // TLS / network
-  'no-disable-tls-validation': [
-    'PCI DSS Req. 4.2.1 — strong cryptography required for data in transit; disabling TLS validation nullifies encryption',
-    'GDPR Art. 32 — encryption in transit; certificate validation is mandatory for meaningful encryption',
-    'HIPAA §164.312(e)(2)(ii) — encryption of ePHI in transit',
-    'NY SHIELD Act — reasonable safeguards include encrypted transmission with valid certificate verification',
-    'FTC Act §5 — disabling TLS validation is an unfair practice under FTC enforcement precedent',
-  ],
-
-  // CSRF
-  'security/detect-no-csrf-before-method-override': [
-    'OWASP Top 10 A01 — Broken Access Control (CSRF)',
-    'GDPR Art. 32 — security of processing; CSRF can trigger unauthorised data modifications',
-    'PCI DSS Req. 6.2.4 — protect against CSRF attacks',
-    'FTC Act §5 — known vulnerability class with consumer harm potential',
-  ],
-
-  // Regex
-  'security/detect-non-literal-regexp': [
-    'OWASP Top 10 A03 — Injection (ReDoS / regex injection)',
-    'GDPR Art. 32 — availability of processing systems',
-    'PCI DSS Req. 6.2.4 — protect against input-based attacks',
-  ],
-};
-
-function LegalCitations({ rule }: { rule: string }) {
-  const [open, setOpen] = useState(false);
-  const citations = RULE_LEGAL_CITATIONS[rule];
-  if (!citations?.length) return null;
-  return (
-    <div className="mt-1">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="text-xs text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1"
-      >
-        {open ? '▾' : '▸'} Regulatory exposure
-      </button>
-      {open && (
-        <ul className="mt-1 space-y-0.5 bg-amber-50 dark:bg-amber-950/30 rounded p-2 border-l-2 border-amber-400/50">
-          {citations.map((c, i) => (
-            <li key={i} className="text-xs text-muted-foreground list-none">
-              · {c}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function RemediationGuidance({ rule, type }: { rule: string; type: 'eslint' | 'semgrep' }) {
-  const [open, setOpen] = useState(false);
-  const guidance = type === 'eslint' ? ESLINT_FIX_GUIDANCE[rule] : SEMGREP_FIX_GUIDANCE[rule];
-  if (!guidance) return null;
-  return (
-    <div className="mt-1">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="text-xs text-primary hover:underline flex items-center gap-1"
-      >
-        {open ? '▾' : '▸'} How to fix
-      </button>
-      {open && (
-        <p className="mt-1 text-xs text-muted-foreground bg-muted/50 rounded p-2 border-l-2 border-primary/30">
-          {guidance}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function StaticIssueTableWithGuidance({ issues, type }: { issues: StaticIssue[]; type: 'eslint' | 'semgrep' }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="border-b">
-            <th className="text-left py-2 pr-3 font-medium text-muted-foreground">File</th>
-            <th className="text-left py-2 pr-3 font-medium text-muted-foreground">Rule</th>
-            <th className="text-left py-2 pr-3 font-medium text-muted-foreground">Severity</th>
-            <th className="text-left py-2 font-medium text-muted-foreground">Message</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y">
-          {issues.map((issue, i) => (
-            <tr key={i} className="align-top">
-              <td className="py-2 pr-3 font-mono text-muted-foreground whitespace-nowrap">
-                {issue.file}{issue.line ? `:${issue.line}` : ''}
-              </td>
-              <td className="py-2 pr-3">
-                <div className="font-mono">{issue.rule}</div>
-                <RemediationGuidance rule={issue.rule} type={type} />
-                <LegalCitations rule={issue.rule} />
-              </td>
-              <td className="py-2 pr-3"><SeverityBadge level={issue.severity} /></td>
-              <td className="py-2 text-muted-foreground">{issue.message}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function CodeAuditTab() {
-  const queryClient = useQueryClient();
-  const [fixOutput, setFixOutput] = useState<string | null>(null);
-  const [showForceWarning, setShowForceWarning] = useState(false);
-
-  const { data, isLoading, refetch } = useQuery({
-    queryKey: ['security-audit'],
-    queryFn: () => securityApi.runAudit().then((r) => r.data?.data),
-    staleTime: 900_000, // 15 min — audit is expensive, don't re-run on every tab visit
-  });
-
-  const runMutation = useMutation({
-    mutationFn: () => securityApi.runAudit(),
-    onSuccess: (res) => {
-      queryClient.setQueryData(['security-audit'], res.data?.data);
-    },
-  });
-
-  const fixMutation = useMutation({
-    mutationFn: (force: boolean) => securityApi.runAuditFix(force),
-    onSuccess: (res) => {
-      setFixOutput(res.data?.data?.output ?? '');
-      setShowForceWarning(false);
-      runMutation.mutate(); // re-run audit after fix
-    },
-  });
-
-  const packages: AuditPackage[] = Array.isArray(data?.packages) ? data.packages : [];
-  const outdated: string[] = Array.isArray(data?.outdated) ? data.outdated : [];
-  const eslintIssues: StaticIssue[] = Array.isArray(data?.eslint?.issues) ? data.eslint.issues : [];
-  const semgrepIssues: StaticIssue[] = Array.isArray(data?.semgrep?.issues) ? data.semgrep.issues : [];
-
-  const severityCounts: Record<string, number> = {};
-  packages.forEach((pkg) => {
-    if (Array.isArray(pkg.vulnerabilities)) {
-      pkg.vulnerabilities.forEach((v) => {
-        const sev = (v.severity ?? 'unknown').toLowerCase();
-        severityCounts[sev] = (severityCounts[sev] ?? 0) + 1;
-      });
-    }
-  });
-
-  const severityOrder = ['critical', 'high', 'moderate', 'low', 'info'];
-
-  return (
-    <div className="space-y-4">
-      {/* What this runs */}
+      {d.reason && <p className="text-sm text-muted-foreground break-words">{d.reason}</p>}
       <Card>
-        <CardContent className="pt-4 pb-4 space-y-2">
-          <p className="text-sm font-medium">Three tools run in parallel:</p>
-          <div className="space-y-1.5">
-            <div className="flex items-start gap-2">
-              <code className="text-xs bg-muted px-2 py-1 rounded font-mono shrink-0">npm audit</code>
-              <span className="text-xs text-muted-foreground">Checks installed packages against the npm CVE advisory database</span>
-            </div>
-            <div className="flex items-start gap-2">
-              <code className="text-xs bg-muted px-2 py-1 rounded font-mono shrink-0">eslint-plugin-security</code>
-              <span className="text-xs text-muted-foreground">Static analysis of source code — detects unsafe regex, non-literal fs paths, eval, timing attacks, and more</span>
-            </div>
-            <div className="flex items-start gap-2">
-              <code className="text-xs bg-muted px-2 py-1 rounded font-mono shrink-0">semgrep</code>
-              <span className="text-xs text-muted-foreground">Pattern-based source code scanning — detects hardcoded secrets, weak crypto, command injection, prototype pollution, and ReDoS</span>
-            </div>
-          </div>
+        <CardContent className="grid grid-cols-1 gap-2 py-4 text-xs sm:grid-cols-2">
+          <p><span className="text-muted-foreground">Package lists last refreshed:</span> {when(d.listsUpdatedAt)}</p>
+          <p><span className="text-muted-foreground">Running kernel:</span> <span className="font-mono">{d.kernel}</span></p>
+          <p><span className="text-muted-foreground">Unattended upgrades:</span>{' '}
+            {d.unattended.configured === null || d.unattended.serviceActive === null ? 'unknown'
+              : d.unattended.configured.unattended && d.unattended.serviceActive ? 'on' : 'off'}
+          </p>
+          <p><span className="text-muted-foreground">Restart pending for:</span> {d.rebootRequired ? (d.rebootPackages.join(', ') || 'unspecified packages') : 'nothing'}</p>
         </CardContent>
       </Card>
 
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-muted-foreground">
-          {data?.scannedAt
-            ? `Last scanned: ${new Date(data.scannedAt as string).toLocaleString()}`
-            : 'Not yet scanned'}
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => { runMutation.mutate(); refetch(); }}
-          disabled={isLoading || runMutation.isPending}
-          className="gap-2"
-        >
-          {(isLoading || runMutation.isPending) && <Loader2 className="h-3 w-3 animate-spin" />}
-          Run Audit
-        </Button>
-      </div>
-
-      {/* npm audit — severity summary */}
-      {Object.keys(severityCounts).length > 0 && (
-        <Card>
-          <CardHeader><CardTitle className="text-sm">npm audit — Vulnerability Summary</CardTitle></CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap gap-3">
-              {severityOrder.filter((s) => severityCounts[s]).map((sev) => (
-                <div key={sev} className="flex items-center gap-2">
-                  <SeverityBadge level={sev} />
-                  <span className="text-sm font-semibold">{severityCounts[sev]}</span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+      {!j?.running && d.state === 'ok' && (d.total ?? 0) > 0 && !confirm && (
+        <Button variant="destructive" size="sm" onClick={() => setConfirm(true)} data-testid="run-os-update">Run apt-get update and upgrade</Button>
       )}
-
-      {/* npm audit — affected packages + remediation */}
-      {packages.length > 0 && (
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm">npm audit — Affected Packages ({packages.length})</CardTitle>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs gap-1"
-                  onClick={() => fixMutation.mutate(false)}
-                  disabled={fixMutation.isPending}
-                >
-                  {fixMutation.isPending && !showForceWarning && <Loader2 className="h-3 w-3 animate-spin" />}
-                  npm audit fix
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
-                  onClick={() => setShowForceWarning(true)}
-                  disabled={fixMutation.isPending}
-                >
-                  npm audit fix --force
-                </Button>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {showForceWarning && (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm space-y-2">
-                <p className="font-medium text-destructive">Warning: --force may introduce breaking changes</p>
-                <p className="text-xs text-muted-foreground">This will install the latest semver-major updates which may break compatibility. Only use if you understand the impact.</p>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={() => fixMutation.mutate(true)} disabled={fixMutation.isPending}>
-                    {fixMutation.isPending && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
-                    Run --force anyway
-                  </Button>
-                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowForceWarning(false)}>Cancel</Button>
-                </div>
-              </div>
-            )}
-            {fixOutput !== null && (
-              <div className="rounded-md bg-muted p-3">
-                <p className="text-xs font-medium mb-1">Fix output:</p>
-                <pre className="text-xs text-muted-foreground whitespace-pre-wrap max-h-48 overflow-y-auto">{fixOutput || '(no output)'}</pre>
-              </div>
-            )}
-            <div className="divide-y">
-              {packages.map((pkg) => (
-                <div key={pkg.label} className="py-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-mono font-medium truncate">{pkg.label}</p>
-                      {pkg.summary && <p className="text-xs text-muted-foreground mt-0.5">{pkg.summary}</p>}
-                    </div>
-                    <span className="text-xs text-muted-foreground shrink-0">{pkg.total} issue{pkg.total !== 1 ? 's' : ''}</span>
-                  </div>
-                  {Array.isArray(pkg.vulnerabilities) && pkg.vulnerabilities.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {pkg.vulnerabilities.map((v, i) => (
-                        <div key={i} className="flex items-center gap-1">
-                          <SeverityBadge level={v.severity ?? 'unknown'} />
-                          {v.title && <span className="text-xs text-muted-foreground">{v.title}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Outdated packages */}
-      {outdated.length > 0 && (
-        <Card>
-          <CardHeader><CardTitle className="text-sm">npm outdated — {outdated.length} package{outdated.length !== 1 ? 's' : ''} behind</CardTitle></CardHeader>
-          <CardContent>
+      {confirm && !j?.running && (
+        <Card className="border-destructive">
+          <CardContent className="space-y-3 py-4">
+            <p className="text-sm font-medium">Upgrade this server now?</p>
+            <p className="text-xs text-muted-foreground">
+              Runs <code className="font-mono">apt-get update</code>, then <code className="font-mono">apt-get upgrade -y</code> keeping existing
+              configuration files. Services may restart; a new kernel needs a server restart afterwards. It is audited and may ask you to confirm it is you.
+            </p>
             <div className="flex flex-wrap gap-2">
-              {outdated.map((pkg) => (
-                <span key={pkg} className="text-xs font-mono bg-muted px-2 py-1 rounded">{pkg}</span>
-              ))}
+              <Button size="sm" variant="destructive" onClick={() => run.mutate()} disabled={run.isPending}>{run.isPending && <Loader2 className="mr-2 h-3 w-3 animate-spin" aria-hidden />}Upgrade</Button>
+              <Button size="sm" variant="outline" onClick={() => setConfirm(false)}>Cancel</Button>
+            </div>
+            <Mutation m={run} />
+          </CardContent>
+        </Card>
+      )}
+      {j && (j.running || j.lines.length > 0) && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              {j.running ? <><Loader2 className="h-4 w-4 animate-spin" aria-hidden />Running {j.phase}…</>
+                : j.exitCode === 0 ? <><CheckCircle2 className="h-4 w-4 text-green-600" aria-hidden />Finished {when(j.finishedAt)}</>
+                : <><XCircle className="h-4 w-4 text-destructive" aria-hidden />{j.phase} failed (exit {j.exitCode})</>}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div ref={out} className="h-64 overflow-y-auto rounded bg-slate-950 p-3 font-mono text-xs text-slate-100">
+              {j.lines.map((l, i) => <div key={i} className="whitespace-pre-wrap break-all">{l}</div>)}
             </div>
           </CardContent>
         </Card>
       )}
-
-      {/* ESLint results */}
-      {data?.eslint && (
+      {d.packages.length > 0 && (
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center gap-2">
-              eslint-plugin-security
-              {eslintIssues.length > 0
-                ? <span className="text-xs font-normal text-muted-foreground">— {eslintIssues.length} issue{eslintIssues.length !== 1 ? 's' : ''}</span>
-                : data?.eslint?.error
-                ? <span className="text-xs font-normal text-destructive">— {data.eslint.error as string}</span>
-                : <span className="text-xs font-normal text-green-600 dark:text-green-400">— no issues</span>
-              }
-            </CardTitle>
-          </CardHeader>
-          {eslintIssues.length > 0 && (
-            <CardContent>
-              <StaticIssueTableWithGuidance issues={eslintIssues} type="eslint" />
-            </CardContent>
-          )}
-        </Card>
-      )}
-
-      {/* Semgrep results */}
-      {data?.semgrep && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center gap-2">
-              semgrep
-              {semgrepIssues.length > 0
-                ? <span className="text-xs font-normal text-muted-foreground">— {semgrepIssues.length} issue{semgrepIssues.length !== 1 ? 's' : ''}</span>
-                : data?.semgrep?.error
-                ? <span className="text-xs font-normal text-destructive">— {data.semgrep.error as string}</span>
-                : <span className="text-xs font-normal text-green-600 dark:text-green-400">— no issues</span>
-              }
-            </CardTitle>
-          </CardHeader>
-          {semgrepIssues.length > 0 && (
-            <CardContent>
-              <StaticIssueTableWithGuidance issues={semgrepIssues} type="semgrep" />
-            </CardContent>
-          )}
-        </Card>
-      )}
-
-      {!data && !isLoading && (
-        <Card>
-          <CardContent className="py-8 text-center text-sm text-muted-foreground">
-            Click &quot;Run Audit&quot; to scan for vulnerabilities.
+          <CardHeader><CardTitle className="text-sm">Upgradable packages ({d.total})</CardTitle></CardHeader>
+          <CardContent>
+            <ul className="divide-y">
+              {pkgs.map((p) => (
+                <li key={p.name} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <span className="flex items-center gap-2 font-mono text-sm break-all">{p.name}{p.security && <Chip className={CHIP.bad}>security</Chip>}</span>
+                  <span className="text-xs text-muted-foreground break-all">{p.from ? `${p.from} → ` : ''}{p.version}</span>
+                </li>
+              ))}
+            </ul>
+            {d.packages.length > 25 && <Button variant="link" size="sm" className="px-0" onClick={() => setShowAll(!showAll)}>{showAll ? 'Show fewer' : `Show all ${d.packages.length}`}</Button>}
           </CardContent>
         </Card>
       )}
@@ -1619,54 +629,103 @@ function CodeAuditTab() {
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+// ─── Dependencies ────────────────────────────────────────────────────────────
+
+const SEV_ORDER = ['critical', 'high', 'moderate', 'low', 'info'] as const;
+
+function DependenciesTab() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['security-deps'], queryFn: () => data<DepAudit>(securityApi.getDependencyAudit()), staleTime: 900_000 });
+  const rescan = useMutation({ mutationFn: () => data<DepAudit>(securityApi.getDependencyAudit(true)), onSuccess: (d) => { qc.setQueryData(['security-deps'], d); qc.invalidateQueries({ queryKey: ['security-posture'] }); } });
+  const sevChip = (s: string) => (s === 'critical' || s === 'high' ? CHIP.bad : s === 'moderate' ? CHIP.warn : CHIP.off);
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="space-y-2 py-4 text-xs text-muted-foreground">
+          <p>
+            <span className="font-medium text-foreground">npm audit</span> of the API&apos;s production dependencies: the manifest and lock the
+            server installs from. Fixing one is a dependency bump in the repository and a deploy with the manifest regenerated, never
+            <code className="mx-1 font-mono">npm audit fix</code> on the server, which would change production&apos;s libraries outside that manifest.
+          </p>
+          <p>
+            Source scanning (ESLint and the security invariants) runs in CI on every push, against the source. Earlier versions ran ESLint
+            and semgrep here: on the server ESLint linted nothing and semgrep could not start, and both were shown as &quot;no issues&quot;.
+          </p>
+        </CardContent>
+      </Card>
+      {q.isLoading ? <Loading what="the dependency audit (up to a minute)" /> : q.isError || !q.data ? <ErrorCard what="the dependency audit" error={q.error} onRetry={() => q.refetch()} /> : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2" data-testid="deps-state" data-state={q.data.state}>
+            <div className="flex flex-wrap items-center gap-2">
+              {q.data.state !== 'ok' || !q.data.audit ? <StatusChip status="unknown" />
+                : q.data.audit.counts.critical + q.data.audit.counts.high > 0 ? <StatusChip status="fail" label={`${q.data.audit.counts.critical + q.data.audit.counts.high} critical or high`} />
+                : <StatusChip status="pass" label="No critical or high advisories" />}
+              <span className="text-xs text-muted-foreground break-all">{q.data.scope}</span>
+            </div>
+            <Checked at={q.data.scannedAt} onRefresh={() => rescan.mutate()} busy={rescan.isPending} />
+          </div>
+          {q.data.reason && <p className="text-sm text-muted-foreground break-words">{q.data.reason}</p>}
+          {q.data.audit && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+                  {SEV_ORDER.map((s) => <Chip key={s} className={sevChip(s)}>{s}: {q.data!.audit!.counts[s]}</Chip>)}
+                  <span className="text-xs font-normal text-muted-foreground">over {q.data.audit.dependencies ?? '?'} packages</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {q.data.audit.packages.length ? (
+                  <ul className="divide-y">
+                    {q.data.audit.packages.map((p) => (
+                      <li key={p.name} className="space-y-1 py-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Chip className={sevChip(p.severity)}>{p.severity}</Chip>
+                          <span className="font-mono text-sm break-all">{p.name}</span>
+                          <span className="text-xs text-muted-foreground">{p.direct ? 'direct' : 'transitive'}{p.fixAvailable ? ' · fix available' : ''}</span>
+                        </div>
+                        {p.titles.map((t) => <p key={t} className="text-xs text-muted-foreground">{t}</p>)}
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="text-sm text-muted-foreground">No advisories.</p>}
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Page ────────────────────────────────────────────────────────────────────
+
+const TABS = [
+  ['overview', 'Overview', ShieldCheck], ['access-rules', 'Access rules', Lock], ['fail2ban', 'fail2ban', ShieldAlert],
+  ['tls', 'TLS & web', Lock], ['os-updates', 'OS updates', Package], ['dependencies', 'Dependencies', Package], ['features', 'Security features', ShieldCheck],
+] as const;
 
 export default function SecurityPage() {
+  const [tab, setTab] = useState<string>('overview');
+  useEffect(() => {
+    try { const h = window.location.hash.slice(1); if (TABS.some(([v]) => v === h)) setTab(h); } catch { /* ignore */ }
+  }, []);
+  const change = (v: string) => { setTab(v); try { window.history.replaceState(null, '', `#${v}`); } catch { /* ignore */ } };
+  const tabs = useMemo(() => TABS, []);
   return (
-    <div className="p-6 space-y-6 max-w-5xl">
-      <PageHeader
-        title="Security"
-        description="Access rules, brute-force protection, TLS certificates, and vulnerability management"
-      />
-
-      <Tabs defaultValue="overview">
-        <TabsList className="mb-4 h-auto flex-wrap">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="access-rules">Access Rules</TabsTrigger>
-          <TabsTrigger value="fail2ban">fail2ban</TabsTrigger>
-          <TabsTrigger value="tls">TLS / Certs</TabsTrigger>
-          <TabsTrigger value="os-updates">OS Updates</TabsTrigger>
-          <TabsTrigger value="code-audit">Code Audit</TabsTrigger>
-          <TabsTrigger value="features">Security features</TabsTrigger>
+    <div className="max-w-5xl space-y-6 p-4 sm:p-6">
+      <PageHeader title="Security" description="This server's security posture: SSH, firewall, updates, fail2ban, certificates and headers, sign-in lockout, and Rem0te's own safeguards." />
+      <Tabs value={tab} onValueChange={change}>
+        <TabsList className="mb-4 h-auto flex-wrap justify-start">
+          {tabs.map(([v, label]) => <TabsTrigger key={v} value={v} data-testid={`security-tab-${v}`}>{label}</TabsTrigger>)}
         </TabsList>
-
-        <TabsContent value="overview">
-          <OverviewTab />
-        </TabsContent>
-
-        <TabsContent value="access-rules">
-          <AccessRulesTab />
-        </TabsContent>
-
-        <TabsContent value="fail2ban">
-          <Fail2banTab />
-        </TabsContent>
-
-        <TabsContent value="tls">
-          <TlsTab />
-        </TabsContent>
-
-        <TabsContent value="os-updates">
-          <OsUpdatesTab />
-        </TabsContent>
-
-        <TabsContent value="code-audit">
-          <CodeAuditTab />
-        </TabsContent>
-
-        <TabsContent value="features">
-          <SecurityFeaturesTab />
-        </TabsContent>
+        <TabsContent value="overview"><OverviewTab /></TabsContent>
+        <TabsContent value="access-rules"><AccessRulesTab /></TabsContent>
+        <TabsContent value="fail2ban"><Fail2banTab /></TabsContent>
+        <TabsContent value="tls"><TlsTab /></TabsContent>
+        <TabsContent value="os-updates"><OsUpdatesTab /></TabsContent>
+        <TabsContent value="dependencies"><DependenciesTab /></TabsContent>
+        <TabsContent value="features"><SecurityFeaturesTab /></TabsContent>
       </Tabs>
     </div>
   );
