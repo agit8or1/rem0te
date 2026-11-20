@@ -2543,7 +2543,13 @@ async function diagnosticsPaletteUi(page, f, vp, theme, label) {
       await page.waitForFunction(() => !!document.querySelector('[data-run-params]'), null, { timeout: 10_000 }).catch(() => {});
       await tcp.locator('button[data-diag-run]').click();
       await settled(page, 10_000);
-      const mine = await prisma.diagnosticRun.findMany({ where: { endpointId: ep.id, requestedAt: { gte: since } }, orderBy: { requestedAt: 'asc' } });
+      // The second POST can still be in flight when the page settles: wait for both rows.
+      let mine = [];
+      for (let i = 0; i < 40; i++) {
+        mine = await prisma.diagnosticRun.findMany({ where: { endpointId: ep.id, requestedAt: { gte: since } }, orderBy: { requestedAt: 'asc' } });
+        if (mine.some((r) => r.key === 'dns_lookup') && mine.some((r) => r.key === 'tcp_port')) break;
+        await new Promise((res) => setTimeout(res, 250));
+      }
       const pd = mine.find((r) => r.key === 'dns_lookup')?.params;
       const pt = mine.find((r) => r.key === 'tcp_port')?.params;
       check(JSON.stringify(pd) === JSON.stringify({ name: 'intranet.example.com' }), `${label}: DNS lookup was requested with exactly {name}`, JSON.stringify(pd));

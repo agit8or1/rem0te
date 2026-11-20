@@ -364,7 +364,7 @@ function Get-NetRoute { param($ErrorAction) @(
 function Get-ItemProperty { param($LiteralPath, $ErrorAction) [pscustomobject]@{ Type = 'NTP'; NtpServer = 'time.windows.com,0x9' } }
 function Test-Path { param($LiteralPath, $Path, $PathType) return $true }
 # pwsh off Windows has no System32 ([Environment]::SystemDirectory is empty): hand back the bare name, which the w32tm.exe stub answers.
-function Join-Path { param($Path, $ChildPath) if ($ChildPath -eq 'w32tm.exe') { return 'w32tm.exe' } Microsoft.PowerShell.Management\Join-Path -Path $Path -ChildPath $ChildPath }
+function Join-Path { param($Path, $ChildPath) if ($ChildPath -eq 'w32tm.exe') { return 'w32tm.exe' } Microsoft.PowerShell.Management\\Join-Path -Path $Path -ChildPath $ChildPath }
 function Get-WinEvent { param($FilterHashtable, $MaxEvents, $ErrorAction)
   Add-Content -LiteralPath '${join(dir, 'filters.txt')}' -Value ($FilterHashtable | ConvertTo-Json -Compress -Depth 4)
   ${world === 'desktop' ? `return @(
@@ -412,7 +412,7 @@ ${blk}
     return results;
   };
   // Run the worlds one after the other (each spawns pwsh per batch); srv answers meanwhile.
-  const desk = await new Promise((r) => setImmediate(() => r(runWorld('desktop'))));
+  const desk = runWorld('desktop');
   const serv = runWorld('server');
   srv.close();
   const res = (R, k) => (R[`pal${PALETTE.indexOf(k)}aaaaaaaaaaaaaaaaaaaa`] ?? []).find((b) => b.state === 'completed')?.result ?? null;
