@@ -5,6 +5,88 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.73.2] — 2026-11-20 · *Warden*
+
+**Documentation only: an audit of the owner's *Full RMM Functionality Expansion* directive, and a prioritised
+roadmap for it. No code, migration, agent or signer change. Nothing to deploy beyond the docs.**
+
+0.73.1 is reserved for the wire-fixture pull request (#183), so this is 0.73.2. If 0.73.1 merges after this
+one, its entry goes directly below this one. This audit is against **0.73.0 *Warden*** (main `3554921`).
+
+### New: `docs/rmm-expansion-audit.md` (in the app at `/docs`)
+
+- **The matrix.** Every directive item (P0 scripting, PowerShell, the read-only palette, a built-in library,
+  Device Tools, alert automation; P1 health, third-party patching, endpoint admin, operations, backup,
+  ClientSt0r; P2 cross-platform execution and the file manager) gets a status and its strongest evidence.
+  Statuses are Existing, Partial, Missing, Planned and In progress. Evidence uses `readiness.md`'s ladder:
+  Lab > Fleet > Runner > Sim > pwsh > API > Unit. Each row points at the file, route or invariant, and gives
+  the gap in one line. Every row was checked against source and tests, not against older planning pages.
+- **Counts.** 136 rows. P0: 26 Existing, 26 Partial, 21 Missing, 3 Planned. P1: 19 Existing, 15 Partial,
+  20 Missing. P2: 6 Planned.
+- **Findings worth knowing.**
+  - Nothing connects an alert to an action: `apps/api/src/monitoring` imports no `ActionsService`.
+  - Scripts run only under System32 Windows PowerShell 5.1, as SYSTEM, with timeouts of at most 30 minutes.
+  - No security-posture data is collected: Defender, firewall, BitLocker, Secure Boot and TPM.
+  - **The older-agent compatibility suites (`scripts/compat/supported-agents.json`) leave out `script-run`.** So
+    `windows.script.run@1` is not tested against the agents still installed when the server changes. The first
+    P0 release adds it.
+- **Thirteen conflicts with existing invariants.** Each says whether it needs an owner decision or can be
+  designed within the rules. Among them:
+  - §39's three-stage approval vs "one-click" scripts;
+  - the ten `integration: false` actions and §58's `DIRECT_MODE_PORTAL_ONLY` vs ClientSt0r requesting actions;
+  - §61's ban on recovery actions vs service recovery settings;
+  - §40's no-upload rule vs an MSI/EXE catalog;
+  - §50's requester-less rule vs automatic investigation;
+  - §39's constant command line vs an interactive terminal.
+- **Related work, outside the counts**:
+  - Managed Secure Access readiness, grants, enforcement, and, from 0.73.0, Connect through grants, revocation,
+    session evidence and group or business cutover runs. All Existing, behind `MSA_GRANTS`, which is off. Lab
+    for enforcement, API for the rest.
+  - #183 (0.73.1, wire fixtures), In progress.
+  - #185 (0.74.0 *Bastion*, posture checks for the portal host, not for endpoints), In progress.
+- **The P0 sequence**, as eight PR-sized minor releases after 0.73.1 and 0.74.0 (0.75.0–0.82.0). Each names its
+  dependencies, whether it needs a new agent build or a signer reinstall, and the real-Windows validation it
+  needs. Then P1 and P2.
+- **An explicit "needs real-device validation" list.** It covers everything that is Sim-only, or Lab-only on
+  Windows Server, today.
+
+### Corrected
+
+- **`docs/implementation-status.md`** now opens with the 0.73.2 summary, the P0 sequence and the in-flight
+  branches, and keeps the 0.54 Phase 0 audit as a record. Its plan rows for discovery and adoption (0.57),
+  scheduling (0.58) and the HP/Apple warranty (0.61) said *planned* or *PR open*. All three shipped. The
+  real-systems table said "not yet" for everything since 0.36, though the 0.68.3 lab and the fleet have since
+  run much of it.
+- **`docs/capabilities.md`.** Its *tested* table said "No" real Windows for seven things that have Lab
+  (Windows Server) or Fleet evidence in `readiness.md`:
+  - the signed patch scan and install;
+  - monitoring collection;
+  - service control and End process;
+  - program removal;
+  - console migration;
+  - chat;
+  - the tray's read-only self-help.
+
+  Its closing line, that the column "stays No" until a lab, was out of date once the lab ran. Each entry now
+  says which: Windows Server in the lab, or the fleet observed. It also says that neither is a Windows 10/11
+  desktop test.
+- **`docs/rmm-gap-analysis.md`** (the 0.30 planning record) is marked superseded. The present-tense lines
+  that were plainly wrong are corrected in place:
+  - the approval signer "not installed in production" and actions "inert in production";
+  - "catalog of exactly two" actions;
+  - "no one-click diagnostics";
+  - "rem0te holds no model-provider key";
+  - "the monitor block has never run on real Windows";
+  - script scheduling "not implemented".
+- Left for their owners and listed on the audit page: `readiness.md` still says Lab evidence is "Nothing has this
+  level yet". `script-library.md` and `automation.md` still say scripts have not run on a lab machine.
+  `compatibility.md` calls the lab "when merged".
+
+### Checks
+
+`node scripts/check-versions.mjs`, `node scripts/check-security-invariants.mjs` and
+`apps/web/scripts/gen-docs-bundle.mjs` (the new page is in `ORDER`; the bundle was regenerated).
+
 ## [0.73.1] — 2026-11-20 · *Warden*
 
 **Wire compatibility for the standard agents: what every released standard Windows, Linux and macOS agent sends
@@ -74,7 +156,6 @@ scripts from stand-in values, so this is wire evidence, not evidence that a rele
 `sw_vers` reads work on a real computer.
 
 ---
-
 ## [0.73.0] — 2026-11-20 · *Warden*
 
 **Managed Secure Access build step 5: Connect through grants, revocation, session evidence and group or business

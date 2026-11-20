@@ -28,6 +28,9 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[lab-testing.md](lab-testing.md)** — the Windows lab (0.68.3): what runs on a disposable GitHub Windows runner
   (RustDesk's command line as SYSTEM, the agent's service, process, removal, update-scan and script code), how to
   read the `lab-evidence-windows` artifact, and what it cannot prove.
+- **[rmm-expansion-audit.md](rmm-expansion-audit.md)** — the 0.73.2 audit of the full-RMM directive: each item's
+  status and strongest evidence, where it conflicts with a security invariant, the P0 release sequence, and what
+  still needs a real computer to prove it.
 - **[inventory.md](inventory.md)** — the specs a managed computer reports, its
   installed software and change history, its pending Windows updates, and how
   to read a slice of its event log.
