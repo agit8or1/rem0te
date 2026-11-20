@@ -9,6 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { CardHeading } from '@/components/endpoints/card-heading';
 import { cn, formatDate } from '@/lib/utils';
 import { MsaManagedControls } from '@/components/endpoints/msa-managed';
+import { MsaSessionsList } from '@/components/endpoints/msa-sessions';
 
 /**
  * Managed Secure Access readiness (0.69): what the signed agent's read-only
@@ -116,7 +117,12 @@ export function MsaReadinessCard({ endpointId }: { endpointId: string }) {
             </p>
           </>
         )}
-        {data?.managedControls === true && <MsaManagedControls endpointId={endpointId} />}
+        {data?.managedControls === true && (
+          <>
+            <MsaManagedControls endpointId={endpointId} />
+            <MsaSessionsList endpointId={endpointId} />
+          </>
+        )}
       </CardContent>
     </Card>
   );

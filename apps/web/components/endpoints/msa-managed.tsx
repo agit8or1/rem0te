@@ -22,7 +22,7 @@ interface GrantRow {
   grantId: string; state: string; createdAt: string; appliedAt: string | null; connectedAt: string | null;
   endedAt: string | null; outcome: string | null; failedKeys: string[]; revealedAt: string | null;
 }
-interface ManagedView {
+export interface ManagedView {
   enabled: true;
   endpointId: string;
   state: 'legacy' | 'pending' | 'verified' | 'enforcement_failure' | 'rollback_pending';
@@ -50,18 +50,28 @@ const GRANT_TEXT: Record<string, string> = {
   ended: 'ended', expired: 'expired unused', cancelled: 'cancelled',
 };
 
+/**
+ * The managed view (GET /msa/managed/:id, View computers). A gated route:
+ * pass `enabled` only when an ungated readiness answer said
+ * `managedControls: true`. The device page's Connect and this card share
+ * the one query (and key).
+ */
+export function useMsaManagedView(endpointId: string, enabled: boolean) {
+  return useQuery<ManagedView | null>({
+    queryKey: ['msa-managed', endpointId],
+    queryFn: () => msaManagedApi.view(endpointId).then((r) => r.data?.data ?? null).catch(() => null),
+    enabled,
+    retry: false,
+    refetchInterval: 15_000,
+  });
+}
+
 export function MsaManagedControls({ endpointId }: { endpointId: string }) {
   const { isPlatformAdmin } = usePermissions();
   const qc = useQueryClient();
   const { toast } = useToast();
   const [password, setPassword] = useState<{ grantId: string; value: string } | null>(null);
-  const { data } = useQuery<ManagedView | null>({
-    queryKey: ['msa-managed', endpointId],
-    queryFn: () => msaManagedApi.view(endpointId).then((r) => r.data?.data ?? null).catch(() => null),
-    enabled: isPlatformAdmin,
-    retry: false,
-    refetchInterval: 15_000,
-  });
+  const { data } = useMsaManagedView(endpointId, isPlatformAdmin);
   const done = () => {
     void qc.invalidateQueries({ queryKey: ['msa-managed', endpointId] });
     void qc.invalidateQueries({ queryKey: ['msa-readiness', endpointId] });

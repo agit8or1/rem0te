@@ -45,7 +45,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Activity, ArrowRightLeft, BarChart3, BellRing, Building2, Cpu, WifiOff, FileCode2, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
   Monitor, MonitorCheck, MonitorX, Package, PackageCheck, PlayCircle, Plus, RefreshCw, Settings, Shield, ShieldCheck, Siren,
-  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail, Sparkles, Ticket, ListChecks, BadgeCheck, ShieldQuestion,
+  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail, Sparkles, Ticket, ListChecks, BadgeCheck, ShieldQuestion, MonitorPlay,
 } from 'lucide-react';
 import { CAP, type Capability } from '@/lib/auth';
 
@@ -115,6 +115,9 @@ export const NAV: NavSection[] = [
       { href: '/endpoints/agent-migrations', label: 'Agent migrations', icon: ArrowRightLeft, show: (c) => c.can(CAP.COMPUTERS_EDIT) },
       // 0.69: Managed Secure Access readiness for every visible computer (read-only).
       { href: '/endpoints/remote-readiness', label: 'Remote access readiness', icon: ShieldQuestion, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
+      // 0.73: live Managed Secure Access sessions and Disconnect. The page asks
+      // the gated sessions route only when the server says MSA is on.
+      { href: '/endpoints/managed-sessions', label: 'Managed sessions', icon: MonitorPlay, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
     ],
     also: ['/endpoints/new', '/trmm', '/quickstart'],
     shortcut: ADD_DEVICE,

@@ -203,6 +203,13 @@ jobs:
       - name: MSA managed tests
         run: node apps/api/scripts/unit-msa-managed.mjs
 
+      # Managed Secure Access sessions (0.73): the signed revocation against
+      # the shared fixture the Go verifier also asserts, the Connect grant
+      # terms over every combination of policy facts (never above the
+      # ceiling), and the session timeline (Launched is never Connected).
+      - name: MSA session tests
+        run: node apps/api/scripts/unit-msa-sessions.mjs
+
       # Diagnostics catalog (0.31): the closed catalog, result sanitising,
       # redaction and the size cap against the compiled module, the agent's
       # dispatch switch against the catalog — and, with the runner's pwsh, both

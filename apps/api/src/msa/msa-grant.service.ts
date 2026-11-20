@@ -16,7 +16,9 @@ import {
   type Envelope, type Grant,
 } from './grant';
 import { msaGrantsEnabled, MSA_NOT_ENABLED } from './msa-grants-flag';
-import { withinCeiling, type ManagedState } from './managed';
+import { CONNECT_APPLY_TIMEOUT_MS, LIVE_GRANT_STATES, VERIFY_GRANT_MINUTES, withinCeiling, type GrantSource, type ManagedState, type RevokeReason } from './managed';
+import { REVOCATION_MAX_GRANTS, REVOCATION_WINDOW_MS, signRevocation, type RevocationEnvelope } from './revocation';
+import type { GrantTerms, ManagedLaunchMode } from './connect-terms';
 import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { MSA_GRANT_KEY_ADD_COMMAND, MSA_GRANT_KEY_PUBLISH_COMMAND } from './grant-key-commands';
 
@@ -59,8 +61,11 @@ type Waiter = { wake: (why: 'grant' | 'superseded' | 'shutdown') => void };
  * the flag first, so even a caller that bypassed the controllers' gate gets
  * MSA_NOT_ENABLED before anything is read.
  *
- * In 0.71 a grant is issued only by `issueTest` (the Platform Admin test
- * route); Connect does not call this service (step 4).
+ * A grant is issued by `issueTest` (the Platform Admin test route, 0.71),
+ * `issueForConnect` (MsaSessionService.connect, after the launch policy,
+ * 0.73) and `issueVerification` (a cutover run's verification grant, 0.73);
+ * every one is signed, audited first and stored here. 0.73 adds the signed
+ * revocations (MsaRevocation), also written only here.
  */
 @Injectable()
 export class MsaGrantService implements OnModuleDestroy {
@@ -225,7 +230,7 @@ export class MsaGrantService implements OnModuleDestroy {
         clipboard: b.permissions?.clipboard ?? false, files: b.permissions?.files ?? false, audio: b.permissions?.audio ?? false,
         tunnel: b.permissions?.tunnel ?? false, restart: b.permissions?.restart ?? false,
       };
-      if (!withinCeiling(b.mode ?? 'view', perms)) throw new ConflictException({ code: 'MSA_ABOVE_CEILING', message: 'A managed computer allows view-only sessions with nothing beyond in this release: no grant was issued.' });
+      if (!withinCeiling(b.mode ?? 'view', perms)) throw new ConflictException({ code: 'MSA_ABOVE_CEILING', message: 'A managed computer allows control with clipboard, file transfer and audio, never a tunnel or a remote restart: no grant was issued.' });
       if (!(await this.activePublishedKeyId())) throw new ConflictException({ code: 'MSA_GRANT_KEY_NOT_PUBLISHED', message: 'The grant key is not in the signed release metadata yet, so the agent would refuse the grant: no grant was issued.' });
     }
 
@@ -292,6 +297,7 @@ export class MsaGrantService implements OnModuleDestroy {
         id: true, endpointId: true, technicianId: true, keyId: true, mode: true, permissions: true, consent: true,
         notBefore: true, notAfter: true, maxMinutes: true, idleMinutes: true, state: true, deliveredAt: true, createdAt: true,
         appliedAt: true, connectedAt: true, endedAt: true, outcome: true, failedKeys: true, revealedAt: true,
+        source: true, launchMode: true, receivedAt: true, launchedAt: true, revokedAt: true, revokedById: true, revokeReason: true,
       },
     });
     return rows.map(({ id, ...r }) => ({ grantId: id, ...r }));
@@ -330,7 +336,15 @@ export class MsaGrantService implements OnModuleDestroy {
           where: { id: { in: ackIds }, endpointId: ep.id, state: 'issued', notAfter: { gte: new Date(now) } },
           data: { state: 'delivered', deliveredAt: new Date(now) },
         })).count
+        // 0.73: the same ack carries revocation ids (32 hex too).
+        + (await this.prisma.msaRevocation.updateMany({
+          where: { id: { in: ackIds }, endpointId: ep.id, state: 'issued' },
+          data: { state: 'delivered', deliveredAt: new Date(now) },
+        })).count
       : 0;
+    // 0.73: Connect refuses a computer whose agent is not polling. The one
+    // MsaManagedComputer field this service writes (§82, §83).
+    await this.prisma.msaManagedComputer.updateMany({ where: { endpointId: ep.id }, data: { lastPollAt: new Date(now) } });
 
     // 0.72: the computer's managed state rides on every answer. The agent
     // runs only while it has one, and rolls back when it says so.
@@ -341,9 +355,16 @@ export class MsaGrantService implements OnModuleDestroy {
     const answer = async () => {
       const t = Date.now();
       await this.expireDue(ep.id, t);
-      if (await activePause(this.prisma, 'remote', ep.customerId)) return { grants: [] as Envelope[], paused: true };
+      await this.timeoutDue(ep.id, t);
+      if (await activePause(this.prisma, 'remote', ep.customerId)) {
+        // 0.73: a `remote` pause ends every session on the computer, not
+        // just new ones: a signed revocation of every grant that reached it.
+        // Undelivered grants stay withheld, as before (0.71).
+        await this.revoke(null, ep.id, { all: true, reason: 'pause', states: ['delivered', 'applied'] }, t);
+        return { grants: [] as Envelope[], paused: true, revocations: await this.revocationsFor(ep.id, t) };
+      }
       // Nothing is handed to a computer that is rolling back.
-      if ((await managedNow())?.rollback) return { grants: [] as Envelope[], paused: false };
+      if ((await managedNow())?.rollback) return { grants: [] as Envelope[], paused: false, revocations: await this.revocationsFor(ep.id, t) };
       const rows = await this.prisma.msaGrant.findMany({
         where: { endpointId: ep.id, state: 'issued', notAfter: { gte: new Date(t) } },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], take: POLL_MAX_GRANTS, select: { id: true, envelopeEnc: true },
@@ -356,13 +377,13 @@ export class MsaGrantService implements OnModuleDestroy {
           this.logger.warn(`Grant ${r.id} could not be opened; not delivered`);
         }
       }
-      return { grants, paused: false };
+      return { grants, paused: false, revocations: await this.revocationsFor(ep.id, t) };
     };
 
     let out = await answer();
     const managed = await managedNow();
     // A computer rolling back is answered at once.
-    if (out.grants.length || out.paused || dto.wait === false || managed?.rollback) return { ...out, acked, holdMs: 0, endpointId: ep.id, managed };
+    if (out.grants.length || out.revocations.length || out.paused || dto.wait === false || managed?.rollback) return { ...out, acked, holdMs: 0, endpointId: ep.id, managed };
 
     if (!this.waiters.has(ep.id) && this.waiters.size >= this.maxPolls) return { ...out, acked, holdMs: 0, retryAfterMs: 5_000, endpointId: ep.id, managed };
     this.waiters.get(ep.id)?.wake('superseded');
@@ -380,14 +401,18 @@ export class MsaGrantService implements OnModuleDestroy {
       const me: Waiter = { wake: finish };
       const timer = setTimeout(() => finish('timeout'), this.holdMs);
       const recheck = setInterval(() => {
-        void this.prisma.msaGrant.count({ where: { endpointId: ep.id, state: 'issued', notAfter: { gte: new Date() } } })
-          .then((n) => { if (n > 0) finish('grant'); })
+        void Promise.all([
+          this.prisma.msaGrant.count({ where: { endpointId: ep.id, state: 'issued', notAfter: { gte: new Date() } } }),
+          this.prisma.msaRevocation.count({ where: { endpointId: ep.id, state: 'issued', notAfter: { gte: new Date() } } }),
+          activePause(this.prisma, 'remote', ep.customerId).then((p) => (p ? 1 : 0)),
+        ])
+          .then(([n, r, paused]) => { if (n > 0 || r > 0 || paused > 0) finish('grant'); })
           .catch(() => { /* the hold just runs out */ });
       }, POLL_RECHECK_MS);
       this.waiters.set(ep.id, me);
     });
     // A superseded poll hands nothing over: grants go only to the newest poll.
-    if (why === 'superseded') return { grants: [], paused: false, acked, holdMs: Date.now() - started, superseded: true, endpointId: ep.id, managed: await managedNow() };
+    if (why === 'superseded') return { grants: [], revocations: [], paused: false, acked, holdMs: Date.now() - started, superseded: true, endpointId: ep.id, managed: await managedNow() };
     out = await answer();
     return { ...out, acked, holdMs: Date.now() - started, endpointId: ep.id, managed: await managedNow() };
   }
@@ -429,5 +454,259 @@ export class MsaGrantService implements OnModuleDestroy {
     } catch {
       throw new ServiceUnavailableException({ code: 'MSA_GRANT_KEY_UNAVAILABLE', message: 'The password could not be opened (ENCRYPTION_KEY changed?).' });
     }
+  }
+
+  // ── 0.73: Connect, verification grants, the password release ─────────────
+
+  /**
+   * The shared front of a managed issuance: a computer this person can see,
+   * assigned, the signed Windows agent, a RustDesk ID and device secret on
+   * record, no `remote` pause, a managed row in the state the caller needs,
+   * and a published grant key.
+   */
+  private async managedComputer(actor: ActorContext, endpointId: string, want: ManagedState, now: number) {
+    if (!ENTITY_ID_RE.test(endpointId)) throw new NotFoundException('Computer not found');
+    await this.acl.assertEndpointInScope(actor, endpointId, 'computers:view');
+    const ep = await this.prisma.endpoint.findFirst({
+      where: { AND: [{ id: endpointId }, this.acl.endpointVisibilityWhere(actor)] },
+      select: {
+        id: true, tenantId: true, customerId: true, platform: true, updateChannel: true, signedSeenAt: true,
+        rustdeskNode: { select: { rustdeskId: true, agentSecretHash: true } },
+      },
+    });
+    if (!ep) throw new NotFoundException('Computer not found');
+    assertAssigned(ep);
+    if (!isWindowsPlatform(ep.platform) || !runsSignedAgent({ updateChannel: ep.updateChannel, signedSeenAt: ep.signedSeenAt }, new Date(now))) {
+      throw new ConflictException({ code: 'MSA_SIGNED_AGENT_REQUIRED', message: 'Managed Secure Access needs a Windows computer running the signed agent.' });
+    }
+    const rid = ep.rustdeskNode?.rustdeskId ?? '';
+    if (!RUSTDESK_ID_RE.test(rid) || !ep.rustdeskNode?.agentSecretHash) {
+      throw new ConflictException({ code: 'MSA_GRANT_NO_DEVICE', message: 'This computer has no RustDesk ID or device secret on record.' });
+    }
+    const pause = await activePause(this.prisma, 'remote', ep.customerId);
+    if (pause) throw new ForbiddenException({ code: 'CONTAINED', message: 'Remote connections are paused for this computer: no grant was issued.', pauseId: pause.id, scope: pause.scope.toLowerCase() });
+    const managed = await this.prisma.msaManagedComputer.findUnique({ where: { endpointId: ep.id }, select: { state: true } });
+    if (!managed) throw new ConflictException({ code: 'MSA_NOT_MANAGED', message: 'This computer is in Legacy mode.' });
+    if (managed.state !== want) {
+      const code = managed.state === 'rollback_pending' ? 'MSA_ROLLBACK_PENDING' : managed.state === 'enforcement_failure' ? 'MSA_ENFORCEMENT_FAILURE' : want === 'verified' ? 'MSA_NOT_VERIFIED' : 'MSA_NOT_PENDING';
+      throw new ConflictException({ code, message: `This computer is Managed (${managed.state.replace('_', ' ')}): no grant was issued.` });
+    }
+    if (!(await this.activePublishedKeyId())) throw new ConflictException({ code: 'MSA_GRANT_KEY_NOT_PUBLISHED', message: 'The grant key is not in the signed release metadata yet, so the agent would refuse the grant: no grant was issued.' });
+    return { ep, rid };
+  }
+
+  /** Sign, audit (first), store. The terms were decided by the caller's rule, never by a request body. */
+  private async signAndStore(
+    actor: ActorContext, ep: { id: string; tenantId: string | null; customerId: string | null }, rid: string,
+    terms: GrantTerms, source: GrantSource, launchMode: ManagedLaunchMode | null, now: number,
+  ) {
+    if (!withinCeiling(terms.mode, terms.permissions)) throw new ConflictException({ code: 'MSA_ABOVE_CEILING', message: 'The grant would exceed the managed ceiling: no grant was issued.' });
+    const key = await this.activeKey(actor);
+    const nb = Math.floor(now / 1000) * 1000;
+    const grant: Grant = {
+      v: GRANT_VERSION, grantId: newGrantId(), endpointId: ep.id, rustdeskId: rid, businessId: ep.customerId!, technicianId: actor.userId,
+      mode: terms.mode, permissions: { ...terms.permissions }, consent: terms.consent,
+      notBefore: isoSeconds(nb), notAfter: isoSeconds(nb + MAX_START_WINDOW_MS),
+      maxMinutes: terms.maxMinutes, idleMinutes: terms.idleMinutes, password: newGrantPassword(),
+    };
+    if (!ENTITY_ID_RE.test(grant.technicianId) || !ENTITY_ID_RE.test(grant.businessId)) throw new BadRequestException({ code: 'MSA_GRANT_INVALID', message: 'The grant request is not valid.' });
+    const envelope = signGrant(grant, key.privatePem, key.keyId);
+    await this.audit.logOrFail({
+      action: 'MSA_GRANT_ISSUED', actorId: actor.userId, actorIp: actor.ip, tenantId: ep.tenantId ?? undefined, customerId: ep.customerId ?? undefined,
+      resource: 'endpoint', resourceId: ep.id,
+      meta: { grantId: grant.grantId, endpointId: ep.id, mode: grant.mode, consent: grant.consent, keyId: key.keyId, source, managed: true, launchMode, permissions: grant.permissions, maxMinutes: grant.maxMinutes },
+    });
+    await this.prisma.$transaction([
+      this.prisma.msaGrant.updateMany({ where: { endpointId: ep.id, state: 'issued' }, data: { state: 'cancelled' } }),
+      this.prisma.msaGrant.create({
+        data: {
+          id: grant.grantId, endpointId: ep.id, businessId: grant.businessId, technicianId: grant.technicianId, keyId: key.keyId,
+          mode: grant.mode, permissions: grant.permissions, consent: grant.consent,
+          notBefore: new Date(grant.notBefore), notAfter: new Date(grant.notAfter), maxMinutes: grant.maxMinutes, idleMinutes: grant.idleMinutes,
+          state: 'issued', source, launchMode,
+          envelopeEnc: sealSecret(this.encKey, 'rem0te-msa-grant-envelope-v1', JSON.stringify(envelope)),
+          passwordEnc: sealSecret(this.encKey, 'rem0te-msa-grant-pw-v1', grant.password),
+        },
+      }),
+    ]);
+    this.waiters.get(ep.id)?.wake('grant');
+    return {
+      grantId: grant.grantId, endpointId: ep.id, keyId: key.keyId, mode: grant.mode, permissions: grant.permissions, consent: grant.consent,
+      notBefore: grant.notBefore, notAfter: grant.notAfter, maxMinutes: grant.maxMinutes, idleMinutes: grant.idleMinutes, state: 'issued',
+    };
+  }
+
+  /**
+   * Connect's issuance (MsaSessionService.connect is the only caller). It has
+   * already run authorizeConnect({ managed: true }) — role, preset, view-only
+   * and consent, schedules, containment, the pool, the fleet limits — and
+   * turned that decision into `terms` (connect-terms.ts). This checks the
+   * computer again (verified managed, the signed agent, no pause, a
+   * published key) and the ceiling, then signs.
+   */
+  async issueForConnect(actor: ActorContext, endpointId: string, launchMode: ManagedLaunchMode, terms: GrantTerms, now = Date.now()) {
+    this.assertEnabled();
+    const { ep, rid } = await this.managedComputer(actor, endpointId, 'verified', now);
+    return this.signAndStore(actor, ep, rid, terms, 'connect', launchMode, now);
+  }
+
+  /**
+   * A cutover run's verification grant for a computer it just moved to
+   * Managed (pending): view-only, consent required, five minutes. The agent
+   * applies and reads it back; nobody is given its password, and it ends
+   * with no connection. MsaCutoverRunService is the only caller.
+   */
+  async issueVerification(actor: ActorContext, endpointId: string, now = Date.now()) {
+    this.assertEnabled();
+    const { ep, rid } = await this.managedComputer(actor, endpointId, 'pending', now);
+    return this.signAndStore(actor, ep, rid, {
+      mode: 'view', permissions: { clipboard: false, files: false, audio: false, tunnel: false, restart: false },
+      consent: 'required', maxMinutes: VERIFY_GRANT_MINUTES, idleMinutes: VERIFY_GRANT_MINUTES,
+    }, 'verify', null, now);
+  }
+
+  /**
+   * A Connect grant's one-time password, released ONCE, to the technician
+   * the grant names, for the Connect script (MsaSessionService.connectScript,
+   * which re-ran authorizeConnect first). Only once the agent reported it
+   * applied and before it ended. Audited first (ids only), claimed by one
+   * conditional write, then opened.
+   */
+  async release(actor: ActorContext, grantId: string) {
+    this.assertEnabled();
+    if (!GRANT_ID_RE.test(grantId)) throw new NotFoundException('Grant not found');
+    const g = await this.prisma.msaGrant.findUnique({ where: { id: grantId }, select: { id: true, endpointId: true, state: true, revealedAt: true, technicianId: true, source: true } });
+    if (!g || g.source !== 'connect' || g.technicianId !== actor.userId) throw new NotFoundException('Grant not found');
+    await this.acl.assertEndpointInScope(actor, g.endpointId, 'computers:view');
+    const ep = await this.prisma.endpoint.findFirst({
+      where: { AND: [{ id: g.endpointId }, this.acl.endpointVisibilityWhere(actor)] },
+      select: { id: true, tenantId: true, customerId: true, rustdeskNode: { select: { rustdeskId: true } } },
+    });
+    if (!ep) throw new NotFoundException('Grant not found');
+    if (g.state !== 'applied') throw new ConflictException({ code: 'MSA_GRANT_NOT_APPLIED', message: 'The computer\'s agent has not applied this session (or it already ended): there is nothing to connect with.' });
+    if (g.revealedAt) throw new ConflictException({ code: 'MSA_PASSWORD_ALREADY_RELEASED', message: 'This session\'s one-time password was already handed to a Connect script. Press Connect again for a new session.' });
+    await this.audit.logOrFail({
+      action: 'MSA_PASSWORD_RELEASED', actorId: actor.userId, actorIp: actor.ip, tenantId: ep.tenantId ?? undefined, customerId: ep.customerId ?? undefined,
+      resource: 'endpoint', resourceId: ep.id, meta: { grantId: g.id, endpointId: ep.id, via: 'connect_script' },
+    });
+    const at = new Date();
+    const claimed = await this.prisma.msaGrant.updateMany({
+      where: { id: g.id, state: 'applied', revealedAt: null }, data: { revealedAt: at, revealedById: actor.userId, launchedAt: at },
+    });
+    if (claimed.count !== 1) throw new ConflictException({ code: 'MSA_PASSWORD_ALREADY_RELEASED', message: 'This session\'s one-time password was already handed to a Connect script. Press Connect again for a new session.' });
+    const row = await this.prisma.msaGrant.findUnique({ where: { id: g.id }, select: { passwordEnc: true } });
+    try {
+      return { grantId: g.id, rustdeskId: ep.rustdeskNode?.rustdeskId ?? '', password: openSecret(this.encKey, 'rem0te-msa-grant-pw-v1', row!.passwordEnc) };
+    } catch {
+      throw new ServiceUnavailableException({ code: 'MSA_GRANT_KEY_UNAVAILABLE', message: 'The password could not be opened (ENCRYPTION_KEY changed?).' });
+    }
+  }
+
+  // ── 0.73: revocation ──────────────────────────────────────────────────────
+
+  /**
+   * Revoke grants on ONE computer: the named ones, a technician's, or (all)
+   * every live one. Callers have decided who may (MsaSessionService) or are
+   * the system (a `remote` pause, a Connect that was never applied in time).
+   * The grants move to `revoked` first (conditional, so nothing more is
+   * delivered), then a signed revocation is stored for the agent's next
+   * poll, which wakes. It only ever reduces: it can end sessions, never
+   * start or extend one. Audited (ids, the reason, never a password).
+   */
+  async revoke(
+    actor: ActorContext | null, endpointId: string,
+    sel: { grantIds?: string[]; technicianId?: string; all?: boolean; reason: RevokeReason; states?: ('issued' | 'delivered' | 'applied')[] }, now = Date.now(),
+  ): Promise<{ revoked: number; revocationId: string | null }> {
+    this.assertEnabled();
+    if (!ENTITY_ID_RE.test(endpointId)) return { revoked: 0, revocationId: null };
+    const named = sel.grantIds ? [...new Set(sel.grantIds.filter((x) => GRANT_ID_RE.test(x)))] : null;
+    if (named && named.length === 0 && !sel.all) return { revoked: 0, revocationId: null };
+    const live = await this.prisma.msaGrant.findMany({
+      where: {
+        endpointId, state: { in: sel.states ?? [...LIVE_GRANT_STATES] },
+        ...(named ? { id: { in: named } } : {}), ...(sel.technicianId ? { technicianId: sel.technicianId } : {}),
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], take: REVOCATION_MAX_GRANTS, select: { id: true },
+    });
+    // Nothing live, nothing to end: a pause or a computer-wide revoke with no
+    // session open sends nothing (every session on a managed computer comes
+    // from a grant recorded here, and stays live here until the agent says
+    // it ended).
+    if (live.length === 0) return { revoked: 0, revocationId: null };
+    const ids = live.map((g) => g.id).sort();
+    const at = new Date(now);
+    const revoked = ids.length
+      ? (await this.prisma.msaGrant.updateMany({
+          where: { id: { in: ids }, endpointId, state: { in: [...LIVE_GRANT_STATES] } },
+          data: { state: 'revoked', revokedAt: at, revokedById: actor?.userId ?? null, revokeReason: sel.reason },
+        })).count
+      : 0;
+    if (revoked === 0) return { revoked: 0, revocationId: null };
+    const ep = await this.prisma.endpoint.findUnique({
+      where: { id: endpointId }, select: { id: true, tenantId: true, customerId: true, rustdeskNode: { select: { rustdeskId: true } } },
+    });
+    const rid = ep?.rustdeskNode?.rustdeskId ?? '';
+    // No key means no grant was ever signed, so there is nothing to end.
+    const keyRow = await this.prisma.msaGrantKey.findFirst({ where: { retiredAt: null }, select: { keyId: true, privateKeyEnc: true } });
+    let revocationId: string | null = null;
+    if (ep && keyRow && RUSTDESK_ID_RE.test(rid)) {
+      let privatePem: string | null;
+      try { privatePem = openSecret(this.encKey, 'rem0te-msa-grant-key-v1', keyRow.privateKeyEnc); } catch { privatePem = null; }
+      if (privatePem) {
+        const issued = Math.floor(now / 1000) * 1000;
+        const doc = {
+          v: 1 as const, revocationId: newGrantId(), endpointId: ep.id, rustdeskId: rid, all: !!sel.all, grantIds: ids,
+          issuedAt: isoSeconds(issued), notAfter: isoSeconds(issued + REVOCATION_WINDOW_MS),
+        };
+        const env: RevocationEnvelope = signRevocation(doc, privatePem, keyRow.keyId);
+        await this.prisma.msaRevocation.create({
+          data: {
+            id: doc.revocationId, endpointId: ep.id, keyId: keyRow.keyId, reason: sel.reason, all: doc.all, grantIds: ids,
+            issuedAt: new Date(doc.issuedAt), notAfter: new Date(doc.notAfter), envelope: JSON.stringify(env), createdById: actor?.userId ?? null,
+          },
+        });
+        revocationId = doc.revocationId;
+      } else {
+        this.logger.warn(`The grant key could not be opened: revocation for ${endpointId} recorded but not signed`);
+      }
+    }
+    await this.audit.log({
+      action: 'MSA_SESSION_REVOKED', actorId: actor?.userId, actorIp: actor?.ip, tenantId: ep?.tenantId ?? undefined, customerId: ep?.customerId ?? undefined,
+      resource: 'endpoint', resourceId: endpointId, meta: { endpointId, grantIds: ids, reason: sel.reason, all: !!sel.all, revocationId },
+    });
+    this.waiters.get(endpointId)?.wake('grant');
+    return { revoked, revocationId };
+  }
+
+  /** Connect grants the agent never applied within CONNECT_APPLY_TIMEOUT_MS are revoked (reason `timeout`): fail closed. */
+  private async timeoutDue(endpointId: string, now: number) {
+    const due = await this.prisma.msaGrant.findMany({
+      where: { endpointId, source: 'connect', state: { in: ['issued', 'delivered'] }, createdAt: { lt: new Date(now - CONNECT_APPLY_TIMEOUT_MS) } },
+      select: { id: true }, take: REVOCATION_MAX_GRANTS,
+    });
+    if (due.length) await this.revoke(null, endpointId, { grantIds: due.map((g) => g.id), reason: 'timeout' }, now);
+  }
+
+  /** Revocations still to hand over: expire the old ones, then the issued ones, oldest first. */
+  private async revocationsFor(endpointId: string, now: number): Promise<RevocationEnvelope[]> {
+    await this.prisma.msaRevocation.updateMany({ where: { endpointId, state: 'issued', notAfter: { lt: new Date(now) } }, data: { state: 'expired' } });
+    const rows = await this.prisma.msaRevocation.findMany({
+      where: { endpointId, state: 'issued' }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], take: POLL_MAX_GRANTS, select: { envelope: true },
+    });
+    return rows.map((r) => JSON.parse(r.envelope) as RevocationEnvelope);
+  }
+
+  /**
+   * 0.73: Connect's timeout check, from MsaSessionService when the console
+   * reads a session's progress (the poll checks too).
+   */
+  async checkTimeout(endpointId: string, now = Date.now()) {
+    this.assertEnabled();
+    await this.timeoutDue(endpointId, now);
+  }
+
+  /** 0.73: whether this computer's agent is polling: a held poll here, or a poll recorded recently (another API process). */
+  isHeld(endpointId: string): boolean {
+    return this.waiters.has(endpointId);
   }
 }

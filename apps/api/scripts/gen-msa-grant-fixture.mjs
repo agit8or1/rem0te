@@ -23,7 +23,11 @@ import { writeFileSync } from 'node:fs';
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const G = require(join(here, '..', 'dist', 'msa', 'grant.js'));
+const M = require(join(here, '..', 'dist', 'msa', 'managed.js'));
+const R = require(join(here, '..', 'dist', 'msa', 'revocation.js'));
 export const FIXTURE_PATH = join(here, '..', '..', '..', 'tools', 'windows-installer', 'internal', 'msa', 'testdata', 'msa-grants.json');
+/** 0.73: the revocation fixture, same keys, same layout. */
+export const REVOCATION_FIXTURE_PATH = join(here, '..', '..', '..', 'tools', 'windows-installer', 'internal', 'msa', 'testdata', 'msa-revocations.json');
 
 const seed = (label) => createHash('sha256').update(`rem0te-msa-grant TEST-ONLY fixture key: ${label}`).digest();
 const keyFromSeed = (s) => createPrivateKey({ key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), s]), format: 'der', type: 'pkcs8' });
@@ -135,6 +139,18 @@ export function buildFixture() {
     ['files under a ceiling without files', env(base({ permissions: { ...base().permissions, files: true } })),
       ctx({ ceiling: { mode: 'control', permissions: { ...allPerms, files: false } } }), 'permission_not_allowed'],
     ['restart under a view ceiling with no permissions', env(base({ permissions: { ...base().permissions, restart: true } })), ctx(), 'permission_not_allowed'],
+
+    // 0.73: the managed ceiling every agent compiles in (msa/managed.ts
+    // MANAGED_CEILING, enforce.Ceiling): control with clipboard, files and
+    // audio; never a tunnel or a remote restart.
+    ['a control grant with clipboard, files and audio, under the managed ceiling',
+      env(base({ mode: 'control', permissions: { clipboard: true, files: true, audio: true, tunnel: false, restart: false }, consent: 'not_required' })),
+      ctx({ ceiling: M.MANAGED_CEILING }), 'ok'],
+    ['a view grant under the managed ceiling', env(base()), ctx({ ceiling: M.MANAGED_CEILING }), 'ok'],
+    ['a tunnel under the managed ceiling', env(base({ mode: 'control', permissions: { ...base().permissions, tunnel: true } })), ctx({ ceiling: M.MANAGED_CEILING }), 'permission_not_allowed'],
+    ['a remote restart under the managed ceiling', env(base({ mode: 'control', permissions: { ...base().permissions, restart: true } })), ctx({ ceiling: M.MANAGED_CEILING }), 'permission_not_allowed'],
+    ['every permission under the managed ceiling', env(base({ mode: 'control', permissions: allPerms })), ctx({ ceiling: M.MANAGED_CEILING }), 'permission_not_allowed'],
+    ['signed under the revocation prefix', raw(canon(base()), { prefix: R.REVOCATION_PREFIX }), ctx(), 'bad_signature'],
   ];
 
   return {
@@ -146,7 +162,104 @@ export function buildFixture() {
   };
 }
 
+/**
+ * 0.73: the revocation fixture. The same test-only keys; every case is an
+ * envelope, a context and the expected result (`ok` or a reason), plus, for
+ * an `ok` case, which of two sessions it ends (revocationEnds).
+ */
+export function buildRevocationFixture() {
+  const priv = keyFromSeed(seed('main'));
+  const other = keyFromSeed(seed('other'));
+  const pubMain = G.rawPublicKey(createPublicKey(priv));
+  const kidMain = G.keyIdOf(pubMain);
+  const kidOther = G.keyIdOf(G.rawPublicKey(createPublicKey(other)));
+  const pem = priv.export({ format: 'pem', type: 'pkcs8' }).toString();
+  const ENDPOINT = 'cmtestendpoint000000000001';
+  const RID = '123456789';
+  const GA = '0123456789abcdef0123456789abcdef';
+  const GB = 'fedcba9876543210fedcba9876543210';
+  const base = (over = {}) => ({
+    v: 1, revocationId: 'aaaaaaaaaaaaaaaabbbbbbbbbbbbbbbb', endpointId: ENDPOINT, rustdeskId: RID,
+    all: false, grantIds: [GA], issuedAt: '2026-11-20T12:10:00Z', notAfter: '2026-11-20T21:10:00Z', ...over,
+  });
+  const ctx = (over = {}) => ({ endpointId: ENDPOINT, rustdeskId: RID, now: '2026-11-20T12:10:05Z', seen: [], ...over });
+  const env = (r) => JSON.stringify(R.signRevocation(r, pem, kidMain));
+  const raw = (bytes, { key = priv, kid = kidMain, prefix = R.REVOCATION_PREFIX, field = 'revocation' } = {}) => {
+    const b = Buffer.from(bytes, 'utf8');
+    return JSON.stringify({ keyId: kid, [field]: b.toString('base64'), sig: sign(null, Buffer.concat([Buffer.from(prefix, 'utf8'), b]), key).toString('base64') });
+  };
+  const canon = (r) => R.canonicalRevocation(r).toString('utf8');
+  const good = JSON.parse(env(base()));
+  const tamper = (fn) => JSON.stringify(fn({ ...good }));
+  // Two sessions to test what an accepted revocation ends: A started before
+  // the revocation, B (another grant) after it.
+  const sessions = [{ grantId: GA, notBefore: '2026-11-20T12:00:00Z' }, { grantId: GB, notBefore: '2026-11-20T12:20:00Z' }];
+
+  const cases = [
+    ['one named grant', env(base()), ctx(), 'ok'],
+    ['all sessions started before it', env(base({ all: true, grantIds: [] })), ctx(), 'ok'],
+    ['all, plus two named grants', env(base({ all: true, grantIds: [GA, GB] })), ctx(), 'ok'],
+    ['20 s before issuedAt (inside the skew)', env(base()), ctx({ now: '2026-11-20T12:09:40Z' }), 'ok'],
+    ['20 s after notAfter (inside the skew)', env(base()), ctx({ now: '2026-11-20T21:10:20Z' }), 'ok'],
+
+    ['the envelope is an array', JSON.stringify([good]), ctx(), 'envelope_malformed'],
+    ['the envelope is null', 'null', ctx(), 'envelope_malformed'],
+    ['the envelope has an extra field', tamper((e) => ({ ...e, grant: e.revocation })), ctx(), 'envelope_malformed'],
+    ['a grant envelope (field `grant`)', raw(canon(base()), { field: 'grant' }), ctx(), 'envelope_malformed'],
+    ['a key id that is not 16 hex', tamper((e) => ({ ...e, keyId: 'XYZ' })), ctx(), 'envelope_malformed'],
+    ['a signature of the wrong length', tamper((e) => ({ ...e, sig: Buffer.alloc(32).toString('base64') })), ctx(), 'envelope_malformed'],
+    ['base64 with a line break in it', tamper((e) => ({ ...e, revocation: `${e.revocation.slice(0, 4)}\r\n${e.revocation.slice(4)}` })), ctx(), 'envelope_malformed'],
+
+    ['an unknown key', raw(canon(base()), { key: other, kid: kidOther }), ctx(), 'unknown_key'],
+    ['signed by another key under the published key id', raw(canon(base()), { key: other }), ctx(), 'bad_signature'],
+    ['signed under the grant prefix', raw(canon(base()), { prefix: G.GRANT_PREFIX }), ctx(), 'bad_signature'],
+    ['signed with no prefix', raw(canon(base()), { prefix: '' }), ctx(), 'bad_signature'],
+    ['a signature over other bytes', tamper((e) => ({ ...e, sig: JSON.parse(env(base({ all: true }))).sig })), ctx(), 'bad_signature'],
+
+    ['not JSON', raw('{"v":1,'), ctx(), 'revocation_malformed'],
+    ['a JSON array', raw('[1]'), ctx(), 'revocation_malformed'],
+    ['version 2', raw(JSON.stringify({ ...base(), v: 2 })), ctx(), 'unsupported_version'],
+    ['an extra field', raw(JSON.stringify({ ...base(), extend: true })), ctx(), 'revocation_malformed'],
+    ['keys out of order', raw(JSON.stringify({ revocationId: base().revocationId, v: 1, ...base() })), ctx(), 'revocation_malformed'],
+    ['whitespace in the document', raw(JSON.stringify(base(), null, 1)), ctx(), 'revocation_malformed'],
+    ['neither all nor a grant', raw(canon(base({ grantIds: [] }))), ctx(), 'revocation_malformed'],
+    ['grant ids out of order', raw(canon(base({ grantIds: [GB, GA] }))), ctx(), 'revocation_malformed'],
+    ['a grant id twice', raw(canon(base({ grantIds: [GA, GA] }))), ctx(), 'revocation_malformed'],
+    ['21 grant ids', raw(canon(base({ grantIds: Array.from({ length: 21 }, (_, i) => i.toString(16).padStart(32, '0')) }))), ctx(), 'revocation_malformed'],
+    ['a grant id that is not 32 hex', raw(canon(base({ grantIds: ['abc'] }))), ctx(), 'revocation_malformed'],
+    ['all as a string', raw(canon(base({ all: 'true' }))), ctx(), 'revocation_malformed'],
+    ['an impossible date', raw(canon(base({ issuedAt: '2026-02-30T12:00:00Z' }))), ctx(), 'revocation_malformed'],
+
+    ['a window over nine hours', raw(canon(base({ notAfter: '2026-11-20T21:10:01Z' }))), ctx(), 'bad_window'],
+    ['notAfter equal to issuedAt', raw(canon(base({ notAfter: '2026-11-20T12:10:00Z' }))), ctx({ now: '2026-11-20T12:10:00Z' }), 'bad_window'],
+
+    ['another computer\'s revocation', env(base()), ctx({ endpointId: 'cmtestendpoint000000000002' }), 'wrong_endpoint'],
+    ['another RustDesk ID', env(base()), ctx({ rustdeskId: '987654321' }), 'wrong_rustdesk_id'],
+    ['31 s before issuedAt', env(base()), ctx({ now: '2026-11-20T12:09:29Z' }), 'not_yet_valid'],
+    ['31 s after notAfter', env(base()), ctx({ now: '2026-11-20T21:10:31Z' }), 'expired'],
+    ['already acted on', env(base()), ctx({ seen: ['aaaaaaaaaaaaaaaabbbbbbbbbbbbbbbb'] }), 'replayed'],
+  ];
+
+  return {
+    _comment: 'TEST-ONLY keys and revocations, generated by apps/api/scripts/gen-msa-grant-fixture.mjs from apps/api/src/msa/revocation.ts. Never load these keys anywhere else.',
+    prefix: R.REVOCATION_PREFIX,
+    reasons: [...R.REVOCATION_REASONS],
+    keys: { [kidMain]: pubMain.toString('base64') },
+    sessions,
+    cases: cases.map(([name, envelope, context, expect]) => {
+      const c = { name, envelope, context, expect };
+      if (expect === 'ok') {
+        const doc = JSON.parse(Buffer.from(JSON.parse(envelope).revocation, 'base64').toString('utf8'));
+        c.ends = sessions.map((s) => R.revocationEnds(doc, s));
+      }
+      return c;
+    }),
+  };
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   writeFileSync(FIXTURE_PATH, `${JSON.stringify(buildFixture(), null, 2)}\n`);
   console.log(`wrote ${FIXTURE_PATH}`);
+  writeFileSync(REVOCATION_FIXTURE_PATH, `${JSON.stringify(buildRevocationFixture(), null, 2)}\n`);
+  console.log(`wrote ${REVOCATION_FIXTURE_PATH}`);
 }

@@ -39,8 +39,10 @@ const go = (f) => readFileSync(join(ROOT, 'tools', 'windows-installer', f), 'utf
   check('every event the agent reports is one the portal accepts, and every one is reported', J(goEvents) === J([...m.REPORT_EVENTS].sort()), J(goEvents));
   check('the managed keys are the preflight\'s eleven', J([...m.MANAGED_KEYS]) === J([...pf.PREFLIGHT_KEYS]) && m.MANAGED_KEYS.length === 11);
   check('a failed readback may name the password, nothing else', J([...m.REPORT_KEYS]) === J([...pf.PREFLIGHT_KEYS, 'password']));
-  check('the agent\'s compiled ceiling is view-only with nothing beyond', /var Ceiling = grant\.Ceiling\{Mode: "view"\}/.test(enf));
-  check('the portal\'s ceiling is the same', J(m.MANAGED_CEILING) === J({ mode: 'view', permissions: { clipboard: false, files: false, audio: false, tunnel: false, restart: false } }));
+  // 0.73: control with clipboard, file transfer and audio; never a tunnel or a remote restart.
+  check('the agent\'s compiled ceiling is control with clipboard, files and audio, never tunnel or restart',
+    /var Ceiling = grant\.Ceiling\{Mode: "control", Permissions: grant\.Permissions\{Clipboard: true, Files: true, Audio: true\}\}/.test(enf) && !/Tunnel: true|Restart: true/.test(enf));
+  check('the portal\'s ceiling is the same', J(m.MANAGED_CEILING) === J({ mode: 'control', permissions: { clipboard: true, files: true, audio: true, tunnel: false, restart: false } }));
   check('every verifier reason fits the outcome charset', G.REASONS.every((x) => /^[a-z_]{1,40}$/.test(x)));
 }
 
@@ -48,8 +50,12 @@ const go = (f) => readFileSync(join(ROOT, 'tools', 'windows-installer', f), 'utf
 {
   const none = { clipboard: false, files: false, audio: false, tunnel: false, restart: false };
   check('view with nothing beyond is within', m.withinCeiling('view', none));
-  check('control is above', !m.withinCeiling('control', none));
-  for (const k of Object.keys(none)) check(`view + ${k} is above`, !m.withinCeiling('view', { ...none, [k]: true }));
+  check('control with nothing beyond is within (0.73)', m.withinCeiling('control', none));
+  check('control with clipboard, files and audio is within', m.withinCeiling('control', { ...none, clipboard: true, files: true, audio: true }));
+  for (const k of ['tunnel', 'restart']) {
+    check(`control + ${k} is above`, !m.withinCeiling('control', { ...none, [k]: true }));
+    check(`view + ${k} is above`, !m.withinCeiling('view', { ...none, [k]: true }));
+  }
 }
 
 // ── rotationHeld / legacyRefused ────────────────────────────────────────────

@@ -408,6 +408,16 @@ enum ActivityAction {
   MSA_ENFORCEMENT_FAILURE
   MSA_LEGACY_SECURED
   MSA_PASSWORD_REVEALED
+  // 0.73 Managed Secure Access build step 5 (behind MSA_GRANTS, off): ids,
+  // states and closed codes only — never a password or an envelope.
+  MSA_SESSION_REQUESTED
+  MSA_PASSWORD_RELEASED
+  MSA_SESSION_REVOKED
+  MSA_CUTOVER_RUN_STARTED
+  MSA_CUTOVER_RUN_ADVANCED
+  MSA_CUTOVER_RUN_CONFIRMED
+  MSA_CUTOVER_RUN_HALTED
+  MSA_CUTOVER_RUN_ROLLED_BACK
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -739,6 +749,7 @@ model Customer {
   emailRecipients      EmailRecipient[]
   reportSchedules      ReportSchedule[]
   psaConnectors        PsaConnector[]
+  msaCutoverRuns       MsaCutoverRun[]
 
   @@index([tenantId])
   @@index([tenantId, name])
@@ -910,6 +921,8 @@ model Endpoint {
   msaGrants         MsaGrant[]
   /// 0.72: the Managed Secure Access mode, when not Legacy (no row = Legacy).
   msaManaged        MsaManagedComputer?
+  msaRevocations    MsaRevocation[]
+  msaCutoverMembers MsaCutoverMember[]
   /// 0.67: false-positive reports about this computer's alerts, and rules scoped to it.
   falsePositiveReports AlertFalsePositiveReport[]
   alertQualityRules    AlertQualityRule[]
@@ -1113,6 +1126,7 @@ model EndpointGroup {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  msaCutoverRuns MsaCutoverRun[]
 
   // Names are unique per business. Postgres treats NULLs as distinct, so
   // pre-0.33 groups (no business) are not constrained by it.
@@ -4823,6 +4837,7 @@ model MsaGrantKey {
   createdAt     DateTime   @default(now())
   retiredAt     DateTime?
   grants        MsaGrant[]
+  revocations   MsaRevocation[]
 }
 
 /// A session grant (0.71, docs/managed-secure-access.md §3.2). In 0.71 one
@@ -4867,9 +4882,100 @@ model MsaGrant {
   /// 0.72: the one-time password was shown, once, to this Platform Admin.
   revealedAt   DateTime?
   revealedById String?
+  /// 0.73: test | connect | verify (0090 CHECK).
+  source       String      @default("test")
+  /// 0.73: the launch mode the policy decided, exactly for a Connect grant.
+  launchMode   String?
+  /// 0.73: the agent verified it, before applying anything.
+  receivedAt   DateTime?
+  /// 0.73: the one-time password went to the technician's Connect script. Never "connected".
+  launchedAt   DateTime?
+  /// 0.73: revoked (state revoked), by whom (null: the system — a pause or a timeout), why.
+  revokedAt    DateTime?
+  revokedById  String?
+  revokeReason String?
 
   @@index([endpointId, state])
   @@index([endpointId, createdAt])
+  @@index([technicianId, state])
+  @@index([businessId, state])
+}
+
+/// A signed revocation for ONE computer (0.73, docs/managed-secure-access.md
+/// §3.4): handed to its signed agent over the long-poll, it ends the named
+/// sessions (or, `all`, every session that started before it). It can only
+/// reduce, and carries no secret. Only MsaGrantService writes this table.
+model MsaRevocation {
+  /// The revocation id: 32 lowercase hex characters.
+  id          String      @id
+  endpointId  String
+  endpoint    Endpoint    @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  keyId       String
+  key         MsaGrantKey @relation(fields: [keyId], references: [keyId], onDelete: Restrict)
+  /// session | technician | business | computer | pause | timeout (0090 CHECK).
+  reason      String
+  all         Boolean
+  grantIds    String[]    @default([])
+  issuedAt    DateTime
+  notAfter    DateTime
+  /// issued | delivered | expired.
+  state       String      @default("issued")
+  /// The signed envelope, JSON. Not sealed: it holds no secret.
+  envelope    String
+  deliveredAt DateTime?
+  createdById String?
+  createdAt   DateTime    @default(now())
+
+  @@index([endpointId, state])
+}
+
+/// A cutover run (0.73): a device group or a business moved into Managed
+/// Secure Access a batch at a time, canary first. Each computer still goes
+/// through the one-computer cutover and its blockers. Only
+/// MsaCutoverRunService writes this table and MsaCutoverMember.
+model MsaCutoverRun {
+  id               String               @id @default(cuid())
+  /// group | business.
+  scope            String
+  businessId       String
+  business         Customer             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  groupId          String?
+  group            EndpointGroup?       @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  canaryEndpointId String
+  batchSize        Int                  @default(5)
+  /// canary | rolling | complete | halted | rolled_back.
+  state            String               @default("canary")
+  createdById      String
+  createdAt        DateTime             @default(now())
+  canaryVerifiedAt DateTime?
+  lastBatchAt      DateTime?
+  batches          Int                  @default(0)
+  haltedAt         DateTime?
+  haltedById       String?
+  completedAt      DateTime?
+  rolledBackAt     DateTime?
+  rolledBackById   String?
+  updatedAt        DateTime             @updatedAt
+  members          MsaCutoverMember[]
+  managed          MsaManagedComputer[]
+}
+
+model MsaCutoverMember {
+  runId      String
+  run        MsaCutoverRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  endpointId String
+  endpoint   Endpoint      @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  /// queued | cut_over | verified | skipped | failed | rolled_back.
+  state      String        @default("queued")
+  canary     Boolean       @default(false)
+  batch      Int?
+  /// The cutover blocker's code when skipped.
+  skipReason String?
+  cutAt      DateTime?
+  verifiedAt DateTime?
+  updatedAt  DateTime      @updatedAt
+
+  @@id([runId, endpointId])
 }
 
 /// A computer's Managed Secure Access mode (0.72, build step 4 of
@@ -4897,5 +5003,10 @@ model MsaManagedComputer {
   /// The agent's last successful readback of every managed setting.
   readbackOkAt          DateTime?
   lastReportAt          DateTime?
+  /// 0.73: the agent's last long-poll.
+  lastPollAt            DateTime?
+  /// 0.73: the cutover run that moved it, if one did.
+  runId                 String?
+  run                   MsaCutoverRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
   updatedAt             DateTime  @updatedAt
 }

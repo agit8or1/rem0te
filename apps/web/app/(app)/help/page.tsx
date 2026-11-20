@@ -67,19 +67,53 @@ const SECTIONS: Section[] = [
     content: (
       <div className="space-y-3 text-sm text-muted-foreground">
         <p>
-          <strong className="text-foreground">Readiness only — Managed Secure Access is not available yet; nothing has
-          changed on any computer.</strong> Managed Secure Access is a planned way of connecting in which the signed agent
-          applies a short-lived, per-session RustDesk password and settings, and reads them back, instead of a standing
-          permanent password. Today every computer still connects exactly as before.
+          <strong className="text-foreground">Off unless this server switches it on (MSA_GRANTS), and lab-tested only.</strong>{' '}
+          Managed Secure Access is a way of connecting in which the signed agent applies a short-lived, per-session
+          RustDesk password and settings, and reads them back, instead of a standing permanent password. It has run only
+          in the Windows lab (Windows Server, as SYSTEM): never on a Windows 10 or 11 desktop, and never on the fleet.
+          With the switch off, every computer connects exactly as before and nothing below appears.
         </p>
         <p>
-          What exists now (0.69) is a check. Every 6 hours, or when RustDesk changes, the signed Windows agent reads the
-          installed RustDesk: where it is installed, its version and build, whether its service is running, and whether
-          its command line answers eleven read-only questions about its settings. It never changes a setting, never sets
-          a password and never touches a session.
+          <strong className="text-foreground">Connect on a managed computer (0.73).</strong> On a computer that is Managed and
+          verified, Connect asks the launch policy (your role, presets, view-only and consent rules, schedules, pauses) and
+          turns its answer into a signed session grant; nothing you choose can widen it. The page then waits — up to 60
+          seconds — for the computer&apos;s agent to report the grant applied and every setting read back, and only then
+          downloads the Connect script, which carries a one-time password and works once. If the agent is not reachable,
+          cannot enforce the settings, or does not apply the grant in time, Connect is refused with the reason: it never
+          falls back to a permanent password. A preset&apos;s view-only and consent rules, which a Legacy computer cannot
+          enforce, are enforced by RustDesk itself here. The signed agent must be 0.73.0 or later.
+        </p>
+        <p>
+          <strong className="text-foreground">What a session can allow.</strong> Interactive control with clipboard, file
+          transfer and audio, as the policy allows — never a TCP tunnel and never a remote restart. That limit is compiled
+          into the signed agent, so the portal cannot raise it.
+        </p>
+        <p>
+          <strong className="text-foreground">Sessions and Disconnect.</strong> The computer&apos;s page lists its managed
+          sessions with a timeline: Requested, Authorized, Received, Applied, Launched (the password was handed over —
+          not a connection), Connected (the agent saw RustDesk accept one), then Disconnected, Expired, Revoked or Failed.
+          The agent cannot see who is at the other end, whether the person at the computer accepted the consent prompt, or
+          what happened inside the session, and the timeline says so.{' '}
+          <Link href="/endpoints/managed-sessions" className="underline text-foreground">Devices → Managed sessions</Link>{' '}
+          lists every live session you can see. Disconnect sends the computer a signed revocation that ends the session;
+          you can always end your own, and someone who can edit the computer can end anyone&apos;s. A computer that is
+          offline cannot be told, so its session still ends at its time limit. A pause of remote connections ends live
+          sessions the same way.
+        </p>
+        <p>
+          <strong className="text-foreground">Moving computers (Platform Admin).</strong> One computer at a time from its
+          page, or a device group or business as a cutover run on Remote access readiness: a canary first, which must
+          become Managed and verified before anything else moves, then one batch per Advance. Nothing moves by itself, and
+          a run can be halted or rolled back.
+        </p>
+        <p>
+          <strong className="text-foreground">Readiness.</strong> Every 6 hours, or when RustDesk changes, the signed
+          Windows agent reads the installed RustDesk: where it is installed, its version and build, whether its service is
+          running, and whether its command line answers eleven read-only questions about its settings. That check never
+          changes a setting.
         </p>
         <ul className="list-disc pl-5 space-y-1.5">
-          <li><strong className="text-foreground">Compatible</strong>: could be managed later. It is not managed now.</li>
+          <li><strong className="text-foreground">Compatible</strong>: could be managed. It is not managed until a Platform Admin moves it.</li>
           <li><strong className="text-foreground">Upgrade available</strong>: would be compatible after the signed agent or RustDesk is updated. RustDesk older than 1.4.1 is &ldquo;not lab-tested&rdquo;, not known to be broken.</li>
           <li><strong className="text-foreground">Unsupported</strong>: Linux, macOS, the standard agent, or a Sciter build of RustDesk.</li>
           <li><strong className="text-foreground">Unknown</strong>: no current report (offline, not reported yet, over 7 days old, or a check did not answer).</li>
@@ -87,7 +121,7 @@ const SECTIONS: Section[] = [
         <p>
           Each computer&apos;s state is on its page (Overview), and every computer&apos;s on{' '}
           <Link href="/endpoints/remote-readiness" className="underline text-foreground">Devices → Remote access readiness</Link>.
-          Reports appear once a computer&apos;s signed agent has updated to 0.69 under the usual automatic update policy.
+          Reports appear once a computer&apos;s signed agent has updated under the usual automatic update policy.
           More: <Link href="/docs/managed-secure-access" className="underline text-foreground">Managed Secure Access</Link>.
         </p>
       </div>

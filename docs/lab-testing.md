@@ -115,9 +115,19 @@ enforcement exec site (`enforceRunner`, the only code that may pass a value to `
 - **`system`**: the same test binary started by a scheduled task as SYSTEM in session 0 with
   `-lab-enforce-out`, which writes the cycle's result to `C:\ProgramData\Rem0te\lab-msa-enforce.json`.
 
+0.73 adds two steps to the same cycle, as the administrator and as SYSTEM:
+
+6. apply a **control** grant at the 0.73 ceiling (control, clipboard, file transfer and audio; tunnel and remote
+   restart off) and read every setting back;
+7. through the agent's own `enforce.Poller` with a stand-in portal, apply a control grant, then hand the poller a
+   signed **revocation** naming it: the poller must verify it under the same test key, end the session (a random
+   password, `stop-service Y` then `N`) and report `ended` with outcome `revoked`.
+
 Ids: `agent/msa-enforce/<version>/admin` and `…/system`, in `enforce-evidence-<version>.jsonl`; a release whose
-download verified but has no such file is a broken lab. It does not cover the portal, the long-poll, grant
-verification (the `internal/msa/enforce` unit tests) or a real remote connection.
+download verified but has no such file is a broken lab. It does not cover the portal, the real long-poll over the
+network, grant verification beyond the one revocation (the `internal/msa/grant` and `internal/msa/enforce` unit
+tests) or a real remote connection: nobody connects through RustDesk in the lab, so *Connected*, consent and the
+idle and session limits ending a live connection are untested on Windows.
 
 ### The agent's Windows code (`agent-lab-windows (agent Go tests)`)
 

@@ -379,7 +379,7 @@ func TestTestSessionPendingFullCycle(t *testing.T) {
 	r.host.sessions = []int{1, 1, 0}
 	r.portal.answers = []PollAnswer{managed("pending", s.envelope(g)), managed("pending"), managed("pending"), managed("pending"), {EndpointID: epID}}
 	r.run(t)
-	if got := r.portal.events(); !reflect.DeepEqual(got, []string{"applied", "connected", "ended:disconnected"}) {
+	if got := r.portal.events(); !reflect.DeepEqual(got, []string{"received", "applied", "connected", "ended:disconnected"}) {
 		t.Fatalf("events %v", got)
 	}
 	if r.store.saved == nil || r.store.saves != 1 || r.store.saved.Values["access-mode"] != "full" {
@@ -445,13 +445,17 @@ func TestBadKeyAndNoKeysRefused(t *testing.T) {
 func TestCeilingAndPauseRefused(t *testing.T) {
 	s := newSigner(t)
 	r := newRig(t, s)
+	// 0.73: control with clipboard, files and audio is inside the ceiling;
+	// a tunnel or a remote restart never is.
 	g := baseGrant("00112233445566778899aabbccddeeff")
 	g.Mode = "control"
+	g.Permissions.Tunnel = true
 	g2 := baseGrant("00112233445566778899aabbccddee00")
-	g2.Permissions.Files = true
+	g2.Mode = "control"
+	g2.Permissions.Restart = true
 	r.portal.answers = []PollAnswer{managed("pending", s.envelope(g), s.envelope(g2)), {EndpointID: epID}}
 	r.run(t)
-	if got := r.portal.events(); !reflect.DeepEqual(got, []string{"failed:mode_not_allowed", "failed:permission_not_allowed"}) || len(r.f.calls) != 0 {
+	if got := r.portal.events(); !reflect.DeepEqual(got, []string{"failed:permission_not_allowed", "failed:permission_not_allowed"}) || len(r.f.calls) != 0 {
 		t.Fatalf("events %v", got)
 	}
 	r = newRig(t, s)
@@ -483,7 +487,7 @@ func TestReadbackMismatchReported(t *testing.T) {
 	r.f.opts["enable-clipboard"] = "Y"
 	r.portal.answers = []PollAnswer{managed("pending", s.envelope(baseGrant("00112233445566778899aabbccddeeff"))), {EndpointID: epID}}
 	r.run(t)
-	if len(r.portal.reports) != 1 || r.portal.reports[0].Outcome != ReadbackMismatch || !reflect.DeepEqual(r.portal.reports[0].Keys, []string{"enable-clipboard"}) {
+	if len(r.portal.reports) != 2 || r.portal.reports[0].Event != "received" || r.portal.reports[1].Outcome != ReadbackMismatch || !reflect.DeepEqual(r.portal.reports[1].Keys, []string{"enable-clipboard"}) {
 		t.Fatalf("reports %+v", r.portal.reports)
 	}
 }
@@ -494,7 +498,7 @@ func TestSaveFailsClosed(t *testing.T) {
 	r.f.failRead["approve-mode"] = true
 	r.portal.answers = []PollAnswer{managed("pending", s.envelope(baseGrant("00112233445566778899aabbccddeeff"))), {EndpointID: epID}}
 	r.run(t)
-	if got := r.portal.events(); !reflect.DeepEqual(got, []string{"failed:save_failed"}) {
+	if got := r.portal.events(); !reflect.DeepEqual(got, []string{"received", "failed:save_failed"}) {
 		t.Fatalf("events %v", got)
 	}
 	for _, c := range r.f.calls {
@@ -514,7 +518,7 @@ func TestNoConnectionAndMaxMinutes(t *testing.T) {
 	r.portal.answers = append(r.portal.answers, PollAnswer{EndpointID: epID})
 	r.run(t)
 	ev := r.portal.events()
-	if len(ev) < 3 || ev[0] != "secured" || ev[1] != "applied" || ev[2] != "ended:no_connection" {
+	if len(ev) < 4 || ev[0] != "secured" || ev[1] != "received" || ev[2] != "applied" || ev[3] != "ended:no_connection" {
 		t.Fatalf("events %v", ev)
 	}
 	r = newRig(t, s)
@@ -526,7 +530,7 @@ func TestNoConnectionAndMaxMinutes(t *testing.T) {
 	r.portal.answers = append(r.portal.answers, PollAnswer{EndpointID: epID})
 	r.run(t)
 	ev = r.portal.events()
-	if len(ev) < 4 || ev[2] != "connected" || ev[3] != "ended:max_minutes" {
+	if len(ev) < 5 || ev[3] != "connected" || ev[4] != "ended:max_minutes" {
 		t.Fatalf("events %v", ev)
 	}
 	// Verified: the managed settings stay after the session (no restore), with a password nobody is told.
@@ -545,7 +549,7 @@ func TestRollbackRestores(t *testing.T) {
 	r.host.sessions = []int{1}
 	r.portal.answers = []PollAnswer{managed("verified", s.envelope(baseGrant("00112233445566778899aabbccddeeff"))), managed("rollback_pending"), {EndpointID: epID}}
 	r.run(t)
-	if got := r.portal.events(); !reflect.DeepEqual(got, []string{"secured", "applied", "connected", "ended:rollback", "restored"}) {
+	if got := r.portal.events(); !reflect.DeepEqual(got, []string{"secured", "received", "applied", "connected", "ended:rollback", "restored"}) {
 		t.Fatalf("events %v", got)
 	}
 	if !reflect.DeepEqual(r.f.opts, before) || r.store.saved != nil {

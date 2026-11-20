@@ -5,6 +5,112 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.73.0] — 2026-11-20 · *Warden*
+
+**Managed Secure Access build step 5: Connect through grants, revocation, session evidence and group or business
+cutover runs — behind `MSA_GRANTS`, which is off.** (docs/managed-secure-access.md §3.12; check-security-invariants
+§83, with §62, §81 and §82 amended.)
+
+> **This is a new signed agent build (0.73.0).** When it is published the fleet's signed agents update the way
+> they always do. **On a Legacy computer — every computer until a Platform Admin moves one — the 0.73 agent
+> behaves exactly as 0.71's.** With `MSA_GRANTS` off (production) nothing new happens: every new route answers
+> `404 MSA_NOT_ENABLED`, the console asks none of them, and Legacy Connect is unchanged. Managed Secure Access
+> has run only in the Windows lab (GitHub's Windows Server runners, RustDesk 1.4.1–1.5.3), never on a Windows
+> 10/11 desktop, never with a real technician connecting through RustDesk, and never on the fleet.
+
+### Connect through a session grant (managed and verified computers only)
+
+- `POST /msa/sessions/connect/:endpointId` takes only `mode` (`control`, `view_only`, `unattended`). Refused, with
+  a reason and nothing issued: Legacy or pending (`MSA_NOT_MANAGED`, `MSA_NOT_VERIFIED`), rolling back, an
+  enforcement failure, an agent older than 0.73.0 (`MSA_AGENT_TOO_OLD`), an agent not polling — no held poll and
+  none in 90 s (`MSA_AGENT_NOT_POLLING`), another person's live session (`MSA_SESSION_ACTIVE`), or anything the
+  ordinary launch policy refuses (`authorizeConnect` now takes `managed: true`).
+- The grant's terms are the policy's (`msa/connect-terms.ts`), never the request's: view-only → view with nothing
+  beyond; control → control with audio, and clipboard / file transfer only when the access controls say `request`
+  and, for a preset technician, the preset allows them; consent for a preset whose controls require it; the
+  preset's or the controls' session limit (1–480 min), idle 15 min.
+- **View-only and attended consent are now enforceable on a managed computer.** The access policy treats a
+  managed launch as able to enforce both, so an L2 technician refused on Legacy with
+  `ENDPOINT_CANNOT_ENFORCE_VIEW_ONLY` gets a view-only, consent-required grant there. Legacy still refuses them.
+- The console waits up to **60 s** for the agent's `applied` (progress: Authorized → Received → Applied). A
+  Connect grant not applied by then is revoked (`timeout`) and nothing is handed over; a late `applied` changes
+  nothing. Then `GET /msa/sessions/grants/:grantId/connect.cmd` hands the one-time password **once**, to that
+  technician only (`MSA_PASSWORD_RELEASED`, ids only, `logOrFail` before a conditional claim). No fresh
+  confirmation: it opens only this session and the agent replaces it at session end. Never a Legacy fallback.
+- The `rem0te://` launcher is not extended: it still refuses a verified managed computer.
+
+### The managed ceiling: control with clipboard, files and audio
+
+- 0.72's view-only ceiling becomes **control with clipboard, file transfer and audio; never a TCP tunnel or a
+  remote restart**, identical in `enforce.Ceiling` (compiled into the agent) and `MANAGED_CEILING`, and in the Go
+  fixture. Control is what support needs, and those three are what the access controls and presets already
+  govern; a tunnel reaches other hosts and a remote restart breaks the session's enforcement, and neither has a
+  control in Rem0te. Widening it again is a signed agent release.
+
+### Revocation
+
+- A signed revocation: Ed25519 under the grant key, its own prefix `rem0te-msa-revoke-v1\n`
+  (`msa/revocation.ts`, Go `grant.VerifyRevocation`, eleven reasons in the same order, a shared fixture
+  `internal/msa/testdata/msa-revocations.json`). One computer, a list of up to 20 grants or `all` (grants issued
+  before it), at most nine hours. Delivered on the long-poll beside grants and acked the same way.
+- Scopes: one session, a list (bulk), a computer, a technician, a business, and the `remote` containment pause,
+  which now revokes every delivered or applied grant on the next poll (undelivered ones are withheld as before).
+- **Who may revoke:** the session's technician; the business's own Owner or Admin (not a technician, with Edit
+  computers) for any session there, a computer's, a technician's or the business's; a Platform Admin. Never a
+  fresh confirmation — disconnecting only reduces access. Audited (`MSA_SESSION_REVOKED`: who, reason, grant ids).
+- The agent verifies it under the signed keys, ends the open session it covers (random password,
+  `stop-service Y`/`N`), reports `ended` / `revoked`, and remembers the revoked ids so they can never be applied
+  later. It only reduces. Offline, the session ends at its limit or idle timeout, locally.
+
+### Session evidence
+
+- The agent now reports `received`. Each session's timeline (`msa/session-timeline.ts`): Requested → Authorized →
+  Received → Applied → Launched → Connected → Disconnected / Expired / Revoked / Failed. **Launched is never shown
+  as Connected**; every timeline lists what the agent cannot see (who is at the other end, whether consent was
+  accepted, what happened in the session). RustDesk's own log lines are not read.
+
+### Cutover runs (a business or a device group)
+
+- `/msa/cutover-runs`, Platform Admin. Start, Advance and Confirm need a fresh confirmation (`msa.cutover`); Halt
+  and Rollback never ask. One open run per business, at most 500 computers, batches of 1–25 (default 5).
+- The canary is cut over first and confirmed on its own page; nothing else moves until it is verified. Each batch
+  is a person pressing Advance; every computer goes through the one-computer cutover with its own blockers and
+  `MSA_CUTOVER` row (a refused one is skipped with its code) and is sent a five-minute view-only verification
+  grant. The next batch waits until the last read back, or an hour. Confirm verifies each computer that read back
+  since cutover (its own `MSA_VERIFIED` naming the run). Rollback rolls back every computer the run moved. No timer.
+
+### Migration 0090
+
+- `MsaGrant`: `source` (`test`/`connect`/`verify`), `launchMode`, `receivedAt`, `launchedAt`, `revoked` with
+  `revokedAt`/`revokedById`/`revokeReason`, all CHECKed. `MsaRevocation` (shape and window CHECKs).
+  `MsaManagedComputer.lastPollAt` and `runId`. `MsaCutoverRun` and `MsaCutoverMember` (one open run per business,
+  one canary per run, a run stays in one business — trigger). Eight audit actions.
+
+### Console
+
+- Device page: Connect and View only go through a grant on a verified managed computer, with a progress dialog;
+  the computer's managed sessions with their timelines and Disconnect, shown only when the server says
+  `managedControls`. New **Devices → Managed sessions** with bulk Disconnect. Remote readiness shows cutover runs
+  to Platform Admins. `/help` and `docs/technician-guide.md` say it is lab-tested only.
+
+### Tests
+
+- `e2e-msa-sessions.mjs` (port 3971, in `run-e2e.sh`, 114 checks); `unit-msa-sessions.mjs` (in CI);
+  `e2e-msa-grants.mjs` and `e2e-msa-managed.mjs` updated for the pause revoking and the new ceiling; Go
+  `internal/msa/grant` revocation tests and `internal/msa/enforce` session tests; the Windows lab's
+  `TestLabRustdeskEnforce` now also applies and reads back a control grant and proves a revocation ends the
+  session, as the administrator and as SYSTEM.
+- Fixed a flake in `e2e-alert-tickets.mjs`: the retry loop moved on as soon as `attempts` was counted, while the
+  row was still `sending`, and then wrote a retry time onto it, which the `MonitorAlertTicket_retry` CHECK
+  refuses. It now waits for the row to leave `sending`.
+
+### Deploy
+
+- Apply migration 0090 and regenerate the Prisma client at the target (CLAUDE.md, *A schema change*).
+- Publish the signed agent (`rem0te-signed-publish`). Nothing else changes while `MSA_GRANTS` is off.
+
+---
+
 ## [0.72.0] — 2026-11-20 · *Helm*
 
 **Managed Secure Access build step 4: agent enforcement, the managed test session, cutover and rollback —

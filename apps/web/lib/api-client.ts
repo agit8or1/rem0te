@@ -1063,6 +1063,42 @@ export const msaManagedApi = {
   rollback: (endpointId: string, force = false) => api.post(`/msa/managed/${endpointId}/rollback`, force ? { force: true } : {}),
 };
 
+// Managed Secure Access sessions (0.73, build step 5), behind MSA_GRANTS like
+// the routes above: call these only after an ungated readiness answer said
+// `managedControls: true`. Connect on a managed and verified computer issues a
+// session grant; the Connect script for it carries the one-time password and
+// works once. Disconnect (revoke) never asks for fresh authentication.
+export type MsaRevokeBody =
+  | { scope: 'sessions'; grantIds: string[] }
+  | { scope: 'computer'; endpointId: string }
+  | { scope: 'technician'; technicianId: string; businessId?: string }
+  | { scope: 'business'; businessId: string };
+export const msaSessionsApi = {
+  connect: (endpointId: string, mode?: 'view_only' | 'control' | 'unattended') =>
+    api.post(`/msa/sessions/connect/${endpointId}`, mode ? { mode } : {}),
+  grant: (grantId: string) => api.get(`/msa/sessions/grants/${grantId}`),
+  connectScriptUrl: (grantId: string) => `${BASE_URL}/msa/sessions/grants/${grantId}/connect.cmd`,
+  forEndpoint: (endpointId: string) => api.get(`/msa/sessions/endpoint/${endpointId}`),
+  active: (businessId?: string) => api.get('/msa/sessions/active', { params: businessId ? { businessId } : undefined }),
+  revokeGrant: (grantId: string) => api.post(`/msa/sessions/grants/${grantId}/revoke`),
+  revoke: (body: MsaRevokeBody) => api.post('/msa/sessions/revoke', body),
+};
+
+// Managed Secure Access cutover runs (0.73): a device group or a business,
+// canary first, one batch per Advance, never automatic. Platform Admin.
+// Start, Advance and Confirm need fresh authentication (the interceptor
+// prompts and retries); Halt and Roll back never do.
+export const msaCutoverRunsApi = {
+  list: () => api.get('/msa/cutover-runs'),
+  get: (runId: string) => api.get(`/msa/cutover-runs/${runId}`),
+  start: (body: { scope: 'group' | 'business'; businessId: string; groupId?: string; canaryEndpointId?: string; batchSize?: number }) =>
+    api.post('/msa/cutover-runs', body),
+  advance: (runId: string) => api.post(`/msa/cutover-runs/${runId}/advance`),
+  confirm: (runId: string) => api.post(`/msa/cutover-runs/${runId}/confirm`),
+  halt: (runId: string) => api.post(`/msa/cutover-runs/${runId}/halt`),
+  rollback: (runId: string) => api.post(`/msa/cutover-runs/${runId}/rollback`),
+};
+
 export const agentSigningApi = {
   overview: (businessId?: string) => api.get('/agent-signing/overview', { params: businessId ? { businessId } : undefined }),
   putAuto: (body: { mode?: 'off' | 'canary_then_all'; soakMinutes?: number }) => api.put('/admin/agent-auto-migration', body),
