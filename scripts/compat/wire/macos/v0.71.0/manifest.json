@@ -1,0 +1,16 @@
+{
+  "agent": "macos",
+  "tag": "v0.71.0",
+  "agentVersion": "0.71.0",
+  "evidence": "captured",
+  "contract": {
+    "heartbeat": {
+      "rawContains": [
+        "\"authenticated\":true"
+      ],
+      "commandPattern": "\\{\"id\":\"[A-Za-z0-9_-]{1,64}\",\"type\":\"(INVENTORY_REFRESH|UPDATE_SCAN|EVENT_LOG_QUERY)\""
+    }
+  },
+  "capturedFrom": "git archive v0.71.0 apps/api/src/public (d96133338e8135ef8e21110261032aae9b9f3a55)",
+  "fixtures": 6
+}

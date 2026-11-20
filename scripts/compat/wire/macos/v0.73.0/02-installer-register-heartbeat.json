@@ -1,0 +1,23 @@
+{
+  "agent": "macos",
+  "tag": "v0.73.0",
+  "name": "installer-register-heartbeat",
+  "evidence": "captured",
+  "source": "the v0.73.0 installer's registration block, run under bash with a recording curl",
+  "identity": "pooled",
+  "request": {
+    "method": "POST",
+    "path": "/enrollment/heartbeat",
+    "body": {
+      "rustdeskId": "{{rustdeskId}}",
+      "hostname": "wire-fixture-mac",
+      "platform": "macos",
+      "password": "{{password}}",
+      "agentSecret": "{{agentSecret}}"
+    }
+  },
+  "raw": "{\"rustdeskId\":\"{{rustdeskId}}\",\"hostname\":\"wire-fixture-mac\",\"platform\":\"macos\",\"password\":\"{{password}}\",\"agentSecret\":\"{{agentSecret}}\"}",
+  "expect": {
+    "status": 200
+  }
+}

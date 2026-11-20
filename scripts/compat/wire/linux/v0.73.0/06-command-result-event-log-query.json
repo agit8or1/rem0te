@@ -1,0 +1,24 @@
+{
+  "agent": "linux",
+  "tag": "v0.73.0",
+  "name": "command-result-event-log-query",
+  "evidence": "captured",
+  "source": "the v0.73.0 agent (rem0te-agent), run under dash against a loopback stub",
+  "identity": "claimed",
+  "request": {
+    "method": "POST",
+    "path": "/enrollment/command-result",
+    "body": {
+      "rustdeskId": "{{rustdeskId}}",
+      "agentSecret": "{{agentSecret}}",
+      "commandId": "{{commandId:EVENT_LOG_QUERY}}",
+      "ok": false,
+      "error": "Event logs are Windows-only: the Linux agent does not read logs."
+    }
+  },
+  "raw": "{\"rustdeskId\":\"{{rustdeskId}}\",\"agentSecret\":\"{{agentSecret}}\",\"commandId\":\"{{commandId:EVENT_LOG_QUERY}}\",\"ok\":false,\"error\":\"Event logs are Windows-only: the Linux agent does not read logs.\"}",
+  "commandType": "EVENT_LOG_QUERY",
+  "expect": {
+    "status": 200
+  }
+}

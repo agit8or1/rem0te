@@ -1,0 +1,40 @@
+{
+  "agent": "macos",
+  "tag": "v0.33.0",
+  "name": "heartbeat",
+  "evidence": "captured",
+  "source": "the v0.33.0 agent (rem0te-agent), run under dash against a loopback stub",
+  "identity": "claimed",
+  "request": {
+    "method": "POST",
+    "path": "/enrollment/heartbeat",
+    "body": {
+      "rustdeskId": "{{rustdeskId}}",
+      "agentSecret": "{{agentSecret}}",
+      "platform": "macos",
+      "agentVersion": "0.33.0",
+      "hostname": "wire-fixture-mac",
+      "osVersion": "macOS 14.5",
+      "rustdeskVersion": "1.4.1",
+      "loggedOnUser": "tech",
+      "uptimeSeconds": 186947,
+      "lastBootAt": "2026-11-18T11:06:40Z",
+      "cpuLoadPercent": 13,
+      "memoryTotalMb": 16384,
+      "memoryFreeMb": 3125,
+      "systemDiskTotalMb": 471482,
+      "systemDiskFreeMb": 292969
+    }
+  },
+  "raw": "{\"rustdeskId\":\"{{rustdeskId}}\",\"agentSecret\":\"{{agentSecret}}\",\"platform\":\"macos\",\"agentVersion\":\"0.33.0\",\"hostname\":\"wire-fixture-mac\",\"osVersion\":\"macOS 14.5\",\"rustdeskVersion\":\"1.4.1\",\"loggedOnUser\":\"tech\",\"uptimeSeconds\":186947,\"lastBootAt\":\"2026-11-18T11:06:40Z\",\"cpuLoadPercent\":13,\"memoryTotalMb\":16384,\"memoryFreeMb\":3125,\"systemDiskTotalMb\":471482,\"systemDiskFreeMb\":292969}",
+  "stage": {
+    "commands": [
+      "INVENTORY_REFRESH",
+      "UPDATE_SCAN",
+      "EVENT_LOG_QUERY"
+    ]
+  },
+  "expect": {
+    "status": 200
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "agent": "linux",
+  "tag": "v0.32.0",
+  "name": "installer-register-heartbeat",
+  "evidence": "captured",
+  "source": "the v0.32.0 installer's registration block, run under bash with a recording curl",
+  "identity": "pooled",
+  "request": {
+    "method": "POST",
+    "path": "/enrollment/heartbeat",
+    "body": {
+      "rustdeskId": "{{rustdeskId}}",
+      "hostname": "wire-fixture-linux",
+      "platform": "linux",
+      "password": "{{password}}",
+      "agentSecret": "{{agentSecret}}"
+    }
+  },
+  "raw": "{\"rustdeskId\":\"{{rustdeskId}}\",\"hostname\":\"wire-fixture-linux\",\"platform\":\"linux\",\"password\":\"{{password}}\",\"agentSecret\":\"{{agentSecret}}\"}",
+  "expect": {
+    "status": 200
+  }
+}

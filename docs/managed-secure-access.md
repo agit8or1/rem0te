@@ -646,7 +646,9 @@ actions, patch policies, service and process control; 611 checks). The plan:
   release.
 - Wire fixtures for the standard agent and the POSIX agents: the heartbeat
   and command-result bodies each supported release sends, replayed against
-  the new API.
+  the new API. **Built in 0.73.1** (`compat-wire` CI jobs,
+  docs/compatibility.md "Wire fixtures"): 20 agent × release sets, every
+  request captured from the release's own scripts.
 - Lab jobs on `windows-latest` for the real-Windows paths, including RustDesk.
 - Each release's notes carry the matrix: versions tested, at which evidence
   level, and what was not tested.

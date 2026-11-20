@@ -1,0 +1,30 @@
+{
+  "agent": "macos",
+  "tag": "v0.64.0",
+  "name": "command-result-update-scan",
+  "evidence": "captured",
+  "source": "the v0.64.0 agent (rem0te-agent), run under dash against a loopback stub",
+  "identity": "claimed",
+  "request": {
+    "method": "POST",
+    "path": "/enrollment/command-result",
+    "body": {
+      "rustdeskId": "{{rustdeskId}}",
+      "agentSecret": "{{agentSecret}}",
+      "commandId": "{{commandId:UPDATE_SCAN}}",
+      "ok": true,
+      "updates": {
+        "pending": [
+          {
+            "title": "macOS Sonoma 14.6"
+          }
+        ]
+      }
+    }
+  },
+  "raw": "{\"rustdeskId\":\"{{rustdeskId}}\",\"agentSecret\":\"{{agentSecret}}\",\"commandId\":\"{{commandId:UPDATE_SCAN}}\",\"ok\":true,\"updates\":{\"pending\":[{\"title\":\"macOS Sonoma 14.6\"}]}}",
+  "commandType": "UPDATE_SCAN",
+  "expect": {
+    "status": 200
+  }
+}

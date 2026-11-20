@@ -1,0 +1,57 @@
+{
+  "agent": "linux",
+  "tag": "v0.71.0",
+  "name": "command-result-inventory-refresh",
+  "evidence": "captured",
+  "source": "the v0.71.0 agent (rem0te-agent), run under dash against a loopback stub",
+  "identity": "claimed",
+  "request": {
+    "method": "POST",
+    "path": "/enrollment/command-result",
+    "body": {
+      "rustdeskId": "{{rustdeskId}}",
+      "agentSecret": "{{agentSecret}}",
+      "commandId": "{{commandId:INVENTORY_REFRESH}}",
+      "ok": true,
+      "inventory": {
+        "osCaption": "Ubuntu 24.04.1 LTS",
+        "osBuild": "6.8.0-49-generic",
+        "osArch": "x86_64",
+        "timezone": "Etc/UTC",
+        "manufacturer": "Contoso Hardware",
+        "model": "Fixture 9000",
+        "serialNumber": "WIRE-SERIAL-0002",
+        "chassisType": "Desktop",
+        "biosVersion": "1.2.3",
+        "biosDate": "2024-03-14T00:00:00Z",
+        "cpuModel": "Fixture CPU 4-Core",
+        "cpuCores": 2,
+        "cpuThreads": 2,
+        "cpuMhz": 3600,
+        "memoryTotalMb": 15921,
+        "memoryFreeMb": 9216,
+        "disks": [
+          {
+            "drive": "/",
+            "label": "/dev/sda2",
+            "fsType": "ext4",
+            "totalBytes": 105152176128,
+            "freeBytes": 58818560000
+          },
+          {
+            "drive": "/boot/efi",
+            "label": "/dev/sda1",
+            "fsType": "vfat",
+            "totalBytes": 1124999168,
+            "freeBytes": 1118633984
+          }
+        ]
+      }
+    }
+  },
+  "raw": "{\"rustdeskId\":\"{{rustdeskId}}\",\"agentSecret\":\"{{agentSecret}}\",\"commandId\":\"{{commandId:INVENTORY_REFRESH}}\",\"ok\":true,\"inventory\":{\"osCaption\":\"Ubuntu 24.04.1 LTS\",\"osBuild\":\"6.8.0-49-generic\",\"osArch\":\"x86_64\",\"timezone\":\"Etc/UTC\",\"manufacturer\":\"Contoso Hardware\",\"model\":\"Fixture 9000\",\"serialNumber\":\"WIRE-SERIAL-0002\",\"chassisType\":\"Desktop\",\"biosVersion\":\"1.2.3\",\"biosDate\":\"2024-03-14T00:00:00Z\",\"cpuModel\":\"Fixture CPU 4-Core\",\"cpuCores\":2,\"cpuThreads\":2,\"cpuMhz\":3600,\"memoryTotalMb\":15921,\"memoryFreeMb\":9216,\"disks\":[{\"drive\":\"/\",\"label\":\"/dev/sda2\",\"fsType\":\"ext4\",\"totalBytes\":105152176128,\"freeBytes\":58818560000},{\"drive\":\"/boot/efi\",\"label\":\"/dev/sda1\",\"fsType\":\"vfat\",\"totalBytes\":1124999168,\"freeBytes\":1118633984}]}}",
+  "commandType": "INVENTORY_REFRESH",
+  "expect": {
+    "status": 200
+  }
+}
