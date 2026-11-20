@@ -50,6 +50,7 @@ const ORDER = [
   ['capabilities.md', 'What each agent can do', 'Computers and monitoring', 'Capabilities by agent type, what needs configuring, and what has been tested on real Windows.'],
   ['readiness.md', 'Readiness and evidence', 'Computers and monitoring', 'Feature by feature: what works on which computers, who enforces it, and what evidence there is that it works on a real machine.'],
   ['lab-testing.md', 'Windows lab testing', 'Computers and monitoring', 'What the Windows lab job runs on a disposable GitHub runner, how to read its evidence, and what it cannot prove.'],
+  ['rmm-expansion-audit.md', 'RMM expansion audit', 'Computers and monitoring', 'The 0.73 audit of the full-RMM directive: status and strongest evidence per item, conflicts with security invariants, the P0 release sequence and what still needs real-device validation.'],
   ['inventory.md', 'Inventory and event logs', 'Computers and monitoring', 'Specs, installed software, change history, pending updates and event-log slices.'],
   ['diagnostics.md', 'One-click diagnostics', 'Computers and monitoring', 'Read-only checks a technician runs with one click: disk, services, errors, network, DNS, updates, restart.'],
   ['monitoring.md', 'Monitoring and alerts', 'Computers and monitoring', 'Monitors, inheritance, alerts, site outages, maintenance windows and escalation.'],

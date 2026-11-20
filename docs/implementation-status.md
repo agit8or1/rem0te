@@ -7,7 +7,44 @@ is **Done** only with backend, UI, permissions, audit, automated tests and docs
 
 Legend: **E** exists · **P** partial · **M** missing · **F** in flight (branch)
 
-## Phase 0 — audit of v0.54.0 (main 12a8350)
+## Current audit — 0.73.2 (main 3554921, 0.73.0)
+
+The *Full RMM Functionality Expansion* directive (2026-11-20) is audited item by item in
+**[rmm-expansion-audit.md](rmm-expansion-audit.md)**. That page has:
+
+- the matrix, with a status and the strongest evidence level for each item, on
+  [readiness.md](readiness.md#evidence-levels)'s ladder;
+- the thirteen places where the directive conflicts with an invariant, and how each would be resolved;
+- the P0 release sequence;
+- the list of features that still need real-device validation.
+
+It supersedes the Phase 0 audit below, which is kept as the 0.54 record.
+
+| Status | P0 | P1 | P2 |
+|---|---|---|---|
+| Existing | 26 | 19 | 0 |
+| Partial | 26 | 15 | 0 |
+| Missing | 21 | 20 | 0 |
+| Planned | 3 | 0 | 6 |
+
+**P0 sequence** (minor releases after the in-flight 0.73.1 and 0.74.0; none deployed without approval):
+
+| # | Release | Agent build | Signer |
+|---|---|---|---|
+| 1 | 0.75.0: PowerShell 5.1 / 7 reporting, per-tool capability states, `script-run` in the compatibility suites | yes | no |
+| 2 | 0.76.0: Device Tools panel (eight groups, existing flows only) | no | no |
+| 3 | 0.77.0: read-only diagnostics palette with typed arguments (network, security posture, tasks, sessions) | script slots | no |
+| 4 | 0.78.0: built-in reviewed library (categories; write scripts still through §39) | no | no |
+| 5 | 0.79.0: bulk runs (group / site / business, preview, ≤ 25 per plan, one approval), searchable history, finish notifications | no | yes |
+| 6 | 0.80.0: `windows.script.run@2` (interpreter, run-as, policy timeouts, reboot detection, stop) | yes | yes |
+| 7 | 0.81.0: alert automation, recommend and dry run | no | no |
+| 8 | 0.82.0: alert automation under a signer-approved remediation policy | no | yes |
+
+In flight: **#183, 0.73.1** (wire-fixture compatibility for the standard and POSIX agents) and **#185, 0.74.0
+*Bastion*** (*Admin → Security* posture checks for the portal host). Merged: **0.73.0 *Warden*** (Managed Secure
+Access step 5: Connect through grants, revocation, session evidence, behind `MSA_GRANTS`, off).
+
+## Phase 0 — audit of v0.54.0 (main 12a8350) — historical
 
 ### 1. Endpoint health
 
@@ -105,8 +142,8 @@ statement until it has been.
 |---|---|---|---|
 | — Alerts: more conditions, PSA auto-tickets, dashboard recent alerts | 0.55 | shipped with 0.56 (stack PR) | — |
 | — Warranty + hardware support links | 0.56 | shipped (stack PR) | — |
-| — Warranty: HP (HP Inc. Warranty API) and Apple (Business Manager) lookups; "why is there no date" per computer | 0.61 | PR open — HP and Apple tested only against a stand-in | 0.56 |
-| 4 Discovery & adoption (bulk assign w/ site, mappings, multi-use deployment keys, explicit pre-assignment refusals incl. sessions) | next | planned | — (independent of monitoring files) |
+| — Warranty: HP (HP Inc. Warranty API) and Apple (Business Manager) lookups; "why is there no date" per computer | 0.61 | shipped — HP and Apple tested only against a stand-in | 0.56 |
+| 4 Discovery & adoption (bulk assign w/ site, mappings, multi-use deployment keys, explicit pre-assignment refusals incl. sessions) | 0.57 | shipped (§70) | — |
 | 1a Health telemetry, Windows (security posture: Defender/AV, firewall, BitLocker, Secure Boot, TPM, activation; battery; SMART/wear via `Get-PhysicalDisk`/`Get-StorageReliabilityCounter`; unexpected shutdown/BSOD), unsupported ≠ healthy | after 0.55/0.56 merge | planned | 0.55 engine |
 | 1b Health telemetry, Linux/macOS (read-only, within §24/§32 or deliberate amendment) | | planned | 1a |
 | 1c History for new metrics, trend alerts (disk fill ETA, wear, shutdowns, battery, stale definitions), health score, Health/Security/Network tabs | | planned | 1a |
@@ -114,10 +151,10 @@ statement until it has been.
 | 5 Backup monitoring (provider adapter interface, generic authenticated webhook + polling, first adapters, backup monitor kinds) | | planned | 0.55 engine |
 | 7 Daily digest (daily frequency on ReportSchedule), quiet hours, per-site notify policy | | planned | 0.55 |
 | 6 Customer health dashboard + P10 health contract (feature-flagged until ClientSt0r advertises it) | | planned | 1c |
-| 2a Scheduling for scripts/software (calendar one-time, recurring via signer-side pre-approved automation policies, modelled on patch policies) | | planned | — |
-| 2b Alert-triggered automation (proposes plans; executes unattended only under a signer-approved automation policy with cooldown, dedup, max-runs, retry, escalation) | | planned | 2a, 1a |
-| 2c Built-in reviewed template library | | planned | 2a |
-| 2d PowerShell 7 + interpreter reporting on Windows; Linux/macOS execution via the Go agent ported to those platforms (signed, verified), POSIX shell agent stays read-only | | planned, needs owner sign-off on reversing §24/§32 | 2a |
+| 2a Scheduling for scripts/software (calendar one-time, recurring via signer-side pre-approved automation policies, modelled on patch policies) | 0.58 | shipped (§65, §71) | — |
+| 2b Alert-triggered automation (proposes plans; executes unattended only under a signer-approved automation policy with cooldown, dedup, max-runs, retry, escalation) | 0.81, 0.82 | planned ([audit](rmm-expansion-audit.md#roadmap) #7–#8) | 2a, 1a |
+| 2c Built-in reviewed template library | 0.77, 0.78 | planned (audit #3–#4: read-only checks in the diagnostics catalog, writes through §39) | 2a |
+| 2d PowerShell 7 + interpreter reporting on Windows; Linux/macOS execution via the Go agent ported to those platforms (signed, verified), POSIX shell agent stays read-only | 0.75 (A1), 0.80 (A2), then A3–A5 | planned; Design A decided 2026-11-16 (shell agents stay read-only, §24/§32 unchanged) | 2a |
 | 3 File manager (signed, time-boxed, path-scoped file-session grant; chunked hashed transfers; `computers:files`) | | planned, design review first | 2d for Linux/macOS |
 | 8 UI: device workspace regrouping, dashboard filters + charts, automation editor | woven into each phase, final polish pass | planned | all |
 
@@ -125,8 +162,8 @@ statement until it has been.
 
 | Capability | Real Windows | Real Linux | Real macOS |
 |---|---|---|---|
-| Everything since the tray (0.36) and approved actions beyond Spooler | not yet | — | — |
-| 0.54 restart scheduling | pending (DEWEY-WKS2022, DS-HOME1 on 0.54.0) | — | — |
+| Everything since the tray (0.36) and approved actions beyond Spooler | **Lab (Windows Server 2025, 0.68.3+)**: service control, End process, program removal (quiet, MSI, Inno), script runs under PS 5.1 as administrator, offline update scan, RustDesk preflight and MSA enforcement. **Fleet**: one update install, one program removal, migrations, auto-update, two tray tools, chat ([readiness.md](readiness.md#the-production-fleet)). Not on a Windows 10/11 desktop under control | — | — |
+| 0.54 restart scheduling | Sim only: has never restarted a real computer | — | — |
 | 0.65 Windows Installer package (`windows.msi`) | not yet (built and read back on Linux only) | — | — |
 
 Simulators (`rem0te-action-sim`, pwsh-on-Linux parse/run) are not real-system tests.

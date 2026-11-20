@@ -35,13 +35,13 @@ far each part has been tested. "Tested" here means one of three things, and they
 | **Deploying updates** (canary, rings, two approvals) | **No** | Yes, when approvals are configured | **No** | **No** | No | No |
 | Approved actions (start the Print Spooler) | No | Yes, when approvals are configured | No | No | No | No |
 | Maintenance actions (restart an allowlisted service, schedule or cancel a restart, collect logs) | No | Yes (0.32+ agent), when approvals are configured | No | No | No | No |
-| Chat with the person at the computer (0.34; [chat.md](chat.md)) | Yes (0.36+, through the tray, once the installer has been re-run; **not yet run on real Windows**) | Yes (0.34+ agent; **not yet run on real Windows**) | No | No | No | No |
-| Tray icon: support request with usage and screenshot, read-only self-help (0.36; [tray.md](tray.md)) | Yes (**not yet run on real Windows**; the Windows account is reported, not proven) | Yes (**not yet run on real Windows**) | No | No | No | No |
+| Chat with the person at the computer (0.34; [chat.md](chat.md)) | Yes (0.36+, through the tray, once the installer has been re-run) | Yes (0.34+ agent; **seen on the fleet**: 2 conversations, 5 messages, not a controlled test) | No | No | No | No |
+| Tray icon: support request with usage and screenshot, read-only self-help (0.36; [tray.md](tray.md)) | Yes (the Windows account is reported, not proven) | Yes (**seen on the fleet**: two read-only self-help tools, `net.test` and `net.details`; support requests not yet) | No | No | No | No |
 | Tray self-help as SYSTEM: flush DNS, renew IP, restart RustDesk (0.36) | No | Yes (**not yet run on real Windows**) | No | No | No | No |
 | Password rotation, reinstall, RustDesk client update from the console | Yes | Yes | **No** — the console refuses them; re-run the installer on the computer | **No** — the console refuses them; re-run the installer on the computer | No | No |
 | Agent card (0.34): type, version (0.70.1: a signed agent on the published build shows the published release, whatever label it last recorded), current or behind, channel, portal update mode, last update result | Yes | Yes (last update result from 0.34 signed builds) | Yes, with the command to re-run the installer | Yes, with the command to re-run the installer | Type only | No |
 | **Update agent** from the console (0.34) | Yes: re-runs the current standard installer (the reinstall path) | **Check for update now**: `rem0te-agent.exe update`, signed files only | **No** — re-run the installer on the computer | **No** — re-run the installer on the computer | No | No |
-| **Upgrade to full agent** (the signed agent) from the console, one computer or a selection (0.34) | Yes, with a fresh sign-in and a reason, while the portal is not in *Signed only*; **fixture-tested only** | Already signed | No signed agent for Linux | No signed agent for macOS | No | No |
+| **Upgrade to full agent** (the signed agent) from the console, one computer or a selection (0.34) | Yes, with a fresh sign-in and a reason, while the portal is not in *Signed only*; **seen on the fleet** (9 migrations completed, 1 by hand and 8 automatic) | Already signed | No signed agent for Linux | No signed agent for macOS | No | No |
 | Containment honoured on the device | Server side only | Server side, and the agent checks the signed pause | Server side only (it acts on nothing anyway) | Server side only (it acts on nothing anyway) | Server side only | Server side only |
 
 The standard agent never deploys anything. The Linux and macOS agents go further: they act on **nothing** the
@@ -103,19 +103,19 @@ values.
 | Standard agent: heartbeat, inventory, update scan | **In production use**, standard channel: observed, not a controlled test | — | Yes |
 | Standard (Linux) agent: heartbeat, inventory, pending updates (0.32) | **No installed Linux endpoint yet** | The real generated script, run unprivileged on a Linux host against a scratch API, reading that host's real `/proc`, `df`, `who` and `apt list`; dnf and zypper from stubs (`e2e-linux-agent.mjs`). Not installed under systemd, not run as root | Yes |
 | Standard (macOS) agent: heartbeat, inventory, pending updates (0.33) | **No Mac yet** — **integration-tested only** | The real generated script against a real API and database, but on Linux: every macOS command (`sw_vers`, `sysctl`, `vm_stat`, `top`, `df`, `mount`, `ioreg`, `system_profiler`, `defaults`, `plutil`) is a stub printing recorded macOS output, and run under dash, `bash --posix` and zsh's sh emulation (`e2e-macos-agent.mjs`, `unit-macos-agent.mjs`). Not run on a Mac, under launchd or as root; the installer's macOS steps are only parsed | Yes |
-| Monitoring collection (services, events, software) | **No** | Under pwsh against stubs (`unit-monitoring.mjs`) | Yes (`e2e-monitoring.mjs`) |
+| Monitoring collection (services, events, software) | **Fleet** (observed, not controlled): software inventory on all four computers, and one real event-log alert (DS-HOME1, the false positive fixed in 0.66). No service monitor seen alerting | Under pwsh against stubs (`unit-monitoring.mjs`) | Yes (`e2e-monitoring.mjs`) |
 | One-click diagnostics (the nine catalog checks) | **No** | Parsed by PowerShell's parser and run under pwsh against stubs (`unit-diagnostics-catalog.mjs`) | Yes: real API and database, simulated heartbeat (`e2e-diagnostics-catalog.mjs`) |
-| Signed agent: patch scan, install, restart detection | **No** | Yes: `e2e-staged-patching.mjs` runs the agent's real `internal/patch` code through `rem0te-action-sim` | — |
+| Signed agent: patch scan, install, restart detection | **Fleet**: 218 scans; one direct-mode install, which reported restart required (DEWEY-WKS2022). **Lab**: the scan under Windows PowerShell 5.1 against a WSUS server that does not exist ([lab-testing.md](lab-testing.md)). The restart itself has not been recorded | Yes: `e2e-staged-patching.mjs` runs the agent's real `internal/patch` code through `rem0te-action-sim` | — |
 | Patch status: restart required | **No** | Yes | Yes (`unit-patch-summary.mjs`) |
 | Patch status: restart completed, confirmed by a later scan | **No** | Yes | Yes |
 | Patch status: failed update (Windows' HRESULT) | **No** | Yes | Yes |
 | Patch status: offline, stale evidence | **No** | Yes (scan time moved back 80 hours in the database) | Yes |
 | Patch status: externally managed (WSUS, Intune) | **No** | Yes (the agent's registry detection against a simulated registry) | Yes |
 | Approved actions (Print Spooler) | **No** | Yes (`e2e-approved-action.mjs`) | Yes |
-| Agent upgrade from the console (0.34): the request, the heartbeat handing exactly that computer its nonce, the served script and its digest pin | **No** — `migrate` itself has never run on Windows | The heartbeat's agent-status block under pwsh against fixture files (`unit-agent-migration.mjs`) | Yes: real API, real signed repository from `rem0te-release`, a stand-in agent binary (`e2e-agent-upgrade.mjs`) |
+| Agent upgrade from the console (0.34): the request, the heartbeat handing exactly that computer its nonce, the served script and its digest pin | **Fleet**: 9 migrations completed (1 by hand, 8 automatic), 2 cancelled, after the 0.37.3 fix | The heartbeat's agent-status block under pwsh against fixture files (`unit-agent-migration.mjs`) | Yes: real API, real signed repository from `rem0te-release`, a stand-in agent binary (`e2e-agent-upgrade.mjs`) |
 | Maintenance actions (service restart, restart schedule/cancel, log collection) | **No** | Yes (`e2e-maintenance-actions.mjs`; service manager, `shutdown.exe`, `wevtutil` and the session count simulated) | Yes |
-| Service control and End process (0.45) | **No** | Yes (`e2e-service-process.mjs`; the service manager and process table simulated by `rem0te-action-sim -scm`) | Yes |
-| Removing installed programs (0.41–0.42: MSI, quiet, Inno, NSIS, Chromium) | **No** | Yes (`e2e-software-catalog.mjs`, stub registry) | Yes |
+| Service control and End process (0.45) | **Lab** (Windows Server 2025, administrator): the real service control manager and process table, PID reuse included ([lab-testing.md](lab-testing.md)). Not on a desktop or the fleet | Yes (`e2e-service-process.mjs`; the service manager and process table simulated by `rem0te-action-sim -scm`) | Yes |
+| Removing installed programs (0.41–0.42: MSI, quiet, Inno, NSIS, Chromium) | **Fleet**: one removal (DS-HOME1). **Lab**: the quiet string, MSI and both Inno forms. NSIS and Chromium: no | Yes (`e2e-software-catalog.mjs`, stub registry) | Yes |
 | Chat files, pictures and emoji (0.44) | **No** — the tray's WebView2 window has not shown a picture or saved a download | `/assist` driven as a page against the real API (`e2e-chat-attachments.mjs`) | Yes |
 | Ask AI and Create ticket (0.48) | Not Windows-dependent. **No real AI provider or PSA has been called** | Loopback stand-ins in the Anthropic and OpenAI shapes, a webhook receiver and an SMTP sink (`e2e-ai-psa.mjs`) | Yes (`unit-ai-psa.mjs`) |
 | ClientSt0r workflow | — | — | Against a contract-conformant reference peer (`e2e-ticket-workflow.mjs`). **Against the real ClientSt0r: does not interoperate yet** (`interop-clientst0r.mjs`, four measured gaps) |
@@ -143,5 +143,8 @@ These are the remaining steps that need hardware or accounts this repository's C
    `--uninstall`, and the real `sw_vers`, `vm_stat`, `top`, `system_profiler` and `com.apple.SoftwareUpdate`
    output are exercised. Until then the recorded output the tests use is the only evidence of those formats.
 
-Until those have been run, the "Real Windows" column above stays **No**, and the Linux and macOS agents are
-integration-tested only.
+Until those have been run, a "Real Windows" entry above means either the Windows lab, which is Windows Server
+on a disposable runner ([lab-testing.md](lab-testing.md)), or the production fleet, seen working but not tested
+under control. Neither is a Windows 10/11 desktop test. The Linux and macOS agents are integration-tested only.
+(Corrected in 0.73.2: this page said the column stays **No**, which stopped being true with the 0.68.3 lab;
+see [rmm-expansion-audit.md](rmm-expansion-audit.md#stale-statements-found).)
