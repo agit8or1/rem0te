@@ -1,20 +1,24 @@
 # Managed Secure Access (MSA) — audit and design
 
-**Status: build steps 2–4 built, behind `MSA_GRANTS`, off.** Readiness
-reporting (§3.9) shipped in 0.69; grants and the long-poll (§3.10) in 0.71;
-agent enforcement, the managed test session, cutover and rollback (§3.11) in
-0.72. Everything after readiness runs only when the server's environment has
-`MSA_GRANTS=on`, which no production server does. Even then **nothing on a
-computer changes until a Platform Admin moves that one computer into
-Managed (pending)**, with a fresh confirmation — never a group, a business
-or the fleet, and never automatically. Every other computer stays in today's
-mode (*Legacy*), and a 0.72 agent on a Legacy computer behaves exactly as
-0.71's. Technician Connect through grants, revocation and session evidence
-are step 5 and not built. RustDesk stays the remote desktop.
+**Status: build steps 1–5 built; steps 3–5 behind `MSA_GRANTS`, off.**
+Readiness reporting (§3.9) shipped in 0.69; grants and the long-poll (§3.10)
+in 0.71; agent enforcement, the managed test session, cutover and rollback
+(§3.11) in 0.72; Connect through grants, revocation, session evidence and
+group or business cutover runs (§3.12) in 0.73. Everything after readiness
+runs only when the server's environment has `MSA_GRANTS=on`, which no
+production server does. Even then **nothing on a computer changes until a
+Platform Admin moves it into Managed (pending)** with a fresh confirmation —
+one computer, or a cutover run that moves a canary first and then paced
+batches, each computer through its own checks. Never the fleet at once, and
+never automatically. Every other computer stays in today's mode (*Legacy*),
+and a 0.73 agent on a Legacy computer behaves exactly as 0.71's. RustDesk
+stays the remote desktop.
 
 **Managed Secure Access has run only in the Windows lab** (GitHub's Windows
-Server runners, RustDesk 1.4.1–1.5.3): never on a Windows 10 or 11 desktop
-and never on the fleet.
+Server runners, RustDesk 1.4.1–1.5.3): never on a Windows 10 or 11 desktop,
+never with a real technician connecting through RustDesk, and never on the
+fleet. The lab runs the agent's enforcement code against real RustDesk as
+SYSTEM; it does not run the portal, the long-poll or a remote connection.
 
 Written 2026-11-19 against Rem0te 0.68 and RustDesk's source at 1.2.3–1.5.3
 (client) and 1.1.16 (hbbs/hbbr OSS). Every RustDesk claim below names the
@@ -169,7 +173,7 @@ directive asks to test directly.
 
 Disconnect one session, all of a technician's sessions, a business's, or a
 computer's, and the `remote` containment pause, all reach the agent over the
-same long-poll and end the session (step 5). **Offline:** a computer that cannot
+same long-poll and end the session. **Built in 0.73** (§3.12). **Offline:** a computer that cannot
 reach the portal cannot receive a grant, so it cannot be connected to in
 managed mode at all (fail closed; Legacy behaves as today). A session already
 open when the network drops ends at `maxMinutes` or idle timeout, enforced by
@@ -178,8 +182,10 @@ the agent and RustDesk locally.
 ### 3.5 Session evidence
 
 The agent reports: grant received, settings applied (with readback), connection
-opened and closed (RustDesk's own log lines and the `--cm` process), consent
-accepted or dismissed where observable, revocation applied. The console shows
+opened and closed (the `--cm` process), revocation applied. **Built in 0.73**
+(§3.12). Not built: reading RustDesk's own log lines (an undocumented format,
+and it holds the other side's details) and consent accepted or dismissed,
+which the agent cannot observe — the timeline says so. The console shows
 *Requested → Authorized → Launched → Connected → Disconnected / Expired /
 Revoked / Failed*, and never treats *Launched* as *Connected*. What the agent
 cannot see (what happened inside the session, the technician's identity at the
@@ -207,9 +213,11 @@ verified.
   and Flutter build, CLI works as SYSTEM, readback works. Result: Compatible /
   Upgrade available / Unsupported. **Built in 0.69** — see §3.9.
 - **Cutover** needs a Platform Admin (fresh sign-in) and moves **one
-  computer** at a time (0.72 has no group or business cutover). The legacy
-  password is kept until a managed test session succeeds; only then is it
-  replaced. Never automatic, never fleet-wide. **Built in 0.72** (§3.11).
+  computer** at a time. The legacy password is kept until a managed test
+  session succeeds; only then is it replaced. Never automatic, never
+  fleet-wide. **Built in 0.72** (§3.11). **Group or business cutover runs**
+  (0.73, §3.12) move a canary first, then batches a Platform Admin advances,
+  each computer through the same one-computer cutover.
 - **Rollback** to Legacy is an admin action: the agent restores the previous
   RustDesk settings and the portal stages a new sealed permanent password
   through the ordinary rotation. **Built in 0.72** (§3.11).
@@ -445,10 +453,8 @@ rotation waits while a grant is in flight.
 `msa.cutover`): only after a test session since cutover that read back and
 connected. The agent then replaces the permanent password with one nobody is
 told (`secured`). From then on legacy Reveal, Connect, rotation and set
-password are refused (`409 MSA_MANAGED` / `msa_managed`). Because technician
-Connect through grants is step 5, **a verified computer can be reached only
-through Platform Admin test grants until step 5 ships**; roll it back to
-connect the ordinary way.
+password are refused (`409 MSA_MANAGED` / `msa_managed`). From 0.73 Connect
+on a verified computer goes through a session grant (§3.12).
 
 **Rollback**, `POST /msa/managed/:endpointId/rollback`: Platform Admin, never
 asks for a fresh confirmation, audited. It cancels undelivered grants and
@@ -460,10 +466,9 @@ rolling back whose agent is gone. Rollback needs the switch on: turning
 `MSA_GRANTS` off with a verified computer stops its poller but still refuses
 its legacy password (fail closed) — roll back first.
 
-**Not in 0.72 (step 5):** Connect issuing grants for technicians, `control`
-mode or any permission above the view-only ceiling, group or business
-cutover, revocation and the session evidence timeline, a console switch for
-`MSA_GRANTS`.
+Step 5 (0.73, §3.12) added Connect through grants, the control ceiling,
+revocation, the session timeline and cutover runs. There is still no console
+switch for `MSA_GRANTS`.
 
 **Evidence.** `apps/api/scripts/e2e-msa-managed.mjs` (port 3961),
 `unit-msa-managed.mjs`, `unit-msa-readiness.mjs`, the Go
@@ -472,6 +477,141 @@ cutover, revocation and the session evidence timeline, a console switch for
 password, end session, restore — as the administrator and as SYSTEM, RustDesk
 1.4.1–1.5.3). The lab runs the agent's enforcement code against real
 RustDesk, but not the portal, the long-poll or a real remote connection.
+
+### 3.12 Connect through grants, revocation, evidence and cutover runs (built, 0.73, behind `MSA_GRANTS`, off)
+
+**A new signed agent build (0.73.0).** Agents update as they always do; on a
+Legacy computer it behaves exactly as 0.71's. Everything below needs
+`MSA_GRANTS=on`; with it off every new route answers `404 MSA_NOT_ENABLED`
+and the console asks none of them.
+
+**Connect.** On a *Managed and verified* computer the device page's Connect
+calls `POST /msa/sessions/connect/:endpointId` with only the mode the
+technician picked (`control`, `view_only`, `unattended`). In order, the
+portal refuses with a reason:
+
+| Refusal | When |
+|---|---|
+| `MSA_NOT_MANAGED` / `MSA_NOT_VERIFIED` | Legacy or Managed (pending): use the ordinary Connect |
+| `MSA_ROLLBACK_PENDING`, `MSA_ENFORCEMENT_FAILURE` | the computer's state |
+| `MSA_AGENT_TOO_OLD` | the agent is older than 0.73.0 (it could not be told to end a session) |
+| `MSA_AGENT_NOT_POLLING` | no poll held and none in the last 90 s: offline, or its poller is not running |
+| `MSA_SESSION_ACTIVE` | another person's managed session is live there |
+| the launch policy's own codes | `authorizeConnect` with `managed: true` — role, preset, assignment, hours, containment, temporary grant |
+
+Then the grant's terms come from the policy, never from the request:
+
+- **Mode.** `view_only` → view with nothing beyond; `control` and
+  `unattended` → control. Elevated never reaches a grant.
+- **Clipboard and file transfer** only when the business's access controls
+  say `request` and, for a preset technician, the preset allows them.
+  **Audio** with control. **Tunnel and remote restart never.**
+- **Consent** (`approve-mode=click`) when a preset technician's access
+  controls require attended consent.
+- **Session limit** is the preset's, or the access controls'
+  `maxSessionMinutes` (1–480), enforced by the agent. Idle disconnect is 15
+  minutes, or the limit if shorter.
+
+So **view-only and attended consent are enforceable on a managed computer**:
+an L2 technician whose Legacy Connect is refused as
+`ENDPOINT_CANNOT_ENFORCE_VIEW_ONLY` gets a view-only, consent-required grant
+here. On a Legacy computer nothing changed: it is still refused.
+
+The portal signs the grant and the console shows its progress: *Authorized*,
+*Received by the agent*, *Applied (settings read back)*. **It waits at most 60
+seconds** for `applied`. A grant not applied by then is revoked (`timeout`),
+the console says why, and nothing is handed over; a late `applied` changes
+nothing. Once applied, *Download Connect script* hands over the session's
+one-time password **once**, to that technician only
+(`GET /msa/sessions/grants/:grantId/connect.cmd`, `MSA_PASSWORD_RELEASED`
+audited with ids). It is not the permanent password and needs no fresh
+confirmation: it opens only this session, and the agent replaces it when the
+session ends. **There is never a fallback to a Legacy password.** The
+`rem0te://` launcher is not used for managed computers in 0.73; it refuses
+one, as before.
+
+**Control mode and the ceiling.** The managed ceiling is **control with
+clipboard, file transfer and audio; never a TCP tunnel or a remote restart**,
+the same in the agent (`enforce.Ceiling`, compiled in) and the portal
+(`MANAGED_CEILING`). Control is what ordinary support needs, and those three
+are what the access controls and presets already govern. A tunnel reaches
+other hosts on the customer's network and a remote restart breaks the
+session's own enforcement window; neither has a control in Rem0te, so
+neither is offered. Widening the ceiling is a signed agent release.
+
+**Revocation.** A signed revocation, Ed25519 under the same grant key with
+its own prefix (`rem0te-msa-revoke-v1\n`), so a grant signature can never be
+replayed as one. It names one computer and either a list of grants or `all`
+(every grant issued before it), and lives at most nine hours. The agent
+verifies it (`grant.VerifyRevocation`), ends the open session it covers,
+remembers the revoked grant ids so they can never be applied later, and acks.
+It only reduces: it can end a session, never start or widen one.
+
+| Scope | Who may (any of them, never a fresh confirmation) |
+|---|---|
+| One session (*Disconnect*) | its technician; the business's own Owner or Admin (not a technician, with Edit computers); a Platform Admin |
+| A list (*Managed sessions → Disconnect selected*) | the same, per session; the others are reported refused |
+| Every session on a computer | the business's Owner or Admin; a Platform Admin |
+| A technician's sessions | the business's Owner or Admin (in their business); a Platform Admin |
+| A business's sessions | its Owner or Admin; a Platform Admin |
+| The `remote` containment pause | whoever may set the pause; every delivered or applied grant is revoked on the next poll, by the system |
+
+Each revocation is audited (`MSA_SESSION_REVOKED`: who, the reason, the
+grant ids). **Offline:** a revoked session on a computer that cannot reach
+the portal ends at its session limit or idle timeout, enforced locally; the
+console says so (*waiting for the agent to end it*).
+
+**Session evidence.** Each session's timeline: *Requested → Authorized →
+Received → Applied → Launched → Connected → Disconnected / Expired / Revoked
+/ Failed*, each with its time, only for what the portal or the agent saw.
+*Launched* (the password went to a Connect script) is never shown as
+*Connected*; *Connected* is the agent seeing RustDesk's connection manager.
+Every timeline says what the agent cannot see: who is at the other end,
+whether the person at the computer accepted the consent prompt, and what
+happened inside the session.
+
+**Cutover runs** (`/msa/cutover-runs`, Platform Admin; starting, advancing
+and confirming need a fresh confirmation, `msa.cutover`; halting and rolling
+back never do). A run covers one business or one of its device groups, at
+most 500 computers, one open run per business.
+
+1. **Canary.** Starting a run cuts over its canary (one named computer, or
+   the first eligible). It is confirmed on its own page as in §3.11 — a test
+   session that read back and connected. Nothing else moves until it is
+   verified (`MSA_CANARY_NOT_VERIFIED`).
+2. **Batches.** *Advance* moves the next batch (1–25, default 5). Each
+   computer goes through the one-computer cutover with its own blockers and
+   audit row; one that is refused is **skipped** with the code. Each
+   computer moved is sent a five-minute view-only verification grant.
+3. **Pacing.** The next batch waits until every computer in the last one has
+   read back its verification grant, or an hour has passed. Nothing runs on a
+   timer: every batch is a person pressing *Advance*.
+4. **Confirm.** Marks verified each computer whose agent applied and read
+   back its verification grant since its cutover (the canary proved a real
+   connection). Each one is its own `MSA_VERIFIED` row naming the run.
+5. **Halt** stops the run; **Rollback** rolls back every computer the run
+   moved.
+
+**The console.** The device page lists the computer's managed sessions with
+their timelines and *Disconnect* (only when the server says
+`managedControls`). *Devices → Managed sessions* lists live sessions on every
+computer the viewer can see, with bulk *Disconnect*. *Remote readiness*
+shows cutover runs to Platform Admins.
+
+**Evidence.** `apps/api/scripts/e2e-msa-sessions.mjs` (port 3971: Connect
+end to end with a stand-in agent, every refusal, view-only enforced on a
+managed computer and still refused on Legacy, revocation for each scope and
+the pause, the timeline, group and business runs with canary, skip, confirm,
+halt and rollback, inertness with the switch off, no password in an audit
+row), `unit-msa-sessions.mjs` (the shared revocation fixture
+`internal/msa/testdata/msa-revocations.json`, every combination of policy
+facts against the ceiling, the timeline), the Go `internal/msa/grant` and
+`internal/msa/enforce` session tests, check-security-invariants §83, and the
+Windows lab's `TestLabRustdeskEnforce`, which now also applies and reads back
+the control ceiling and checks that a revocation ends the session (RustDesk
+1.4.1–1.5.3, as the administrator and as SYSTEM). **Not run:** a real
+technician connecting through RustDesk to a managed computer, a Windows 10
+or 11 desktop, or any fleet computer.
 
 ## 4. Build order (each a reviewable PR, none deployed without approval)
 
@@ -489,7 +629,8 @@ RustDesk, but not the portal, the long-poll or a real remote connection.
 4. **Agent enforcement** (signed agent release), managed test session, cutover
    and rollback. **Built in 0.72, behind `MSA_GRANTS`, off** (§3.11): one
    computer at a time, view-only, grant keys in the signed release.
-5. **Revocation, session evidence**, console controls.
+5. **Connect through grants, revocation, session evidence**, cutover runs,
+   console controls. **Built in 0.73, behind `MSA_GRANTS`, off** (§3.12).
 6. **Compatibility suite** (below) gates every release from step 2 on.
 
 ## 5. Permanent compatibility testing

@@ -12,7 +12,18 @@ import { pauseMessage } from '../containment/pause';
 import { BUILT_IN_PRESETS, PresetPolicy, presetCapabilities, type AccessControls } from './presets';
 
 export type LaunchMode = 'view_only' | 'control' | 'elevated' | 'unattended';
-export interface LaunchContext { via: 'browser' | 'launcher'; technicianDeviceId?: string | null }
+export interface LaunchContext {
+  via: 'browser' | 'launcher';
+  technicianDeviceId?: string | null;
+  /**
+   * 0.73: a Managed Secure Access Connect on a verified managed computer. Its
+   * signed agent enforces view-only and attended consent through the grant
+   * (access-mode view, approve-mode click) and refuses one it cannot read
+   * back, so the per-mode checks hold as enforceable there. Only
+   * MsaSessionService passes it, through authorizeConnect({ managed: true }).
+   */
+  managed?: true;
+}
 
 /** What an endpoint reports it can enforce itself. Unknown = nothing. */
 export interface SessionEnforcement { viewOnly?: boolean; attendedConsent?: boolean; clipboardOff?: boolean; fileTransferOff?: boolean; reportedAt?: string }
@@ -168,7 +179,9 @@ export class AccessPolicyService {
 
     const presets = this.covering(actor.technician.sources, ep.id).filter((s) => s.presetPolicy);
     if (presets.length === 0) return { ok: false, status: 'denied', reason: 'outside_technician_assignment', message: 'No active assignment covers this computer.' };
-    const enforce = (ep.sessionEnforcement ?? {}) as SessionEnforcement;
+    const enforce: SessionEnforcement = ctx.managed === true
+      ? { viewOnly: true, attendedConsent: true }
+      : (ep.sessionEnforcement ?? {}) as SessionEnforcement;
     const maxMin = Math.min(controls.maxSessionMinutes, ...presets.map((s) => s.presetPolicy!.maxSessionMinutes));
 
     if (mode === 'view_only') {
@@ -201,6 +214,25 @@ export class AccessPolicyService {
     // Never hand a preset-backed technician the permanent password: it would
     // outlive the grant and allow a direct reconnect the portal never sees.
     return { ok: true, path: 'preset', revealCredential: false, maxSessionMinutes: maxMin, tier };
+  }
+
+  /**
+   * 0.73: what a Managed Secure Access Connect grant may allow beyond the
+   * mode (msa/connect-terms.ts): the business's effective access controls,
+   * and whether a preset covering this computer allows clipboard / file
+   * transfer outright. Read after evaluateLaunch said yes; grants nothing.
+   */
+  async managedTermsFacts(actor: ActorContext, ep: { id: string; customerId: string | null }) {
+    const controls = await this.controls.effective(ep.customerId);
+    const presets = actor.technician ? this.covering(actor.technician.sources, ep.id).filter((s) => s.presetPolicy) : [];
+    return {
+      controls: {
+        attendedConsent: controls.attendedConsent, clipboard: controls.clipboard, fileTransfer: controls.fileTransfer,
+        maxSessionMinutes: controls.maxSessionMinutes,
+      },
+      presetClipboard: presets.some((s) => s.presetPolicy!.clipboard === 'allowed'),
+      presetFiles: presets.some((s) => s.presetPolicy!.fileTransfer === 'allowed'),
+    };
   }
 
   async activeTemporary(userId: string, endpointId: string, mode: 'CONTROL' | 'ELEVATION' | 'PROTECTED_EXCEPTION') {

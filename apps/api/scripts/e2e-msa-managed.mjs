@@ -297,10 +297,12 @@ async function all() {
   check(r.data?.msaPoll === undefined, `A1 with a wrong secret (HTTP ${r.status}): no msaPoll`, msg(r));
 
   section('The managed test session');
-  r = await req('POST', `/msa/grants/test/${A1.id}`, { s: SAd, body: { mode: 'control' } });
-  check(r.status === 409 && code(r) === 'MSA_ABOVE_CEILING', 'a control grant to a managed computer: 409 MSA_ABOVE_CEILING', msg(r));
-  r = await req('POST', `/msa/grants/test/${A1.id}`, { s: SAd, body: { permissions: { files: true } } });
-  check(r.status === 409 && code(r) === 'MSA_ABOVE_CEILING', 'view with files: 409 MSA_ABOVE_CEILING', msg(r));
+  // 0.73: the ceiling is control with clipboard, files and audio; a tunnel
+  // or a remote restart is still above it.
+  r = await req('POST', `/msa/grants/test/${A1.id}`, { s: SAd, body: { mode: 'control', permissions: { tunnel: true } } });
+  check(r.status === 409 && code(r) === 'MSA_ABOVE_CEILING', 'a control grant with a tunnel to a managed computer: 409 MSA_ABOVE_CEILING', msg(r));
+  r = await req('POST', `/msa/grants/test/${A1.id}`, { s: SAd, body: { permissions: { restart: true } } });
+  check(r.status === 409 && code(r) === 'MSA_ABOVE_CEILING', 'view with a remote restart: 409 MSA_ABOVE_CEILING', msg(r));
   r = await req('POST', `/msa/grants/test/${A1.id}`, { s: SAd, body: { mode: 'view', consent: 'required', maxMinutes: 30, idleMinutes: 10 } });
   const g1 = r.data;
   check(ok(r) && g1.state === 'issued', 'a view-only test grant: issued', msg(r));

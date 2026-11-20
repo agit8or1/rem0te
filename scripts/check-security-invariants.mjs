@@ -360,7 +360,11 @@ check(
   const page = read('apps/web/app/(app)/endpoints/[id]/page.tsx');
   const devActions = read('apps/web/components/endpoints/workspace/device-actions.tsx');
   check('View only is offered only in a technician context',
-    /technician: !!technician\b/.test(page) && /onViewOnly=\{\(\) => launchMutation\.mutate\('view_only'\)\}/.test(page)
+    /technician: !!technician\b/.test(page)
+      // 0.73: view-only goes through a session grant on a verified managed
+      // computer (where RustDesk enforces it), and the Legacy launch otherwise.
+      && /onViewOnly=\{\(\) => startConnect\('view_only'\)\}/.test(page)
+      && /const startConnect = \(mode\?: 'view_only'\) => \(viaGrant \? managedConnect\.connect\(mode\) : launchMutation\.mutate\(mode\)\);/.test(page)
       && /\{perms\.technician && \(\s*<DropdownMenuItem[^>]*onSelect=\{onViewOnly\}/.test(devActions)
       && (devActions.match(/onViewOnly/g) ?? []).length === 3,
     'for members view-only is not applied; the menu must not imply it is');
@@ -4547,6 +4551,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'warranty/warranty.controller.ts': ['warranty.settings'],
     'msa/msa-grant.controller.ts': ['msa.grant'],
     'msa/msa-managed.controller.ts': ['msa.cutover', 'msa.reveal'],
+    'msa/msa-cutover-runs.controller.ts': ['msa.cutover'],
   };
   const named = {};
   for (const f of files) {
@@ -6469,7 +6474,11 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //         then scope, the pool, Windows and the signed agent, the `remote`
 //         pause, the key, and the audit row (logOrFail) before the grant row;
 //         nothing outside the controller calls it and the module exports
-//         nothing, so Connect cannot reach it (step 4);
+//         nothing. 0.73 (§83): exactly three issuers, each with one caller —
+//         issueTest (the test route), issueForConnect (MsaSessionService.connect,
+//         after authorizeConnect) and issueVerification (a cutover run); the
+//         Legacy Connect, sessions and launcher code outside msa/ still
+//         reaches none of it;
 //       - the poll checks the device secret before reading anything and
 //         admits only the signed Windows agent of an assigned computer;
 //       - grant.ts is pure, its prefix and reason list are the Go verifier's,
@@ -6512,13 +6521,16 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     deployOn.length === 0 && !/MSA_GRANTS/.test(read('scripts/run-e2e.sh')), deployOn.join(', '));
   check('a middleware answers 404 MSA_NOT_ENABLED on every grant route before the throttler, the session guard or the handler',
     /if \(!msaGrantsEnabled\(\)\) throw new NotFoundException\(\{ code: MSA_NOT_ENABLED,/.test(flag)
-      && /consumer\.apply\(MsaGrantsGate\)\.forRoutes\(MsaGrantsController, MsaAgentController, MsaManagedController\);/.test(mod)
+      && /consumer\.apply\(MsaGrantsGate\)\.forRoutes\(MsaGrantsController, MsaAgentController, MsaManagedController, MsaSessionsController, MsaCutoverRunsController\);/.test(mod)
+      && J([...mod.matchAll(/^import \{ ([\w, ]+Controller) \} from/gm)].flatMap((m) => m[1].split(', ')).sort())
+        === J(['MsaAgentController', 'MsaCutoverRunsController', 'MsaGrantsController', 'MsaManagedController', 'MsaSessionsController'])
       && J([...ctl.matchAll(/^export class (\w+Controller)/gm)].map((m) => m[1])) === J(['MsaGrantsController', 'MsaAgentController']),
     'msa-grants-flag.ts MsaGrantsGate; msa-grants.module.ts configure');
   const publicMethods = [...svc.matchAll(/^  async (\w+)\(/gm)].map((m) => m[1]);
-  const firstLine = (name) => svc.slice(svc.indexOf(`  async ${name}(`)).split('\n')[1]?.trim();
+  // The first statement after the signature (0.73: a signature may span lines).
+  const firstLine = (name) => { const ls = svc.slice(svc.indexOf(`  async ${name}(`)).split('\n'); return ls[ls.findIndex((l) => l.endsWith('{')) + 1]?.trim(); };
   check('every public MsaGrantService method asserts the switch first',
-    J(publicMethods) === J(['publicKeys', 'ensureKey', 'activePublishedKeyId', 'issueTest', 'listForEndpoint', 'poll', 'reveal']) && publicMethods.every((m) => firstLine(m) === 'this.assertEnabled();')
+    J(publicMethods) === J(['publicKeys', 'ensureKey', 'activePublishedKeyId', 'issueTest', 'listForEndpoint', 'poll', 'reveal', 'issueForConnect', 'issueVerification', 'release', 'revoke', 'checkTimeout']) && publicMethods.every((m) => firstLine(m) === 'this.assertEnabled();')
       && /private assertEnabled\(\) \{\n\s*if \(!msaGrantsEnabled\(\)\) throw new NotFoundException\(\{ code: MSA_NOT_ENABLED,/.test(svc),
     `methods: ${publicMethods.join(', ')}`);
 
@@ -6545,10 +6557,13 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const issueRet = svc.slice(svc.indexOf("this.waiters.get(ep.id)?.wake('grant');"), svc.indexOf('// ── Reading'));
   const listSel = svc.slice(svc.indexOf('  async listForEndpoint('), svc.indexOf('// ── The device long-poll'));
   check('no audit meta, log line or answer carries the private key, the password or the envelope',
-    auditCalls.length === 4 && auditCalls.every((c) => !/password|privatePem|privateKeyEnc|envelope|\bsig\b/i.test(c.replace("'MSA_PASSWORD_REVEALED'", '')))
+    auditCalls.length === 7 && auditCalls.every((c) => !/password|privatePem|privateKeyEnc|envelope|\bsig\b/i.test(c.replace(/'MSA_PASSWORD_(REVEALED|RELEASED)'/, '')))
       && (auditCalls.join('\n').match(/meta: \{ keyId: k\.keyId \}/g) ?? []).length === 2
       && /meta: \{ grantId: grant\.grantId, endpointId: ep\.id, mode: grant\.mode, consent: grant\.consent, keyId: key\.keyId, source: 'test', managed: !!managed \}/.test(auditCalls.join('\n'))
       && /meta: \{ grantId: g\.id, endpointId: ep\.id \}/.test(auditCalls.join('\n'))
+      && /meta: \{ grantId: grant\.grantId, endpointId: ep\.id, mode: grant\.mode, consent: grant\.consent, keyId: key\.keyId, source, managed: true, launchMode, permissions: grant\.permissions, maxMinutes: grant\.maxMinutes \}/.test(auditCalls.join('\n'))
+      && /meta: \{ grantId: g\.id, endpointId: ep\.id, via: 'connect_script' \}/.test(auditCalls.join('\n'))
+      && /meta: \{ endpointId, grantIds: ids, reason: sel\.reason, all: !!sel\.all, revocationId \}/.test(auditCalls.join('\n'))
       && logLines.length >= 1 && logLines.every((l) => !/password|privatePem|envelope\b|envelopeEnc|passwordEnc/i.test(l))
       && !/password/.test(issueRet) && !/envelopeEnc: true|passwordEnc: true/.test(listSel)
       && !/privateKeyEnc/.test(svc.slice(svc.indexOf('  async publicKeys('), svc.indexOf('// ── Issuing'))),
@@ -6573,10 +6588,16 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     `order ${J(order)}`);
   const callers = files.filter((f) => /\.issueTest\(/.test(read(f))).map(rel);
   const importers = files.filter((f) => /from '[^']*msa-grant\.service'|from '[^']*msa-grants\.module'/.test(read(f))).map(rel).sort();
-  check('issuance is not reachable from Connect: one caller (the test route), the module exports nothing, nothing outside it imports the service',
+  // 0.73 (§83): three issuers, one caller each. Connect reaches a grant only
+  // through MsaSessionService.connect (its own gated route), never through
+  // the Legacy Connect, sessions or launcher code outside msa/.
+  const callersOf = (fn) => files.filter((f) => new RegExp(`\\.${fn}\\(`).test(read(f))).map(rel);
+  check('issuance: three issuers with one caller each (the test route, MsaSessionService.connect, a cutover run), the module exports nothing, nothing outside msa/ imports the service',
     J(callers) === J(['msa/msa-grant.controller.ts']) && !/exports:/.test(mod)
-      && J(importers) === J(['app.module.ts', 'msa/msa-grant.controller.ts', 'msa/msa-grants.module.ts', 'msa/msa-managed.controller.ts', 'msa/msa-managed.service.ts'])
-      && files.filter((f) => /sessions|launcher|connect/.test(rel(f))).every((f) => !/MsaGrant|msaGrant|msa\/grant/.test(read(f))),
+      && J(callersOf('issueForConnect')) === J(['msa/msa-sessions.service.ts']) && (read(`${SRC}/msa/msa-sessions.service.ts`).match(/\.issueForConnect\(/g) ?? []).length === 1
+      && J(callersOf('issueVerification')) === J(['msa/msa-cutover-runs.service.ts']) && (read(`${SRC}/msa/msa-cutover-runs.service.ts`).match(/\.issueVerification\(/g) ?? []).length === 1
+      && J(importers) === J(['app.module.ts', 'msa/msa-cutover-runs.service.ts', 'msa/msa-grant.controller.ts', 'msa/msa-grants.module.ts', 'msa/msa-managed.controller.ts', 'msa/msa-managed.service.ts', 'msa/msa-sessions.service.ts'])
+      && files.filter((f) => !rel(f).startsWith('msa/') && /sessions|launcher|connect/.test(rel(f))).every((f) => !/MsaGrant|msaGrant|msa\/grant|msa-sessions|MsaSession/.test(read(f))),
     `callers ${J(callers)}; importers ${J(importers)}`);
 
   const pollFn = svc.slice(svc.indexOf('  async poll('), svc.lastIndexOf('\n}'));
@@ -6701,8 +6722,14 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const rowWriters = files.filter((f) => /msaManagedComputer\.(create|update|updateMany|upsert|delete|deleteMany|createMany)\(/.test(read(f))).map(rel);
   const pub = [...mgd.matchAll(/^  async (\w+)\(/gm)].map((m) => m[1]);
   const first = (name) => mgd.slice(mgd.indexOf(`  async ${name}(`)).split('\n')[1]?.trim();
-  check('only MsaManagedService writes MsaManagedComputer, and every public method asserts the switch first',
-    J(rowWriters) === J(['msa/msa-managed.service.ts']) && J(pub) === J(['view', 'cutover', 'confirm', 'rollback', 'report'])
+  // 0.73: the one exception is the poll recording lastPollAt (Connect's
+  // "is the agent polling"), a single unconditional field write that moves
+  // no state.
+  const gsvcRowWrites = [...gsvc.matchAll(/msaManagedComputer\.(create|update|updateMany|upsert|delete|deleteMany|createMany)\([^;]*;/g)].map((m) => m[0]);
+  check('only MsaManagedService writes MsaManagedComputer (but the poll\'s lastPollAt), and every public method asserts the switch first',
+    J(rowWriters) === J(['msa/msa-grant.service.ts', 'msa/msa-managed.service.ts'])
+      && J(gsvcRowWrites) === J(['msaManagedComputer.updateMany({ where: { endpointId: ep.id }, data: { lastPollAt: new Date(now) } });'])
+      && J(pub) === J(['view', 'cutover', 'confirm', 'confirmFromRun', 'rollback', 'report'])
       && pub.every((m) => first(m) === 'this.assertEnabled();')
       && /private assertEnabled\(\) \{\n\s*if \(!msaGrantsEnabled\(\)\) throw new NotFoundException\(\{ code: MSA_NOT_ENABLED,/.test(mgd),
     `writers ${J(rowWriters)}; methods ${J(pub)}`);
@@ -6732,7 +6759,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'if (await this.row(ep.id)) throw new ConflictException({ code: \'MSA_ALREADY_MANAGED\'',
     'const blockers = await this.cutoverBlockers(ep);',
     "action: 'MSA_CUTOVER'",
-    "await this.prisma.msaManagedComputer.create({ data: { endpointId: ep.id, state: 'pending', requestedById: actor.userId } });",
+    "await this.prisma.msaManagedComputer.create({ data: { endpointId: ep.id, state: 'pending', requestedById: actor.userId, runId } });",
   ].map((x) => cb.indexOf(x));
   const blk = body(mgd, '  private async cutoverBlockers(');
   check('cutover: scope, the pool, not already managed, every blocker, the audit row (logOrFail), then the row',
@@ -6779,9 +6806,12 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'MsaGrantService.reveal');
 
   // The ceiling.
-  check('the ceiling is view-only with nothing beyond, compiled into the agent; the portal refuses a managed grant above it first',
-    /var Ceiling = grant\.Ceiling\{Mode: "view"\}/.test(enf) && /Ceiling: Ceiling,/.test(pol)
-      && /mode: 'view',\n\s*permissions: \{ clipboard: false, files: false, audio: false, tunnel: false, restart: false \},/.test(managedTs)
+  // 0.73 (§83) widened it to control with clipboard, file transfer and
+  // audio; a tunnel and a remote restart stay above it on both sides.
+  check('the ceiling is control with clipboard, files and audio, never a tunnel or a restart, compiled into the agent; the portal refuses a managed grant above it first',
+    /var Ceiling = grant\.Ceiling\{Mode: "control", Permissions: grant\.Permissions\{Clipboard: true, Files: true, Audio: true\}\}/.test(enf) && /Ceiling: Ceiling,/.test(pol)
+      && !/Tunnel: true|Restart: true/.test(stripGo(enf))
+      && /mode: 'control',\n\s*permissions: \{ clipboard: true, files: true, audio: true, tunnel: false, restart: false \},/.test(managedTs)
       && /if \(!withinCeiling\(b\.mode \?\? 'view', perms\)\) throw new ConflictException\(\{ code: 'MSA_ABOVE_CEILING'/.test(gsvc)
       && !/Ceiling\s*=|Ceiling:\s*(ans|a|p\.state|g)\./.test(pol.replace('Ceiling: Ceiling,', '')),
     'enforce.Ceiling; managed.ts MANAGED_CEILING; MsaGrantService.issueTest');
@@ -6853,6 +6883,197 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /func TestReadbackMismatchFailsClosed\(/.test(read(`${goDir}/internal/msa/enforce/enforce_test.go`))
       && /func TestRollbackRestores\(/.test(read(`${goDir}/internal/msa/enforce/enforce_test.go`)),
     'e2e-msa-managed.mjs in run-e2e.sh, unit-msa-managed.mjs in CI, TestLabRustdeskEnforce in the Windows lab, the enforce Go tests');
+}
+
+// ── §83 (0.73): Managed Secure Access sessions — Connect through grants, revocation, evidence, cutover runs ──
+//     Build step 5 of docs/managed-secure-access.md, behind MSA_GRANTS (off).
+//       - Connect reaches a grant only through POST /msa/sessions/connect,
+//         MsaSessionService.connect: verified managed, an agent of at least
+//         0.73.0 that is polling, nobody else's live session, then
+//         authorizeConnect({ managed: true }) — the ordinary launch policy —
+//         then managedGrantTerms from the policy's own facts, the audit row,
+//         then issueForConnect. The body carries only `mode`. Only on that
+//         path does view-only and consent become enforceable (access-policy:
+//         `ctx.managed === true`), and only there is the Legacy credential
+//         gate skipped; a Legacy computer's Connect is unchanged.
+//       - The one-time password is released once, to the grant's own
+//         technician, for an applied Connect grant: audited, claimed by a
+//         conditional write, then opened. A grant not applied in 60 s is
+//         revoked (timeout): nothing is handed over.
+//       - The ceiling (§82) is control with clipboard, files and audio; a
+//         tunnel and a remote restart never. Terms never exceed it.
+//       - Revocation is signed under the grant key with its own prefix
+//         (rem0te-msa-revoke-v1), stored only by MsaGrantService.revoke,
+//         which only moves live grants to `revoked` and creates no key; a
+//         `remote` pause revokes every delivered or applied grant. Who may
+//         revoke: the grant's technician, a Platform Admin, or the business's
+//         own non-technician member with computers:edit. Revoking never asks
+//         for a fresh confirmation. The Go agent verifies before it acts and
+//         only ever ends a session.
+//       - The timeline is pure; Launched is never Connected.
+//       - Cutover runs are a Platform Admin's; start, advance and confirm
+//         name msa.cutover, halt and rollback never ask. Every computer goes
+//         through MsaManagedService.cutover (its own blockers and audit row);
+//         advance refuses until the canary is verified; batches of at most
+//         25; nothing runs on a timer.
+//       - 0090 CHECKs the states, sources, reasons, shapes and windows.
+{
+  console.log('\n§83 Managed Secure Access sessions (MSA_GRANTS, off)');
+  const J = JSON.stringify;
+  const SRC = 'apps/api/src';
+  const files = walk(SRC);
+  const rel = (f) => f.replace(/^.*apps\/api\/src\//, '');
+  const ssvc = read(`${SRC}/msa/msa-sessions.service.ts`);
+  const sctl = read(`${SRC}/msa/msa-sessions.controller.ts`);
+  const rsvc = read(`${SRC}/msa/msa-cutover-runs.service.ts`);
+  const rctl = read(`${SRC}/msa/msa-cutover-runs.controller.ts`);
+  const gsvc = read(`${SRC}/msa/msa-grant.service.ts`);
+  const terms = read(`${SRC}/msa/connect-terms.ts`);
+  const revTs = read(`${SRC}/msa/revocation.ts`);
+  const tl = read(`${SRC}/msa/session-timeline.ts`);
+  const managedTs = read(`${SRC}/msa/managed.ts`);
+  const eps = read(`${SRC}/endpoints/endpoints.service.ts`);
+  const pol = read(`${SRC}/security-controls/access-policy.service.ts`);
+  const goDir = 'tools/windows-installer';
+  const revGo = read(`${goDir}/internal/msa/grant/revocation.go`);
+  const poller = read(`${goDir}/internal/msa/enforce/poller.go`);
+  const mig = read('apps/api/prisma/migrations/0090_msa_sessions/migration.sql');
+  const body = (src, sig) => { const i = src.indexOf(sig); if (i < 0) return ''; const j = src.indexOf('\n  }\n', i); return src.slice(i, j); };
+
+  // Connect.
+  const con = body(ssvc, '  async connect(');
+  const order = [
+    'this.assertEnabled();',
+    'const ep = await this.visible(actor, endpointId);',
+    "if (row.state !== 'verified') throw new ConflictException({ code: 'MSA_NOT_VERIFIED'",
+    'compareVersion(pr?.agentVersion ?? null, MIN_SESSION_AGENT)',
+    "code: 'MSA_AGENT_NOT_POLLING'",
+    "code: 'MSA_SESSION_ACTIVE'",
+    "const authz = await this.endpoints.canConnect(actor, ep.id, { mode, admit: 'ui', stage: 'connect', managed: true });",
+    'const facts = await this.policy.managedTermsFacts(actor, ep);',
+    'const terms = managedGrantTerms({ mode, path, maxSessionMinutes: authz.maxSessionMinutes, ...facts });',
+    "action: 'MSA_SESSION_REQUESTED'",
+    'const g = await this.grants.issueForConnect(actor, ep.id, mode, terms, now);',
+  ].map((x) => con.indexOf(x));
+  check('Connect: verified managed, a 0.73 agent that is polling, nobody else\'s session, the launch policy (managed), the policy\'s terms, the audit row, then the grant',
+    order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1]))
+      && /await this\.audit\.logOrFail\(\{\n\s*action: 'MSA_SESSION_REQUESTED'/.test(con)
+      && /export const MIN_SESSION_AGENT = '0\.73\.0';/.test(managedTs)
+      && /async connect\(@Actor\(\) a: ActorContext, @Param\('endpointId'\) endpointId: string, @Body\(\) body: \{ mode\?: unknown \} \| undefined\) \{\n\s*return \{ success: true, data: await this\.sessions\.connect\(a, endpointId, body\?\.mode\) \};/.test(sctl),
+    `order ${J(order)}`);
+  const strip = (t) => t.split('\n').filter((l) => !/^\s*(\*|\/\/)/.test(l)).join('\n');
+  const managedCallers = files.filter((f) => /managed: true \}\)|managed: true as const/.test(strip(read(f))) && /canConnect\(|evaluateLaunch\(/.test(read(f))).map(rel);
+  check('view-only and consent are enforceable only on the managed path; the Legacy credential gate is skipped only there; Legacy Connect keeps refusing a verified computer',
+    /const enforce: SessionEnforcement = ctx\.managed === true\n\s*\? \{ viewOnly: true, attendedConsent: true \}\n\s*: \(ep\.sessionEnforcement \?\? \{\}\) as SessionEnforcement;/.test(pol)
+      && /if \(opts\.credentialGate && decision\.revealCredential && opts\.managed !== true\) \{/.test(eps)
+      && /if \(await this\.msaLegacyRefused\(endpoint\.id\)\) return \{ ok: false, reason: 'msa_managed', status: 'denied', message: LEGACY_REFUSED_MESSAGE \};/.test(eps)
+      && /return \{ ok: false, reason: 'msa_not_managed',/.test(eps)
+      && J(managedCallers.sort()) === J(['endpoints/endpoints.service.ts', 'msa/msa-sessions.service.ts'])
+      && (ssvc.match(/managed: true \}\)/g) ?? []).length === 2,
+    `managed callers ${J(managedCallers)}`);
+  check('the terms are the policy\'s, never above the ceiling: view has nothing beyond, tunnel and restart are never set, consent only for a preset that requires it, 1–480 minutes',
+    /const mode: GrantMode = i\.mode === 'view_only' \? 'view' : 'control';/.test(terms)
+      && /tunnel: false,\n\s*restart: false,/.test(terms)
+      && /const consent: GrantConsent = preset && i\.controls\.attendedConsent === 'required' \? 'required' : 'not_required';/.test(terms)
+      && /const maxMinutes = Math\.max\(1, Math\.min\(480, Math\.floor\(limit\)\)\);/.test(terms)
+      && /if \(!withinCeiling\(mode, permissions\)\) throw/.test(terms)
+      && /if \(!withinCeiling\(terms\.mode, terms\.permissions\)\) throw new ConflictException\(\{ code: 'MSA_ABOVE_CEILING'/.test(gsvc)
+      && J([...terms.matchAll(/^import [\s\S]*? from '([^']+)';/gm)].map((m) => m[1])) === J(['./grant', './managed']),
+    'connect-terms.ts managedGrantTerms; MsaGrantService.signAndStore');
+  const rel_ = body(gsvc, '  async release(');
+  check('the one-time password: once, to the grant\'s own technician, for an applied Connect grant; audited, claimed by a conditional write, then opened',
+    /if \(!g \|\| g\.source !== 'connect' \|\| g\.technicianId !== actor\.userId\) throw new NotFoundException/.test(rel_)
+      && rel_.indexOf("if (g.state !== 'applied')") > 0
+      && rel_.indexOf('await this.audit.logOrFail({') > rel_.indexOf("if (g.state !== 'applied')")
+      && rel_.indexOf("where: { id: g.id, state: 'applied', revealedAt: null }") > rel_.indexOf('await this.audit.logOrFail({')
+      && rel_.indexOf("openSecret(this.encKey, 'rem0te-msa-grant-pw-v1'") > rel_.indexOf("where: { id: g.id, state: 'applied', revealedAt: null }")
+      && /this\.acl\.endpointVisibilityWhere\(actor\)/.test(rel_)
+      && J(files.filter((f) => /\.release\(actor, grantId\)/.test(read(f))).map(rel)) === J(['msa/msa-sessions.service.ts']),
+    'MsaGrantService.release');
+  check('a Connect grant not applied within 60 s is revoked (timeout) and never handed over',
+    /export const CONNECT_APPLY_TIMEOUT_MS = 60_000;/.test(managedTs)
+      && /where: \{ endpointId, source: 'connect', state: \{ in: \['issued', 'delivered'\] \}, createdAt: \{ lt: new Date\(now - CONNECT_APPLY_TIMEOUT_MS\) \} \},/.test(gsvc)
+      && /if \(due\.length\) await this\.revoke\(null, endpointId, \{ grantIds: due\.map\(\(g\) => g\.id\), reason: 'timeout' \}, now\);/.test(gsvc),
+    'MsaGrantService.timeoutDue');
+
+  // Revocation.
+  const rv = body(gsvc, '  async revoke(');
+  const revWriters = files.filter((f) => /msaRevocation\.(create|update|updateMany|upsert|delete|deleteMany|createMany)\(/.test(read(f))).map(rel);
+  check('revocation: its own prefix, the same on the Go side; revocation.ts pure; the Go verifier pure',
+    /export const REVOCATION_PREFIX = 'rem0te-msa-revoke-v1\\n';/.test(revTs) && /const RevocationPrefix = "rem0te-msa-revoke-v1\\n"/.test(revGo)
+      && J([...revTs.matchAll(/^import [\s\S]*? from '([^']+)';/gm)].map((m) => m[1])) === J(['node:crypto', 'zod', './grant'])
+      && !/process\.env|from '@prisma|fetch\(/.test(revTs)
+      && J([...(/import \(([\s\S]*?)\)/.exec(revGo)?.[1] ?? '').matchAll(/"([^"]+)"/g)].map((m) => m[1])) === J(['bytes', 'crypto/ed25519', 'encoding/json', 'io', 'time'])
+      && !/time\.Now\(/.test(revGo),
+    'revocation.ts; internal/msa/grant/revocation.go');
+  check('only MsaGrantService.revoke stores a revocation; it only moves live grants to revoked, creates no key, and is audited',
+    J(revWriters) === J(['msa/msa-grant.service.ts'])
+      && (gsvc.match(/msaRevocation\.create\(/g) ?? []).length === 1 && rv.includes('this.prisma.msaRevocation.create(')
+      && /where: \{ id: \{ in: ids \}, endpointId, state: \{ in: \[\.\.\.LIVE_GRANT_STATES\] \} \},\n\s*data: \{ state: 'revoked', revokedAt: at, revokedById: actor\?\.userId \?\? null, revokeReason: sel\.reason \},/.test(rv)
+      && !/msaGrantKey\.(create|update|upsert)|ensureKey|activeKey\(/.test(rv)
+      && /export const LIVE_GRANT_STATES = \['issued', 'delivered', 'applied'\] as const;/.test(managedTs)
+      && rv.indexOf("action: 'MSA_SESSION_REVOKED'") > rv.indexOf('msaRevocation.create('),
+    `writers ${J(revWriters)}`);
+  check('a `remote` pause revokes every grant that reached the computer, signed, on the next poll',
+    /await this\.revoke\(null, ep\.id, \{ all: true, reason: 'pause', states: \['delivered', 'applied'\] \}, t\);/.test(gsvc),
+    'MsaGrantService.answer');
+  const revCallers = files.filter((f) => /grants\.revoke\(|this\.revoke\(null/.test(read(f))).map(rel).sort();
+  check('who may revoke: the grant\'s technician, a Platform Admin, or the business\'s own non-technician member with computers:edit; revoking never asks',
+    /private mayRevokeAny\(actor: ActorContext, businessId: string \| null\): boolean \{\n\s*if \(actor\.isPlatformAdmin\) return true;\n\s*return !actor\.technician && !!businessId && actor\.businessId === businessId && this\.acl\.can\(actor, CAP\.COMPUTERS_EDIT\);/.test(ssvc)
+      && /private mayRevoke\(actor: ActorContext, g: \{ technicianId: string; businessId: string \}\): boolean \{\n\s*return g\.technicianId === actor\.userId \|\| this\.mayRevokeAny\(actor, g\.businessId\);/.test(ssvc)
+      && !/assertFresh|stepUp/.test(sctl) && !/assertFresh|stepUp/.test(ssvc)
+      && J(revCallers) === J(['msa/msa-grant.service.ts', 'msa/msa-sessions.service.ts']),
+    `revoke callers ${J(revCallers)}`);
+  const goRevoke = poller.slice(poller.indexOf('func (p *Poller) revoke('), poller.indexOf('func (p *Poller) endActive('));
+  check('the agent verifies a revocation under the signed keys before acting, and it only ends a session',
+    goRevoke.indexOf('p.H.Trust(ctx)') < goRevoke.indexOf('grant.VerifyRevocation(')
+      && goRevoke.indexOf('grant.VerifyRevocation(') < goRevoke.indexOf('p.endSession(ctx, Revoked)')
+      && !/p\.E\.(Apply|Set|SetPassword|Restore)\(/.test(goRevoke),
+    'enforce/poller.go revoke');
+
+  // Evidence.
+  check('the timeline is pure and never shows Launched as Connected',
+    !/^import /m.test(tl)
+      && /push\('launched', r\.launchedAt \?\? r\.revealedAt, 'The one-time password was handed over\. This is not a connection\.'\);/.test(tl)
+      && /push\('connected', r\.connectedAt,/.test(tl) && (tl.match(/push\('connected'/g) ?? []).length === 1
+      && /export const CANNOT_SEE = \[/.test(tl),
+    'session-timeline.ts');
+
+  // Cutover runs.
+  const rroutes = [...rctl.matchAll(/@(Get|Post)\(([^)]*)\)/g)].map((m) => `${m[1]} ${m[2]}`);
+  const rr = (sig) => rctl.slice(rctl.indexOf(sig), rctl.indexOf('\n  }\n', rctl.indexOf(sig)));
+  check('cutover runs: a Platform Admin\'s; start, advance and confirm name msa.cutover first; halt and rollback never ask',
+    /@Controller\('msa\/cutover-runs'\)\n@UseGuards\(JwtAuthGuard, CapabilitiesGuard, PlatformAdminGuard\)/.test(rctl)
+      && J(rroutes) === J(['Get ', "Get ':runId'", 'Post ', "Post ':runId/advance'", "Post ':runId/confirm'", "Post ':runId/halt'", "Post ':runId/rollback'"])
+      && [['@Post()\n', 'this.runs.start('], ["@Post(':runId/advance')", 'this.runs.advance('], ["@Post(':runId/confirm')", 'this.runs.confirm(']].every(([sig, call]) => {
+        const r = rr(sig); return /assertFresh\(this\.method\(req\), \{ action: 'msa\.cutover',/.test(r) && r.indexOf('assertFresh(') < r.indexOf(call);
+      })
+      && !/assertFresh/.test(rr("@Post(':runId/halt')")) && !/assertFresh/.test(rr("@Post(':runId/rollback')")),
+    `routes ${J(rroutes)}`);
+  const adv = body(rsvc, '  async advance(');
+  const runWriters = files.filter((f) => /msaCutover(Run|Member)\.(create|update|updateMany|upsert|delete|deleteMany|createMany)\(/.test(read(f))).map(rel);
+  check('cutover runs: canary first, each computer through the one-computer cutover, batches of at most 25, no timer, the only writer',
+    J(runWriters) === J(['msa/msa-cutover-runs.service.ts'])
+      && adv.indexOf("!run.canaryVerifiedAt ? 'MSA_CANARY_NOT_VERIFIED'") > 0
+      && adv.indexOf("action: 'MSA_CUTOVER_RUN_ADVANCED'") < adv.indexOf('await this.managed.cutover(actor, id, run.id);')
+      && !/msaManagedComputer\.(create|update|updateMany|upsert|delete|deleteMany)\(/.test(rsvc)
+      && !/setInterval|setTimeout|@Cron|@Interval|onModuleInit/.test(rsvc)
+      && /export const RUN_BATCH_MAX = 25;/.test(managedTs) && /export const RUN_MEMBERS_MAX = 500;/.test(managedTs)
+      && /"MsaCutoverRun_one_open"/.test(mig) && /"batchSize" BETWEEN 1 AND 25/.test(mig),
+    `writers ${J(runWriters)}`);
+
+  check('0090: revoked and the sources, reasons, shapes and windows are CHECKed; one open run per business; a run stays in one business',
+    /'revoked'/.test(mig) && /"source" IN \('test', 'connect', 'verify'\)/.test(mig)
+      && /"reason" IN \('session', 'technician', 'business', 'computer', 'pause', 'timeout'\)/.test(mig)
+      && /interval '9 hours'/.test(mig) && /cardinality\("grantIds"\) <= 20/.test(mig)
+      && /CREATE TRIGGER "MsaCutoverMember_same_business"/.test(mig),
+    '0090 migration');
+  check('MSA sessions: the suites prove it',
+    / msa-sessions[ ;]/.test(read('scripts/run-e2e.sh')) && /unit-msa-sessions\.mjs/.test(read('.github/workflows/ci.yml'))
+      && /func TestRevocationEndsTheNamedSession\(/.test(read(`${goDir}/internal/msa/enforce/session_test.go`))
+      && JSON.parse(read(`${goDir}/internal/msa/testdata/msa-revocations.json`)).cases.length >= 30
+      && read('apps/web/scripts/e2e-ui.mjs').includes('msa\\/(managed|grants|sessions|cutover-runs)'),
+    'e2e-msa-sessions.mjs in run-e2e.sh, unit-msa-sessions.mjs in CI, the Go session tests, the shared revocation fixture, the browser suite\'s gated-route check');
 }
 
 // ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──

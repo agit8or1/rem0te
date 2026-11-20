@@ -12,11 +12,19 @@ import (
 	"github.com/agit8or1/rem0te/windows-installer/internal/msa/grant"
 )
 
-// Ceiling is the most a managed computer allows in 0.72: view-only, nothing
-// beyond. Compiled in, not taken from the portal (a portal-supplied ceiling
-// would be the portal asking itself). The portal's MANAGED_CEILING is the
-// same (§82).
-var Ceiling = grant.Ceiling{Mode: "view"}
+// Ceiling is the most a managed computer allows (0.73; 0.72's was
+// view-only): interactive control with clipboard, file transfer and audio,
+// never a TCP tunnel and never a remote restart. Compiled in, not taken from
+// the portal: a portal-supplied (or portal-signed) ceiling would be the
+// portal asking itself, so widening it takes a signed agent release.
+//
+//   - tunnel: RustDesk's TCP tunnel reaches the customer's network beyond
+//     the desktop, invisibly to the person watching;
+//   - restart: a remote restart drops RustDesk and the session with it, and
+//     this agent's bookkeeping is what ends a grant on time.
+//
+// The portal's MANAGED_CEILING is the same (§82, §83).
+var Ceiling = grant.Ceiling{Mode: "control", Permissions: grant.Permissions{Clipboard: true, Files: true, Audio: true}}
 
 // Outcome codes the agent reports (the portal's AGENT_OUTCOMES).
 const (
@@ -32,12 +40,15 @@ const (
 	Superseded         = "superseded"
 	NotEnabled         = "not_enabled"
 	StopFailed         = "stop_failed"
+	// 0.73: a signed revocation ended the session; the signed pause did.
+	Revoked = "revoked"
+	Paused  = "paused"
 )
 
 // Outcomes lists them in the portal's order.
 var Outcomes = []string{
 	ReadbackMismatch, PasswordNotApplied, SaveFailed, RustdeskNotReady, NoKeys,
-	MaxMinutes, NoConnection, Disconnected, Rollback, Superseded, NotEnabled, StopFailed,
+	MaxMinutes, NoConnection, Disconnected, Rollback, Superseded, NotEnabled, StopFailed, Revoked, Paused,
 }
 
 // Bounds.
@@ -146,14 +157,16 @@ func Desired(g *grant.Grant) map[string]string {
 		approve = "click"
 	}
 	return map[string]string{
-		"verification-method":     "use-permanent-password",
-		"access-mode":             access,
-		"enable-keyboard":         yn(g.Mode == "control"),
-		"enable-clipboard":        yn(g.Permissions.Clipboard),
-		"enable-file-transfer":    yn(g.Permissions.Files),
-		"enable-audio":            yn(g.Permissions.Audio),
-		"enable-tunnel":           yn(g.Permissions.Tunnel),
-		"enable-remote-restart":   yn(g.Permissions.Restart),
+		"verification-method":  "use-permanent-password",
+		"access-mode":          access,
+		"enable-keyboard":      yn(g.Mode == "control"),
+		"enable-clipboard":     yn(g.Permissions.Clipboard),
+		"enable-file-transfer": yn(g.Permissions.Files),
+		"enable-audio":         yn(g.Permissions.Audio),
+		// Never on, whatever a grant says: the Ceiling refuses either
+		// permission before this is reached; this is the second lock.
+		"enable-tunnel":           "N",
+		"enable-remote-restart":   "N",
 		"approve-mode":            approve,
 		"allow-auto-disconnect":   "Y",
 		"auto-disconnect-timeout": strconv.Itoa(g.IdleMinutes),

@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **623** of them across
-**94** controllers.
+integration, under `/api/integration/v1`). There are **637** of them across
+**96** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -599,6 +599,20 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/msa/readiness` | signed in | `COMPUTERS_VIEW` |
 | `GET` | `/api/v1/msa/readiness/:endpointId` | signed in | `COMPUTERS_VIEW` |
 
+## Msa cutover runs
+
+`apps/api/src/msa/msa-cutover-runs.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/msa/cutover-runs` | signed in | — |
+| `POST` | `/api/v1/msa/cutover-runs` | signed in, throttled | — |
+| `GET` | `/api/v1/msa/cutover-runs/:runId` | signed in | — |
+| `POST` | `/api/v1/msa/cutover-runs/:runId/advance` | signed in, throttled | — |
+| `POST` | `/api/v1/msa/cutover-runs/:runId/confirm` | signed in, throttled | — |
+| `POST` | `/api/v1/msa/cutover-runs/:runId/halt` | signed in, throttled | — |
+| `POST` | `/api/v1/msa/cutover-runs/:runId/rollback` | signed in, throttled | — |
+
 ## Msa grant msaagent
 
 `apps/api/src/msa/msa-grant.controller.ts`
@@ -630,6 +644,20 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/msa/managed/:endpointId/cutover` | Platform Admin, throttled | — |
 | `POST` | `/api/v1/msa/managed/:endpointId/rollback` | Platform Admin, throttled | — |
 | `POST` | `/api/v1/msa/managed/grants/:grantId/reveal` | Platform Admin, throttled | — |
+
+## Msa sessions
+
+`apps/api/src/msa/msa-sessions.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/msa/sessions/active` | signed in | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/msa/sessions/connect/:endpointId` | signed in, throttled | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/msa/sessions/endpoint/:endpointId` | signed in | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/msa/sessions/grants/:grantId` | signed in, throttled | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/msa/sessions/grants/:grantId/connect.cmd` | signed in, throttled | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/msa/sessions/grants/:grantId/revoke` | signed in, throttled | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/msa/sessions/revoke` | signed in, throttled | `COMPUTERS_VIEW` |
 
 ## Notes
 

@@ -477,6 +477,40 @@ Requirements on your own workstation:
 Every connection is written to the audit log with who connected, to what, and
 when.
 
+### Managed computers (0.73, not switched on by default)
+
+Managed Secure Access is off on every production server; this section applies
+only where an administrator has switched it on. **It has been tested only in a
+Windows Server lab, never on a desktop or with a real connection.**
+
+A computer whose page says **Managed and verified** has no standing password.
+Pressing **Connect** (or **View only**) asks the computer's agent to open one
+session for you:
+
+1. The dialog shows progress: *Authorized*, *Received by the agent*, *Applied*.
+   It waits up to 60 seconds. If the agent does not answer (the computer is
+   offline, or busy), the session is cancelled and the dialog says why; nothing
+   was handed over. Try again later — there is no fallback to an old password.
+2. When it says *Applied*, press **Download Connect script** and run it. The
+   script carries a one-time password for this session only; it works once.
+3. What you may do is decided by your role or preset, not by the button: a
+   view-only preset gets a view-only session, and if your business requires
+   consent the person at the computer is asked to accept. Clipboard and file
+   transfer are on only when your business allows them. A TCP tunnel and a
+   remote restart are never available on a managed computer.
+4. The session ends when you disconnect, at your session limit, after 15
+   idle minutes, or when someone disconnects it from the console.
+
+The computer's page lists its managed sessions with a timeline. *Launched*
+means the Connect script was downloaded; it is **not** *Connected*, which
+appears only when the agent saw RustDesk accept a connection. The agent cannot
+see who connected or whether consent was accepted, and the timeline says so.
+
+You can end your own session with **Disconnect**. A business's Owner or Admin,
+and Platform Admins, can disconnect any session there, all of a technician's,
+or all of a computer's (**Devices → Managed sessions**). A containment pause on
+remote access ends open sessions too.
+
 ---
 
 ## 4. Help someone who is not enrolled

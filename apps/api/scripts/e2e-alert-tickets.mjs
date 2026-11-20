@@ -358,9 +358,13 @@ async function all() {
   check((await prisma.monitorAlertTicket.findUnique({ where: { alertId: bA1.id } }))?.attempts === 1 && hitsFor(bA1.id).length === 1, 'nothing more is sent before the retry time');
   const waits = [];
   for (const n of [2, 3, 4]) {
+    // 0.73: wait for the row to LEAVE `sending`, not just for the attempt to
+    // be counted. The claim bumps `attempts` while the row is still
+    // `sending`; moving on then let this loop write a retry time onto a
+    // `sending` row, which the MonitorAlertTicket_retry CHECK refuses.
     const cur = await prisma.monitorAlertTicket.findUnique({ where: { alertId: bA1.id } });
     await prisma.monitorAlertTicket.update({ where: { id: cur.id }, data: { nextAttemptAt: new Date(Date.now() - 1000), lastAttemptAt: new Date(Date.now() - 3_000_000) } });
-    const nx = await until(async () => { const x = await prisma.monitorAlertTicket.findUnique({ where: { alertId: bA1.id } }); return x.attempts === n ? x : null; }, 15_000);
+    const nx = await until(async () => { const x = await prisma.monitorAlertTicket.findUnique({ where: { alertId: bA1.id } }); return x.attempts === n && x.status !== 'sending' ? x : null; }, 15_000);
     waits.push(nx ? (nx.nextAttemptAt ? Math.round((nx.nextAttemptAt.getTime() - nx.lastAttemptAt.getTime()) / 60_000) : null) : 'stuck');
   }
   const gave = await prisma.monitorAlertTicket.findUnique({ where: { alertId: bA1.id } });

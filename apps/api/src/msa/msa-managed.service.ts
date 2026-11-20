@@ -134,7 +134,7 @@ export class MsaManagedService {
    * changes on the computer yet: Legacy keeps working until a test session
    * succeeds and a Platform Admin confirms it.
    */
-  async cutover(actor: ActorContext, endpointId: string) {
+  async cutover(actor: ActorContext, endpointId: string, runId: string | null = null) {
     this.assertEnabled();
     const ep = await this.computer(actor, endpointId);
     assertAssigned(ep);
@@ -147,10 +147,10 @@ export class MsaManagedService {
     }
     await this.audit.logOrFail({
       action: 'MSA_CUTOVER', actorId: actor.userId, actorIp: actor.ip, tenantId: ep.tenantId ?? undefined, customerId: ep.customerId ?? undefined,
-      resource: 'endpoint', resourceId: ep.id, meta: { endpointId: ep.id, before: 'legacy', after: 'pending' },
+      resource: 'endpoint', resourceId: ep.id, meta: { endpointId: ep.id, before: 'legacy', after: 'pending', ...(runId ? { runId } : {}) },
     });
     try {
-      await this.prisma.msaManagedComputer.create({ data: { endpointId: ep.id, state: 'pending', requestedById: actor.userId } });
+      await this.prisma.msaManagedComputer.create({ data: { endpointId: ep.id, state: 'pending', requestedById: actor.userId, runId } });
     } catch {
       throw new ConflictException({ code: 'MSA_ALREADY_MANAGED', message: 'This computer is already in Managed Secure Access.' });
     }
@@ -184,6 +184,34 @@ export class MsaManagedService {
     if (moved.count !== 1) throw new ConflictException({ code: 'MSA_NOT_PENDING', message: 'Only a computer in Managed (pending) can be confirmed.' });
     this.grants.wake(ep.id);
     return this.view(actor, ep.id);
+  }
+
+  /**
+   * 0.73: confirm a computer a cutover run moved, without a connection: the
+   * run's canary already proved a connection through a managed session (it
+   * was confirmed the ordinary way), so each later computer needs only its
+   * own agent's apply and readback of the run's verification grant since it
+   * was cut over. Platform Admin (the run controller), msa.cutover, audited.
+   * MsaCutoverRunService is the only caller.
+   */
+  async confirmFromRun(actor: ActorContext, endpointId: string, runId: string) {
+    this.assertEnabled();
+    const ep = await this.computer(actor, endpointId);
+    const row = await this.row(ep.id);
+    if (!row || row.state !== 'pending' || row.runId !== runId) return false;
+    const applied = await this.prisma.msaGrant.count({
+      where: { endpointId: ep.id, source: 'verify', createdAt: { gte: row.requestedAt }, appliedAt: { not: null } },
+    });
+    if (!row.readbackOkAt || row.readbackOkAt < row.requestedAt || applied === 0) return false;
+    await this.audit.logOrFail({
+      action: 'MSA_VERIFIED', actorId: actor.userId, actorIp: actor.ip, tenantId: ep.tenantId ?? undefined, customerId: ep.customerId ?? undefined,
+      resource: 'endpoint', resourceId: ep.id, meta: { endpointId: ep.id, before: 'pending', after: 'verified', runId },
+    });
+    const moved = await this.prisma.msaManagedComputer.updateMany({
+      where: { endpointId: ep.id, state: 'pending', runId }, data: { state: 'verified', verifiedAt: new Date(), verifiedById: actor.userId },
+    });
+    if (moved.count === 1) this.grants.wake(ep.id);
+    return moved.count === 1;
   }
 
   /**
@@ -259,6 +287,12 @@ export class MsaManagedService {
     const outcome = r.outcome ?? null;
     const g = (states: string[]) => ({ id: r.grantId, endpointId: ep.id, state: { in: states } });
     switch (r.event) {
+      case 'received': {
+        // 0.73 evidence: the agent verified the grant, before it applied anything.
+        const n = (await this.prisma.msaGrant.updateMany({ where: { ...g(['delivered', 'revoked']), receivedAt: null }, data: { receivedAt: now } })).count
+          + (await this.prisma.msaGrant.updateMany({ where: { ...g(['issued']), receivedAt: null }, data: { state: 'delivered', deliveredAt: now, receivedAt: now } })).count;
+        return n > 0;
+      }
       case 'applied': {
         const n = (await this.prisma.msaGrant.updateMany({ where: g(['delivered']), data: { state: 'applied', appliedAt: now } })).count
           + (await this.prisma.msaGrant.updateMany({ where: g(['issued']), data: { state: 'applied', appliedAt: now, deliveredAt: now } })).count;
@@ -288,7 +322,9 @@ export class MsaManagedService {
         return n > 0;
       }
       case 'ended': {
-        const n = (await this.prisma.msaGrant.updateMany({ where: g(['applied', 'delivered']), data: { state: 'ended', endedAt: now, outcome: outcome ?? 'max_minutes' } })).count;
+        // 0.73: a revoked session the agent ended stays `revoked` and gains endedAt.
+        const n = (await this.prisma.msaGrant.updateMany({ where: g(['applied', 'delivered']), data: { state: 'ended', endedAt: now, outcome: outcome ?? 'max_minutes' } })).count
+          + (await this.prisma.msaGrant.updateMany({ where: { ...g(['revoked']), endedAt: null }, data: { endedAt: now, outcome: outcome ?? 'revoked' } })).count;
         if (!n) return false;
         await this.audit.log({ ...base, action: 'MSA_SESSION_ENDED', meta: { grantId: r.grantId, endpointId: ep.id, outcome: outcome ?? 'max_minutes' } });
         // Still pending: Legacy must keep working, and the agent just set a

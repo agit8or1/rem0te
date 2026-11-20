@@ -1408,6 +1408,138 @@
         }
       },
       "expect": "permission_not_allowed"
+    },
+    {
+      "name": "a control grant with clipboard, files and audio, under the managed ceiling",
+      "envelope": "{\"keyId\":\"c26019f2544b3811\",\"grant\":\"eyJ2IjoxLCJncmFudElkIjoiMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYiLCJlbmRwb2ludElkIjoiY210ZXN0ZW5kcG9pbnQwMDAwMDAwMDAwMDEiLCJydXN0ZGVza0lkIjoiMTIzNDU2Nzg5IiwiYnVzaW5lc3NJZCI6ImNtdGVzdGJ1c2luZXNzMDAwMDAwMDAwMDAxIiwidGVjaG5pY2lhbklkIjoiY210ZXN0dGVjaG5pY2lhbjAwMDAwMDAwMDEiLCJtb2RlIjoiY29udHJvbCIsInBlcm1pc3Npb25zIjp7ImNsaXBib2FyZCI6dHJ1ZSwiZmlsZXMiOnRydWUsImF1ZGlvIjp0cnVlLCJ0dW5uZWwiOmZhbHNlLCJyZXN0YXJ0IjpmYWxzZX0sImNvbnNlbnQiOiJub3RfcmVxdWlyZWQiLCJub3RCZWZvcmUiOiIyMDI2LTExLTIwVDEyOjAwOjAwWiIsIm5vdEFmdGVyIjoiMjAyNi0xMS0yMFQxMjowNTowMFoiLCJtYXhNaW51dGVzIjo2MCwiaWRsZU1pbnV0ZXMiOjE1LCJwYXNzd29yZCI6IkFiY2RlZmdoaWprbG1ub3BxcnN0dXYxMiJ9\",\"sig\":\"/OTqNOTvMbyNZn7nhGv/Di3nADKqef0Sm/81m4YWmV/OI/bZf7Kb2TcXej3sc9/JTe5BpD9gwj79DtROsCXtBA==\"}",
+      "context": {
+        "endpointId": "cmtestendpoint000000000001",
+        "rustdeskId": "123456789",
+        "now": "2026-11-20T12:01:00Z",
+        "seen": [],
+        "remotePaused": false,
+        "ceiling": {
+          "mode": "control",
+          "permissions": {
+            "clipboard": true,
+            "files": true,
+            "audio": true,
+            "tunnel": false,
+            "restart": false
+          }
+        }
+      },
+      "expect": "ok"
+    },
+    {
+      "name": "a view grant under the managed ceiling",
+      "envelope": "{\"keyId\":\"c26019f2544b3811\",\"grant\":\"eyJ2IjoxLCJncmFudElkIjoiMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYiLCJlbmRwb2ludElkIjoiY210ZXN0ZW5kcG9pbnQwMDAwMDAwMDAwMDEiLCJydXN0ZGVza0lkIjoiMTIzNDU2Nzg5IiwiYnVzaW5lc3NJZCI6ImNtdGVzdGJ1c2luZXNzMDAwMDAwMDAwMDAxIiwidGVjaG5pY2lhbklkIjoiY210ZXN0dGVjaG5pY2lhbjAwMDAwMDAwMDEiLCJtb2RlIjoidmlldyIsInBlcm1pc3Npb25zIjp7ImNsaXBib2FyZCI6ZmFsc2UsImZpbGVzIjpmYWxzZSwiYXVkaW8iOmZhbHNlLCJ0dW5uZWwiOmZhbHNlLCJyZXN0YXJ0IjpmYWxzZX0sImNvbnNlbnQiOiJyZXF1aXJlZCIsIm5vdEJlZm9yZSI6IjIwMjYtMTEtMjBUMTI6MDA6MDBaIiwibm90QWZ0ZXIiOiIyMDI2LTExLTIwVDEyOjA1OjAwWiIsIm1heE1pbnV0ZXMiOjYwLCJpZGxlTWludXRlcyI6MTUsInBhc3N3b3JkIjoiQWJjZGVmZ2hpamtsbW5vcHFyc3R1djEyIn0=\",\"sig\":\"J1+pc7ENvlvSLGI4U/ZJEcvFNs1ozqg/uJv3JB6k+Au+MssLwTKK+T4d/cACLTjKJtIJXm5Bz9Iz5FiPWiwEBA==\"}",
+      "context": {
+        "endpointId": "cmtestendpoint000000000001",
+        "rustdeskId": "123456789",
+        "now": "2026-11-20T12:01:00Z",
+        "seen": [],
+        "remotePaused": false,
+        "ceiling": {
+          "mode": "control",
+          "permissions": {
+            "clipboard": true,
+            "files": true,
+            "audio": true,
+            "tunnel": false,
+            "restart": false
+          }
+        }
+      },
+      "expect": "ok"
+    },
+    {
+      "name": "a tunnel under the managed ceiling",
+      "envelope": "{\"keyId\":\"c26019f2544b3811\",\"grant\":\"eyJ2IjoxLCJncmFudElkIjoiMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYiLCJlbmRwb2ludElkIjoiY210ZXN0ZW5kcG9pbnQwMDAwMDAwMDAwMDEiLCJydXN0ZGVza0lkIjoiMTIzNDU2Nzg5IiwiYnVzaW5lc3NJZCI6ImNtdGVzdGJ1c2luZXNzMDAwMDAwMDAwMDAxIiwidGVjaG5pY2lhbklkIjoiY210ZXN0dGVjaG5pY2lhbjAwMDAwMDAwMDEiLCJtb2RlIjoiY29udHJvbCIsInBlcm1pc3Npb25zIjp7ImNsaXBib2FyZCI6ZmFsc2UsImZpbGVzIjpmYWxzZSwiYXVkaW8iOmZhbHNlLCJ0dW5uZWwiOnRydWUsInJlc3RhcnQiOmZhbHNlfSwiY29uc2VudCI6InJlcXVpcmVkIiwibm90QmVmb3JlIjoiMjAyNi0xMS0yMFQxMjowMDowMFoiLCJub3RBZnRlciI6IjIwMjYtMTEtMjBUMTI6MDU6MDBaIiwibWF4TWludXRlcyI6NjAsImlkbGVNaW51dGVzIjoxNSwicGFzc3dvcmQiOiJBYmNkZWZnaGlqa2xtbm9wcXJzdHV2MTIifQ==\",\"sig\":\"nJhj/khkN+q+2y2WZ0b8aCTn0JpdM1ukT36mQpv9WBRXEWnt+lu03MDIK8A8w3u+9Pgozj+cLF+aRiiIjJ0+Bg==\"}",
+      "context": {
+        "endpointId": "cmtestendpoint000000000001",
+        "rustdeskId": "123456789",
+        "now": "2026-11-20T12:01:00Z",
+        "seen": [],
+        "remotePaused": false,
+        "ceiling": {
+          "mode": "control",
+          "permissions": {
+            "clipboard": true,
+            "files": true,
+            "audio": true,
+            "tunnel": false,
+            "restart": false
+          }
+        }
+      },
+      "expect": "permission_not_allowed"
+    },
+    {
+      "name": "a remote restart under the managed ceiling",
+      "envelope": "{\"keyId\":\"c26019f2544b3811\",\"grant\":\"eyJ2IjoxLCJncmFudElkIjoiMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYiLCJlbmRwb2ludElkIjoiY210ZXN0ZW5kcG9pbnQwMDAwMDAwMDAwMDEiLCJydXN0ZGVza0lkIjoiMTIzNDU2Nzg5IiwiYnVzaW5lc3NJZCI6ImNtdGVzdGJ1c2luZXNzMDAwMDAwMDAwMDAxIiwidGVjaG5pY2lhbklkIjoiY210ZXN0dGVjaG5pY2lhbjAwMDAwMDAwMDEiLCJtb2RlIjoiY29udHJvbCIsInBlcm1pc3Npb25zIjp7ImNsaXBib2FyZCI6ZmFsc2UsImZpbGVzIjpmYWxzZSwiYXVkaW8iOmZhbHNlLCJ0dW5uZWwiOmZhbHNlLCJyZXN0YXJ0Ijp0cnVlfSwiY29uc2VudCI6InJlcXVpcmVkIiwibm90QmVmb3JlIjoiMjAyNi0xMS0yMFQxMjowMDowMFoiLCJub3RBZnRlciI6IjIwMjYtMTEtMjBUMTI6MDU6MDBaIiwibWF4TWludXRlcyI6NjAsImlkbGVNaW51dGVzIjoxNSwicGFzc3dvcmQiOiJBYmNkZWZnaGlqa2xtbm9wcXJzdHV2MTIifQ==\",\"sig\":\"kxSTaPGTi7OKntP71ip95rfdKmClj9dHy1R5sCLlf16KGj1Oo9qrce7Hwgx3F33MSwNrXubWvkvJh6DWMfqIAg==\"}",
+      "context": {
+        "endpointId": "cmtestendpoint000000000001",
+        "rustdeskId": "123456789",
+        "now": "2026-11-20T12:01:00Z",
+        "seen": [],
+        "remotePaused": false,
+        "ceiling": {
+          "mode": "control",
+          "permissions": {
+            "clipboard": true,
+            "files": true,
+            "audio": true,
+            "tunnel": false,
+            "restart": false
+          }
+        }
+      },
+      "expect": "permission_not_allowed"
+    },
+    {
+      "name": "every permission under the managed ceiling",
+      "envelope": "{\"keyId\":\"c26019f2544b3811\",\"grant\":\"eyJ2IjoxLCJncmFudElkIjoiMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYiLCJlbmRwb2ludElkIjoiY210ZXN0ZW5kcG9pbnQwMDAwMDAwMDAwMDEiLCJydXN0ZGVza0lkIjoiMTIzNDU2Nzg5IiwiYnVzaW5lc3NJZCI6ImNtdGVzdGJ1c2luZXNzMDAwMDAwMDAwMDAxIiwidGVjaG5pY2lhbklkIjoiY210ZXN0dGVjaG5pY2lhbjAwMDAwMDAwMDEiLCJtb2RlIjoiY29udHJvbCIsInBlcm1pc3Npb25zIjp7ImNsaXBib2FyZCI6dHJ1ZSwiZmlsZXMiOnRydWUsImF1ZGlvIjp0cnVlLCJ0dW5uZWwiOnRydWUsInJlc3RhcnQiOnRydWV9LCJjb25zZW50IjoicmVxdWlyZWQiLCJub3RCZWZvcmUiOiIyMDI2LTExLTIwVDEyOjAwOjAwWiIsIm5vdEFmdGVyIjoiMjAyNi0xMS0yMFQxMjowNTowMFoiLCJtYXhNaW51dGVzIjo2MCwiaWRsZU1pbnV0ZXMiOjE1LCJwYXNzd29yZCI6IkFiY2RlZmdoaWprbG1ub3BxcnN0dXYxMiJ9\",\"sig\":\"3SWm7foSCa9YlToxkOnJO59cezm0b/HtOIIyth9pbM2QR0XGcOzNAUsubNRGMDCGVqSO0a+SYP71cWzU7Ed9AA==\"}",
+      "context": {
+        "endpointId": "cmtestendpoint000000000001",
+        "rustdeskId": "123456789",
+        "now": "2026-11-20T12:01:00Z",
+        "seen": [],
+        "remotePaused": false,
+        "ceiling": {
+          "mode": "control",
+          "permissions": {
+            "clipboard": true,
+            "files": true,
+            "audio": true,
+            "tunnel": false,
+            "restart": false
+          }
+        }
+      },
+      "expect": "permission_not_allowed"
+    },
+    {
+      "name": "signed under the revocation prefix",
+      "envelope": "{\"keyId\":\"c26019f2544b3811\",\"grant\":\"eyJ2IjoxLCJncmFudElkIjoiMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYiLCJlbmRwb2ludElkIjoiY210ZXN0ZW5kcG9pbnQwMDAwMDAwMDAwMDEiLCJydXN0ZGVza0lkIjoiMTIzNDU2Nzg5IiwiYnVzaW5lc3NJZCI6ImNtdGVzdGJ1c2luZXNzMDAwMDAwMDAwMDAxIiwidGVjaG5pY2lhbklkIjoiY210ZXN0dGVjaG5pY2lhbjAwMDAwMDAwMDEiLCJtb2RlIjoidmlldyIsInBlcm1pc3Npb25zIjp7ImNsaXBib2FyZCI6ZmFsc2UsImZpbGVzIjpmYWxzZSwiYXVkaW8iOmZhbHNlLCJ0dW5uZWwiOmZhbHNlLCJyZXN0YXJ0IjpmYWxzZX0sImNvbnNlbnQiOiJyZXF1aXJlZCIsIm5vdEJlZm9yZSI6IjIwMjYtMTEtMjBUMTI6MDA6MDBaIiwibm90QWZ0ZXIiOiIyMDI2LTExLTIwVDEyOjA1OjAwWiIsIm1heE1pbnV0ZXMiOjYwLCJpZGxlTWludXRlcyI6MTUsInBhc3N3b3JkIjoiQWJjZGVmZ2hpamtsbW5vcHFyc3R1djEyIn0=\",\"sig\":\"ncebOrjwucwWnmiY98RWOJCK4QbdiwpbkPf7NLYEBpuceDNuuKbx5hXYGoVW3C/DZMyS7NE415afAf0+BWFbDA==\"}",
+      "context": {
+        "endpointId": "cmtestendpoint000000000001",
+        "rustdeskId": "123456789",
+        "now": "2026-11-20T12:01:00Z",
+        "seen": [],
+        "remotePaused": false,
+        "ceiling": {
+          "mode": "view",
+          "permissions": {
+            "clipboard": false,
+            "files": false,
+            "audio": false,
+            "tunnel": false,
+            "restart": false
+          }
+        }
+      },
+      "expect": "bad_signature"
     }
   ]
 }

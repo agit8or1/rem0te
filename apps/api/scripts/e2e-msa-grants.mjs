@@ -366,8 +366,10 @@ async function all() {
   check(ok(r) && r.data.grants.length === 1 && G.verifyEnvelope(r.data.grants[0], ctxFor(A1)).grant?.grantId === g6.grantId, 'lifted: handed over', msg(r));
   r = await req('GET', `/msa/grants/endpoint/${A1.id}`, { s: SAdmin });
   const states = Object.fromEntries((r.data ?? []).map((x) => [x.grantId, x.state]));
-  check(ok(r) && states[g1.grantId] === 'delivered' && states[g4.grantId] === 'cancelled' && states[g5.grantId] === 'expired' && states[g6.grantId] === 'issued',
-    'the list shows delivered, cancelled, expired and issued', J(states));
+  // 0.73: the pause also revoked every grant that had reached the computer
+  // (g1, delivered); the undelivered one was only withheld.
+  check(ok(r) && states[g1.grantId] === 'revoked' && states[g4.grantId] === 'cancelled' && states[g5.grantId] === 'expired' && states[g6.grantId] === 'issued',
+    'the list shows revoked (by the pause), cancelled, expired and issued', J(states));
 
   section('The database holds the rules too');
   const tryInsert = async (over) => {

@@ -1,6 +1,6 @@
 {
-  "version": "0.72.0",
-  "codename": "Helm",
+  "version": "0.73.0",
+  "codename": "Warden",
   "releaseDate": "2026-11-20",
   "channel": "stable"
 }

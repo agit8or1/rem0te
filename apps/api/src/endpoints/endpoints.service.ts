@@ -49,6 +49,14 @@ export interface ConnectOptions {
    * refusal there neither counts a launch nor mints anything.
    */
   credentialGate?: () => Promise<void>;
+  /**
+   * 0.73 (§83): a Managed Secure Access Connect, from MsaSessionService only.
+   * Allowed only on a verified managed computer (and every other one is
+   * refused msa_not_managed); the launch policy runs exactly as for Legacy,
+   * with view-only and consent enforceable (the grant's agent enforces
+   * them). No permanent password is released on this path: there is none.
+   */
+  managed?: true;
 }
 export type ConnectDecision =
   | { ok: true; mode: LaunchMode; revealCredential: boolean; path: string; maxSessionMinutes: number | null }
@@ -825,7 +833,11 @@ export class EndpointsService {
 
     // 0.72 (§82): a verified Managed Secure Access computer has no legacy
     // password to launch with. Connect for managed computers is step 5.
-    if (await this.msaLegacyRefused(endpoint.id)) return { ok: false, reason: 'msa_managed', status: 'denied', message: LEGACY_REFUSED_MESSAGE };
+    if (opts.managed !== true) {
+      if (await this.msaLegacyRefused(endpoint.id)) return { ok: false, reason: 'msa_managed', status: 'denied', message: LEGACY_REFUSED_MESSAGE };
+    } else if (!(await this.msaLegacyRefused(endpoint.id))) {
+      return { ok: false, reason: 'msa_not_managed', status: 'denied', message: 'This computer is not a verified Managed Secure Access computer: use the ordinary Connect.' };
+    }
 
     // Business members and admins need computers:connect, as before. A
     // technician is decided by the launch policy below: a preset grants no
@@ -847,7 +859,7 @@ export class EndpointsService {
 
     // v0.23 launch policy: pause, protected classes, per-mode enforcement.
     const mode = opts.mode ?? 'control';
-    const decision = await this.policy.evaluateLaunch(actor, endpoint, mode, { via: opts.via ?? 'browser', technicianDeviceId: null });
+    const decision = await this.policy.evaluateLaunch(actor, endpoint, mode, { via: opts.via ?? 'browser', technicianDeviceId: null, ...(opts.managed === true ? { managed: true as const } : {}) });
     if (!decision.ok) {
       await this.audit.log({
         tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
@@ -858,7 +870,7 @@ export class EndpointsService {
       return { ok: false, reason: decision.reason, message: decision.message, status: decision.status };
     }
 
-    if (opts.credentialGate && decision.revealCredential) {
+    if (opts.credentialGate && decision.revealCredential && opts.managed !== true) {
       const node = await this.prisma.rustdeskNode.findUnique({ where: { endpointId }, select: { permanentPassword: true } });
       if (node?.permanentPassword) await opts.credentialGate();
     }

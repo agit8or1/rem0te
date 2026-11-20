@@ -4,7 +4,7 @@ import { EndpointDiagnosticsCatalog } from '@/components/endpoints/endpoint-diag
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
-import { endpointsApi, offboardingApi } from '@/lib/api-client';
+import { endpointsApi, msaApi, offboardingApi } from '@/lib/api-client';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EndpointEventLog } from '@/components/endpoints/endpoint-event-log';
 import { EndpointActions } from '@/components/endpoints/endpoint-actions';
@@ -24,7 +24,9 @@ import { DeviceChatTab } from '@/components/endpoints/workspace/chat-tab';
 import { OPEN_CHAT_EVENT } from '@/components/chat/chat-inbox';
 import { DiagnosticsPanel } from '@/components/endpoints/workspace/diagnostics-panel';
 import { AgentCard } from '@/components/endpoints/workspace/agent-card';
-import { MsaReadinessCard } from '@/components/endpoints/msa-readiness';
+import { MsaReadinessCard, type MsaEndpointView } from '@/components/endpoints/msa-readiness';
+import { useMsaManagedView } from '@/components/endpoints/msa-managed';
+import { useManagedConnect } from '@/components/endpoints/msa-sessions';
 import { UPGRADE_LABEL, upgradeView, useAgentActions } from '@/components/endpoints/workspace/agent-actions';
 import type { AccessReview } from '@/components/endpoints/workspace/access-review-panel';
 import { acceptsQueuedWork, agentType, parseTab, reportsInventory, reportsWindowsDetail, TAB_LABEL, type WorkspaceTab } from '@/components/endpoints/workspace/device-model';
@@ -168,6 +170,23 @@ export default function EndpointDetailPage() {
     },
   });
 
+  // 0.73: Managed Secure Access Connect. The readiness read is ungated (and
+  // the same query, and key, as the readiness card); only when it says
+  // `managedControls: true` is the gated managed view asked, and only when
+  // that says `verified` does Connect go through a session grant. Otherwise
+  // Connect is the Legacy launch above, unchanged.
+  const { data: msaReadiness } = useQuery<MsaEndpointView>({
+    queryKey: ['msa-readiness', id],
+    queryFn: () => msaApi.forEndpoint(id).then((r) => r.data?.data),
+    enabled: canView,
+    retry: false,
+  });
+  const msaOn = msaReadiness?.managedControls === true;
+  const { data: msaManaged } = useMsaManagedView(id, msaOn);
+  const managedConnect = useManagedConnect(id);
+  const viaGrant = msaOn && msaManaged?.state === 'verified';
+  const startConnect = (mode?: 'view_only') => (viaGrant ? managedConnect.connect(mode) : launchMutation.mutate(mode));
+
   if (isLoading) return <div className="p-6 text-muted-foreground text-sm">Loading…</div>;
   if (!endpoint) return <div className="p-6 text-muted-foreground text-sm">Not found</div>;
 
@@ -225,9 +244,9 @@ export default function EndpointDetailPage() {
           <DeviceActions
             endpointId={id}
             ep={ep}
-            onConnect={() => launchMutation.mutate(undefined)}
-            onViewOnly={() => launchMutation.mutate('view_only')}
-            connecting={launchMutation.isPending}
+            onConnect={() => startConnect(undefined)}
+            onViewOnly={() => startConnect('view_only')}
+            connecting={launchMutation.isPending || managedConnect.pending}
             onOpenTab={setTab}
             perms={{ view: canView, edit: canEdit, remove: can(CAP.COMPUTERS_REMOVE), technician: !!technician }}
             actionReason={actionReason}
@@ -241,8 +260,9 @@ export default function EndpointDetailPage() {
         endpointId={id}
         refusal={grantRequired}
         onDismiss={() => setGrantRequired(null)}
-        onConnect={() => launchMutation.mutate(undefined)}
+        onConnect={() => startConnect(undefined)}
       />
+      {managedConnect.dialog}
 
       {canView && <DeviceTasks endpointId={id} />}
 

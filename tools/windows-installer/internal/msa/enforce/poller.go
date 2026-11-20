@@ -24,6 +24,18 @@ package enforce
 //     session when it disconnects, when maxMinutes runs out, or when no one
 //     connected by notAfter; at rest, read the managed settings back hourly.
 //
+// 0.73 (build step 5):
+//
+//   - each revocation, before any grant: verified (internal/msa/grant
+//     VerifyRevocation) under the same keys; it ends the open session when
+//     it names that session's grant (or says `all` and the grant started no
+//     later than it was issued), puts every grant it names in the replay
+//     set, and is acked so the portal stops sending it. It only reduces;
+//   - a grant that verifies is reported `received` before anything changes;
+//   - the signed pause is read again while a session is open, and ends it;
+//   - the open session (never its password) is in the state file, so a
+//     poller that restarts still ends it on time.
+//
 // Fail closed: no keys, an unreadable pause, a grant that does not verify, a
 // readback that disagrees — each refuses and is reported; nothing weaker is
 // ever applied in its place.
@@ -53,6 +65,8 @@ type ManagedAnswer struct {
 
 // PollAnswer is one poll's answer, as the agent reads it.
 type PollAnswer struct {
+	// Revocations (0.73): signed revocation envelopes, handled before Grants.
+	Revocations  []json.RawMessage `json:"revocations"`
 	Grants       []json.RawMessage `json:"grants"`
 	Paused       bool              `json:"paused"`
 	EndpointID   string            `json:"endpointId"`
@@ -87,17 +101,38 @@ type Host interface {
 }
 
 // State is the poller's own file (msa\enforce.json): the endpoint id it
-// pinned, what it last applied (never a password), and whether the legacy
-// password was replaced.
+// pinned, what it last applied (never a password), whether the legacy
+// password was replaced, and (0.73) the open session, the managed state the
+// portal last named, and the revocations already acted on.
 type State struct {
-	Schema     string            `json:"schema"`
-	EndpointID string            `json:"endpointId,omitempty"`
-	Applied    map[string]string `json:"applied,omitempty"`
-	Secured    bool              `json:"secured,omitempty"`
+	Schema      string               `json:"schema"`
+	EndpointID  string               `json:"endpointId,omitempty"`
+	Applied     map[string]string    `json:"applied,omitempty"`
+	Secured     bool                 `json:"secured,omitempty"`
+	Managed     string               `json:"managed,omitempty"`
+	Active      *ActiveSession       `json:"active,omitempty"`
+	Revocations map[string]time.Time `json:"revocations,omitempty"`
 }
 
-// StateSchema names the state file.
-const StateSchema = "rem0te-msa-enforce/1"
+// ActiveSession is the open session as the state file keeps it: enough to
+// end it on time after a restart. Never the password.
+type ActiveSession struct {
+	GrantID     string    `json:"grantId"`
+	BusinessID  string    `json:"businessId"`
+	NotBefore   time.Time `json:"notBefore"`
+	NotAfter    time.Time `json:"notAfter"`
+	AppliedAt   time.Time `json:"appliedAt"`
+	MaxMinutes  int       `json:"maxMinutes"`
+	IdleMinutes int       `json:"idleMinutes"`
+	Connected   bool      `json:"connected,omitempty"`
+}
+
+// StateSchema names the state file. A /1 file (0.72) is read as is, with no
+// open session.
+const (
+	StateSchema   = "rem0te-msa-enforce/2"
+	stateSchemaV1 = "rem0te-msa-enforce/1"
+)
 
 // Store keeps the poller's files, SYSTEM-only.
 type Store interface {
@@ -121,13 +156,12 @@ const (
 	IdleExit = time.Hour
 	// MaxBackoff bounds the wait after a failed poll.
 	MaxBackoff = time.Minute
+	// PauseCheck is how often the signed pause is read again while a
+	// session is open (it may fetch from the portal).
+	PauseCheck = time.Minute
 )
 
-type active struct {
-	g         *grant.Grant
-	appliedAt time.Time
-	connected bool
-}
+type active = ActiveSession
 
 // Poller is one run.
 type Poller struct {
@@ -144,6 +178,7 @@ type Poller struct {
 	mstate string
 	ack    []string
 	lastRB time.Time
+	lastPZ time.Time
 	rolled bool
 }
 
@@ -182,12 +217,30 @@ func (p *Poller) report(ctx context.Context, r Report) {
 // Run polls until the portal stops wanting it, the context ends, or IdleExit.
 func (p *Poller) Run(ctx context.Context) error {
 	st, err := p.S.LoadState()
-	if err != nil || st == nil || st.Schema != StateSchema {
+	switch {
+	case err != nil || st == nil:
+		st = &State{Schema: StateSchema}
+	case st.Schema == stateSchemaV1:
+		st.Schema, st.Active, st.Managed, st.Revocations = StateSchema, nil, "", nil
+	case st.Schema != StateSchema:
 		st = &State{Schema: StateSchema}
 	}
 	p.state = st
+	if p.state.Revocations == nil {
+		p.state.Revocations = map[string]time.Time{}
+	}
 	if p.seen, err = p.S.LoadSeen(); err != nil || p.seen == nil {
 		p.seen = map[string]time.Time{}
+	}
+	// A session left open by a poller that stopped: past its limit it is
+	// ended now, before anything else; inside it, it is watched again.
+	if a := p.state.Active; a != nil {
+		p.mstate = p.state.Managed
+		c := *a
+		p.act = &c
+		if p.now().Sub(a.AppliedAt) >= time.Duration(a.MaxMinutes)*time.Minute {
+			p.endSession(ctx, MaxMinutes)
+		}
 	}
 	backoff := 5 * time.Second
 	lastActive := p.now()
@@ -217,7 +270,14 @@ func (p *Poller) Run(ctx context.Context) error {
 			p.endActive(ctx, NotEnabled)
 			return nil
 		}
-		p.mstate = ans.Managed.State
+		if p.mstate != ans.Managed.State {
+			p.mstate = ans.Managed.State
+			p.state.Managed = p.mstate
+			p.saveState()
+		}
+		for _, env := range ans.Revocations {
+			p.revoke(ctx, env)
+		}
 		if ans.Managed.Rollback {
 			if !p.rolled {
 				p.rollback(ctx)
@@ -336,6 +396,8 @@ func (p *Poller) handle(ctx context.Context, env json.RawMessage) {
 		refuse(grant.RemotePaused, nil)
 		return
 	}
+	// 0.73: verified on this computer. Evidence only: it never waits on the portal.
+	p.report(ctx, Report{Event: "received", GrantID: g.GrantID})
 	// The replay set is written before anything changes: a crash after this
 	// can never let the same grant apply twice.
 	na, _ := time.Parse(time.RFC3339, g.NotAfter)
@@ -365,9 +427,10 @@ func (p *Poller) handle(ctx context.Context, env json.RawMessage) {
 		refuse(out.Code, out.Keys)
 		return
 	}
+	nb, _ := time.Parse(time.RFC3339, g.NotBefore)
+	p.act = &active{GrantID: g.GrantID, BusinessID: g.BusinessID, NotBefore: nb, NotAfter: na, AppliedAt: p.now(), MaxMinutes: g.MaxMinutes, IdleMinutes: g.IdleMinutes}
 	p.state.Applied = Desired(g)
-	p.saveState()
-	p.act = &active{g: g, appliedAt: p.now()}
+	p.persistActive()
 	p.report(ctx, Report{Event: "applied", GrantID: g.GrantID})
 }
 
@@ -380,6 +443,17 @@ func (p *Poller) pruneSeen() {
 	}
 }
 
+// persistActive writes the open session (or its absence) to the state file.
+func (p *Poller) persistActive() {
+	if p.act == nil {
+		p.state.Active = nil
+	} else {
+		c := *p.act
+		p.state.Active = &c
+	}
+	p.saveState()
+}
+
 // tick watches an active session.
 func (p *Poller) tick(ctx context.Context) {
 	a := p.act
@@ -387,25 +461,112 @@ func (p *Poller) tick(ctx context.Context) {
 		return
 	}
 	t := p.now()
-	if t.Sub(a.appliedAt) >= time.Duration(a.g.MaxMinutes)*time.Minute {
+	if t.Sub(a.AppliedAt) >= time.Duration(a.MaxMinutes)*time.Minute {
 		p.endSession(ctx, MaxMinutes)
 		return
+	}
+	// 0.73: the signed pause, read again while a session is open, ends it.
+	if p.lastPZ.IsZero() || t.Sub(p.lastPZ) >= PauseCheck {
+		p.lastPZ = t
+		if _, paused, err := p.H.Trust(ctx); err == nil && paused != nil {
+			if rid, err := p.H.RustdeskID(ctx); err == nil && paused(a.BusinessID, rid) {
+				p.endSession(ctx, Paused)
+				return
+			}
+		}
 	}
 	n, err := p.H.Sessions()
 	if err != nil {
 		return // cannot tell: the time limits still end it
 	}
 	switch {
-	case n > 0 && !a.connected:
-		a.connected = true
-		p.report(ctx, Report{Event: "connected", GrantID: a.g.GrantID})
-	case n == 0 && a.connected:
+	case n > 0 && !a.Connected:
+		a.Connected = true
+		p.persistActive()
+		p.report(ctx, Report{Event: "connected", GrantID: a.GrantID})
+	case n == 0 && a.Connected:
 		p.endSession(ctx, Disconnected)
-	case n == 0 && !a.connected:
-		if na, err := time.Parse(time.RFC3339, a.g.NotAfter); err != nil || t.After(na.Add(grant.ClockSkew)) {
+	case n == 0 && !a.Connected:
+		if t.After(a.NotAfter.Add(grant.ClockSkew)) {
 			p.endSession(ctx, NoConnection)
 		}
 	}
+}
+
+// revocationIDOf reads the revocation id without trusting it: only to ack
+// one already acted on (the portal marks only this computer's own).
+func revocationIDOf(env []byte) string {
+	var e struct {
+		Revocation string `json:"revocation"`
+	}
+	if json.Unmarshal(env, &e) != nil {
+		return ""
+	}
+	b, err := base64.StdEncoding.DecodeString(e.Revocation)
+	if err != nil || len(b) > grant.MaxRevocationBytes {
+		return ""
+	}
+	var r struct {
+		RevocationID string `json:"revocationId"`
+	}
+	if json.Unmarshal(b, &r) != nil || !grantIDRE.MatchString(r.RevocationID) {
+		return ""
+	}
+	return r.RevocationID
+}
+
+// revoke handles one revocation envelope (0.73). It only ever reduces: it
+// can end the open session and refuse grants, never start or widen one.
+func (p *Poller) revoke(ctx context.Context, env json.RawMessage) {
+	keys, _, err := p.H.Trust(ctx)
+	if err != nil || len(keys) == 0 {
+		p.logf("msa-poller: revocation not checked: %s", NoKeys)
+		return
+	}
+	rid, err := p.H.RustdeskID(ctx)
+	if err != nil {
+		p.logf("msa-poller: revocation not checked: %s", RustdeskNotReady)
+		return
+	}
+	t := p.now()
+	for id, until := range p.state.Revocations {
+		if t.After(until) {
+			delete(p.state.Revocations, id)
+		}
+	}
+	seen := map[string]bool{}
+	for id := range p.state.Revocations {
+		seen[id] = true
+	}
+	r, reason := grant.VerifyRevocation(bytes.TrimSpace(env), grant.RevocationContext{
+		Keys: keys, EndpointID: p.state.EndpointID, RustdeskID: rid, Now: t, Seen: seen,
+	})
+	if reason == grant.Replayed {
+		if id := revocationIDOf(env); id != "" {
+			p.ack = append(p.ack, id)
+		}
+		return
+	}
+	if reason != "" {
+		p.logf("msa-poller: revocation refused: %s", reason)
+		return
+	}
+	// Reduce first: end the session it covers before recording anything.
+	if a := p.act; a != nil && grant.Ends(r, a.GrantID, a.NotBefore) {
+		p.endSession(ctx, Revoked)
+	}
+	until := grant.RevocationNotAfter(r).Add(grant.ClockSkew)
+	for _, id := range r.GrantIDs {
+		if cur, ok := p.seen[id]; !ok || cur.Before(until) {
+			p.seen[id] = until
+		}
+	}
+	if err := p.S.SaveSeen(p.seen); err != nil {
+		p.logf("msa-poller: replay set: %v", err)
+	}
+	p.state.Revocations[r.RevocationID] = until
+	p.saveState()
+	p.ack = append(p.ack, r.RevocationID)
 }
 
 func (p *Poller) endActive(ctx context.Context, code string) {
@@ -422,6 +583,7 @@ func (p *Poller) endSession(ctx context.Context, code string) {
 	a := p.act
 	p.act = nil
 	err := p.E.EndSession(ctx)
+	p.persistActive()
 	if err != nil {
 		p.logf("msa-poller: ending the session: %v", err)
 		code = StopFailed
@@ -437,7 +599,7 @@ func (p *Poller) endSession(ctx context.Context, code string) {
 		}
 	}
 	if a != nil {
-		p.report(ctx, Report{Event: "ended", GrantID: a.g.GrantID, Outcome: code})
+		p.report(ctx, Report{Event: "ended", GrantID: a.GrantID, Outcome: code})
 	}
 }
 

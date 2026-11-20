@@ -16,11 +16,23 @@ package main
 // Twice: as the runner's elevated administrator (this process), and as
 // SYSTEM in session 0 — this same test binary started by a scheduled task
 // with -lab-enforce-out, writing its result to a file this process reads.
-// What it does not cover: the portal, the long-poll, grant verification
-// (internal/msa/enforce's unit tests) and a real remote connection.
+//
+// 0.73 adds, in the same cycle: a control grant inside the 0.73 ceiling
+// (clipboard, file transfer and audio Y; tunnel and remote restart N, read
+// back), and a revocation — the agent's own enforce.Poller, with a stand-in
+// portal and host and an in-process test key, applies a control grant to the
+// real RustDesk, then verifies a signed revocation naming it and ends the
+// session (a password nobody is told, stop-service Y then N) — before the
+// saved settings are restored.
+//
+// What it does not cover: the real portal and long-poll, the signed key
+// chain (internal/msa/enforce's unit tests), and a real remote connection.
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -72,6 +84,34 @@ func runEnforceCycle(ctx context.Context) enforceCycle {
 		return fail("end session: %v", err)
 	}
 	step("ended the session in %s: random password, stop-service Y then N, read back N", time.Since(start).Round(time.Millisecond))
+
+	// 0.73: a control grant inside the ceiling.
+	cg := grant.Grant{V: 1, GrantID: "00112233445566778899aabbccddee01", Mode: "control", Consent: "not_required",
+		Permissions: grant.Permissions{Clipboard: true, Files: true, Audio: true}, MaxMinutes: 30, IdleMinutes: 10, Password: enforce.RandomPassword()}
+	if out := e.Apply(ctx, &cg); !out.OK {
+		_ = e.Restore(ctx, &enforce.Saved{Schema: enforce.SavedSchema, Values: saved})
+		return fail("apply control: %s %v", out.Code, out.Keys)
+	}
+	for k, v := range map[string]string{"access-mode": "full", "enable-keyboard": "Y", "enable-clipboard": "Y", "enable-file-transfer": "Y",
+		"enable-audio": "Y", "enable-tunnel": "N", "enable-remote-restart": "N", "approve-mode": "password"} {
+		got, ok := e.Read(ctx, k)
+		if !ok || !enforce.Matches(k, got, v) {
+			_ = e.EndSession(ctx)
+			_ = e.Restore(ctx, &enforce.Saved{Schema: enforce.SavedSchema, Values: saved})
+			return fail("control readback %s = %q, want %q", k, got, v)
+		}
+	}
+	step("applied a control grant: clipboard, file transfer and audio Y, tunnel and remote restart N, read back")
+	if err := e.EndSession(ctx); err != nil {
+		return fail("end control session: %v", err)
+	}
+
+	// 0.73: a revocation through the agent's own poller.
+	if err := labRevocationCycle(ctx, e); err != nil {
+		_ = e.Restore(ctx, &enforce.Saved{Schema: enforce.SavedSchema, Values: saved})
+		return fail("revocation: %v", err)
+	}
+	step("the poller applied a control grant, verified a signed revocation naming it and ended the session: random password, stop-service Y then N")
 
 	if bad := e.Restore(ctx, &enforce.Saved{Schema: enforce.SavedSchema, Values: saved}); len(bad) > 0 {
 		return fail("restore: %v", bad)
@@ -170,4 +210,109 @@ func TestLabRustdeskEnforce(t *testing.T) {
 		n.Logf("as SYSTEM (scheduled task, session 0), the agent's enforcement code through enforceRunner")
 		report(t, n, c)
 	})
+}
+
+// ── 0.73: a revocation through enforce.Poller on the real RustDesk ─────────
+
+const (
+	labEndpoint = "cmlabendpoint0000000000001"
+	labBusiness = "cmlabbusiness0000000000001"
+	labRustdesk = "123456789"
+)
+
+type labPortal struct {
+	answers []enforce.PollAnswer
+	reports []enforce.Report
+	acks    [][]string
+}
+
+func (p *labPortal) Poll(_ context.Context, ack []string, _ bool) (enforce.PollAnswer, error) {
+	p.acks = append(p.acks, ack)
+	if len(p.answers) == 0 {
+		return enforce.PollAnswer{}, enforce.ErrStop
+	}
+	a := p.answers[0]
+	p.answers = p.answers[1:]
+	return a, nil
+}
+func (p *labPortal) Report(_ context.Context, r enforce.Report) error {
+	p.reports = append(p.reports, r)
+	return nil
+}
+
+type labHost struct{ keys map[string]ed25519.PublicKey }
+
+func (h labHost) RustdeskID(context.Context) (string, error) { return labRustdesk, nil }
+func (h labHost) Sessions() (int, error)                     { return 0, nil }
+func (h labHost) Trust(context.Context) (map[string]ed25519.PublicKey, func(string, string) bool, error) {
+	return h.keys, func(string, string) bool { return false }, nil
+}
+
+type labStore struct {
+	st    *enforce.State
+	saved *enforce.Saved
+	seen  map[string]time.Time
+}
+
+func (m *labStore) LoadState() (*enforce.State, error)      { return m.st, nil }
+func (m *labStore) SaveState(s *enforce.State) error        { c := *s; m.st = &c; return nil }
+func (m *labStore) LoadSaved() (*enforce.Saved, error)      { return m.saved, nil }
+func (m *labStore) SaveSaved(s *enforce.Saved) error        { m.saved = s; return nil }
+func (m *labStore) DeleteSaved() error                      { m.saved = nil; return nil }
+func (m *labStore) LoadSeen() (map[string]time.Time, error) { return m.seen, nil }
+func (m *labStore) SaveSeen(s map[string]time.Time) error   { m.seen = s; return nil }
+
+func labRevocationCycle(ctx context.Context, e *enforce.Enforcer) error {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+	kid := grant.KeyID(pub)
+	now := time.Now().UTC().Truncate(time.Second)
+	iso := func(t time.Time) string { return t.Format("2006-01-02T15:04:05Z") }
+	g := grant.Grant{V: 1, GrantID: "00112233445566778899aabbccddee02", EndpointID: labEndpoint, RustdeskID: labRustdesk, BusinessID: labBusiness,
+		TechnicianID: "cmlabtechnician00000000001", Mode: "control", Consent: "not_required",
+		Permissions: grant.Permissions{Clipboard: true, Files: true, Audio: true},
+		NotBefore:   iso(now.Add(-10 * time.Second)), NotAfter: iso(now.Add(4 * time.Minute)), MaxMinutes: 30, IdleMinutes: 10, Password: enforce.RandomPassword()}
+	gb := grant.Canonical(&g)
+	genv, _ := json.Marshal(map[string]string{"keyId": kid, "grant": base64.StdEncoding.EncodeToString(gb),
+		"sig": base64.StdEncoding.EncodeToString(ed25519.Sign(priv, append([]byte(grant.Prefix), gb...)))})
+	r := grant.Revocation{V: 1, RevocationID: "aaaaaaaaaaaaaaaabbbbbbbbbbbbbbbb", EndpointID: labEndpoint, RustdeskID: labRustdesk,
+		GrantIDs: []string{g.GrantID}, IssuedAt: iso(now), NotAfter: iso(now.Add(time.Hour))}
+	rb := grant.CanonicalRevocation(&r)
+	renv, _ := json.Marshal(map[string]string{"keyId": kid, "revocation": base64.StdEncoding.EncodeToString(rb),
+		"sig": base64.StdEncoding.EncodeToString(ed25519.Sign(priv, append([]byte(grant.RevocationPrefix), rb...)))})
+	m := &enforce.ManagedAnswer{State: "verified"}
+	portal := &labPortal{answers: []enforce.PollAnswer{
+		{EndpointID: labEndpoint, Managed: m, Grants: []json.RawMessage{genv}},
+		{EndpointID: labEndpoint, Managed: m, Revocations: []json.RawMessage{renv}},
+		{EndpointID: labEndpoint, Managed: m},
+	}}
+	store := &labStore{st: &enforce.State{Schema: enforce.StateSchema, EndpointID: labEndpoint, Secured: true}, seen: map[string]time.Time{}}
+	p := &enforce.Poller{E: e, P: portal, H: labHost{keys: map[string]ed25519.PublicKey{kid: pub}}, S: store,
+		Wait: func(context.Context, time.Duration) {}}
+	if err := p.Run(ctx); err != nil {
+		return err
+	}
+	var events []string
+	for _, rep := range portal.reports {
+		events = append(events, rep.Event+":"+rep.Outcome)
+	}
+	want := []string{"received:", "applied:", "ended:revoked"}
+	if len(events) < 3 || events[0] != want[0] || events[1] != want[1] || events[2] != want[2] {
+		return fmt.Errorf("events %v, want %v first", events, want)
+	}
+	acked := false
+	for _, a := range portal.acks {
+		for _, id := range a {
+			acked = acked || id == r.RevocationID
+		}
+	}
+	if !acked {
+		return fmt.Errorf("the revocation was not acked: %v", portal.acks)
+	}
+	if got, ok := e.Read(ctx, "stop-service"); !ok || !enforce.Matches("stop-service", got, "N") {
+		return fmt.Errorf("stop-service reads %q after the session ended", got)
+	}
+	return nil
 }

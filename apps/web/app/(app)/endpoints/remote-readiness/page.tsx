@@ -11,6 +11,7 @@ import { msaApi } from '@/lib/api-client';
 import { usePermissions, CAP } from '@/lib/auth';
 import { formatDate } from '@/lib/utils';
 import { MSA_FLEET_NOTE, MsaNote, MsaStateBadge, type MsaState } from '@/components/endpoints/msa-readiness';
+import { MsaCutoverRuns } from '@/components/endpoints/msa-cutover-runs';
 
 /**
  * Devices → Remote access readiness (0.69): Managed Secure Access readiness
@@ -33,6 +34,8 @@ interface Fleet {
   computers: Row[];
   labTested: { versions: string[]; min: string; max: string };
   minAgent: string;
+  /** 0.72: MSA_GRANTS is on, so the managed routes exist. Absent or false: never ask them. */
+  managedControls?: boolean;
 }
 
 const EXPLAIN: Record<State, string> = {
@@ -43,7 +46,7 @@ const EXPLAIN: Record<State, string> = {
 };
 
 export default function RemoteReadinessPage() {
-  const { can } = usePermissions();
+  const { can, isPlatformAdmin } = usePermissions();
   const allowed = can(CAP.COMPUTERS_VIEW);
   const [filter, setFilter] = React.useState<State | null>(null);
   const { data, isLoading, isError } = useQuery<Fleet>({
@@ -117,6 +120,15 @@ export default function RemoteReadinessPage() {
                   {data.truncated && <p className="border-t p-3 text-xs text-muted-foreground">Showing the first {data.total} computers.</p>}
                 </CardContent>
               </Card>
+
+              {/* 0.73: cutover runs, only for a Platform Admin and only when the
+                  server has the managed routes (MSA_GRANTS on). */}
+              {isPlatformAdmin && data.managedControls === true && <MsaCutoverRuns />}
+              {data.managedControls === true && (
+                <p className="text-xs text-muted-foreground">
+                  Live managed sessions: <Link className="underline" href="/endpoints/managed-sessions">Devices → Managed sessions</Link>.
+                </p>
+              )}
 
               <p className="text-xs text-muted-foreground">
                 Lab-tested RustDesk releases: {data.labTested.versions.join(', ')} (on Windows Server, as SYSTEM). Agents report from {data.minAgent}; signed agents

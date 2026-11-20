@@ -1612,8 +1612,12 @@ agent binary is unchanged.
   `assertFresh` naming `msa.grant`. The service then checks, in order:
   scope; `assertAssigned`; Windows and `runsSignedAgent`; the `remote`
   pause; the key. It writes the audit row (`logOrFail`) before the grant
-  row. `issueTest` has one caller, and the module exports nothing, so
-  Connect cannot reach it (step 4).
+  row. `issueTest` has one caller, and the module exports nothing. From
+  0.73 there are exactly three issuers, each with one caller: `issueTest`
+  (this route), `issueForConnect` (`MsaSessionService.connect`, after
+  `authorizeConnect`, §83) and `issueVerification` (a cutover run, §83).
+  The Legacy Connect, sessions and launcher code outside `msa/` reaches
+  none of them.
 - **The poll** (`POST /msa/agent/poll`, `@Public`, `@RateLimit(120)`) calls
   `authenticateDevice` before reading anything. It then admits only an
   assigned Windows computer whose identity is the signed agent. An ack is
@@ -1646,19 +1650,23 @@ moves that **one** computer; a Legacy computer behaves exactly as 0.71.
   argument) only on that answer. One poller at a time (`poller.lock`); it
   exits when idle or told the computer is Legacy.
 - **Writers.** Only `MsaManagedService` writes `MsaManagedComputer` (0089),
-  and every public method asserts the switch first. `MsaManagedService`
+  except that the poll records `lastPollAt` (0.73, one field write in
+  `MsaGrantService`, no state). Every public method asserts the switch first. `MsaManagedService`
   moves grants only by conditional `updateMany`; only `MsaGrantService`
   creates them.
 - **Who.** Cutover and confirming verified are a Platform Admin's with
   `assertFresh` naming `msa.cutover`; revealing a test session's one-time
-  password (once) names `msa.reveal`; rollback never asks. No route takes a
-  group or a business.
+  password (once) names `msa.reveal`; rollback never asks. No route on
+  `msa/managed` takes a group or a business; group and business cutover is
+  the run controller's (§83), one computer at a time through `cutover`.
 - **Cutover**, in order: scope, the pool, not already managed, every blocker
   (Compatible readiness, an agent that can enforce, no `remote` pause, a
   grant key in the published release), the audit row, then the row.
-- **The ceiling** is view-only with no permissions, on both sides
-  (`enforce.Ceiling` compiled into the agent, the portal's
-  `MANAGED_CEILING`), never taken from the portal.
+- **The ceiling** is, from 0.73, control with clipboard, file transfer and
+  audio, never a tunnel or a remote restart (0.72's was view-only). It is
+  the same on both sides (`enforce.Ceiling` compiled into the agent, the
+  portal's `MANAGED_CEILING`), never taken from the portal, so widening it
+  is a signed agent release.
 - **The agent.** One enforcement exec site (`enforceRunner.Run`) runs only
   what `enforce.Valid` accepts, the installed `rustdesk.exe` by absolute
   path, an argument array, no shell, and only when the RustDesk service runs
@@ -1677,16 +1685,80 @@ moves that **one** computer; a Legacy computer behaves exactly as 0.71.
   add|list|retire`, then `rem0te-signed-publish`); the portal only shows the
   two commands, matched exactly in §56's allowlist
   (`msa/grant-key-commands.ts`).
-- **Not built (step 5):** Connect through grants, control mode, group or
-  business cutover, revocation and the session-evidence timeline. Turning
-  the switch off with a verified computer still refuses its legacy
-  password: roll back first.
+- **Step 5 is §83 (0.73).** Turning the switch off with a verified
+  computer still refuses its legacy password: roll back first.
 
 Behavioural proof: `e2e-msa-managed.mjs` (port 3961, in `run-e2e.sh`). Unit:
 `unit-msa-managed.mjs` (in CI) and the Go `internal/msa/enforce` tests (a
 fake RustDesk runner). Lab: `TestLabRustdeskEnforce` in the Windows lab's
 RustDesk jobs (save, apply, read back, password, end session, restore, as the
 administrator and as SYSTEM). **It has run only on Windows Server in the
+lab**, never on a desktop, with a real remote connection, or on the fleet.
+
+§83 (0.73) is Managed Secure Access sessions: build step 5, **behind
+`MSA_GRANTS`, off**. Connect through grants, revocation, session evidence
+and cutover runs. It is a new signed agent build (0.73.0); a Legacy
+computer's Connect is unchanged.
+
+- **Connect** on a verified managed computer is `POST
+  /msa/sessions/connect/:endpointId`, whose body carries only `mode`.
+  `MsaSessionService.connect` checks, in order:
+  1. the computer is verified managed;
+  2. its agent is at least `MIN_SESSION_AGENT` (0.73.0) and polling (a held
+     poll, or `lastPollAt` within 90 s);
+  3. nobody else has a live session there;
+  4. `authorizeConnect({ managed: true })`, the ordinary launch policy.
+
+  Then `managedGrantTerms` turns the policy's own facts into the grant,
+  `MSA_SESSION_REQUESTED` is written with `logOrFail`, and
+  `issueForConnect` signs. Only on this path are view-only and attended
+  consent enforceable (`ctx.managed === true` in the access policy) and the
+  Legacy credential gate skipped. Legacy Connect keeps refusing a verified
+  computer and keeps refusing view-only on a Legacy one.
+- **The password** goes once, to the grant's own technician, for an applied
+  Connect grant: `MSA_PASSWORD_RELEASED` (`logOrFail`, ids only), a
+  conditional claim, then it is opened into the Connect script. A Connect
+  grant not applied within `CONNECT_APPLY_TIMEOUT_MS` (60 s) is revoked
+  (`timeout`) and nothing is handed over. It never falls back to a Legacy
+  password.
+- **The ceiling** is control with clipboard, files and audio; never a
+  tunnel or a restart (§82). Clipboard and files only when the access
+  controls say `request` and, for a preset technician, the preset allows
+  them.
+- **Revocation** is signed under the grant key with its own prefix,
+  `rem0te-msa-revoke-v1\n` (`msa/revocation.ts`, pure, and the Go
+  `grant.VerifyRevocation`, the same reasons in order). Only
+  `MsaGrantService.revoke` stores one. It moves only live grants to
+  `revoked`, creates no key and is audited (`MSA_SESSION_REVOKED`). A
+  `remote` pause revokes every delivered or applied grant. Who may revoke:
+  - the grant's own technician;
+  - a Platform Admin;
+  - the business's own non-technician member with `computers:edit`.
+
+  Revoking never asks for a fresh confirmation. The agent verifies before
+  acting, and a revocation only ever ends a session.
+- **Evidence.** `msa/session-timeline.ts` is pure: Requested → Authorized →
+  Received → Applied → Launched → Connected → Disconnected / Expired /
+  Revoked / Failed. Launched is never Connected, and every timeline says
+  what the agent cannot see.
+- **Cutover runs** (`msa/cutover-runs`) are a Platform Admin's. Start,
+  advance and confirm name `msa.cutover`; halt and rollback never ask.
+  - The canary must be verified before any batch.
+  - Every computer goes through `MsaManagedService.cutover`, with its own
+    blockers and audit row; a refused one is skipped with its code.
+  - Batches are at most 25, the next waits for the last to read back (or an
+    hour), and nothing runs on a timer.
+  - Only the run service writes `MsaCutoverRun` / `MsaCutoverMember`.
+- **0090** CHECKs `revoked`, the sources, the reasons, a revocation's shape
+  and nine-hour window, one open run per business and a run in one
+  business (trigger).
+
+Behavioural proof: `e2e-msa-sessions.mjs` (port 3971, in `run-e2e.sh`).
+Unit: `unit-msa-sessions.mjs` (in CI), which rebuilds and asserts the
+shared fixture `internal/msa/testdata/msa-revocations.json`, and the Go
+`internal/msa/grant` and `internal/msa/enforce` session tests. Lab:
+`TestLabRustdeskEnforce` adds revocation → session end and the control
+ceiling's apply and readback. **It has run only on Windows Server in the
 lab**, never on a desktop, with a real remote connection, or on the fleet.
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.

@@ -481,7 +481,8 @@ const VIEWPORTS = {
  */
 // 0.72: this suite's API runs with MSA_GRANTS unset (off). The console must
 // then make no request at all to a gated Managed Secure Access route — each
-// would be a 404 on every device page view.
+// would be a 404 on every device page view. 0.73 adds /msa/sessions and
+// /msa/cutover-runs, and Devices → Managed sessions is visited below.
 const msaGated = [];
 let msaReadinessReads = 0;
 function instrument(page) {
@@ -489,7 +490,7 @@ function instrument(page) {
   page.on('request', (r) => {
     if (!r.url().startsWith(WEB)) return;
     const u = r.url().slice(WEB.length);
-    if (/\/api\/v1\/msa\/(managed|grants)(\/|\?|$)/.test(u)) msaGated.push(`${r.method()} ${u}`);
+    if (/\/api\/v1\/msa\/(managed|grants|sessions|cutover-runs)(\/|\?|$)/.test(u)) msaGated.push(`${r.method()} ${u}`);
     if (/\/api\/v1\/msa\/readiness\//.test(u)) msaReadinessReads++;
   });
   page.on('console', (m) => {
@@ -2155,6 +2156,18 @@ async function msaReadinessUi(page, f, vp, theme, label) {
   if (vp === 'phone') await noSideScroll(page, `${label} Remote access readiness`);
   await shot(page, `${label}-remote-readiness`);
   await cleanCheck(page, `${label} Remote access readiness`);
+
+  // 0.73: Devices → Managed sessions with MSA_GRANTS off says so and asks no
+  // gated route (the final msaGated check covers every request it made).
+  await go(page, '/endpoints/managed-sessions');
+  await page.getByTestId('msa-sessions-off').waitFor({ timeout: 15_000 }).catch(() => {});
+  const off = await page.getByTestId('msa-sessions-off').innerText().catch(() => '');
+  check(/not switched on on this server/.test(off) && await page.getByTestId('msa-cutover-runs').count() === 0,
+    `${label}: Managed sessions says Managed Secure Access is off, and no cutover-run controls are drawn`, off.slice(0, 200));
+  const cur = await page.locator('[data-section-tabs="devices"] a[aria-current="page"]').innerText().catch(() => null);
+  check(cur === 'Managed sessions', `${label}: Managed sessions is the current Devices tab`, String(cur));
+  if (vp === 'phone') await noSideScroll(page, `${label} Managed sessions`);
+  await cleanCheck(page, `${label} Managed sessions`);
 }
 
 /**
@@ -2807,7 +2820,7 @@ main()
   .catch((e) => { fail++; failures.push(`fatal: ${e.stack ?? e.message}`); console.error(e); })
   .finally(async () => {
     check(msaReadinessReads > 0 && msaGated.length === 0,
-      'MSA_GRANTS off: device pages read readiness but the console requested no /msa/managed or /msa/grants route',
+      'MSA_GRANTS off: device pages read readiness but the console requested no /msa/managed, /msa/grants, /msa/sessions or /msa/cutover-runs route',
       `readiness reads ${msaReadinessReads}; gated: ${[...new Set(msaGated)].slice(0, 10).join(', ')}`);
     await cleanup035();
     await cleanup();
