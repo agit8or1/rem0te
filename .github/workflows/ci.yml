@@ -188,6 +188,13 @@ jobs:
       - name: MSA readiness tests
         run: node apps/api/scripts/unit-msa-readiness.mjs
 
+      # Managed Secure Access grants (0.71): the switch's exactness, the grant
+      # document's canonical form and signature, and the shared fixture —
+      # rebuilt and compared with the file, then every case asserted exactly
+      # as the Go verifier's tests assert it (internal/msa/grant).
+      - name: MSA grant tests
+        run: node apps/api/scripts/unit-msa-grants.mjs
+
       # Diagnostics catalog (0.31): the closed catalog, result sanitising,
       # redaction and the size cap against the compiled module, the agent's
       # dispatch switch against the catalog — and, with the runner's pwsh, both

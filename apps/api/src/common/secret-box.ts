@@ -11,7 +11,11 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 
 export type SecretPurpose = 'rem0te-ai-key-v1' | 'rem0te-psa-webhook-secret-v1' | 'rem0te-warranty-key-v1'
   // 0.59: an OIDC provider's private_key_jwt key, and an SSO sign-in's tokens.
-  | 'rem0te-oidc-client-key-v1' | 'rem0te-oidc-refresh-v1' | 'rem0te-oidc-id-token-v1';
+  | 'rem0te-oidc-client-key-v1' | 'rem0te-oidc-refresh-v1' | 'rem0te-oidc-id-token-v1'
+  // 0.71: Managed Secure Access — the grant signing key, a grant's one-time
+  // password, and its signed envelope (which carries that password). Used
+  // only in msa/msa-grant.service.ts (§81).
+  | 'rem0te-msa-grant-key-v1' | 'rem0te-msa-grant-pw-v1' | 'rem0te-msa-grant-envelope-v1';
 
 function key(hex: string | undefined): Buffer {
   const k = Buffer.from(hex ?? '', 'hex');

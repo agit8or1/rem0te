@@ -110,7 +110,8 @@ function parseFile(file) {
             method: verb,
             path: joinPath(prefix, route),
             public: isPublic,
-            access: classAccess,
+            // 0.71: a method-level Platform Admin guard is shown too.
+            access: classAccess ?? (pending.some((d) => d === '@UseGuards(PlatformAdminGuard)') ? 'Platform Admin' : null),
             capability: cap?.match(/CAP\.([A-Z0-9_]+)/)?.[1] ?? null,
             throttled,
             handler,

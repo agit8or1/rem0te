@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **612** of them across
-**91** controllers.
+integration, under `/api/integration/v1`). There are **616** of them across
+**93** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -599,6 +599,24 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/msa/readiness` | signed in | `COMPUTERS_VIEW` |
 | `GET` | `/api/v1/msa/readiness/:endpointId` | signed in | `COMPUTERS_VIEW` |
 
+## Msa grant msaagent
+
+`apps/api/src/msa/msa-grant.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `POST` | `/api/v1/msa/agent/poll` | public, throttled | — |
+
+## Msa grant msagrants
+
+`apps/api/src/msa/msa-grant.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/msa/grants/endpoint/:endpointId` | signed in | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/msa/grants/keys` | Platform Admin | — |
+| `POST` | `/api/v1/msa/grants/test/:endpointId` | Platform Admin, throttled | — |
+
 ## Notes
 
 `apps/api/src/notes/notes.controller.ts`
@@ -1131,13 +1149,13 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/platform/:id` | signed in | — |
 | `PATCH` | `/api/v1/platform/:id` | signed in | — |
 | `PATCH` | `/api/v1/platform/:id/branding` | signed in | — |
-| `PATCH` | `/api/v1/platform/:id/branding/logo` | signed in | — |
+| `PATCH` | `/api/v1/platform/:id/branding/logo` | Platform Admin | — |
 | `PATCH` | `/api/v1/platform/:id/settings` | signed in | — |
 | `GET` | `/api/v1/tenants` | signed in | — |
 | `GET` | `/api/v1/tenants/:id` | signed in | — |
 | `PATCH` | `/api/v1/tenants/:id` | signed in | — |
 | `PATCH` | `/api/v1/tenants/:id/branding` | signed in | — |
-| `PATCH` | `/api/v1/tenants/:id/branding/logo` | signed in | — |
+| `PATCH` | `/api/v1/tenants/:id/branding/logo` | Platform Admin | — |
 | `PATCH` | `/api/v1/tenants/:id/settings` | signed in | — |
 
 ## Timeline

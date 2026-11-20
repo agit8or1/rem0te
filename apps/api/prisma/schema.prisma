@@ -389,6 +389,11 @@ enum ActivityAction {
   WARRANTY_SET
   WARRANTY_SETTINGS_CHANGED
   WARRANTY_LOOKUP_REQUESTED
+  // 0.71 Managed Secure Access grants (behind MSA_GRANTS, off): the grant
+  // key was generated (its key id only), and a grant was issued (ids, mode
+  // and key id only — never the password or the envelope).
+  MSA_GRANT_KEY_CREATED
+  MSA_GRANT_ISSUED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -888,6 +893,7 @@ model Endpoint {
   eventFingerprints MonitorEventFingerprint[]
   /// 0.69: the signed agent's read-only RustDesk preflight (Managed Secure Access readiness).
   rustdeskPreflight RustdeskPreflight?
+  msaGrants         MsaGrant[]
   /// 0.67: false-positive reports about this computer's alerts, and rules scoped to it.
   falsePositiveReports AlertFalsePositiveReport[]
   alertQualityRules    AlertQualityRule[]
@@ -4783,4 +4789,56 @@ model RustdeskPreflight {
   agentVersion String?
 
   @@index([checkedAt])
+}
+
+/// Managed Secure Access (0.71, build step 3): the portal's grant signing
+/// key. Ed25519, separate from the approval signer's keys and from every
+/// session secret. The private key is sealed (secret-box purpose
+/// rem0te-msa-grant-key-v1) and appears in no response, log or audit row.
+/// At most one row has retiredAt null (0088's partial unique index). Only
+/// MsaGrantService writes this table.
+model MsaGrantKey {
+  id            String     @id @default(cuid())
+  /// First 16 hex of SHA-256 of the raw 32-byte public key.
+  keyId         String     @unique
+  /// The raw 32-byte public key, base64.
+  publicKey     String
+  privateKeyEnc String
+  createdAt     DateTime   @default(now())
+  retiredAt     DateTime?
+  grants        MsaGrant[]
+}
+
+/// A session grant (0.71, docs/managed-secure-access.md §3.2). In 0.71 one
+/// is issued only from the Platform Admin test route, and only while
+/// MSA_GRANTS is exactly 'on'; it is handed to the computer's signed agent
+/// over the long-poll and nothing on the computer acts on it yet. The
+/// envelope and the one-time password are stored only sealed. Only
+/// MsaGrantService writes this table.
+model MsaGrant {
+  /// The grant id: 32 lowercase hex characters.
+  id           String      @id
+  endpointId   String
+  endpoint     Endpoint    @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  businessId   String
+  technicianId String
+  keyId        String
+  key          MsaGrantKey @relation(fields: [keyId], references: [keyId], onDelete: Restrict)
+  mode         String
+  /// { clipboard, files, audio, tunnel, restart }: booleans.
+  permissions  Json
+  consent      String
+  notBefore    DateTime
+  notAfter     DateTime
+  maxMinutes   Int
+  idleMinutes  Int
+  /// issued | delivered | expired | cancelled (0088 CHECK). Step 4 adds applied / failed / revoked.
+  state        String      @default("issued")
+  envelopeEnc  String
+  passwordEnc  String
+  deliveredAt  DateTime?
+  createdAt    DateTime    @default(now())
+
+  @@index([endpointId, state])
+  @@index([endpointId, createdAt])
 }

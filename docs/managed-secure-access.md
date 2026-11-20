@@ -1,10 +1,15 @@
 # Managed Secure Access (MSA) — audit and design
 
-**Status: design, with build step 2 (readiness reporting) built in 0.69.**
-The signed agent now reports a read-only RustDesk preflight and the console
-shows each computer's readiness (§3.7, §4). Nothing else on this page is
-built, and nothing on it is turned on for any computer: no setting, password
-or session is changed, and no computer can be Managed. Every computer stays
+**Status: design, with build step 2 (readiness reporting) built in 0.69 and
+build step 3 (grants and the long-poll channel) built in 0.71, behind
+`MSA_GRANTS`, off.** The signed agent reports a read-only RustDesk preflight
+and the console shows each computer's readiness (§3.9). The portal can sign a
+session grant and hold it for a computer's signed agent over a long-poll
+(§3.10), but only when the server runs with `MSA_GRANTS=on`, which no
+production server does, and no agent polls for one or acts on one yet.
+Nothing else on this page is built, and nothing on it is turned on for any
+computer: no setting, password or session is changed, and no computer can be
+Managed. Every computer stays
 in today's mode (*Legacy*) until a Platform Admin moves it, one computer or
 group at a time, after it passes a preflight. RustDesk stays the remote
 desktop; the technician still selects a computer and presses **Connect**.
@@ -129,7 +134,13 @@ portal issues a **session grant**: a small JSON document signed with Ed25519
   containment pause in its signed pause file.
 - **Delivery:** a managed computer's signed agent keeps one long-poll request
   open to the portal (device secret, TLS), so a grant arrives within seconds.
-  Legacy computers never open it.
+  Legacy computers never open it. **The portal side is built in 0.71**
+  (`POST /msa/agent/poll`, §3.10), behind `MSA_GRANTS`, off; the agent's
+  poller is step 4.
+- **Publishing the key:** in 0.71 the public key is readable only by a
+  Platform Admin (`GET /msa/grants/keys`). Putting it in the signed release
+  metadata the agent verifies is step 4, together with the agent change that
+  reads it; until then no agent trusts any grant key.
 
 ### 3.3 What the agent does with a grant
 
@@ -275,6 +286,90 @@ with someone signed in, or on any fleet computer: reports appear only once a
 computer's signed agent has updated to 0.69, through the existing automatic
 update policy.
 
+### 3.10 Grants and the long-poll (built, 0.71, behind `MSA_GRANTS`, off)
+
+**Off unless the server's environment has `MSA_GRANTS=on`, exactly.** It is
+not a console setting, on purpose: nobody can switch it on from the UI
+before the agent enforces a grant (steps 4 and 5). With it off every route
+below answers `404 MSA_NOT_ENABLED` before a session, a device secret or a
+row is read, no key is generated and nothing is stored. Do not set it on a
+production server until step 4 ships.
+
+**The grant key.** A dedicated Ed25519 key, separate from the approval
+signer's keys and from every session secret, generated on the first issuance
+(table `MsaGrantKey`, migration 0088; at most one active). Its private key is
+sealed under `ENCRYPTION_KEY` (secret-box purpose `rem0te-msa-grant-key-v1`)
+and appears in no response, log or audit row; the key id is the first 16 hex
+characters of the SHA-256 of the raw public key. Creating it is audited
+(`MSA_GRANT_KEY_CREATED`, the key id only). A key sealed under an earlier
+`ENCRYPTION_KEY` is refused (`503 MSA_GRANT_KEY_UNAVAILABLE`) rather than
+silently replaced.
+
+**The document** is §3.2's, defined in one pure module,
+`apps/api/src/msa/grant.ts`: one canonical serialisation (the fixed key
+order, no whitespace, every string inside a strict charset), signed with
+Ed25519 over `rem0te-msa-grant-v1\n` + those bytes, in an envelope
+`{ keyId, grant: base64, sig: base64 }`. `notAfter` is exactly five minutes
+after `notBefore` when issued (at most five accepted), `maxMinutes` is 1–480,
+`idleMinutes` 1–120 and no more than `maxMinutes`. The one-time password is
+24 characters from `A–Z a–z 0–9`, made by the server; a request cannot choose
+it. It is stored only sealed (`rem0te-msa-grant-pw-v1`), as is the envelope
+(`rem0te-msa-grant-envelope-v1`), and is never logged or audited.
+
+**The agent's verifier** is `tools/windows-installer/internal/msa/grant` (Go,
+pure: it reads no clock, file or network). It refuses, in this order and with
+these codes: `envelope_malformed`, `unknown_key`, `bad_signature`,
+`grant_malformed` (including any non-canonical spelling), `unsupported_version`,
+`bad_window`, `wrong_endpoint`, `wrong_rustdesk_id`, `remote_paused`,
+`not_yet_valid`, `expired` (both with 30 s of clock skew), `replayed`,
+`mode_not_allowed`, `permission_not_allowed`. The portal's `verifyEnvelope` is
+the same list in the same order, and both are tested against one fixture
+(`internal/msa/testdata/msa-grants.json`, 63 cases, test-only keys). **No
+command imports the verifier**: the 0.71 agent binary is unchanged.
+
+**Issuing** (step 3 has no Connect path): `POST /msa/grants/test/:endpointId`,
+Platform Admin, with a fresh confirmation when *Settings → Confirm it is you*
+has **Managed Secure Access test grants** (`msa.grant`) on *Ask*. Body, all
+optional: `mode` (`view`), `permissions` (all `false`), `consent`
+(`required`), `maxMinutes` (60), `idleMinutes` (15). Refused: a computer the
+caller cannot see (404), an unassigned one (`ENDPOINT_UNASSIGNED`), one not on
+Windows or not running the signed agent (`409 MSA_SIGNED_AGENT_REQUIRED`), one
+with no RustDesk ID or device secret (`409 MSA_GRANT_NO_DEVICE`), a `remote`
+containment pause (`403 CONTAINED`), and a malformed body
+(`400 MSA_GRANT_INVALID`). `MSA_GRANT_ISSUED` (ids, mode, consent, key id) is
+written before the grant exists, and a failure to write it refuses the grant.
+A newer grant cancels an older undelivered one for the same computer.
+
+**The long-poll**, `POST /msa/agent/poll` (`rustdeskId`, `agentSecret`,
+optional `ack` of up to 20 grant ids, optional `wait: false`): the device
+secret is checked first, then only an assigned Windows computer whose
+identity is the signed agent (§64) may poll (`403 MSA_SIGNED_AGENT_REQUIRED`
+otherwise). It answers at once with the computer's undelivered grants inside
+their window (at most five); with none, it holds for up to 25 s and wakes as
+soon as one is issued (in process; every 5 s it also looks at the database).
+One held poll per computer — a second ends the first, which then hands
+nothing over (`superseded: true`) — and at most 500 in a process
+(`retryAfterMs`). An `ack` marks those of its own grants still issued and in
+their window *delivered*, conditionally, so a repeated ack changes nothing.
+Under a `remote` pause grants are withheld (`paused: true`). An undelivered
+grant past its window is marked *expired* when the computer polls or the list
+is read; there is no sweep. The 0.71 agent never calls it.
+
+**Reading:** `GET /msa/grants/endpoint/:endpointId` (View computers, the
+computer in scope) lists its 50 most recent grants — state, mode,
+permissions, window, who issued it — never the password or the envelope.
+`GET /msa/grants/keys` (Platform Admin) lists the public keys.
+
+**States** (0088 CHECK): `issued`, `delivered`, `expired`, `cancelled`.
+Step 4 adds `applied`, `failed` and `revoked`.
+
+**Evidence.** `apps/api/scripts/e2e-msa-grants.mjs` (68 checks: the switch
+off and on, every refusal, delivery and verification under the published key,
+ack, wake, supersede, the hold, the cap, expiry, cancellation, the pause, no
+password anywhere, the database's CHECKs), `unit-msa-grants.mjs`, the Go
+`internal/msa/grant` tests and check-security-invariants §81. **Nothing of it
+has run on Windows**, and no agent has polled.
+
 ## 4. Build order (each a reviewable PR, none deployed without approval)
 
 1. **Lab proof** on GitHub's `windows-latest`: install RustDesk, run the signed
@@ -285,6 +380,9 @@ update policy.
    version, build and preflight; the console shows each computer's mode.
    **Built in 0.69** (§3.9).
 3. **Grants and the long-poll channel**, behind a feature flag, off.
+   **Built in 0.71, behind `MSA_GRANTS`, off** (§3.10): the portal side and a
+   pure Go verifier no command imports. Publishing the grant key in the
+   signed release metadata is step 4.
 4. **Agent enforcement** (signed agent release), managed test session, cutover
    and rollback.
 5. **Revocation, session evidence**, console controls.
