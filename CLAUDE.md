@@ -1567,8 +1567,9 @@ computer and nothing can be Managed.
 - **The agent only reads.** `rem0te-agent.exe rustdesk-preflight` builds its
   argv only through `msa.ReadArgs` — exactly `{"--option", key}` for the
   eleven keys of `msa.Keys`, the same list as the portal's `PREFLIGHT_KEYS` —
-  and nothing in the preflight names `--password`. Only the preflight names
-  `--option`.
+  and nothing in the preflight names `--password`. From 0.72 `--option` is
+  named only by the preflight and `internal/msa/enforce/args.go`, and
+  `--password` only by `args.go` (§82).
 - **One exec site** (`preflightRunner.Read`): the installed
   `%ProgramFiles%\RustDesk\rustdesk.exe` (`installedRustdeskExe()`) by
   absolute path, an argument array, no shell, no window, output capped. It
@@ -1620,9 +1621,10 @@ agent binary is unchanged.
   poll hands nothing over.
 - **The document.** `msa/grant.ts` imports only `node:crypto` and zod. Its
   `GRANT_PREFIX` (`rem0te-msa-grant-v1\n`) and `REASONS` order are the Go
-  verifier's (`internal/msa/grant`). That package is pure and imported by
-  nothing: it lives outside `internal/msa` because the agent imports that
-  package for the preflight.
+  verifier's (`internal/msa/grant`). That package is pure (no clock, file,
+  network or process). It lives outside `internal/msa` because the agent
+  imports that package for the preflight; from 0.72 only
+  `internal/msa/enforce` and `internal/agent` import it (§82).
 - **0088** CHECKs the four states, the five-minute window, the limits and
   the sealed columns, and holds one active key (partial unique index).
 
@@ -1632,6 +1634,60 @@ Behavioural proof: `e2e-msa-grants.mjs` (port 3951, in `run-e2e.sh`). Unit:
 test-only keys) and asserts every case, and the Go `internal/msa/grant`
 tests, which assert the same file. **No agent polls, and none of it has run
 on Windows.**
+
+§82 (0.72) is Managed Secure Access enforcement, the managed test session,
+cutover and rollback: build step 4, **behind `MSA_GRANTS`, off**. This is a
+new signed agent build, but a computer changes only when a Platform Admin
+moves that **one** computer; a Legacy computer behaves exactly as 0.71.
+
+- **The heartbeat** says `msaPoll: true` only to an authenticated signed
+  agent that may act, only with the switch on and a `MsaManagedComputer`
+  row. The signed heartbeat starts `rem0te-agent.exe msa-poller` (no
+  argument) only on that answer. One poller at a time (`poller.lock`); it
+  exits when idle or told the computer is Legacy.
+- **Writers.** Only `MsaManagedService` writes `MsaManagedComputer` (0089),
+  and every public method asserts the switch first. `MsaManagedService`
+  moves grants only by conditional `updateMany`; only `MsaGrantService`
+  creates them.
+- **Who.** Cutover and confirming verified are a Platform Admin's with
+  `assertFresh` naming `msa.cutover`; revealing a test session's one-time
+  password (once) names `msa.reveal`; rollback never asks. No route takes a
+  group or a business.
+- **Cutover**, in order: scope, the pool, not already managed, every blocker
+  (Compatible readiness, an agent that can enforce, no `remote` pause, a
+  grant key in the published release), the audit row, then the row.
+- **The ceiling** is view-only with no permissions, on both sides
+  (`enforce.Ceiling` compiled into the agent, the portal's
+  `MANAGED_CEILING`), never taken from the portal.
+- **The agent.** One enforcement exec site (`enforceRunner.Run`) runs only
+  what `enforce.Valid` accepts, the installed `rustdesk.exe` by absolute
+  path, an argument array, no shell, and only when the RustDesk service runs
+  that file. Grant keys come only from the signed `msa/grant-keys.json`
+  target of the verified update chain. The replay set is written before
+  anything changes. Settings are saved (SYSTEM-only DACL) before the first
+  apply, every value is read back, and a mismatch ends the session with a
+  password nobody is told. No password reaches a log, journal or report.
+- **A device report** is parsed strictly, then the device secret is checked,
+  before any read.
+- **Passwords.** A verified computer's legacy password is never revealed,
+  launched, rotated or set, and a staged rotation waits (`rotationHeld`).
+  After a pending test session ends, the portal re-establishes a password it
+  knows through the existing rotation; rollback stages one too.
+- **The release host** publishes grant keys (`rem0te-signed-grant-key
+  add|list|retire`, then `rem0te-signed-publish`); the portal only shows the
+  two commands, matched exactly in §56's allowlist
+  (`msa/grant-key-commands.ts`).
+- **Not built (step 5):** Connect through grants, control mode, group or
+  business cutover, revocation and the session-evidence timeline. Turning
+  the switch off with a verified computer still refuses its legacy
+  password: roll back first.
+
+Behavioural proof: `e2e-msa-managed.mjs` (port 3961, in `run-e2e.sh`). Unit:
+`unit-msa-managed.mjs` (in CI) and the Go `internal/msa/enforce` tests (a
+fake RustDesk runner). Lab: `TestLabRustdeskEnforce` in the Windows lab's
+RustDesk jobs (save, apply, read back, password, end session, restore, as the
+administrator and as SYSTEM). **It has run only on Windows Server in the
+lab**, never on a desktop, with a real remote connection, or on the fleet.
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
