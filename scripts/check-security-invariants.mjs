@@ -2243,8 +2243,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     callers.length === 1 && callers[0].endsWith('/ai/client.ts') && /export const AI_TIMEOUT_MS = 60_000;/.test(A('client.ts')) && /safePost\(req\.url, req\.headers, req\.body, \{ timeoutMs: AI_TIMEOUT_MS, maxBytes: AI_MAX_RESPONSE \}\)/.test(A('client.ts')),
     `safePost callers: ${callers.join(', ')}`);
   // 0.56: and the warranty lookup client (warranty/client.ts), held to the same rule by § 69.
-  const outside = files.filter((f) => /from '[./]*common\/safe-https'|from '\.\/safe-https'/.test(read(f))).filter((f) => !f.startsWith('apps/api/src/ai/') && f !== 'apps/api/src/psa/connectors/webhook.ts' && f !== 'apps/api/src/warranty/client.ts');
-  check('AI/PSA/warranty: only ai/, the PSA webhook connector and the warranty client use the typed-destination client', outside.length === 0, outside.join(', '));
+  // 0.80: and MDM drivers (mdm/drivers/), held to it by §90; in 0.80 only the loopback stand-in.
+  const outside = files.filter((f) => /from '[./]*common\/safe-https'|from '\.\/safe-https'/.test(read(f))).filter((f) => !f.startsWith('apps/api/src/ai/') && f !== 'apps/api/src/psa/connectors/webhook.ts' && f !== 'apps/api/src/warranty/client.ts' && !f.startsWith('apps/api/src/mdm/drivers/'));
+  check('AI/PSA/warranty/MDM: only ai/, the PSA webhook connector, the warranty client and MDM drivers use the typed-destination client', outside.length === 0, outside.join(', '));
   const sh = read('apps/api/src/common/safe-https.ts');
   const post = sh.slice(sh.indexOf('export async function safePost('));
   check('safe-https: the URL is checked, resolved, every address judged with no local allowance, and the checked address is what is connected to',
@@ -5238,8 +5239,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const raw = wFiles.filter((f) => /\bfetch\(|\bhttps?\.request\(|axios|got\(|undici/.test(read(f)));
   check('warranty: no fetch or raw request in warranty/ — only safeGet / safePost', raw.length === 0, raw.join(', '));
   const callers = files.filter((f) => /\bsafe(Get|Post)\(/.test(read(f)) && !f.endsWith('common/safe-https.ts'));
-  check('warranty: safeGet is called only by warranty/client.ts, with the 20 s bound and the 256 KB cap',
-    files.filter((f) => /\bsafeGet\(/.test(read(f)) && !f.endsWith('common/safe-https.ts')).every((f) => f === 'apps/api/src/warranty/client.ts')
+  // 0.80: an MDM driver (mdm/drivers/, §90) may also GET; in 0.80 only the loopback stand-in does.
+  check('warranty: safeGet is called only by warranty/client.ts (and MDM drivers, §90), with the 20 s bound and the 256 KB cap',
+    files.filter((f) => /\bsafeGet\(/.test(read(f)) && !f.endsWith('common/safe-https.ts')).every((f) => f === 'apps/api/src/warranty/client.ts' || f.startsWith('apps/api/src/mdm/drivers/'))
       && /export const WARRANTY_TIMEOUT_MS = 20_000;/.test(cl) && /export const WARRANTY_MAX_RESPONSE = 256 \* 1024;/.test(cl)
       && /const OPTS = \{ timeoutMs: WARRANTY_TIMEOUT_MS, maxBytes: WARRANTY_MAX_RESPONSE \};/.test(cl)
       && (cl.match(/\bsafe(Get|Post)\(/g) ?? []).length === 9 && (cl.match(/safe(Get|Post)\([^;]*OPTS\)/g) ?? []).length === 9 && callers.includes('apps/api/src/warranty/client.ts'),
@@ -7732,6 +7734,140 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /unit-files\.mjs/.test(read('.github/workflows/ci.yml')) && /run files node scripts\/e2e-files\.mjs/.test(read('scripts/run-e2e.sh'))
       && /async function filesPanel\(/.test(read('apps/web/scripts/e2e-ui.mjs')) && /TestLabFilesAsAdministrator/.test(read(`${GO}/internal/remote/lab_files_windows_test.go`)),
     'ci.yml / run-e2e.sh / e2e-ui.mjs / lab_files_windows_test.go');
+}
+
+// ── §90 (0.80): mobile devices through an MDM provider — read-only ──────────
+//     The model, a provider-neutral driver interface, a bounded sync and four
+//     read-only routes, proven against a loopback stand-in. No real provider
+//     exists, so the checks are about what must stay true when one is added:
+//       - no MDM provider host anywhere in the API, and no https URL in the
+//         module; the pure files import nothing they should not;
+//       - the driver interface reads only; a provider's HTTP goes through
+//         safe-https;
+//       - the stand-in is test-only and loopback-only (testLoopbackAllowed),
+//         its base URL read in one place;
+//       - MDM_SWEEP=off is exact and set wherever the rules demand;
+//       - the closed lists in model.ts and 0096's CHECKs agree, in order;
+//       - provider acceptance and device completion stay separate;
+//       - every route is a GET needing mobile:view, and scope() runs first;
+//       - mobile:view is never a default; only the sync writes the tables;
+//         nothing creates a connector; no IMEI, and no BYOD serial.
+{
+  console.log('\n§90 Mobile devices (MDM): read-only, stand-in only, scoped');
+  const SRC = 'apps/api/src';
+  const DIR = `${SRC}/mdm`;
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const mdmFiles = walk(DIR);
+  const HOSTS = /graph\.microsoft\.com|manage\.microsoft\.com|intune\.microsoft|androidmanagement\.googleapis|play\.google\.com\/work|mdmenrollment\.apple\.com|push\.apple\.com|deviceenrollment\.apple|identity\.apple\.com|business\.apple\.com\/.*mdm|workspaceone|jamfcloud|kandji\.io|meraki\.com\/.*sm/i;
+  const hostHits = walk(SRC).filter((f) => HOSTS.test(read(f)));
+  check('mdm: no MDM provider host appears anywhere in apps/api/src', hostHits.length === 0, hostHits.join(', '));
+  const urlHits = mdmFiles.filter((f) => /https?:\/\/(?!127\.0\.0\.1)/.test(read(f)));
+  check('mdm: the module holds no URL (the stand-in\'s base comes from MDM_TEST_BASE_URL only)', urlHits.length === 0, urlHits.join(', '));
+  const imports = (f) => [...read(f).matchAll(/^import [^;]*? from '([^']+)';/gm)].map((m) => m[1]);
+  check('mdm: model.ts imports nothing; command-state.ts only ./model; schemas.ts only zod, ./model and common/text',
+    imports(`${DIR}/model.ts`).length === 0 && JSON.stringify(imports(`${DIR}/command-state.ts`)) === JSON.stringify(['./model'])
+      && JSON.stringify(imports(`${DIR}/schemas.ts`).sort()) === JSON.stringify(['../common/text', './model', 'zod']),
+    JSON.stringify({ cs: imports(`${DIR}/command-state.ts`), sc: imports(`${DIR}/schemas.ts`) }));
+
+  const drv = code(read(`${DIR}/driver.ts`));
+  const iface = (drv.match(/export interface MdmDriver \{([\s\S]*?)\n\}/) ?? [])[1] ?? '';
+  const members = [...iface.matchAll(/^\s*([a-zA-Z]+)[(:]/gm)].map((m) => m[1]);
+  check('mdm: MdmDriver reads only — provider, label, ready, listDevices, listCommands; no send, cancel or wipe',
+    JSON.stringify(members) === JSON.stringify(['provider', 'label', 'ready', 'listDevices', 'listCommands']), JSON.stringify(members));
+  const outbound = walk(SRC).filter((f) => !f.startsWith(DIR) ? false : /from 'https?'|from 'node:https?'|require\('https?'\)|\bfetch\(|axios|undici/.test(read(f)));
+  check('mdm: no HTTP client in the module except common/safe-https', outbound.length === 0 && mdmFiles.filter((f) => /safeGet|safePost/.test(read(f))).every((f) => /from '\.\.\/\.\.\/common\/safe-https'/.test(read(f))), outbound.join(', '));
+
+  const si = read(`${DIR}/drivers/standin.ts`);
+  const envReaders = walk(SRC).filter((f) => /MDM_TEST_BASE_URL/.test(code(read(f))));
+  check('mdm: the stand-in is test-only and loopback-only — MDM_TEST_BASE_URL is read once, in standinBase(), through testLoopbackAllowed',
+    JSON.stringify(envReaders) === JSON.stringify([`${DIR}/drivers/standin.ts`]) && (code(si).match(/process\.env\.MDM_TEST_BASE_URL/g) ?? []).length === 1
+      && /return raw && testLoopbackAllowed\(raw\) \? raw : null;/.test(si) && /if \(!base\) throw new MdmDriverError\('not_ready'/.test(si)
+      && /if \(!standinBase\(\)\) return \{ ok: false/.test(si),
+    envReaders.join(', '));
+  const idx = read(`${DIR}/drivers/index.ts`);
+  const model = read(`${DIR}/model.ts`);
+  check('mdm: the stand-in is the only driver and the only provider',
+    /export const PROVIDERS = \['standin'\] as const;/.test(model) && /standin: standinDriver,\n\};/.test(idx) && readdirSync(join(ROOT, `${DIR}/drivers`)).sort().join() === 'index.ts,standin.ts',
+    'model.ts PROVIDERS / drivers/');
+
+  const sync = read(`${DIR}/mdm-sync.service.ts`);
+  const offReaders = walk(SRC).filter((f) => /process\.env\.MDM_SWEEP\b(?!_)/.test(code(read(f))));
+  check('mdm: MDM_SWEEP=off is exact; run-e2e.sh exports it (and passes it to the scratch APIs), e2e-ui.mjs sets it, §84 names it',
+    /if \(process\.env\.MDM_SWEEP === 'off'\) return;/.test(sync) && offReaders.every((f) => f.startsWith(DIR)) && /^export MDM_SWEEP=off$/m.test(read('scripts/run-e2e.sh'))
+      && /TERMINAL_SWEEP=off MDM_SWEEP=off \\/.test(read('scripts/run-e2e.sh')) && /MDM_SWEEP: 'off'/.test(read('apps/web/scripts/e2e-ui.mjs'))
+      && /\{ name: 'MDM_SWEEP', severity: /.test(read(`${SRC}/admin/host-security/posture.ts`)),
+    offReaders.join(', '));
+  check('mdm: the sync is bounded and careful — 20 connectors, 20 device and 10 command pages, an integration pause skipped, a conditional claim, not_reported only after a complete listing',
+    /CONNECTORS_PER_PASS = 20;/.test(sync) && /DEVICE_PAGES = 20;/.test(sync) && /COMMAND_PAGES = 10;/.test(sync) && /PAGE_MAX = 100;/.test(read(`${DIR}/schemas.ts`))
+      && /take: CONNECTORS_PER_PASS/.test(sync) && /activePause\(this\.prisma, 'integration', row\.customerId\)/.test(sync)
+      && /const claimed = await this\.prisma\.mdmConnector\.updateMany\(\{/.test(sync) && /if \(claimed\.count !== 1\) return null;/.test(sync)
+      && /if \(complete\) \{\s*const gone = await this\.prisma\.mobileDevice\.updateMany/.test(sync)
+      && sync.indexOf("if (!drv.ready(row).ok) return 'not_ready';") < sync.indexOf('await drv.listDevices('),
+    'mdm-sync.service.ts');
+
+  const sql = read('apps/api/prisma/migrations/0096_mobile_devices/migration.sql');
+  const listOf = (name) => { const m = model.match(new RegExp(`export const ${name} = \\[([^\\]]*)\\] as const;`)); return m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null; };
+  const checkOf = (c, col) => { const m = sql.match(new RegExp(`CONSTRAINT "${c}" CHECK \\("${col}" (?:IS NULL OR "${col}" )?IN \\(([^)]*)\\)`)); return m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null; };
+  const pairs = [
+    ['PROVIDERS', 'MdmConnector_provider_check', 'provider'], ['PROVIDERS', 'MobileDevice_provider_check', 'provider'],
+    ['PLATFORMS', 'MobileDevice_platform_check', 'platform'], ['OWNERSHIPS', 'MobileDevice_ownership_check', 'ownership'],
+    ['MANAGEMENT_SCOPES', 'MobileDevice_managementScope_check', 'managementScope'], ['ENROLLMENT_STATES', 'MobileDevice_enrollmentState_check', 'enrollmentState'],
+    ['COMPLIANCE_STATES', 'MobileDevice_complianceState_check', 'complianceState'], ['COMMAND_KINDS', 'MdmCommand_kind_check', 'kind'],
+    ['COMMAND_ORIGINS', 'MdmCommand_origin_check', 'origin'], ['COMMAND_STATES', 'MdmCommand_state_check', 'state'],
+    ['SYNC_RESULTS', 'MdmConnector_lastSyncResult_check', 'lastSyncResult'],
+  ];
+  const bad = pairs.filter(([l, c, col]) => { const a = listOf(l), b = checkOf(c, col); return !a || !b || JSON.stringify(a) !== JSON.stringify(b); });
+  check('mdm: every closed list in model.ts is 0096\'s CHECK, word for word and in order (eleven constraints)', bad.length === 0, bad.map((b) => b[1]).join(', '));
+
+  const cs = code(read(`${DIR}/command-state.ts`));
+  check('mdm: provider acceptance and device completion stay separate — only provider_accepted stamps one, only device_completed the other, and never from sent',
+    (cs.match(/providerAcceptedAt: e\.at/g) ?? []).length === 1 && (cs.match(/deviceCompletedAt: e\.at/g) ?? []).length === 1
+      && /if \(f\.state === 'queued' \|\| f\.state === 'sent'\) return \{ ok: false, reason: 'not_accepted' \};\s*return move\(f, 'completed', \{ deviceCompletedAt: e\.at \}\);/.test(cs)
+      && /completed: \[\],\s*failed: \[\],\s*expired: \[\],/.test(cs)
+      && /\("deviceCompletedAt" IS NULL OR \("providerAcceptedAt" IS NOT NULL AND "state" = 'completed'\)\)/.test(sql)
+      && /CREATE TRIGGER "MdmCommand_final_trg" BEFORE UPDATE ON "MdmCommand"/.test(sql),
+    'command-state.ts / 0096');
+
+  const ctl = code(read(`${DIR}/mdm.controller.ts`));
+  const routes = [...ctl.matchAll(/@(Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)')?\s*\)\s*\n\s*@RequireCapability\(([A-Z_.]+)\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''} ${m[3]}`);
+  check('mdm: four GETs under mobile-devices, each @RequireCapability(CAP.MOBILE_VIEW), behind JwtAuthGuard and CapabilitiesGuard; no write route',
+    JSON.stringify(routes) === JSON.stringify(['GET setup CAP.MOBILE_VIEW', 'GET  CAP.MOBILE_VIEW', 'GET :id CAP.MOBILE_VIEW', 'GET :id/commands CAP.MOBILE_VIEW'])
+      && /@Controller\('mobile-devices'\)\s*\n@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)/.test(ctl) && !/@(Post|Put|Patch|Delete)\(|@Public\(\)/.test(ctl),
+    JSON.stringify(routes));
+  const svc = code(read(`${DIR}/mdm.service.ts`));
+  const readers = ['async setup(', 'async list(', 'private async visible('];
+  check('mdm: scope() is the first statement of every read; a technician needs mobile:view on a whole-business grant; everyone else is pinned by requireScope; a device outside it is a 404',
+    readers.every((r) => new RegExp(`${r.replace(/[()]/g, '\\$&')}[^)]*\\)[^{]*\\{\\s*const (?:where|scope) = this\\.scope\\(actor, q\\.businessId\\);`).test(svc))
+      && /async get\([^)]*\) \{\s*const d = await this\.visible\(/.test(svc) && /async commands\([^)]*\) \{\s*const d = await this\.visible\(/.test(svc)
+      && /s\.endpointIds === null && \(s\.capabilities as string\[\]\)\.includes\(CAP\.MOBILE_VIEW\)/.test(svc)
+      && /const business = this\.acl\.requireScope\(actor, requested\);/.test(svc) && /if \(!this\.acl\.can\(actor, CAP\.MOBILE_VIEW\)\)/.test(svc)
+      && /findFirst\(\{ where: \{ AND: \[\{ id \}, scope\] \}/.test(svc) && /if \(!d\) throw new NotFoundException/.test(svc),
+    'mdm.service.ts');
+  const caps = read(`${SRC}/rbac/capabilities.ts`);
+  const capBody = (caps.match(/export const CAP = \{([\s\S]*?)\} as const;/) ?? [])[1] ?? '';
+  const defBody = (caps.match(/DEFAULT_BUSINESS_USER_CAPABILITIES: Capability\[\] = \[([\s\S]*?)\];/) ?? [])[1] ?? '';
+  const legacy = (caps.match(/LEGACY_ROLE_CAPABILITIES[^=]*= \{([\s\S]*?)\};/) ?? [])[1] ?? '';
+  check('mdm: mobile:view is a business capability, never a Business User default, a legacy role\'s or a preset\'s',
+    /MOBILE_VIEW: 'mobile:view'/.test(capBody) && !/MOBILE_VIEW/.test(defBody) && !/MOBILE_VIEW/.test(legacy)
+      && !/MOBILE_VIEW|mobile:view/.test(read(`${SRC}/security-controls/presets.ts`)) && /MOBILE_VIEW: 'mobile:view'/.test(read('apps/web/lib/auth.ts')),
+    'capabilities.ts / presets.ts');
+  const writers = walk(SRC).filter((f) => f !== `${DIR}/mdm-sync.service.ts`)
+    .filter((f) => /\.(mdmConnector|mobileDevice|mdmCommand)\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/.test(read(f)));
+  check('mdm: only MdmSyncService writes the MDM tables, and nothing creates a connector',
+    writers.length === 0 && !/mdmConnector\.(create|createMany|upsert)\(/.test(sync), writers.join(', '));
+  check('mdm: 0096 keeps connector, device and command in one business and tenant (three triggers)',
+    ['MdmConnector_business_trg', 'MobileDevice_business_trg', 'MdmCommand_business_trg'].every((n) => new RegExp(`CREATE TRIGGER "${n}" BEFORE INSERT OR UPDATE`).test(sql)),
+    '0096');
+  const sc = code(read(`${DIR}/schemas.ts`));
+  const rawDevice = (sc.match(/const RawDevice = z\.object\(\{([\s\S]*?)\n\}\)/) ?? [])[1] ?? '';
+  check('mdm: no IMEI, MEID, phone number, MAC or user in the device schema; a BYOD serial is dropped and 0096 refuses one',
+    rawDevice.length > 100 && !/imei|meid|phone|mac|wifi|bluetooth|user|email/i.test(rawDevice) && /d\.ownership === 'corporate' && d\.serialNumber/.test(sc)
+      && /"serialNumber" IS NULL OR \("ownership" = 'corporate'/.test(sql),
+    'schemas.ts / 0096');
+  check('mdm: the suites prove it (unit in CI, e2e against the stand-in, the browser)',
+    /unit-mdm\.mjs/.test(read('.github/workflows/ci.yml')) && /host-security mdm; do run/.test(read('scripts/run-e2e.sh'))
+      && /async function mobileDevicesUi\(/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    'ci.yml / run-e2e.sh / e2e-ui.mjs');
 }
 
 // ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──

@@ -1359,3 +1359,14 @@ export const restartWindowsApi = {
   clearComputer: (endpointId: string) => api.delete(`/restart-windows/computers/${encodeURIComponent(endpointId)}`, { data: {} }),
   bulk: (endpointIds: string[], mode: 'off' | 'inherit') => api.post('/restart-windows/computers/bulk', { endpointIds, mode }),
 };
+
+// Mobile devices (0.80 Tablet): iOS, iPadOS and Android read from an MDM
+// provider. Read-only, mobile:view. "Requires setup" until a provider is
+// connected; no real provider can be connected yet.
+export const mobileApi = {
+  setup: () => api.get('/mobile-devices/setup'),
+  list: (params: { platform?: string; ownership?: string; compliance?: string; enrollment?: string; search?: string; page?: number; pageSize?: number }) =>
+    api.get('/mobile-devices', { params }),
+  get: (id: string) => api.get(`/mobile-devices/${encodeURIComponent(id)}`),
+  commands: (id: string) => api.get(`/mobile-devices/${encodeURIComponent(id)}/commands`),
+};

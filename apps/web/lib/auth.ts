@@ -35,6 +35,8 @@ export const CAP = {
   MONITORING_CONFIGURE: 'monitoring:configure',
   SCRIPTS_AUTHOR: 'scripts:author',
   SCRIPTS_REVIEW: 'scripts:review',
+  // 0.80: read mobile devices from an MDM provider (off for a Business User by default).
+  MOBILE_VIEW: 'mobile:view',
   // 0.77: platform-only (a Platform Admin holds it; no business can grant it).
   COMPUTERS_TERMINAL: 'computers:terminal',
   // 0.78: send a file to / fetch one from a Windows computer (platform-only).
