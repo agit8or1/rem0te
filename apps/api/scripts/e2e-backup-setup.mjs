@@ -333,6 +333,8 @@ async function all() {
   for (let i = 0; i < 34 && !limited; i++) {
     const x = await req('POST', '/backups/push?dryRun=1', { body: { v: 1, assets: [] }, auth: `Bearer ${tokB}`, from: fixed });
     if (x.status === 429) limited = x;
+    // Stay under the global burst limit (20 a second) so it is the push's own per-minute limit that answers.
+    await sleep(80);
   }
   check(!!limited && limited.status === 429 && code(limited) === 'TOO_MANY_REQUESTS' && limited.headers.get('retry-after-main') === '60', 'past 30 a minute from one address: 429 TOO_MANY_REQUESTS with Retry-After-main', limited ? msg(limited) : 'never limited');
   console.log(`      (429 body: ${limited ? JSON.stringify(limited.body).slice(0, 200) : '-'}; retry headers: ${limited ? [...limited.headers].filter(([k]) => /retry/i.test(k)).map(([k, v]) => `${k}=${v}`).join(' ') : '-'})`);
