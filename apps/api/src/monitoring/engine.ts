@@ -13,6 +13,7 @@ import { HEARTBEAT_STALE_MS } from '../common/connectivity';
 import { PROGRAM_KEY_RE, REMOVAL_KINDS } from '../actions/catalog';
 import { Posture } from '../patching/posture';
 import { STALE_AFTER_MS } from '../patching/summary';
+import { drillVerdict, failedVerdict, rpoVerdict, staleVerdict, type AssetFacts, type BackupVerdict } from '../backups/state';
 
 export const MONITOR_KINDS = [
   'OFFLINE', 'DISK_FREE', 'CPU_HIGH', 'MEMORY_HIGH', 'SERVICE_STOPPED', 'EVENT_MATCH', 'REBOOT_PENDING', 'AGENT_SILENT',
@@ -20,6 +21,8 @@ export const MONITOR_KINDS = [
   'DRIVE_FREE', 'UPTIME_LONG', 'UPDATES_MISSING', 'UPDATE_FAILED',
   // 0.56: opt-in, never recommended.
   'WARRANTY_EXPIRING',
+  // 0.81: backup provider facts (backups/), opt-in, never recommended. See BACKUP_KINDS.
+  'BACKUP_STALE', 'BACKUP_FAILED', 'DRILL_FAILED', 'RPO_EXCEEDED',
 ] as const;
 export type MonitorKind = (typeof MONITOR_KINDS)[number];
 export const SEVERITIES = ['INFO', 'WARNING', 'CRITICAL'] as const;
@@ -109,6 +112,12 @@ export const PARAMS: Record<MonitorKind, z.ZodTypeAny> = {
   UPDATE_FAILED: z.object({ days: ints(1, 90).default(7) }).strict(),
   // 0.56: opt-in, never in RECOMMENDED. See evaluateWarranty.
   WARRANTY_EXPIRING: z.object({ daysBefore: ints(1, 365).default(30) }).strict(),
+  // 0.81: opt-in, never in RECOMMENDED. See evaluateBackup.
+  BACKUP_STALE: z.object({ hours: ints(1, 720).default(26) }).strict(),
+  BACKUP_FAILED: z.object({ consecutive: ints(1, 10).default(1) }).strict(),
+  DRILL_FAILED: z.object({ days: ints(1, 365).default(30) }).strict(),
+  // The asset's RPO target, else the business's; fallbackHours only where neither is set.
+  RPO_EXCEEDED: z.object({ fallbackHours: ints(1, 8760).optional() }).strict(),
 };
 
 export const RULE_KEY = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -462,6 +471,37 @@ export function evaluateWarranty(rule: RuleLike, endsAt: Date | null, name: stri
     detail: { endsAt: endsAt.toISOString(), daysLeft, daysBefore, ended },
     state: { ...st, breachCount: 1, okCount: 0, breachSince: st.breachSince ?? now },
   };
+}
+
+/**
+ * 0.81: the backup kinds. Read from what a backup provider reported and
+ * Rem0te stored (backups/), by the monitoring sweep, on the inventory
+ * cadence (MONITOR_INVENTORY_SECONDS). Nothing is asked of the agent, and
+ * nothing is evaluated from anything but stored rows. Opt-in: none is in
+ * RECOMMENDED.
+ *
+ * A backup alert is raised on the computer the asset is linked to, one per
+ * asset (assetKeyOf), so the alert list's visibility rule (alertWhere) and
+ * notification, maintenance windows and PSA tickets all apply unchanged. An
+ * asset linked to no computer shows on the Backups page and raises no alert.
+ */
+export const BACKUP_KINDS: ReadonlySet<MonitorKind> = new Set(['BACKUP_STALE', 'BACKUP_FAILED', 'DRILL_FAILED', 'RPO_EXCEEDED']);
+/** An asset id as it reaches a dedup key (a cuid). */
+export const ASSET_ID = /^[A-Za-z0-9_-]{8,64}$/;
+/** One alert per asset: the rule, the computer and the asset id. Rule keys have no ':', so drivePrefixOf is the prefix. */
+export const assetKeyOf = (ruleKey: string, endpointId: string, assetId: string) => `${ruleKey}:${endpointId}:${assetId}`;
+
+export function evaluateBackup(rule: RuleLike, name: string, facts: AssetFacts, now: Date): BackupVerdict {
+  const p = parseParams(rule.kind, rule.params);
+  if (!p.ok) return { verdict: 'skip', reason: `invalid params: ${p.error}` };
+  const P = p.params as { hours?: number; consecutive?: number; days?: number; fallbackHours?: number };
+  switch (rule.kind) {
+    case 'BACKUP_STALE': return staleVerdict(name, facts, P.hours!, now);
+    case 'BACKUP_FAILED': return failedVerdict(name, facts, P.consecutive!);
+    case 'DRILL_FAILED': return drillVerdict(name, facts, P.days!, now);
+    case 'RPO_EXCEEDED': return rpoVerdict(name, facts, P.fallbackHours, now);
+    default: return { verdict: 'skip', reason: 'not a backup rule' };
+  }
 }
 
 /**

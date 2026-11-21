@@ -1001,6 +1001,37 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'backups',
+    title: 'Backups',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          From 0.81, <Link href="/backups" className="underline text-foreground">Backups</Link> shows what a backup provider
+          reports about the machines it protects. It is read-only: nothing there starts a backup, a restore, a drill or a failover.
+        </p>
+        <p>
+          Each job has three separate facts: whether it <strong className="text-foreground">completed</strong>, whether its
+          <strong className="text-foreground"> integrity check</strong> passed, and whether a <strong className="text-foreground">restore
+          was tested</strong>. A restore counts as verified only when a real (not simulated) restore drill of that job&apos;s own recovery
+          point passed and checked what it restored. <strong className="text-foreground">A successful backup is never shown as verified.</strong>
+          The last verified restore shows its recovery point, scope and how long it took.
+        </p>
+        <p>
+          Until a Platform Admin connects a provider for the business, the page says <em>Requires setup</em>. St0r pushes its status
+          to Rem0te with a per-business token (shown once); the St0r side of that push is not written yet. Comet is planned. RPO is
+          measured from the newest recovery point and RTO only from a verified drill, against targets set on the page by someone
+          with <em>Monitoring: configure</em>.
+        </p>
+        <p>
+          Business Users need <em>See backup status</em> (<code>backups:view</code>), which is not a default, and see only assets on
+          computers they can see. Four monitors — <em>Backup stale</em>, <em>Backup failed</em>, <em>Restore drill failed</em> and
+          <em> RPO exceeded</em> — and templates for the UrBackup and Comet agents&apos; Windows services are in Settings → Monitoring.
+          None is added for you. <Link href="/docs/backups" className="underline text-foreground">Backups</Link>.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'hardware-warranty',
     title: 'Hardware Warranty and Support Links',
     content: (

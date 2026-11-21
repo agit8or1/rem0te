@@ -33,6 +33,7 @@ const KIND: Record<string, string> = {
   OFFLINE: 'Offline', DISK_FREE: 'Disk space', CPU_HIGH: 'Processor', MEMORY_HIGH: 'Memory', SERVICE_STOPPED: 'Service stopped',
   EVENT_MATCH: 'Event log', REBOOT_PENDING: 'Restart pending', AGENT_SILENT: 'Agent silent', SITE_OUTAGE: 'Site outage',
   DRIVE_FREE: 'Drive space', UPTIME_LONG: 'Not restarted', UPDATES_MISSING: 'Updates outstanding', UPDATE_FAILED: 'Update failed', WARRANTY_EXPIRING: 'Warranty ending',
+  BACKUP_STALE: 'Backup stale', BACKUP_FAILED: 'Backup failed', DRILL_FAILED: 'Restore drill failed', RPO_EXCEEDED: 'RPO exceeded',
 };
 const head = ['Raised', 'Critical', 'Warning', 'Info', 'Open', 'Resolved', 'Median to resolve', 'Longest'];
 const cells = (g: Summary) => [g.raised, g.critical, g.warning, g.info, g.open, g.resolved, duration(g.medianResolveMinutes), duration(g.longestResolveMinutes)];

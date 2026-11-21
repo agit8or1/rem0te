@@ -902,12 +902,25 @@ export const securityControlsApi = {
   alerts: () => api.get('/security-controls/alerts'),
 };
 
+// Backups (0.81): read-only status from a backup provider, RPO/RTO targets,
+// and (Platform Admin) provider connections. Nothing here starts a backup,
+// a restore, a drill or a failover.
+export const backupsApi = {
+  overview: (businessId?: string | null) => api.get('/backups', bq(businessId)),
+  asset: (id: string) => api.get(`/backups/assets/${id}`),
+  setObjective: (body: { businessId?: string; assetId?: string; rpoMinutes: number | null; rtoMinutes: number | null }) => api.put('/backups/objectives', body),
+  connections: (businessId?: string | null) => api.get('/backups/connections', bq(businessId)),
+  connect: (body: { businessId: string; kind: 'st0r' | 'comet' | 'standin'; credential?: string }) => api.post('/backups/connections', body),
+  revoke: (id: string) => api.post(`/backups/connections/${id}/revoke`),
+};
+
 // Monitoring and alerts (0.29).
 export type MonitorScope = 'global' | 'business' | 'site' | 'group' | 'endpoint';
 export type Severity = 'INFO' | 'WARNING' | 'CRITICAL';
 export type MonitorKindId = 'OFFLINE' | 'DISK_FREE' | 'CPU_HIGH' | 'MEMORY_HIGH' | 'SERVICE_STOPPED' | 'EVENT_MATCH' | 'REBOOT_PENDING' | 'AGENT_SILENT'
   | 'DRIVE_FREE' | 'UPTIME_LONG' | 'UPDATES_MISSING' | 'UPDATE_FAILED' // 0.55
-  | 'WARRANTY_EXPIRING'; // 0.56
+  | 'WARRANTY_EXPIRING' // 0.56
+  | 'BACKUP_STALE' | 'BACKUP_FAILED' | 'DRILL_FAILED' | 'RPO_EXCEEDED'; // 0.81
 /** A notification destination: a webhook, or (0.34) a confirmed email recipient of the policy's own scope. */
 export type NotifyDestination = { label: string; url: string } | { label: string; recipientId: string };
 const bq = (businessId?: string | null) => ({ params: businessId ? { businessId } : {} });
@@ -928,6 +941,8 @@ export const monitoringApi = {
   createRule: (data: { scope: MonitorScope; businessId?: string; siteId?: string; groupId?: string; priority?: number; endpointId?: string; key: string; kind: MonitorKindId; name: string; enabled?: boolean; severity: Severity; params: Record<string, unknown> }) =>
     api.post('/monitoring/rules', data),
   addRecommended: (scope: 'global' | 'business', businessId?: string) => api.post('/monitoring/rules/recommended', businessId ? { scope, businessId } : { scope }),
+  // 0.81: a backup agent's monitor template (opt-in).
+  addTemplate: (template: string, scope: 'global' | 'business', businessId?: string) => api.post('/monitoring/rules/templates', businessId ? { template, scope, businessId } : { template, scope }),
   updateRule: (id: string, data: { name?: string; enabled?: boolean; severity?: Severity; params?: Record<string, unknown>; priority?: number }) => api.patch(`/monitoring/rules/${id}`, data),
   deleteRule: (id: string) => api.delete(`/monitoring/rules/${id}`),
   suppressions: (businessId?: string | null) => api.get('/monitoring/suppressions', bq(businessId)),

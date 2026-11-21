@@ -225,6 +225,10 @@ export const MONITOR_KIND_LABEL: Record<string, string> = {
   UPDATES_MISSING: 'Updates outstanding',
   UPDATE_FAILED: 'Update failed',
   WARRANTY_EXPIRING: 'Warranty ending',
+  BACKUP_STALE: 'Backup stale',
+  BACKUP_FAILED: 'Backup failed',
+  DRILL_FAILED: 'Restore drill failed',
+  RPO_EXCEEDED: 'RPO exceeded',
 };
 
 const EVENT_LEVEL: Record<number, string> = { 0: 'any', 1: 'Critical', 2: 'Error', 3: 'Warning', 4: 'Information', 5: 'Verbose' };
@@ -249,6 +253,10 @@ export function describeMonitor(kind: string, p: Record<string, unknown>): strin
     case 'UPDATES_MISSING': return `${Array.isArray(p.classes) ? (p.classes as string[]).join(' or ') : 'security or critical'} updates outstanding for ${n('days') ?? 30} days`;
     case 'UPDATE_FAILED': return `an update install failed in the last ${n('days') ?? 7} days`;
     case 'WARRANTY_EXPIRING': return `hardware warranty ends within ${n('daysBefore') ?? 30} days, or has ended`;
+    case 'BACKUP_STALE': return `no successful backup for ${n('hours') ?? 26} hours (or the RPO target)`;
+    case 'BACKUP_FAILED': return `${n('consecutive') ?? 1} failed backup job${(n('consecutive') ?? 1) === 1 ? '' : 's'} in a row`;
+    case 'DRILL_FAILED': return `a restore drill failed in the last ${n('days') ?? 30} days`;
+    case 'RPO_EXCEEDED': return `the newest recovery point older than the RPO target${n('fallbackHours') ? ` (or ${n('fallbackHours')} hours)` : ''}`;
     case 'EVENT_MATCH': {
       const ids = Array.isArray(p.ids) && p.ids.length ? `event ID ${(p.ids as number[]).join(', ')}` : null;
       const levels = Array.isArray(p.levels) && p.levels.length ? (p.levels as number[]).map((l) => EVENT_LEVEL[l] ?? l).join(' / ') : null;

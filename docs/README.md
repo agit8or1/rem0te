@@ -69,6 +69,9 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   Management API and native Apple MDM each need first, who can see phones and tablets (`mobile:view`), what is kept
   (never an IMEI, no serial for a personal device), and commands accepted by the provider versus completed on the
   device. Read-only, and **requires setup**: no real provider can be connected yet.
+- **[backups.md](backups.md)** — backup status from a provider (0.81): completion, integrity and a verified
+  restore kept apart, the St0r push and its token, Comet (planned), RPO/RTO against target, the four opt-in backup
+  monitors and the UrBackup and Comet service templates. Read-only: nothing starts a backup, restore or failover.
 - **[email.md](email.md)** — outbound email (0.34): the SMTP relay and which hosts it may be, confirmed recipients,
   alert emails, scheduled reports (exactly once per period, evaluated as their owner), and stopping all mail.
 - **[ai-and-tickets.md](ai-and-tickets.md)** — Ask AI and Create ticket on event-log entries and alerts (0.48):

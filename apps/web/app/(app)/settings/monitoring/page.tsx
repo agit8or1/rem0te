@@ -35,7 +35,9 @@ type Rule = {
   key: string; kind: MonitorKindId; name: string; enabled: boolean; severity: Severity; params: Record<string, unknown>; updatedAt: string;
 };
 type Starter = { key: string; kind: MonitorKindId; name: string; severity: Severity; params: Record<string, unknown> };
-type Rules = { rules: Rule[]; recommended: Starter[]; may: { global: boolean; business: boolean } };
+/** 0.81: a backup agent's monitor template, offered here and never added by itself. */
+type Template = { id: string; vendor: string; label: string; description: string; source: string; rules: Starter[] };
+type Rules = { rules: Rule[]; recommended: Starter[]; templates?: Template[]; may: { global: boolean; business: boolean } };
 /** Kinds whose recommended starter fills in New monitor's key, name, severity and params when picked (0.36; from the recommended set since 0.36.1). */
 const PREFILL: readonly MonitorKindId[] = ['AGENT_SILENT'];
 type Window = { id: string; scopeKey: string; ruleKeys: string[]; reason: string; startsAt: string; endsAt: string; revokedAt: string | null; active: boolean };
@@ -106,6 +108,27 @@ const KIND: Record<MonitorKindId, { label: string; hint: string; fields: { k: st
     label: 'Hardware warranty ending',
     hint: 'The computer’s stored warranty end date (entered on its device page, or read from Dell, Lenovo, HP or Apple when that lookup is on) is within this many days, or has passed. One alert per computer; it clears when the date moves out of the window and is raised again, naming the new date, when the date changes. A computer with no date stored never alerts.',
     fields: [{ k: 'daysBefore', label: 'Days before the end date', type: 'int', def: 30 }],
+  },
+  // 0.81. Backup provider facts (Backups page), never in “Add recommended”. One alert per backup asset linked to a computer; an unlinked asset never alerts.
+  BACKUP_STALE: {
+    label: 'Backup stale',
+    hint: 'No successful backup job for this long — or, when the asset or business has an RPO target, for that target. A successful job is not a verified restore. A new asset is given the window before it alerts. Needs a connected backup provider (Backups page).',
+    fields: [{ k: 'hours', label: 'Hours without a successful backup', type: 'int', def: 26 }],
+  },
+  BACKUP_FAILED: {
+    label: 'Backup failed',
+    hint: 'The newest finished backup jobs failed this many times in a row. It clears when a job succeeds. Needs a connected backup provider.',
+    fields: [{ k: 'consecutive', label: 'Failed jobs in a row', type: 'int', def: 1 }],
+  },
+  DRILL_FAILED: {
+    label: 'Restore drill failed',
+    hint: 'A real (not simulated) restore drill failed within this many days, and none has passed since. Simulated drills never count. Needs a provider that reports drills.',
+    fields: [{ k: 'days', label: 'Look back (days)', type: 'int', def: 30 }],
+  },
+  RPO_EXCEEDED: {
+    label: 'RPO exceeded',
+    hint: 'The newest recovery point is older than the asset’s RPO target, else the business’s (set on the Backups page). Assets with no target are skipped unless you give a fallback here.',
+    fields: [{ k: 'fallbackHours', label: 'Fallback hours where no target is set (optional)', type: 'int', def: '' }],
   },
 };
 
@@ -252,6 +275,10 @@ function Monitors({ businessId, ok, fail }: Props) {
     mutationFn: () => monitoringApi.addRecommended(atScope, businessId ?? undefined).then((r) => r.data.data as { added: unknown[] }),
     onSuccess: (r) => { ok(r.added.length ? `Added ${r.added.length} recommended monitors.` : 'The recommended monitors are all here already.'); refresh(); }, onError: fail,
   });
+  const template = useMutation({
+    mutationFn: (id: string) => monitoringApi.addTemplate(id, atScope, businessId ?? undefined).then((r) => r.data.data as { added: unknown[] }),
+    onSuccess: (r) => { ok(r.added.length ? `Added ${r.added.length} monitor${r.added.length === 1 ? '' : 's'}.` : 'That template’s monitors are here already.'); refresh(); }, onError: fail,
+  });
   const update = useMutation({
     mutationFn: (v: { id: string; data: Parameters<typeof monitoringApi.updateRule>[1] }) => monitoringApi.updateRule(v.id, v.data),
     onSuccess: () => { ok('Saved.'); setEditing(null); refresh(); }, onError: fail,
@@ -314,6 +341,23 @@ function Monitors({ businessId, ok, fail }: Props) {
             <ParamFields kind={kind} value={params} onChange={setParams} />
             <Button size="sm" disabled={!key || !name || create.isPending} onClick={() => create.mutate()}>Add monitor</Button>
           </div>
+        )}
+        {mayHere && (data.templates?.length ?? 0) > 0 && (
+          <details className="rounded-md border p-3" data-testid="mon-templates">
+            <summary className="cursor-pointer font-medium">Backup agent templates</summary>
+            <p className="mt-2 text-xs text-muted-foreground">Service monitors for backup agents on Windows, added only when you press one. A computer without that agent raises nothing. Each service name is taken from the vendor’s own material (linked); event-log templates are not offered because neither vendor documents a Windows event for a failed backup.</p>
+            <div className="mt-2 space-y-2">
+              {data.templates!.map((t) => (
+                <div key={t.id} className="flex flex-wrap items-center gap-2" data-template={t.id}>
+                  <span className="font-medium">{t.label}</span>
+                  <span className="text-xs text-muted-foreground">{t.rules.map((r) => String(r.params.service ?? r.key)).join(', ')}</span>
+                  <a className="text-xs underline" href={t.source} target="_blank" rel="noopener noreferrer">source</a>
+                  <Button size="sm" variant="outline" className="ml-auto" disabled={template.isPending} onClick={() => template.mutate(t.id)}>Add</Button>
+                  <p className="basis-full text-xs text-muted-foreground">{t.description}</p>
+                </div>
+              ))}
+            </div>
+          </details>
         )}
         {shown.length === 0 && <p className="text-muted-foreground">No monitors yet. {mayHere ? '“Add recommended” sets up offline, disk, other-drive, CPU, memory, restart-pending, disk-error, agent-silent, outstanding-update and failed-update monitors you can then adjust.' : ''}</p>}
         <div className="divide-y rounded-md border">

@@ -2099,6 +2099,58 @@ Behavioural proof: `e2e-mdm.mjs` (ports 4021–4022, a loopback stand-in, in
 `run-e2e.sh`). Unit: `unit-mdm.mjs` (in CI). Browser: `e2e-ui.mjs`
 (`mobileDevicesUi`). **No real provider or device has been used.**
 
+§91 (0.81) is backups: roadmap 4.1 and 4.2 (`docs/backups.md`), **read-only**.
+Nothing starts a backup, a restore, a drill or a failover.
+
+- **Reaching a provider.** No provider is reached from outside
+  `apps/api/src/backups/drivers/`. There is no fetch or raw request in
+  `backups/`, and safe-https is used only in the drivers. The one driver is
+  the loopback stand-in, which reads `BACKUP_TEST_BASE_URL` only through
+  `testLoopbackAllowed` (`NODE_ENV=test`, `127.0.0.1`). A real driver must
+  take a public DNS name with valid TLS (decision 17). Comet is planned.
+- **The St0r push** (`POST /backups/push`) is `@Public` and rate-limited. The
+  token is `rbk_<connection>_<secret>`, stored only as SHA-256 and compared
+  with `timingSafeEqual`. An unknown connection, a wrong secret and a revoked
+  token all get the same 401. **The business is the token's connection's,
+  never the body's**: the feed is strict and has no business field.
+- **Completion, integrity and a verified restore are never collapsed.**
+  - The feed has no `restoreTest` or `verified` field.
+  - `deriveRestoreTests` decides a job's restore test from the newest
+    non-simulated drill of its own recovery point.
+  - 0097's CHECK and trigger refuse anything else.
+  - A simulated drill never counts.
+  - A successful job is never shown as verified.
+- **Writers.** Only `BackupIngestService` writes asset, job, point and drill
+  rows. Monitoring reads them and writes none.
+- **Reads** go through `BackupsService.assetWhere`:
+  - a Business Owner or Platform Admin sees the business;
+  - anyone else needs `backups:view` (not a default). A Business User sees
+    only assets on computers they can see, never an unlinked one. A
+    technician needs an assignment that carries it.
+- **Connections** are `PlatformAdminGuard`.
+  - Create needs `assertFresh` naming `backup.connection` (§62, default
+    `off`) and `logOrFail` before the row.
+  - Revoke never asks.
+  - RPO/RTO targets need `monitoring:configure` and are audited.
+- **The monitor kinds** `BACKUP_STALE`, `BACKUP_FAILED`, `DRILL_FAILED` and
+  `RPO_EXCEEDED` are opt-in, never in `RECOMMENDED`, and live in their own
+  `BACKUP_KINDS`. 0.55's `INVENTORY_KINDS` is unchanged.
+  - They are swept from stored rows on the inventory cadence, so
+    `MONITOR_SWEEP=off` stops them.
+  - Each alert is one per asset, keyed `<rule>:<computer>:<asset>`. An
+    unlinked asset raises no alert.
+- **The 4.2 templates** are `SERVICE_STOPPED` with `alertIfMissing: false`,
+  each from a cited vendor source, added only on request through
+  `createRule`. There is no event template, because no vendor documents a
+  failure event.
+- **`BACKUP_SYNC_SWEEP=off`** is exact, exported by `run-e2e.sh`, set by
+  `e2e-ui.mjs` and named in §84's `OFF_SWITCHES`. A pull skips an
+  `integration` pause; a push is accepted under one.
+
+Behavioural proof: `e2e-backups.mjs` (ports 4051–4053, a loopback stand-in,
+`MONITOR_SWEEP` on, in `run-e2e.sh`). Unit: `unit-backups.mjs` (in CI).
+Browser: `e2e-ui.mjs`. **No real St0r push or Comet server has been seen.**
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

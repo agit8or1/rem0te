@@ -5,6 +5,197 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.81.0] — 2026-11-21 · *Vault*
+
+**Backups: Rem0te shows what a backup provider reports, read-only, and never calls a successful backup a verified
+restore.** This is roadmap items 4.1 and 4.2 from `docs/session-maintenance-mdm-backup-audit.md` (Phase 4), built on
+the owner's 2026-11-21 decisions:
+
+- **16.** Destructive actions need a second person and always ask. None exists yet.
+- **17.** St0r pushes. A provider Rem0te reads must be on public DNS with valid TLS.
+- **19.** St0r goes first once it can send a token. Otherwise Comet does.
+- **20.** Standby is readiness only.
+
+**There is no real provider yet.** St0r does not send the push. Comet is planned. The only pull driver is a
+loopback stand-in for tests. On a production server, the page shows **Requires setup** until a Platform Admin
+connects St0r and St0r starts pushing.
+
+Migration 0097. No agent, signer or sudoers change. New in this release:
+
+- a capability, `backups:view`;
+- a confirm key, `backup.connection` (default `off`);
+- a sweep switch, `BACKUP_SYNC_SWEEP`.
+
+Versions 0.78.1, 0.79.0 and 0.80.0 belong to parallel branches. This release does not use their numbers, their
+migration 0096 or their §89 and §90.
+
+### Added
+
+- **The model.** Migration 0097 adds six tables:
+  - `BackupConnection`: one live connection per provider per business. A St0r connection is push-only and stores
+    only the SHA-256 of its token. A pull credential is sealed (`rem0te-backup-credential-v1`).
+  - `BackupProtectedAsset`: in a business, optionally linked to one of its computers.
+  - `BackupJob`.
+  - `BackupRecoveryPoint`.
+  - `RestoreDrill`: target, scope, result, `simulated`, validation, elapsed time and the recovery point used.
+  - `BackupObjective`: RPO and RTO targets for a business, or for one asset.
+
+  Every closed list is a CHECK, and a same-business trigger sits on every table. Moving a computer to another
+  business unlinks its assets.
+- **Three facts, never one.** A job carries **completion**, **integrity** and **restoreTest** as three columns.
+  - **The provider cannot claim a verified restore.** The feed has no `restoreTest` or `verified` field, and the
+    strict schema refuses one.
+  - **Rem0te derives it** (`deriveRestoreTests`). The newest finished, non-simulated drill of that job's *own*
+    recovery point decides it.
+  - **0097 enforces it too.** A CHECK and a trigger refuse `verified` or `failed` without such a drill.
+  - **A simulated drill is stored and never counts.**
+  - **A "pass" must have checked something.** A pass that validated nothing is refused.
+- **The St0r push**, `POST /api/v1/backups/push`, with `Authorization: Bearer rbk_<connection>_<64 hex>`:
+  - It is public and rate-limited.
+  - The token's SHA-256 is compared in constant time. An unknown connection, a wrong secret and a revoked token
+    all get the same `401 BACKUP_PUSH_UNAUTHORIZED`.
+  - It takes a strict feed, at most 500 assets and 1 MB, or it is refused with `400 BAD_FEED`.
+  - **The business is the token's.** The feed names none. A computer is linked only inside that business, by its
+    Rem0te id or by a hostname that matches exactly one computer.
+- **The driver interface** (`backups/driver.ts`), on the PSA connector pattern. Its one driver is the stand-in.
+  The stand-in reads `BACKUP_TEST_BASE_URL` only through `testLoopbackAllowed`, so only under `NODE_ENV=test` and
+  only on `127.0.0.1`. It calls through `safePost`, with a 20-second bound and a 1 MB cap. The pull sweep
+  (`BACKUP_SYNC_SWEEP`, default every 15 minutes) skips a business under an `integration` pause.
+- **The Backups page** (`/backups`, in the sidebar for `backups:view`) shows each asset with:
+  - its backup state: backed up, stale, failing, running or no backup yet;
+  - the last job's completion, integrity and restore test, in **separate columns**;
+  - the last verified restore: when, the recovery point used, its scope and how long it took;
+  - failed drills;
+  - RPO and RTO measured against target.
+
+  **RTO is measured only from a verified drill, never guessed.** The page also shows:
+
+  - every provider's prerequisites and limitations;
+  - a business RPO/RTO form, for someone with `monitoring:configure`;
+  - for a Platform Admin, *Connect St0r*, with the token shown once, and *Revoke*.
+
+  Empty states say what is needed. The page works on a phone and in dark mode.
+- **Who.**
+  - Reads go through one rule, `assetWhere`. A Business Owner or Platform Admin sees the business.
+  - A Business User needs `backups:view`, which is not a default, and sees only assets on computers they can see,
+    never an unlinked one.
+  - A technician needs an assignment that carries `backups:view`.
+
+  `backups:view` is its own capability because a backup report also names mailboxes, databases and shares that the
+  computer permissions say nothing about.
+- **Connections.**
+  - They are a Platform Admin's.
+  - Creating one asks the person to confirm it is them under the new key `backup.connection` (default `off`), and
+    is written with `logOrFail` before the row (`BACKUP_CONNECTION_CREATED`).
+  - Revoking never asks, drops the hash and the credential, and keeps the history.
+  - Targets are audited with before and after (`BACKUP_OBJECTIVE_SET`).
+- **Four monitor kinds**, all opt-in and none in *Add recommended*:
+
+  | Kind | Raises when |
+  |---|---|
+  | `BACKUP_STALE` | No successful job for 26 h, or the RPO target |
+  | `BACKUP_FAILED` | N failed jobs in a row |
+  | `DRILL_FAILED` | A real drill failed within 30 days, with no pass since |
+  | `RPO_EXCEEDED` | The newest point is older than the target. Skipped with no target unless a fallback is set |
+
+  - **Swept from stored rows only.** They run on the inventory cadence, and `MONITOR_SWEEP=off` stops them.
+  - **One alert per asset,** keyed `<monitor>:<computer>:<asset>`, on the linked computer, so visibility,
+    notifications, maintenance windows and PSA tickets apply unchanged.
+  - **An asset linked to no computer raises no alert in 0.81.**
+  - 0.55's `INVENTORY_KINDS` and the other kind sets are unchanged. The backup kinds are their own `BACKUP_KINDS`.
+- **Backup agent templates (4.2)**, in *Settings → Monitoring* and `POST /monitoring/rules/templates`. Each is a
+  *Windows service stopped* monitor with *alert if missing* off, added only on request through `createRule`:
+
+  | Template | Service | Source |
+  |---|---|---|
+  | UrBackup client | `UrBackupClientBackend` | The client's own installer, `urbackup.nsi` |
+  | Comet | `backup.delegate` | Comet's installation and troubleshooting documentation |
+
+  **Left out, and why:**
+
+  - **Comet's `backup.elevator`.** It is not documented as always running.
+  - **Every event-log template.** Neither vendor documents a Windows event for a failed backup.
+
+### Security
+
+- check-security-invariants **§91**:
+  - **Reaching a provider.**
+    - There is no fetch or raw request in `backups/`, and safe-https is used only in `backups/drivers/`.
+    - `BACKUP_TEST_BASE_URL` is read only by the stand-in, through `testLoopbackAllowed`.
+    - The stand-in is the only driver.
+    - Nothing outside `backups/` imports a driver, the ingest service or the push token.
+  - **What is stored.**
+    - `BackupIngestService` is the only writer of the reported rows.
+    - The feed schemas are strict, with no business, `restoreTest` or `verified`.
+    - 0097 has the three columns, the restore-test CHECK and trigger, the same-business triggers, and the kinds.
+  - **The push and the reads.**
+    - The push is in order and takes its business from the token.
+    - The token is stored only as SHA-256 and compared with `timingSafeEqual`.
+    - Reads go through `assetWhere`.
+    - Connections are behind `PlatformAdminGuard`, with `assertFresh('backup.connection')` on create, never on
+      revoke.
+    - No route starts a backup, restore, drill or failover.
+  - **Monitors and switches.**
+    - The four kinds are not in `RECOMMENDED` and are read-only in monitoring.
+    - The templates are `SERVICE_STOPPED` with `alertIfMissing: false` and a source.
+    - `BACKUP_SYNC_SWEEP=off` is exact and exported by `run-e2e.sh`.
+- **Existing invariants.**
+  - §41/§69's typed-destination check admits `backups/drivers/`.
+  - §62's site keys gain `backups/backups.controller.ts: backup.connection`.
+  - §44 and §84 pick up `BACKUP_SYNC_SWEEP` (`e2e-ui.mjs` sets it off; `OFF_SWITCHES` names it).
+
+### Tests
+
+- `unit-backups.mjs` (72, in CI) covers:
+  - the feed's strictness and bounds;
+  - restore-test derivation, including simulated drills, a later failure, and a drill with no point;
+  - asset state, RPO/RTO and the page state;
+  - the four monitors' parameters and verdicts, and their dedup keys;
+  - the push token;
+  - the provider texts, the capability and the confirm key;
+  - the templates.
+- `unit-alert-conditions.mjs` reads the kinds CHECK from 0097 as well.
+- `e2e-backups.mjs` (58; ports 4051 to 4053; scratch database; `MONITOR_SWEEP` and `BACKUP_SYNC_SWEEP` on and
+  fast; a loopback stand-in; in `run-e2e.sh`) covers:
+  - **Access.** Default deny, refusal of another business, and "requires setup".
+  - **Connections.** Platform Admin only, with a fresh confirmation; Comet refused; one token, shown once and
+    hashed.
+  - **The push.** Every refusal, the token as the scope, and another business's computer linking nothing.
+  - **Restore tests.** A successful job is not tested; a simulated drill verifies nothing; a real drill verifies
+    its own job, and 0097 refuses another asset's drill.
+  - **Visibility.** What a Business User with `backups:view` sees.
+  - **Monitors.**
+    - `BACKUP_STALE` raises once per asset and clears on a fresh success.
+    - A failed simulated drill raises nothing; a failed real drill raises `DRILL_FAILED`.
+    - `RPO_EXCEEDED` fires against a target set on the page, and skips an asset with none.
+  - **The pull sweep.** It skips a paused business, then pulls.
+  - **Revoking and secrets.** Revocation, and no secret in the audit or the logs.
+- `e2e-ui.mjs` covers the Backups page at both widths and in both themes:
+  - a business with no provider reads *Requires setup*;
+  - the asset shows succeeded, integrity passed, restore not tested and "Simulated only (not verified)";
+  - providers and connections are shown;
+  - there is no sideways scroll at 375 px.
+
+### Not tested
+
+- No St0r push has been received, because the St0r side is not written.
+- No Comet server has been read.
+- No template has been applied on a real fleet.
+
+### Docs
+
+- New: `docs/backups.md`.
+- Updated:
+  - `capabilities.md`: the backup row is now *requires setup*, plus what needs configuring;
+  - `access-control.md`: `backups:view`;
+  - `monitoring.md`: the backup kinds and templates;
+  - the Phase 4 note in the audit;
+  - the README index;
+  - `/help`;
+  - CLAUDE.md §91.
+
+---
+
 ## [0.80.0] — 2026-11-21 · *Tablet*
 
 **Mobile devices, read-only, behind "Requires setup": roadmap 3.1, the MDM data model and driver interface.**

@@ -347,7 +347,8 @@ vendor certificate and a yearly renewal per customer, and the host cannot prove 
 
 ## Phase 4: backup, verified recovery and standby
 
-Nothing is built. Backup *monitoring* is in [rmm-expansion-audit.md](rmm-expansion-audit.md#backup-monitoring)
+**From 0.81 (*Vault*) items 4.1 and 4.2 are built: see [backups.md](backups.md).** What follows is the audit as
+written. Backup *monitoring* is in [rmm-expansion-audit.md](rmm-expansion-audit.md#backup-monitoring)
 (P1, Missing). The two providers named in the directive:
 
 ### St0r

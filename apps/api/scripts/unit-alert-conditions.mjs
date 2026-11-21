@@ -41,8 +41,8 @@ const J = (x) => JSON.stringify(x);
   const migration = readFileSync(join(here, '..', 'prisma', 'migrations', '0076_alert_conditions', 'migration.sql'), 'utf8');
   check('0076 adds exactly the four kinds to the enum', ['DRIVE_FREE', 'UPTIME_LONG', 'UPDATES_MISSING', 'UPDATE_FAILED'].every((k) => migration.includes(`ADD VALUE '${k}'`)));
   // The kinds CHECK is re-made by later migrations as kinds are added (0077:
-  // WARRANTY_EXPIRING); the newest one is what the database holds.
-  const kindsSql = ['0076_alert_conditions', '0077_warranty'].map((d) => readFileSync(join(here, '..', 'prisma', 'migrations', d, 'migration.sql'), 'utf8'))
+  // WARRANTY_EXPIRING; 0097: the four backup kinds); the newest one is what the database holds.
+  const kindsSql = ['0076_alert_conditions', '0077_warranty', '0097_backups'].map((d) => readFileSync(join(here, '..', 'prisma', 'migrations', d, 'migration.sql'), 'utf8'))
     .map((s) => (s.match(/"MonitorTicketPolicy_kinds" CHECK \([\s\S]*?::TEXT\[\]/g) ?? []).pop() ?? '').filter(Boolean).pop() ?? '';
   check('the newest ticket-rule CHECK names every monitor kind and no other', m.MONITOR_KINDS.every((k) => kindsSql.includes(`'${k}'`)) && !kindsSql.includes("'SITE_OUTAGE'"), kindsSql.slice(0, 80));
 

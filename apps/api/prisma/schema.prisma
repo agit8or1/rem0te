@@ -446,6 +446,9 @@ enum ActivityAction {
   FILE_TRANSFER_FAILED
   FILE_TRANSFER_CANCELLED
   REMOTE_OPS_SETTINGS_CHANGED
+  BACKUP_CONNECTION_CREATED
+  BACKUP_CONNECTION_REVOKED
+  BACKUP_OBJECTIVE_SET
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -786,6 +789,14 @@ model Customer {
   remoteOpsSetting RemoteOpsSetting?
   /// 0.80: mobile-device providers connected for this business (read-only, §90).
   mdmConnectors    MdmConnector[]
+
+  /// 0.81: backup providers, protected assets and what they reported (backups/, §91).
+  backupConnections    BackupConnection[]
+  backupAssets         BackupProtectedAsset[]
+  backupObjectives     BackupObjective[]
+  backupJobs           BackupJob[]
+  backupRecoveryPoints BackupRecoveryPoint[]
+  restoreDrills        RestoreDrill[]
 }
 
 model Site {
@@ -986,6 +997,8 @@ model Endpoint {
   selfHelpRuns      TraySelfHelpRun[]
   /// 0.48: tickets created in a PSA from this computer's events or alerts.
   psaTickets        PsaTicket[]
+  /// 0.81: backup assets a provider reported for this computer.
+  backupAssets      BackupProtectedAsset[]
 
   // Access mode: how the computer's remote-access authorization is scoped.
   //   ASSIGNED_USERS  → only users listed in ComputerAccess may connect
@@ -3299,6 +3312,10 @@ enum MonitorKind {
   UPDATES_MISSING // 0.55: security/critical updates offered for N days (signed patch scan)
   UPDATE_FAILED // 0.55: an update install failed (Windows Update history, deployment results)
   WARRANTY_EXPIRING // 0.56: the hardware warranty ends within daysBefore days (opt-in)
+  BACKUP_STALE // 0.81: no successful backup of a linked asset within N hours (opt-in)
+  BACKUP_FAILED // 0.81: the last N finished backup jobs of a linked asset failed (opt-in)
+  DRILL_FAILED // 0.81: the newest non-simulated restore drill within N days failed (opt-in)
+  RPO_EXCEEDED // 0.81: the newest recovery point is older than the RPO target (opt-in)
 }
 
 enum AlertSeverity {
@@ -5325,4 +5342,150 @@ model MdmCommand {
   @@unique([connectorId, providerCommandId])
   @@index([mobileDeviceId, requestedAt])
   @@index([state, expiresAt])
+}
+
+// ─── Backups (0.81 Vault, roadmap 4.1; backups/, docs/backups.md, §91) ────────
+// Rem0te's own copy of what a backup provider reported. Only
+// BackupIngestService writes the provider rows; only BackupsService writes
+// connections and objectives. Closed lists, same-business triggers and the
+// "a successful job is never verified" trigger are in migration 0097.
+
+/// A provider for one business. St0r pushes (token hash only), Comet and the
+/// test stand-in are read (pull).
+model BackupConnection {
+  id              String    @id @default(cuid())
+  customerId      String
+  customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  kind            String // 'standin' | 'st0r' | 'comet'
+  transport       String // 'pull' | 'push'
+  enabled         Boolean   @default(true)
+  credentialEnc   String?
+  credentialLast4 String?
+  pushTokenHash   String?
+  pushTokenLast4  String?
+  lastSyncAt      DateTime?
+  lastResult      String?
+  createdById     String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  revokedAt       DateTime?
+  revokedById     String?
+
+  assets BackupProtectedAsset[]
+
+  @@index([customerId])
+}
+
+/// Something a provider protects: a computer, server, VM, database, files or a mailbox.
+model BackupProtectedAsset {
+  id           String           @id @default(cuid())
+  customerId   String
+  customer     Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  connectionId String
+  connection   BackupConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  externalId   String
+  name         String
+  assetType    String
+  /// The Rem0te computer this asset is, when it is one of this business's.
+  endpointId   String?
+  endpoint     Endpoint?        @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+  firstSeenAt  DateTime         @default(now())
+  lastSeenAt   DateTime         @default(now())
+
+  jobs           BackupJob[]
+  recoveryPoints BackupRecoveryPoint[]
+  drills         RestoreDrill[]
+  objective      BackupObjective?
+
+  @@unique([connectionId, externalId])
+  @@index([customerId])
+  @@index([endpointId])
+}
+
+/// RPO / RTO targets: the business default (assetId null) or one asset's.
+model BackupObjective {
+  id          String                @id @default(cuid())
+  customerId  String
+  customer    Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  assetId     String?               @unique
+  asset       BackupProtectedAsset? @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  rpoMinutes  Int?
+  rtoMinutes  Int?
+  updatedById String
+  updatedAt   DateTime              @updatedAt
+}
+
+/// One backup job. completion, integrity and restoreTest are three facts,
+/// never one: restoreTest is set only by Rem0te, from a non-simulated drill
+/// that passed (or failed) on this job's own recovery point.
+model BackupJob {
+  id                 String               @id @default(cuid())
+  customerId         String
+  customer           Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  assetId            String
+  asset              BackupProtectedAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  externalId         String
+  startedAt          DateTime
+  finishedAt         DateTime?
+  completion         String
+  integrity          String               @default("not_checked")
+  integrityCheckedAt DateTime?
+  restoreTest        String               @default("not_tested")
+  restoreDrillId     String?
+  restoreDrill       RestoreDrill?        @relation("JobRestoreDrill", fields: [restoreDrillId], references: [id], onDelete: NoAction)
+  bytes              BigInt?
+  errorCode          String?
+
+  recoveryPoints BackupRecoveryPoint[]
+
+  @@unique([assetId, externalId])
+  @@index([assetId, startedAt])
+  @@index([customerId])
+}
+
+model BackupRecoveryPoint {
+  id         String               @id @default(cuid())
+  customerId String
+  customer   Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  assetId    String
+  asset      BackupProtectedAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  externalId String
+  jobId      String?
+  job        BackupJob?           @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  pointAt    DateTime
+  location   String
+
+  drills RestoreDrill[]
+
+  @@unique([assetId, externalId])
+  @@index([assetId, pointAt])
+  @@index([customerId])
+}
+
+/// A restore drill as the provider ran it. Simulated drills are kept and
+/// shown, and never count as verified.
+model RestoreDrill {
+  id              String               @id @default(cuid())
+  customerId      String
+  customer        Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  assetId         String
+  asset           BackupProtectedAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  externalId      String
+  recoveryPointId String?
+  recoveryPoint   BackupRecoveryPoint? @relation(fields: [recoveryPointId], references: [id], onDelete: SetNull)
+  recoveryPointAt DateTime?
+  target          String
+  scope           String
+  result          String
+  simulated       Boolean
+  validation      String
+  startedAt       DateTime
+  finishedAt      DateTime?
+  elapsedSeconds  Int?
+  failureCode     String?
+
+  verifiedJobs BackupJob[] @relation("JobRestoreDrill")
+
+  @@unique([assetId, externalId])
+  @@index([customerId])
 }

@@ -15,7 +15,10 @@ export type SecretPurpose = 'rem0te-ai-key-v1' | 'rem0te-psa-webhook-secret-v1' 
   // 0.71: Managed Secure Access — the grant signing key, a grant's one-time
   // password, and its signed envelope (which carries that password). Used
   // only in msa/msa-grant.service.ts (§81).
-  | 'rem0te-msa-grant-key-v1' | 'rem0te-msa-grant-pw-v1' | 'rem0te-msa-grant-envelope-v1';
+  | 'rem0te-msa-grant-key-v1' | 'rem0te-msa-grant-pw-v1' | 'rem0te-msa-grant-envelope-v1'
+  // 0.81: a pull backup provider's credential (backups/, §91). Sealed in
+  // BackupsService, opened only by a driver in backups/drivers/.
+  | 'rem0te-backup-credential-v1';
 
 function key(hex: string | undefined): Buffer {
   const k = Buffer.from(hex ?? '', 'hex');
