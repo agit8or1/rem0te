@@ -42,7 +42,34 @@ type Action struct {
 	// was executing when the agent stopped. It must not change anything.
 	// params are the plan's, as journaled; check them before use.
 	Interrupted func(params map[string]any, o Options) map[string]string
+	// Rollback and Repeatable (0.79) are data, not behaviour: what undoes
+	// this action, and whether running it again for the same plan's
+	// parameters is harmless. Nothing on the agent reads them yet; they are
+	// here so the closed catalog declares them where the portal's copy is
+	// compared against it (§89), and so the bounded retry planned next
+	// (roadmap 2.2) has a compiled-in answer to check.
+	Rollback   Rollback
+	Repeatable bool
 }
+
+// Rollback is how an action is undone: by nothing Rem0te can send
+// (RollbackNone), by another catalog action or the same one with other
+// parameters (RollbackInverse, Via naming it), or not at all because it
+// changes nothing (RollbackReadOnly). The words are the portal's
+// ROLLBACK_KINDS, in the same order.
+type Rollback struct {
+	Kind string
+	Via  string
+}
+
+const (
+	RollbackNone     = "none"
+	RollbackInverse  = "inverse"
+	RollbackReadOnly = "read_only"
+)
+
+// RollbackKinds is the closed list, in the portal's order.
+var RollbackKinds = []string{RollbackNone, RollbackInverse, RollbackReadOnly}
 
 var catalog = []Action{
 	{
@@ -67,6 +94,8 @@ var catalog = []Action{
 			}
 			return nil
 		},
+		Rollback:   Rollback{Kind: RollbackInverse, Via: "windows.service.control"},
+		Repeatable: true,
 	},
 	{
 		// Install named Windows updates (v0.27). Software installation is high
@@ -81,6 +110,8 @@ var catalog = []Action{
 		Risk:        func(int, int) string { return "high" },
 		Execute:     installUpdates,
 		Interrupted: updatesNow,
+		Rollback:    Rollback{Kind: RollbackNone},
+		Repeatable:  true,
 	},
 	{
 		// Restart one service from RestartableServices (v0.32). High impact
@@ -92,6 +123,8 @@ var catalog = []Action{
 		Precheck:    restartPrecheck,
 		Execute:     restartService,
 		Interrupted: restartInterrupted,
+		Rollback:    Rollback{Kind: RollbackNone},
+		Repeatable:  true,
 	},
 	{
 		// Schedule a restart after a warning of 5 minutes to 24 hours
@@ -105,6 +138,8 @@ var catalog = []Action{
 		Precheck:    rebootPrecheck,
 		Execute:     scheduleRestart,
 		Interrupted: scheduleInterrupted,
+		Rollback:    Rollback{Kind: RollbackInverse, Via: "windows.reboot.cancel"},
+		Repeatable:  false,
 	},
 	{
 		// Cancel a pending restart (v0.32). No parameters at all.
@@ -114,6 +149,8 @@ var catalog = []Action{
 		Precheck:    needMaint,
 		Execute:     cancelRestart,
 		Interrupted: func(map[string]any, Options) map[string]string { return nil },
+		Rollback:    Rollback{Kind: RollbackInverse, Via: "windows.reboot.schedule"},
+		Repeatable:  true,
 	},
 	{
 		// Collect the fixed LogSources, bounded and redacted (v0.32). No
@@ -124,6 +161,8 @@ var catalog = []Action{
 		Precheck:    needMaint,
 		Execute:     collectLogs,
 		Interrupted: func(map[string]any, Options) map[string]string { return nil },
+		Rollback:    Rollback{Kind: RollbackReadOnly},
+		Repeatable:  true,
 	},
 	{
 		// Run one approved library script (v0.34). The parameters name a
@@ -139,6 +178,8 @@ var catalog = []Action{
 		Precheck:    scriptPrecheck,
 		Execute:     runScript,
 		Interrupted: scriptInterrupted,
+		Rollback:    Rollback{Kind: RollbackNone},
+		Repeatable:  false,
 	},
 	{
 		// Install one allowlisted winget package at an exact version, pinned
@@ -151,6 +192,8 @@ var catalog = []Action{
 		Precheck:    softwarePrecheck(false),
 		Execute:     installSoftware,
 		Interrupted: softwareInterrupted,
+		Rollback:    Rollback{Kind: RollbackInverse, Via: "windows.software.uninstall"},
+		Repeatable:  true,
 	},
 	{
 		// Uninstall that package (v0.34). Same closed parameters.
@@ -160,6 +203,8 @@ var catalog = []Action{
 		Precheck:    softwarePrecheck(true),
 		Execute:     uninstallSoftware,
 		Interrupted: softwareInterrupted,
+		Rollback:    Rollback{Kind: RollbackInverse, Via: "windows.software.install"},
+		Repeatable:  true,
 	},
 	{
 		// Remove one program Programs and Features lists, by its uninstall
@@ -174,6 +219,8 @@ var catalog = []Action{
 		Precheck:    removePrecheck,
 		Execute:     removeProgram,
 		Interrupted: removeInterrupted,
+		Rollback:    Rollback{Kind: RollbackNone},
+		Repeatable:  true,
 	},
 	{
 		// Start, stop or restart one service, or change its startup type and
@@ -189,6 +236,8 @@ var catalog = []Action{
 		Precheck:    servicePrecheck,
 		Execute:     controlService,
 		Interrupted: serviceInterrupted,
+		Rollback:    Rollback{Kind: RollbackInverse, Via: "windows.service.control"},
+		Repeatable:  true,
 	},
 	{
 		// End one process, optionally with the processes it started (0.45,
@@ -202,6 +251,8 @@ var catalog = []Action{
 		Precheck:    processPrecheck,
 		Execute:     stopProcess,
 		Interrupted: processInterrupted,
+		Rollback:    Rollback{Kind: RollbackNone},
+		Repeatable:  true,
 	},
 }
 

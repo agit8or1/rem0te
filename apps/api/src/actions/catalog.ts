@@ -71,7 +71,35 @@ export interface CatalogAction {
   acknowledge: string;
   /** The one parameter a requester chooses, if any, and every value it may take. */
   choice?: { field: string; label: string; options: { value: string | number; label: string }[] };
+  /** 0.79 (§89): how this action is undone, the same kind and action as the agent's catalog. */
+  rollback: Rollback;
+  /** 0.79 (§89): whether running it again for the same parameters is harmless, the same flag as the agent's Repeatable. */
+  repeat: Repeat;
 }
+
+/**
+ * 0.79 (§89): how a catalog action is undone. `none`: nothing Rem0te can
+ * send undoes it (`how` says what a person can do); `inverse`: another
+ * catalog action, or the same one with other parameters, named by `via`;
+ * `read_only`: it changes nothing. The agent's RollbackKinds, in the same
+ * order (tools/windows-installer/internal/action/catalog.go).
+ */
+export const ROLLBACK_KINDS = ['none', 'inverse', 'read_only'] as const;
+export type RollbackKind = (typeof ROLLBACK_KINDS)[number];
+export interface Rollback {
+  kind: RollbackKind;
+  /** The catalog action that undoes it; only for `inverse`. */
+  via?: string;
+  /** One or two sentences for the console and the docs. */
+  how: string;
+}
+/**
+ * 0.79 (§89): safe to repeat means a second run of the same action with the
+ * same parameters changes nothing the first did not, so the bounded retry
+ * planned next (roadmap 2.2) may run it again. Nothing retries yet; this is
+ * data, shown before the request and on the job.
+ */
+export interface Repeat { safe: boolean; why: string }
 
 export const SERVICE_START: CatalogAction = {
   id: 'windows.service.start',
@@ -92,6 +120,8 @@ export const SERVICE_START: CatalogAction = {
   direct: true,
   integration: true,
   acknowledge: 'I understand that documents already waiting may print as soon as the spooler starts, and cannot be recalled.',
+  rollback: { kind: 'inverse', via: 'windows.service.control', how: 'Stop the spooler again from the Services tab. Anything that printed when it started cannot be recalled.' },
+  repeat: { safe: true, why: 'Starting a running spooler changes nothing: the computer reports it was already running.' },
 };
 
 export const UPDATE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -191,6 +221,8 @@ export const UPDATE_INSTALL: CatalogAction = {
   indirectVia: 'Windows updates are installed through a patch deployment, ring by ring, not one computer at a time.',
   integration: true,
   acknowledge: 'I understand that these updates change the computers, may need a restart, and that under the in-window rule the computers restart after a fixed warning.',
+  rollback: { kind: 'none', how: 'No catalog action uninstalls an update. Remove it on the computer (Settings, Windows Update, Update history, Uninstall updates) where Microsoft allows it; servicing stack updates and some cumulative updates cannot be removed.' },
+  repeat: { safe: true, why: 'Windows Update skips an update that is already installed, so a second run installs nothing and so restarts nothing for this plan.' },
 };
 
 // ── Maintenance actions (0.32) ──────────────────────────────────────────────
@@ -236,6 +268,8 @@ export const SERVICE_RESTART: CatalogAction = {
   integration: false,
   acknowledge: 'I understand that the service stops for a moment, and that restarting RustDesk disconnects anyone connected.',
   choice: { field: 'service', label: 'Service', options: RESTARTABLE_SERVICES.map((s) => ({ value: s.name, label: `${s.label} (${s.name})` })) },
+  rollback: { kind: 'none', how: 'Usually nothing to undo: the service ends running, as it was. If it had been stopped, it can be stopped again from the Services tab (except RustDesk, which is kept running).' },
+  repeat: { safe: true, why: 'It always ends with the service running. Each run interrupts the service once more, and a RustDesk restart still waits for no open session.' },
 };
 
 /** Restart warning bounds, minutes; the agent enforces the same. */
@@ -273,6 +307,8 @@ export const REBOOT_SCHEDULE: CatalogAction = {
   maxWindowHours: 2,
   acknowledge: 'I understand that programs still open when the delay ends are closed without saving.',
   choice: { field: 'delayMinutes', label: 'Warning before the restart', options: DELAYS.map((m) => ({ value: m, label: m < 60 ? `${m} minutes` : m === 60 ? '1 hour' : `${m / 60} hours` })) },
+  rollback: { kind: 'inverse', via: 'windows.reboot.cancel', how: 'Cancel the scheduled restart before its warning runs out. Once the computer has restarted there is nothing to undo, and unsaved work does not come back.' },
+  repeat: { safe: false, why: 'Once the first restart has happened, a second run restarts the computer again. While the first is still pending, Windows refuses the second (restart already scheduled).' },
 };
 
 export const REBOOT_CANCEL: CatalogAction = {
@@ -293,6 +329,8 @@ export const REBOOT_CANCEL: CatalogAction = {
   direct: true,
   integration: false,
   acknowledge: 'I understand that this cancels any pending restart on the computer.',
+  rollback: { kind: 'inverse', via: 'windows.reboot.schedule', how: 'Schedule a new restart. It cannot bring back the canceled one at its original time or with its original message.' },
+  repeat: { safe: true, why: 'With no restart pending the computer reports no change and does nothing.' },
 };
 
 export const LOGS_COLLECT: CatalogAction = {
@@ -314,6 +352,8 @@ export const LOGS_COLLECT: CatalogAction = {
   integration: false,
   requiresCapability: 'computers:event_logs',
   acknowledge: 'I understand that the collected text may include personal details that redaction does not catch.',
+  rollback: { kind: 'read_only', how: 'Nothing to undo: it only reads. Nothing on the computer changes.' },
+  repeat: { safe: true, why: 'It only reads; a second run collects a newer copy.' },
 };
 
 // ── Running an approved library script (0.34) ───────────────────────────────
@@ -348,6 +388,8 @@ export const SCRIPT_RUN: CatalogAction = {
   indirectVia: 'Scripts are run from an approved version in the script library, which names the script and its allowlist entry.',
   integration: false,
   acknowledge: 'I understand that this runs the script as SYSTEM on every computer named, and that a stopped script may have done part of its work.',
+  rollback: { kind: 'none', how: 'What a script changes is its own. Its library version should say how to undo it, and undoing it is another approved script.' },
+  repeat: { safe: false, why: 'The catalog cannot know whether a script does the same thing twice, so a run is never treated as safe to repeat.' },
 };
 
 // ── Software deployment (0.34) ─────────────────────────────────────────────
@@ -425,6 +467,8 @@ export const SOFTWARE_INSTALL: CatalogAction = {
   indirectVia: 'Software is installed from the software catalog, as a deployment (one computer, or a canary and rings).',
   integration: false,
   acknowledge: 'I understand that this installs software on the computers, and that I accept the package and source agreements on the business\'s behalf.',
+  rollback: { kind: 'inverse', via: 'windows.software.uninstall', how: 'Uninstall the same package from the Software tab. An install that upgraded an older version does not bring that version back.' },
+  repeat: { safe: true, why: 'The computer checks the detection rule first: a package already installed is reported as no change and nothing is run.' },
 };
 
 export const SOFTWARE_UNINSTALL: CatalogAction = {
@@ -447,6 +491,8 @@ export const SOFTWARE_UNINSTALL: CatalogAction = {
   indirectVia: 'Software is uninstalled from the software catalog, as a deployment (one computer, or a canary and rings).',
   integration: false,
   acknowledge: 'I understand that this removes the program for everyone on the computers.',
+  rollback: { kind: 'inverse', via: 'windows.software.install', how: 'Install the catalog\'s pinned version again. That may not be the version removed, and settings or data the uninstaller deleted do not come back.' },
+  repeat: { safe: true, why: 'The computer checks the detection rule first: a package not installed is reported as no change and nothing is run.' },
 };
 
 // Remove one installed program by its uninstall key (0.41). Keep in step with
@@ -507,6 +553,8 @@ export const SOFTWARE_REMOVE: CatalogAction = {
   indirectVia: 'An installed program is removed from the computer\'s Software tab (Installed software, Uninstall).',
   integration: false,
   acknowledge: 'I understand that this removes the program for everyone on the computer, by running its own uninstaller.',
+  rollback: { kind: 'none', how: 'The program\'s own uninstaller ran. Reinstall it from its vendor, or install its package if it is in the software catalog. What the uninstaller deleted does not come back.' },
+  repeat: { safe: true, why: 'The computer reads the uninstall key first: once it is gone, a second run reports no change and runs nothing, and a key whose name changed is refused.' },
 };
 
 // ── Service control and ending a process (0.45) ────────────────────────────
@@ -607,6 +655,8 @@ export const SERVICE_CONTROL: CatalogAction = {
   indirectVia: 'Services are controlled from the computer\'s Services tab, which names a service from its latest service list.',
   integration: false,
   acknowledge: 'I understand that this changes a service on the computer, and that anything depending on it may stop working.',
+  rollback: { kind: 'inverse', via: 'windows.service.control', how: 'The opposite operation from the Services tab: stop after a start, start after a stop, or the earlier startup type, which the result shows.' },
+  repeat: { safe: true, why: 'A start of a running service, a stop of a stopped one and an unchanged startup type are reported as no change. A restart interrupts the service once more.' },
 };
 
 /** A process name as the process list shows it (the image name without .exe): a name, never a path. */
@@ -670,6 +720,8 @@ export const PROCESS_STOP: CatalogAction = {
   indirectVia: 'A process is ended from the computer\'s Processes tab, which names it from its latest process list.',
   integration: false,
   acknowledge: 'I understand that the process is ended at once and anything it had not saved is lost.',
+  rollback: { kind: 'none', how: 'An ended process cannot be resumed, and what it had not saved is lost. Start the program again, or restart its service.' },
+  repeat: { safe: true, why: 'The plan names the process id and its start time: once it has ended, a second run reports it is not running and changes nothing, and a new process given the same id is refused.' },
 };
 
 export const CATALOG: CatalogAction[] = [SERVICE_START, UPDATE_INSTALL, SERVICE_RESTART, REBOOT_SCHEDULE, REBOOT_CANCEL, LOGS_COLLECT, SCRIPT_RUN, SOFTWARE_INSTALL, SOFTWARE_UNINSTALL, SOFTWARE_REMOVE, SERVICE_CONTROL, PROCESS_STOP];

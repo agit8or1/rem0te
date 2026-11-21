@@ -1428,6 +1428,20 @@ const SECTIONS: Section[] = [
           says why. They have been tested against a simulated Windows only.{' '}
           More in <Link href="/docs/approved-actions#maintenance-actions-032" className="underline text-foreground">Approved actions</Link>.
         </p>
+        <p data-help="rollback-repeat">
+          <strong className="text-foreground">Undoing an action, and running it again (0.79).</strong> Every approved
+          action says how it is undone and whether a second run is harmless, before you request it on the{' '}
+          <em>Actions</em> tab, beside it in <em>Tools</em>, and on every job in the history. Some are undone by another
+          action: a scheduled restart by <em>Cancel a scheduled restart</em>, an install by its uninstall, a service
+          change by the opposite change on the Services tab. Some can&apos;t be undone from here: an installed Windows
+          update, a removed program, an ended process, a script. Collecting logs only reads. Two actions are{' '}
+          <strong className="text-foreground">not safe to repeat</strong>: scheduling a restart (a second run restarts
+          the computer again) and running a script (the catalog can&apos;t know what a script does twice); the rest
+          change nothing the second time. Nothing is retried automatically. When one plan names several computers, the
+          job also counts how all of them stand and says <em>Partial</em> when some succeeded and some did not. The full
+          table is in{' '}
+          <Link href="/docs/approved-actions#rollback-and-repeating-an-action-079" className="underline text-foreground">Approved actions → Rollback and repeating an action</Link>.
+        </p>
         <p>
           From 0.62, a patch policy, a company-wide policy or a deployment on{' '}
           <Link href="/patching" className="underline text-foreground">Patching</Link> installs{' '}

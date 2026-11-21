@@ -9,7 +9,7 @@ import { actionsApi, api, containmentApi } from '@/lib/api-client';
 import { connectivityFrom, connectivityLabel } from '@/lib/connectivity';
 import { useCurrentUser } from '@/lib/auth';
 import {
-  STATE_LABEL, TOOL_GROUPS, deviceTools, mayRequestActions, opens, toolsIn, type ToolFacts, type ToolState, type ToolTarget, type ToolView,
+  STATE_LABEL, TOOL_GROUPS, deviceTools, mayRequestActions, noteLine, opens, toolsIn, type ActionNote, type ToolFacts, type ToolState, type ToolTarget, type ToolView,
 } from '@/lib/device-tools';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { agentType, ago } from './device-model';
@@ -45,7 +45,7 @@ const STATE_STYLE: Record<ToolState, { cls: string; Icon: typeof Activity }> = {
   checking: { cls: 'bg-muted text-muted-foreground', Icon: Clock },
 };
 
-type Catalog = { configured: boolean; approval: 'direct' | 'signed' | null; actions: { id: string; workstationRisk?: 'low' | 'high' }[] };
+type Catalog = { configured: boolean; approval: 'direct' | 'signed' | null; actions: ({ id: string; title?: string; workstationRisk?: 'low' | 'high' } & Partial<ActionNote>)[] };
 type BannerPause = { scope: 'global' | 'business'; businessId?: string | null; kinds: string[] };
 
 /** The reads, only while the panel is open, and the facts the pure module decides from. */
@@ -87,6 +87,13 @@ export function useToolFacts(endpointId: string, ep: Record<string, unknown>, pa
     .flatMap((p) => p.kinds))];
   const actionRisk: Record<string, 'low' | 'high'> = {};
   for (const a of catalog.data?.actions ?? []) actionRisk[a.id] = deviceClass === 'WORKSTATION' ? (a.workstationRisk ?? 'high') : 'high';
+  // 0.79: rollback and repeatability, from the catalog the server serves.
+  const actionNotes: Record<string, ActionNote> = {};
+  const actionTitles: Record<string, string> = {};
+  for (const a of catalog.data?.actions ?? []) {
+    if (a.rollback && a.repeat) actionNotes[a.id] = { rollback: a.rollback, repeat: a.repeat };
+    if (a.title) actionTitles[a.id] = a.title;
+  }
   const u = user ? { isPlatformAdmin: user.isPlatformAdmin, capabilities: user.capabilities as string[], roleType: user.roleType, technician: user.technician ? { sources: user.technician.sources } : null } : null;
   const facts: ToolFacts = {
     agentKind: agent.kind,
@@ -114,8 +121,9 @@ export function useToolFacts(endpointId: string, ep: Record<string, unknown>, pa
     },
     actionRisk,
     restartPending: patches?.summary?.rebootRequired ?? patches?.basic?.rebootRequired ?? null,
+    actionNotes,
   };
-  return { facts, loading: on && (catalog.isLoading || diag.isLoading) };
+  return { facts, titles: actionTitles, loading: on && (catalog.isLoading || diag.isLoading) };
 }
 
 export function ToolsPanel({
@@ -130,7 +138,7 @@ export function ToolsPanel({
   /** Opens the tool's flow: a tab (with its action, check or log) or a page. */
   onPick: (target: ToolTarget) => void;
 }) {
-  const { facts, loading } = useToolFacts(endpointId, ep, patches, perms, open);
+  const { facts, titles, loading } = useToolFacts(endpointId, ep, patches, perms, open);
   const tools = deviceTools(endpointId, facts);
   const name = (ep.name as string) ?? 'this computer';
   // Closed without picking: focus goes back to the Tools button. After a pick,
@@ -156,7 +164,7 @@ export function ToolsPanel({
             <section key={g.id} aria-labelledby={`tool-group-${g.id}`} data-testid={`tool-group-${g.id}`} className="min-w-0 space-y-1.5">
               <h3 id={`tool-group-${g.id}`} className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{g.label}</h3>
               <ul className="divide-y rounded-md border">
-                {toolsIn(tools, g.id).map((t) => <ToolRow key={t.id} t={t} onPick={(target) => { picked.current = true; onOpenChange(false); onPick(target); }} />)}
+                {toolsIn(tools, g.id).map((t) => <ToolRow key={t.id} t={t} titles={titles} onPick={(target) => { picked.current = true; onOpenChange(false); onPick(target); }} />)}
               </ul>
             </section>
           ))}
@@ -166,7 +174,7 @@ export function ToolsPanel({
   );
 }
 
-function ToolRow({ t, onPick }: { t: ToolView; onPick: (target: ToolTarget) => void }) {
+function ToolRow({ t, titles, onPick }: { t: ToolView; titles: Record<string, string>; onPick: (target: ToolTarget) => void }) {
   const s = STATE_STYLE[t.state];
   const body = (
     <>
@@ -177,6 +185,12 @@ function ToolRow({ t, onPick }: { t: ToolView; onPick: (target: ToolTarget) => v
         </span>
       </span>
       <span className="block text-xs text-muted-foreground">{t.reason === t.description || t.reason === 'Ready.' ? t.description : <>{t.description} <span className="text-foreground/80">{t.reason}</span></>}</span>
+      {t.note && (
+        <span className="block text-[11px] text-muted-foreground" data-testid="tool-note" data-repeat={t.note.repeat.safe ? 'safe' : 'unsafe'} data-rollback={t.note.rollback.kind}
+          title={`${t.note.rollback.how} ${t.note.repeat.why}`}>
+          {noteLine(t.note, titles)}
+        </span>
+      )}
     </>
   );
   const common = { 'data-testid': `tool-${t.id}`, 'data-state': t.state } as const;

@@ -1750,6 +1750,7 @@ async function combo(browser, f, vp, theme) {
     await msaReadinessUi(page, f, vp, theme, label);
     await headerAgentUpgrade(page, f, vp, theme, label);
     await toolsPanel(page, f, vp, theme, label);
+    await rollbackDisplays(page, f, vp, theme, label);
     await diagnosticsPaletteUi(page, f, vp, theme, label);
     await terminalPanel(page, f, vp, theme, label);
     await filesPanel(page, f, vp, theme, label);
@@ -2308,6 +2309,84 @@ async function seedTools(f) {
     mac: await mk('MAC', { platform: 'macOS', osVersion: 'macOS 15.1', agentVersion: '0.33.0' }),
     offline: await mk('OFFLINE', { isOnline: false, lastSeenAt: new Date(Date.now() - 3 * 86400_000) }),
   };
+}
+
+/**
+ * 0.79: one finished software-install plan over three of the Tools
+ * computers — succeeded on the signed one, failed on the standard one,
+ * refused on the offline one — so the signed computer's Actions tab has a
+ * partial job to show. Final (FAILED), so nothing asks a signer about it;
+ * it goes with the business.
+ */
+async function seedRollbackJob(f) {
+  const T = f.tools;
+  const now = Date.now();
+  const id = `uiact${sfx}`.replace(/[^A-Za-z0-9]/g, '').slice(0, 24);
+  await prisma.actionJob.create({ data: {
+    id, tenantId: f.tenant.id, customerId: T.D.id, endpointId: T.signed.id, actionId: 'windows.software.install', actionVersion: 1, params: {},
+    reason: 'UI check: a plan over three computers', origin: 'technician', via: 'portal', requestedById: f.admin.id,
+    status: 'FAILED', risk: 'high', approvalsRequired: 2, customerSignoff: false,
+    notBefore: new Date(now - 3_600_000), notAfter: new Date(now + 3_600_000), plan: {}, digest: 'a'.repeat(64), approvalUrl: '',
+    dispatchedAt: new Date(now - 3_000_000), outcome: 'failed', resultAt: new Date(now - 2_000_000),
+    targets: { create: [
+      { endpointId: T.signed.id, status: 'SUCCEEDED', outcome: 'succeeded', result: { detail: 'installed' }, resultAt: new Date(now - 2_500_000) },
+      { endpointId: T.standard.id, status: 'FAILED', outcome: 'failed', result: { reason: 'install_failed' }, resultAt: new Date(now - 2_400_000) },
+      { endpointId: T.offline.id, status: 'REFUSED_BY_ENDPOINT', statusReason: 'expired', resultAt: new Date(now - 2_000_000) },
+    ] },
+  } });
+  return id;
+}
+
+/**
+ * 0.79 (§89): rollback and repeatability, where an action is offered and
+ * where a job is shown. The Tools panel: every action tool carries its
+ * action's note, the restart's names the cancel and says not safe to
+ * repeat. The Actions tab (no signer here): the per-action notes stay
+ * readable, and the three-computer job shows its own note and a Partial
+ * tally from the signed computer, whose own row succeeded while the plan
+ * failed. Every width and theme, no sideways scroll, no console error.
+ */
+async function rollbackDisplays(page, f, vp, theme, label) {
+  const ep = f.tools.signed;
+  await go(page, `/endpoints/${ep.id}`);
+  await openTools(page, ep.id);
+  const notes = Object.fromEntries(await page.getByTestId('tools-panel').locator('li[data-testid^="tool-"]').evaluateAll((els) => els.map((e) => {
+    const n = e.querySelector('[data-testid="tool-note"]');
+    return [e.getAttribute('data-testid').replace(/^tool-/, ''), n ? { rollback: n.getAttribute('data-rollback'), repeat: n.getAttribute('data-repeat'), text: n.textContent } : null];
+  })));
+  const missing = ACTION_TOOLS.filter((t) => !notes[t]);
+  check(missing.length === 0, `${label}: every action tool in Tools says how it is undone and whether it is safe to repeat`, missing.join(', '));
+  const extra = Object.entries(notes).filter(([t, n]) => n && !ACTION_TOOLS.includes(t)).map(([t]) => t);
+  check(extra.length === 0, `${label}: no other tool claims a rollback note`, extra.join(', '));
+  const r = notes['restart-schedule'];
+  check(r?.rollback === 'inverse' && r?.repeat === 'unsafe' && /Can be undone: Cancel a scheduled restart · Not safe to repeat/.test(r?.text ?? ''),
+    `${label}: Tools: a restart is undone by the cancel and is not safe to repeat`, JSON.stringify(r));
+  check(notes['logs-collect']?.rollback === 'read_only' && notes['logs-collect']?.repeat === 'safe' && notes['run-script']?.repeat === 'unsafe' && notes['process-stop']?.rollback === 'none',
+    `${label}: Tools: logs are read-only, a script is not safe to repeat, an ended process has no undo`, JSON.stringify([notes['logs-collect'], notes['run-script'], notes['process-stop']]));
+  await closeTools(page);
+
+  await go(page, `/endpoints/${ep.id}?tab=actions`);
+  const box = page.getByTestId('action-notes-unconfigured');
+  await box.waitFor({ timeout: 15_000 });
+  await box.locator('summary').click();
+  const actionNotes = await box.getByTestId('action-note').evaluateAll((els) => els.map((e) => ({ rollback: e.getAttribute('data-rollback'), repeat: e.getAttribute('data-repeat'), text: e.textContent })));
+  check(actionNotes.length === 5 && actionNotes.every((n) => n.rollback && n.repeat && /Safe to repeat\.|Not safe to repeat\./.test(n.text)),
+    `${label}: with no signer, the Actions tab still says how each of its five actions is undone and whether it is safe to repeat`, JSON.stringify(actionNotes.map((n) => [n.rollback, n.repeat])));
+  check(actionNotes.some((n) => n.repeat === 'unsafe' && /Cancel a scheduled restart/.test(n.text)), `${label}: Actions: the restart's note names the cancel and says not safe to repeat`);
+  const job = page.getByTestId('job-note').first();
+  await job.waitFor({ timeout: 15_000 });
+  const jn = { rollback: await job.getAttribute('data-rollback'), repeat: await job.getAttribute('data-repeat'), text: await job.innerText() };
+  check(jn.rollback === 'inverse' && jn.repeat === 'safe' && /Uninstall/.test(jn.text), `${label}: a job shows its action's rollback and repeatability`, JSON.stringify(jn));
+  const tally = page.getByTestId('job-tally').first();
+  const tt = await tally.innerText();
+  check(await tally.getAttribute('data-partial') === 'true' && /Partial/.test(tt) && /Of 3 computers: 1 succeeded, 1 failed, 1 refused by the computer\./.test(tt),
+    `${label}: a plan over three computers shows Partial and how each stands, from the computer that succeeded`, tt);
+  if (vp === 'phone') {
+    const w = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, vw: innerWidth }));
+    check(w.scroll <= w.vw + 1, `${label}: the Actions tab with notes and a tally fits 375 px with no sideways scroll`, JSON.stringify(w));
+  }
+  await themeCheck(page, theme, `${label} Actions tab notes`);
+  await cleanCheck(page, `${label} rollback and repeat displays`);
 }
 
 /**
@@ -3346,6 +3425,7 @@ async function main() {
   f.c = await seed035(f);
   f.msa = await seedMsa(f);
   f.tools = await seedTools(f);
+  f.rollbackJob = await seedRollbackJob(f);
   if (process.env.UI_HOLD === '1') {
     // Debugging only: leave the stack and fixtures up until interrupted.
     console.log(`  holding: ${WEB}  admin ${f.admin.email} / owner ${f.owner.email}  password in UI_HOLD_PW_FILE`);

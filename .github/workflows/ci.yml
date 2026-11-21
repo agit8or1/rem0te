@@ -425,6 +425,14 @@ jobs:
       - name: File transfer tests
         run: node apps/api/scripts/unit-files.mjs
 
+      # Rollback and repeatability per catalog action (0.79, §89): every one
+      # of the twelve declares both, the portal agrees with the fixture the
+      # agent's Go test reads, the catalog route and the job view serve them,
+      # the docs table says the same, and the per-computer tally and the
+      # console's words for it.
+      - name: Rollback and repeatability tests
+        run: node apps/api/scripts/unit-action-rollback.mjs
+
       # Agit8or Identity P0 (0.59): the decisions made from an identity
       # provider's claims (levels from acr corroborated by amr, the
       # organization gate, Platform Admin, step-up freshness, back-channel
