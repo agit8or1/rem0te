@@ -77,6 +77,10 @@ rules for this feature only (§14's closed catalog, "the agent runs no process" 
 - `unit-confirm-policy.mjs` and `e2e-confirm-policy.mjs` now expect exactly one key, `terminal.open`, to ask by
   default. `unit-device-tools.mjs` covers the Terminal tool; `e2e-ui.mjs` drives the panel in both themes and at
   phone width.
+- **The diagnostics lab's read-only check no longer compares BITS's start type** (`tools/lab/windows/diagnostics-lab.mjs`).
+  Windows moves it between Auto and Manual on its own: the SYSTEM run failed on #189 and again on #191 with
+  `-svc|BITS|Auto, +svc|BITS|Manual` while no check touched BITS. A change to it is now reported with the run states
+  as Windows-managed, not attributed; every other start type is still compared.
 
 ### Not yet
 
