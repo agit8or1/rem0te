@@ -88,6 +88,7 @@ const ORDER = [
   ['incident-recovery.md', 'Incident recovery', 'Security and incidents', 'What to do, in order, when you suspect a compromise.'],
   ['update-signing.md', 'Update signing', 'Security and incidents', 'The offline-signed update chain and what a compromised portal cannot do.'],
   ['SECURITY-AUDIT.md', 'Security', 'Security and incidents', 'Security review findings and how each was addressed.'],
+  ['st0r-push-contract.md', 'St0r push contract', 'Integrations and API', 'For St0r\'s developers: how St0r pushes backup status to Rem0te (contract version 1): the token, the body, limits, idempotency, errors, retries and clocks, with worked examples and a JSON Schema.'],
   ['integration-clientst0r.md', 'ClientSt0r integration', 'Integrations and API', 'Ticket analysis, the device AI summary, alert events and ticket links (contract ticket-rmm-v1).'],
   ['tactical-rmm.md', 'Tactical RMM', 'Integrations and API', 'Connecting from inside Tactical RMM: URL actions and agent matching.'],
   ['PUBLIC-API.md', 'API guide', 'Integrations and API', 'API keys, scopes and the public API with examples.'],

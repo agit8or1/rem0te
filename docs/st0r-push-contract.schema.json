@@ -1,0 +1,359 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/agit8or1/rem0te/blob/main/docs/st0r-push-contract.schema.json",
+  "title": "Rem0te St0r push, contract version 1",
+  "type": "object",
+  "properties": {
+    "v": {
+      "type": "number",
+      "const": 1,
+      "description": "The contract version. Always 1 for this contract."
+    },
+    "assets": {
+      "maxItems": 500,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "externalId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+            "description": "St0r's own stable id for the asset. The same id in a later push updates the same asset."
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9À-ɏ .,:;()/&+'#_@-]{1,200}$",
+            "description": "What people see. Letters (including Latin accents), digits, space and . , : ; ( ) / & + ' # _ @ - only."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "computer",
+              "server",
+              "virtual_machine",
+              "database",
+              "files",
+              "mailbox",
+              "other"
+            ],
+            "description": "What is protected."
+          },
+          "computer": {
+            "type": "object",
+            "properties": {
+              "rem0teId": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{8,64}$",
+                "description": "The computer's Rem0te id. Tried first."
+              },
+              "hostname": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9.-]{1,253}$",
+                "description": "The computer's hostname. Links only when exactly one active computer of the business has it (case-insensitive)."
+              }
+            },
+            "additionalProperties": false,
+            "description": "Which Rem0te computer this asset is, if St0r knows. Linked only to a computer of the token's business; anything else leaves it unlinked."
+          },
+          "jobs": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "externalId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+                  "description": "St0r's id for the job. Re-sending the same id updates the job; a finished job is never put back to running."
+                },
+                "startedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                  "description": "When the job started."
+                },
+                "finishedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "When it finished. Absent or null while running."
+                },
+                "completion": {
+                  "type": "string",
+                  "enum": [
+                    "running",
+                    "succeeded",
+                    "partial",
+                    "failed",
+                    "cancelled",
+                    "unknown"
+                  ],
+                  "description": "Did the job finish, and how. Completion only: says nothing about integrity or restore."
+                },
+                "integrity": {
+                  "default": "not_checked",
+                  "type": "string",
+                  "enum": [
+                    "not_checked",
+                    "passed",
+                    "failed"
+                  ],
+                  "description": "Did St0r verify the stored data. Separate from completion. Default not_checked; never put back to not_checked once passed or failed."
+                },
+                "integrityCheckedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "When the integrity check ran."
+                },
+                "bytes": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Bytes transferred or stored, if known."
+                },
+                "errorCode": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "A short machine code for a failure (not a message)."
+                }
+              },
+              "required": [
+                "externalId",
+                "startedAt",
+                "completion"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Recent backup jobs of this asset, at most 50."
+          },
+          "recoveryPoints": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "externalId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+                  "description": "St0r's id for the point. A drill names it."
+                },
+                "pointAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                  "description": "The moment the point restores to."
+                },
+                "location": {
+                  "default": "unknown",
+                  "type": "string",
+                  "enum": [
+                    "local",
+                    "offsite",
+                    "cloud",
+                    "unknown"
+                  ],
+                  "description": "Where the point is kept."
+                },
+                "jobExternalId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "The job that made the point. Needed for a drill of this point to verify that job."
+                }
+              },
+              "required": [
+                "externalId",
+                "pointAt"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Restorable points of this asset, at most 50."
+          },
+          "drills": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "externalId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+                  "description": "St0r's id for the drill."
+                },
+                "recoveryPointExternalId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+                  "description": "Required: the recovery point this drill restored. A drill that does not name one is refused; one naming a point Rem0te does not hold verifies nothing."
+                },
+                "recoveryPointAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "The restored point's time, if the point itself is not sent. Ignored when the named point is stored."
+                },
+                "target": {
+                  "type": "string",
+                  "enum": [
+                    "isolated_vm",
+                    "isolated_path",
+                    "sandbox",
+                    "other"
+                  ],
+                  "description": "Where it was restored to. Always isolated from production."
+                },
+                "scope": {
+                  "type": "string",
+                  "enum": [
+                    "file",
+                    "volume",
+                    "full_image",
+                    "application"
+                  ],
+                  "description": "What was restored."
+                },
+                "result": {
+                  "type": "string",
+                  "enum": [
+                    "running",
+                    "passed",
+                    "failed",
+                    "partial",
+                    "unknown"
+                  ],
+                  "description": "The drill's outcome. A finished result is never put back to running or unknown."
+                },
+                "simulated": {
+                  "type": "boolean",
+                  "description": "Required. true for a simulated drill: shown, never counted as a verified restore."
+                },
+                "validation": {
+                  "type": "string",
+                  "enum": [
+                    "sha256",
+                    "file_compare",
+                    "service_running",
+                    "boot",
+                    "manual",
+                    "none"
+                  ],
+                  "description": "How the restore was checked. \"none\" cannot pass."
+                },
+                "startedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                  "description": "When the drill started."
+                },
+                "finishedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "When it finished. Required once the result is passed, failed or partial."
+                },
+                "elapsedSeconds": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 2592000
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "How long the restore took. The only source of Rem0te's measured RTO."
+                },
+                "failureCode": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "A short machine code for a failure (not a message)."
+                }
+              },
+              "required": [
+                "externalId",
+                "recoveryPointExternalId",
+                "target",
+                "scope",
+                "result",
+                "simulated",
+                "validation",
+                "startedAt"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Restore drills of this asset, at most 20."
+          }
+        },
+        "required": [
+          "externalId",
+          "name",
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "description": "The assets this push reports on. A push is a delta: an asset left out is kept as it was. At most 500 per push; send more pushes for more."
+    }
+  },
+  "required": [
+    "v",
+    "assets"
+  ],
+  "additionalProperties": false,
+  "description": "Rem0te St0r push contract, version 1: the body of POST /api/v1/backups/push. Also enforced and not expressible here: a job with completion \"running\" has no finishedAt; a drill with result \"passed\" has a validation other than \"none\"; a drill whose result is passed, failed or partial has finishedAt; externalId is unique among the assets, and within each asset's jobs, recoveryPoints and drills; every date is RFC 3339 with an offset, no earlier than 2000-01-01 and no later than 24 hours after Rem0te's clock. The body carries no business: the token decides it. See docs/st0r-push-contract.md."
+}

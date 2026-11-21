@@ -912,7 +912,31 @@ export const backupsApi = {
   connections: (businessId?: string | null) => api.get('/backups/connections', bq(businessId)),
   connect: (body: { businessId: string; kind: 'st0r' | 'comet' | 'standin'; credential?: string }) => api.post('/backups/connections', body),
   revoke: (id: string) => api.post(`/backups/connections/${id}/revoke`),
+  /** 0.82: a new push token, shown once; the old one stops at once. May answer STEP_UP_REQUIRED (backup.connection). */
+  rotate: (id: string) => api.post(`/backups/connections/${id}/rotate`),
+  /** 0.82: link an asset to a computer by hand, mark it as no computer, or hand it back to the provider's report. */
+  link: (assetId: string, body: { link: 'manual'; endpointId: string } | { link: 'none' } | { link: 'auto' }) => api.put(`/backups/assets/${assetId}/link`, body),
 };
+
+/** Settings → Backups (0.82): GET /backups/connections. Never a token, hash or credential. */
+export type BackupCapabilityState = 'available' | 'requires_setup' | 'unsupported' | 'planned';
+export interface BackupConnectionView {
+  id: string; businessId: string; kind: string; label: string; transport: 'push' | 'pull'; enabled: boolean;
+  lastSyncAt: string | null; lastResult: string | null; lastErrorAt: string | null; lastError: string | null; tokenRotatedAt: string | null;
+  createdAt: string; revokedAt: string | null; pushTokenLast4: string | null; credentialLast4: string | null;
+  assetCount: number; linkedCount: number; lastDryRun: { at: string; valid: boolean; issues: number; warnings: number } | null;
+}
+export interface BackupSetupView {
+  connections: BackupConnectionView[];
+  providers: { kind: string; label: string; transport: 'push' | 'pull'; state: string; stateNote: string; prerequisites: string[]; limitations: string[] }[];
+  setup: {
+    url: string; dryRunUrl: string; https: boolean; contractVersion: number; addressSource: 'setting' | 'environment' | 'default';
+    headers: { name: string; value: string }[];
+    limits: { bytes: number; assets: number; jobsPerAsset: number; pointsPerAsset: number; drillsPerAsset: number; perMinute: number };
+    warning: string | null;
+  };
+  capabilities: { key: string; label: string; state: BackupCapabilityState; note: string }[] | null;
+}
 
 // Monitoring and alerts (0.29).
 export type MonitorScope = 'global' | 'business' | 'site' | 'group' | 'endpoint';

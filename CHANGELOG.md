@@ -5,6 +5,170 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.82.0] — 2026-11-21 · *Wharf*
+
+**Settings → Backups: a Platform Admin sets St0r's push up per business, step by step, and St0r's developers get a
+written contract to build to.** The owner said St0r is still being written, so St0r implements against our
+specification and nothing in Rem0te waits for it. There is still **no real St0r push**: every test uses the
+API alone.
+
+Migration 0099. No agent, signer or sudoers change, and no new confirm key: rotation names 0.81's
+`backup.connection`. Comet is still refused, and is shown as **planned**, with what it will need.
+
+### Added
+
+- **Settings → Backups** (`/settings/backups`), Platform Admin only. After picking a business, it shows five steps:
+  1. **Create the St0r connection.** The token is shown once, masked until **Reveal**, with **Copy**. Creating it
+     asks the person to confirm it is them when `backup.connection` asks.
+  2. **What to give St0r:** the push address, the token and the two headers. The address is built from *Settings →
+     General → Public address*, and the page warns when that is not HTTPS or not set.
+  3. **A test push**, with a curl example whose token stays masked until revealed. The page shows the newest test
+     push and whether it was valid.
+  4. **The real push.**
+  5. **Monitors, and linking assets.**
+
+  Below the steps:
+  - **Each connection:** its last push, last result, asset count (and how many are linked), the token's last four
+    characters, when it was rotated, and why its last push was refused. There are **Rotate** and **Revoke**
+    buttons.
+  - **Every capability in the four states** that `docs/capabilities.md` uses. The St0r push, the test push, the
+    three separate facts, linked assets and alerts are **requires setup** until done. Comet and starting a drill
+    are **planned**. Failover is **unsupported**.
+
+  **Why a Business Owner cannot use it.** 0.81 already made connections a Platform Admin's, because a push token is
+  a credential that writes a business's backup status and raises its alerts. This release keeps that.
+- **Rotate** (`POST /backups/connections/:id/rotate`). It issues a new token for the same connection, shown once,
+  and the old token stops working **at once**: there is no overlap.
+  - **Why no overlap.** A token is usually rotated because it may be known to someone else, and an overlap would be
+    a window in which it still works.
+  - **Why nothing is lost.** Pushes refused until St0r has the new token are simply sent again.
+
+  Rotation asks for fresh authentication (`backup.connection`), as creating does. It is audited with `logOrFail`
+  before the write (`BACKUP_CONNECTION_ROTATED`, with the last four characters before and after). The write is
+  conditional on the hash it read, so two rotations cannot both win.
+- **The dry run** (`POST /backups/push?dryRun=1`). It takes the same token checks, in the same order, and the same
+  schema. It writes **only one audit row** (`BACKUP_PUSH_DRY_RUN`, counts only). It writes no asset, job, point or
+  drill, and not the connection's last result. It answers `200` with:
+  - `valid`, and up to 20 issues, each with a path;
+  - what a real push would write;
+  - how each asset would link (`rem0te_id`, `hostname`, `manual`, `not_a_computer` or `none`), never which
+    computer;
+  - warnings: a drill whose recovery point Rem0te does not hold, a simulated drill, a point whose job is unknown,
+    and an asset naming a computer that matches nothing.
+
+  A `dryRun` value other than 1 or 0 is `400`.
+- **Link an asset to a computer by hand** (`PUT /backups/assets/:id/link`), in the **Computer** column of the
+  Backups page. 0.81 linked only by the provider's Rem0te id or a hostname matching exactly one computer. So an
+  asset St0r names differently, such as a renamed server or a NAS share, stayed unlinked and could raise no alert.
+  The choices:
+  - **A computer.** A report never changes it afterwards.
+  - **Not a computer.** A report never links it.
+  - **Automatic.** The report decides again.
+
+  It is scoped and audited:
+  - **The asset** must be one the person can read (`assetWhere`).
+  - **The person** must configure its business: the owner, a Platform Admin, or *Monitoring: configure* for the
+    whole business. That is the rule for RPO and RTO targets, because the link decides where a backup alert is
+    raised.
+  - **The computer** must be an active one of the asset's own business, and visible to the person.
+  - **Audit:** `BACKUP_ASSET_LINKED`, with before and after.
+
+  A Business User never sees an unlinked asset (0.81's read rule), so they cannot link one either.
+- **`docs/st0r-push-contract.md`**, contract version 1, for St0r's developers. It covers:
+  - authentication, and the exact body, with a field table for every field;
+  - the three facts kept apart: a drill names the recovery point it restored, and a simulated drill never counts;
+  - limits, idempotency, the dry run, every error code, retries with backoff, and clock and time-zone rules;
+  - worked examples, refused examples, a short message to point the St0r developers at, and a changelog.
+
+  **`docs/st0r-push-contract.schema.json`** is generated from the API's own zod schema by
+  `apps/api/scripts/gen-st0r-schema.mjs`, with only descriptions added, so it cannot say anything the API does not
+  enforce. The page is in the in-app docs bundle and `docs/README.md`.
+- **Migration 0099.** It adds:
+  - `BackupConnection.lastError`: printable ASCII, at most 300 characters, by CHECK;
+  - `lastErrorAt` and `tokenRotatedAt`, on push connections only;
+  - `BackupProtectedAsset.linkSource`, `linkedById` and `linkedAt`, CHECKed: `none` links nothing, and only `auto`
+    has no author;
+  - three audit actions;
+  - a new version of 0097's move trigger. A computer that changes business now also drops a person's link,
+    sending the asset back to automatic.
+
+### Changed
+
+- **A drill must name the recovery point it restored** (`recoveryPointExternalId` is required). 0.81 accepted a
+  drill without one, and such a drill could never verify anything. No St0r build had pushed before this, so
+  nothing that worked stops working.
+- **Re-sending is defined: a fact never moves backwards.** In 0.81 the last write won, so an older push retried
+  late could put a finished job back to `running`. Now:
+  - a finished job keeps its completion and end time;
+  - an integrity result of `passed` or `failed` is never put back to `not_checked`;
+  - a finished drill report that goes back to `running` or `unknown` is skipped.
+
+  A finished job can still be corrected to another finished completion. The push answers `kept` with the count held
+  back, and its `contractVersion`. The rules are `mergeJob` and `drillRegresses` in `backups/model.ts`.
+- **A refused push keeps its reason.** The parse message (paths and rules, never the feed) is stored on the
+  connection and shown on Settings → Backups.
+- **The Backups page no longer creates or revokes connections.** For a Platform Admin, it lists them and points to
+  Settings → Backups, so a credential is managed in one place.
+
+### Fixed
+
+- **A request body over 1 MB answered `500 INTERNAL_ERROR`, on every route.** Express's body parser throws its own
+  error (`entity.too.large`), which the global filter did not recognise. It now answers `413 PAYLOAD_TOO_LARGE`. A
+  body that is not JSON (`entity.parse.failed`) now answers `400 BAD_REQUEST`, where it was also a 500. Both were
+  found by the new e2e suite while proving the contract's limits.
+- **A rate-limited request was coded `INTERNAL_ERROR`.** The throttler's `429` carries a string response, and the
+  filter set a code only for an object. Every string-response `HttpException` now gets the code for its status
+  (`TOO_MANY_REQUESTS` for 429). The `Retry-After-main` header was already sent.
+
+### Tests
+
+- **`apps/api/scripts/unit-backup-setup.mjs`** (57 checks, in CI). It checks:
+  - every example in the contract document against the API's own `parseFeed`: the valid ones accepted, the invalid
+    ones refused;
+  - the dry-run issue the document shows, against the API's real wording;
+  - that every schema field has a row in a field table, and every closed-list value appears;
+  - the limits and the version;
+  - the JSON Schema file, regenerated byte for byte;
+  - the idempotency rules, rotation, the push address and its warnings, the four capability states, and
+    `errorLine` against 0099's CHECK.
+- **`apps/api/scripts/e2e-backup-setup.mjs`** (63 checks, ports 4061 and 4062, in `run-e2e.sh`), on a scratch API
+  and database. It proves:
+  - Platform Admin only, the push address, headers, limits and states;
+  - create with fresh authentication on `ask`, and the token shown once and never listed;
+  - the dry run: the same 401s, valid and invalid bodies, link previews and warnings, and nothing written but its
+    audit row;
+  - a refused push's reason kept;
+  - identical and out-of-order re-sends;
+  - rotation: fresh authentication, the old token refused at once (push and dry run), the new one accepted, and the
+    audit;
+  - linking by hand: refused for `backups:view` alone, for another business's asset and for another business's
+    computer; strict; done by the owner and by *Monitoring: configure*; audited; surviving reports; `none` and
+    `auto`; dropped by the 0099 trigger on a move;
+  - another business's token linking only its own computers;
+  - revoke ending the push and the dry run;
+  - `413` and `429`;
+  - no token in any audit row or the API's output.
+- `unit-backups.mjs` (0.81) passes with drills that name their point. `e2e-backups.mjs` (0.81, 62 checks) passes
+  unchanged.
+- **`apps/web/scripts/e2e-ui.mjs`** opens Settings → Backups at both widths and in both themes. It checks the push
+  address, the masked curl, the steps, the connection's counts, Rotate and Revoke, the four states and the Comet
+  card. It also checks that the Backups page's link control offers the business's computers, *not a computer* and
+  *automatic*, and that there is no sideways scroll at 375 px.
+- **§91 is extended.** It now covers:
+  - the dry run's branch (only `preview` and one audit row, before any write) and `preview` writing nothing;
+  - rotate's guard, step-up, `logOrFail` and conditional write;
+  - `linkAsset`'s scope, and `setLink` writing only the link columns;
+  - a person's link outliving reports;
+  - the required drill point and the never-backwards rules;
+  - the contract and schema in the docs bundle and CI;
+  - 0099's CHECKs and trigger.
+
+### Deploying
+
+This release has a schema change, so take the two extra steps in CLAUDE.md: `prisma migrate deploy`, then
+`prisma generate` at the target. The API's dependencies do not change. Nothing changes for a business until a
+Platform Admin opens Settings → Backups.
+
 ## [0.81.1] — 2026-11-21 · *Vault*
 
 **Design only: Rem0te becomes its own MDM.** On 2026-11-21 the owner decided *"I don't have an MDM, I want our
@@ -59,7 +223,6 @@ or tablet was used.
   planned rows for the wizard, Apple and Android enrollment, ADE and Apple BYOD.
 
 ---
-
 ## [0.81.0] — 2026-11-21 · *Vault*
 
 **Backups: Rem0te shows what a backup provider reports, read-only, and never calls a successful backup a verified

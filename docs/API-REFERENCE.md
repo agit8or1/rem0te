@@ -3,7 +3,7 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **674** of them across
+integration, under `/api/integration/v1`). There are **676** of them across
 **104** controllers.
 
 For request and response shapes, worked examples and error codes, see
@@ -220,6 +220,7 @@ Admins and Business Owners are not confined by it; see
 |---|---|---|---|
 | `GET` | `/api/v1/backups` | signed in | — |
 | `GET` | `/api/v1/backups/assets/:id` | signed in | — |
+| `PUT` | `/api/v1/backups/assets/:id/link` | signed in, throttled | — |
 | `PUT` | `/api/v1/backups/objectives` | signed in, throttled | — |
 
 ## Backups backupsconnections
@@ -231,6 +232,7 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/backups/connections` | Platform Admin | — |
 | `POST` | `/api/v1/backups/connections` | Platform Admin, throttled | — |
 | `POST` | `/api/v1/backups/connections/:id/revoke` | Platform Admin | — |
+| `POST` | `/api/v1/backups/connections/:id/rotate` | Platform Admin, throttled | — |
 
 ## Backups backupspush
 

@@ -203,6 +203,8 @@ export const NAV: NavSection[] = [
       // 0.48: the AI provider is the operator's; a Business Owner may set their business's own PSA.
       { href: '/settings/ai', label: 'AI', icon: Sparkles, show: (c) => c.isPlatformAdmin },
       { href: '/settings/warranty', label: 'Warranty', icon: BadgeCheck, show: (c) => c.isPlatformAdmin },
+      // 0.82: St0r's push, set up per business (a push token is a credential: Platform Admin, as in 0.81).
+      { href: '/settings/backups', label: 'Backups', icon: Archive, show: (c) => c.isPlatformAdmin },
       { href: '/settings/psa', label: 'PSA / ticketing', icon: Ticket, show: (c) => c.isPlatformAdmin || (c.isBusinessOwner && !c.technician) },
       { href: '/admin/security', label: 'Security', icon: Shield, show: (c) => c.isPlatformAdmin },
       { href: '/admin/status', label: 'System status', icon: Activity, show: (c) => c.isPlatformAdmin },

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { backupsApi, businessesApi } from '@/lib/api-client';
+import { backupsApi, businessesApi, endpointsApi } from '@/lib/api-client';
 import { usePermissions, CAP } from '@/lib/auth';
 import { PageHeader } from '@/components/common/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -12,7 +12,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Definition, Empty, Figure, Refused, Section, Table, ago, duration } from '@/components/reports/report-kit';
 import { apiError } from '@/components/security-controls/shared';
-import { reauthSuffix, useAsks } from '@/lib/confirm-policy';
 
 /**
  * Backups (0.81 Vault, docs/backups.md): what a backup provider reported,
@@ -34,6 +33,8 @@ type State = {
 };
 type Asset = {
   id: string; name: string; type: string; business: { id: string; name: string }; computer: { id: string; name: string } | null; provider: string;
+  /** 0.82: who decides the computer — the provider's report, or a person. */
+  linkSource: 'auto' | 'manual' | 'none'; linkedAt: string | null;
   providerLastSyncAt: string | null; state: State; latestPoint: { at: string; location: string } | null;
   failedDrills: { id: string; at: string; result: string; scope: string; target: string; failureCode: string | null }[]; simulatedDrills: number;
 };
@@ -129,7 +130,7 @@ export default function BackupsPage() {
                     empty="No assets."
                     rows={d.assets.map((a) => [
                       <span key="n" className="block min-w-[10rem]" data-asset={a.id}><span className="font-medium">{a.name}</span><span className="block text-xs text-muted-foreground">{a.type.replace('_', ' ')} · {a.business.name}</span></span>,
-                      a.computer ? <Link key="c" href={`/endpoints/${a.computer.id}`} className="hover:underline">{a.computer.name}</Link> : <span key="c" className="text-muted-foreground">Not linked</span>,
+                      <LinkCell key="c" a={a} may={d.may.configure} />,
                       <span key="b" className={BACKUP[a.state.backup].tone} data-backup={a.state.backup}>{BACKUP[a.state.backup].label}{a.state.lastSuccessAt ? <span className="block text-xs text-muted-foreground">success {ago(a.state.lastSuccessAt)}</span> : null}</span>,
                       a.state.lastJob ? <span key="j" className={tone(a.state.lastJob.completion)} data-completion={a.state.lastJob.completion}>{COMPLETION[a.state.lastJob.completion] ?? a.state.lastJob.completion}<span className="block text-xs text-muted-foreground">{ago(a.state.lastJob.finishedAt ?? a.state.lastJob.startedAt)}{a.state.lastJob.errorCode ? ` · ${a.state.lastJob.errorCode}` : ''}</span></span> : '—',
                       a.state.lastJob ? <span key="i" className={tone(a.state.lastJob.integrity)} data-integrity={a.state.lastJob.integrity}>{INTEGRITY[a.state.lastJob.integrity] ?? a.state.lastJob.integrity}</span> : '—',
@@ -209,19 +210,61 @@ function Objectives({ d }: { d: Overview }) {
   );
 }
 
-/** Platform Admin: connect St0r (a push token, shown once) or revoke a connection. */
-function Connections({ d, biz }: { d: Overview; biz: string }) {
+/**
+ * The Computer column (0.82): the linked computer, and — for someone who
+ * configures the business (owner, Platform Admin, monitoring:configure) — a
+ * small control to link the asset by hand when the provider's name for it
+ * matches no computer, to mark it as no computer, or to hand it back to the
+ * provider's report. The API scopes it to the asset's own business and a
+ * computer the person can see, and audits it (BACKUP_ASSET_LINKED).
+ */
+function LinkCell({ a, may }: { a: Asset; may: boolean }) {
   const qc = useQueryClient();
-  const ask = useAsks('backup.connection');
-  const [token, setToken] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
-  const refresh = () => void qc.invalidateQueries({ queryKey: ['backups'] });
-  const connect = useMutation({
-    mutationFn: () => backupsApi.connect({ businessId: biz, kind: 'st0r' }).then((r) => r.data.data as { pushToken?: string }),
-    onSuccess: (r) => { setToken(r.pushToken ?? null); setNote(null); refresh(); },
-    onError: (e) => setNote(apiError(e).message),
+  const [open, setOpen] = useState(false);
+  const [pick, setPick] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const computers = useQuery({
+    queryKey: ['backup-link-computers', a.business.id],
+    queryFn: () => endpointsApi.list({ businessId: a.business.id, limit: '200' })
+      .then((r) => ((r.data?.data?.endpoints ?? []) as { id: string; name: string; hostname?: string | null; status?: string }[]).filter((c) => c.status !== 'ARCHIVED')),
+    enabled: open, retry: false,
   });
-  const revoke = useMutation({ mutationFn: (id: string) => backupsApi.revoke(id), onSuccess: () => { setToken(null); refresh(); }, onError: (e) => setNote(apiError(e).message) });
+  const save = useMutation({
+    mutationFn: () => backupsApi.link(a.id, pick === '__none' ? { link: 'none' } : pick === '__auto' ? { link: 'auto' } : { link: 'manual', endpointId: pick }),
+    onSuccess: () => { setOpen(false); setErr(null); void qc.invalidateQueries({ queryKey: ['backups'] }); },
+    onError: (e) => setErr(apiError(e).message),
+  });
+  const how = a.linkSource === 'manual' ? 'linked by hand' : a.linkSource === 'none' ? 'marked as no computer' : null;
+  return (
+    <span className="block min-w-[8rem]" data-link-source={a.linkSource}>
+      {a.computer ? <Link href={`/endpoints/${a.computer.id}`} className="hover:underline">{a.computer.name}</Link> : <span className="text-muted-foreground">Not linked</span>}
+      {how && <span className="block text-xs text-muted-foreground">{how}</span>}
+      {may && !open && <button type="button" className="block text-xs underline" onClick={() => { setOpen(true); setPick(a.computer?.id ?? ''); }} data-testid="backups-link-open">{a.computer ? 'Change' : 'Link to computer'}</button>}
+      {may && open && (
+        <span className="mt-1 flex flex-col gap-1" data-testid="backups-link-form">
+          <select aria-label={`Computer for ${a.name}`} className="h-8 max-w-[14rem] rounded-md border bg-background px-1 text-xs" value={pick} onChange={(e) => setPick(e.target.value)} data-testid="backups-link-select">
+            <option value="">Pick a computer…</option>
+            {(computers.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}{c.hostname && c.hostname !== c.name ? ` (${c.hostname})` : ''}</option>)}
+            <option value="__none">Not a computer (never link)</option>
+            <option value="__auto">Automatic (from the provider)</option>
+          </select>
+          <span className="flex gap-1">
+            <Button size="sm" className="h-7 px-2 text-xs" disabled={!pick || save.isPending} onClick={() => save.mutate()} data-testid="backups-link-save">Save</Button>
+            <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => { setOpen(false); setErr(null); }}>Cancel</Button>
+          </span>
+          {err && <span className="text-xs text-destructive">{err}</span>}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Platform Admin: the connections' status, and a pointer to Settings → Backups
+ * (0.82), where St0r is set up and its token tested, rotated or revoked. One
+ * place to manage a credential, not two.
+ */
+function Connections({ d, biz }: { d: Overview; biz: string }) {
   const live = d.connections;
   return (
     <Section title="Provider connections" note="Platform Admin">
@@ -231,21 +274,13 @@ function Connections({ d, biz }: { d: Overview; biz: string }) {
           <div key={c.id} className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{c.label}</span>
             <span className="text-xs text-muted-foreground">{c.pushTokenLast4 ? `token …${c.pushTokenLast4}` : c.credentialLast4 ? `credential …${c.credentialLast4}` : ''} · last report {c.lastSyncAt ? ago(c.lastSyncAt) : 'never'}{c.lastResult && c.lastResult !== 'OK' ? ` · ${c.lastResult}` : ''}</span>
-            <Button size="sm" variant="outline" className="ml-auto" disabled={revoke.isPending} onClick={() => { if (window.confirm(`Revoke the ${c.label} connection? Its token stops working at once; what it reported is kept.`)) revoke.mutate(c.id); }}>Revoke</Button>
           </div>
         ))}
-        {biz ? (
-          !live.some((c) => c.kind === 'st0r') && <Button size="sm" disabled={connect.isPending} onClick={() => connect.mutate()} data-testid="backups-connect-st0r">{`Connect St0r${reauthSuffix(ask)}`}</Button>
-        ) : <p className="text-xs text-muted-foreground">Pick a business above to connect a provider.</p>}
-        {token && (
-          <div className="space-y-1 rounded-md border border-amber-500/50 bg-amber-500/10 p-3" data-testid="backups-token">
-            <p className="font-medium">St0r push token — shown once</p>
-            <code className="block break-all text-xs">{token}</code>
-            <p className="text-xs">Configure St0r with this token and this portal&apos;s address. Rem0te keeps only its SHA-256; if it is lost, revoke the connection and make a new one.</p>
-          </div>
-        )}
-        {note && <p className="text-destructive">{note}</p>}
-        <p className="text-xs text-muted-foreground">Comet is planned (it needs a read-only Comet API user and is read by Rem0te, not pushed). Neither provider can be told to back up, restore or fail over from here.</p>
+        <p className="text-xs text-muted-foreground">
+          Connect St0r, see what to give it, test its push, and rotate or revoke its token in{' '}
+          <Link href="/settings/backups" className="underline" data-testid="backups-settings-link">Settings → Backups</Link>. Comet is planned.
+          Neither provider can be told to back up, restore or fail over from here.
+        </p>
       </div>
     </Section>
   );
