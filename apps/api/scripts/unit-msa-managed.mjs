@@ -37,8 +37,21 @@ const go = (f) => readFileSync(join(ROOT, 'tools', 'windows-installer', f), 'utf
   const poller = go('internal/msa/enforce/poller.go');
   const goEvents = [...new Set([...poller.matchAll(/Event: "([a-z_]+)"/g)].map((x) => x[1]))].sort();
   check('every event the agent reports is one the portal accepts, and every one is reported', J(goEvents) === J([...m.REPORT_EVENTS].sort()), J(goEvents));
-  check('the managed keys are the preflight\'s eleven', J([...m.MANAGED_KEYS]) === J([...pf.PREFLIGHT_KEYS]) && m.MANAGED_KEYS.length === 11);
-  check('a failed readback may name the password, nothing else', J([...m.REPORT_KEYS]) === J([...pf.PREFLIGHT_KEYS, 'password']));
+  // 0.78.1 (F1): the preflight's eleven, then the six permissions no grant turns on.
+  const LOCKED = ['enable-terminal', 'enable-camera', 'enable-remote-printer', 'enable-block-input', 'enable-privacy-mode', 'enable-record-session'];
+  check('the managed keys are the preflight\'s eleven, then the six locked permissions',
+    J([...m.MANAGED_KEYS]) === J([...pf.PREFLIGHT_KEYS, ...LOCKED]) && pf.PREFLIGHT_KEYS.length === 11 && J([...m.LOCKED_KEYS]) === J(LOCKED));
+  const goLocked = [...(/var Locked = \[\]string\{([^}]*)\}/.exec(go('internal/msa/enforce/args.go'))?.[1] ?? '').matchAll(/"([a-z-]+)"/g)].map((x) => x[1]);
+  check('the agent locks the same six, in the same order (enforce.Locked)', J(goLocked) === J(LOCKED), J(goLocked));
+  check('a failed readback may name the password, nothing else', J([...m.REPORT_KEYS]) === J([...pf.PREFLIGHT_KEYS, ...LOCKED, 'password']));
+  check('0098 takes exactly the report keys', (() => {
+    const sql = readFileSync(join(ROOT, 'apps', 'api', 'prisma', 'migrations', '0098_msa_locked_keys', 'migration.sql'), 'utf8');
+    const lists = [...sql.matchAll(/ARRAY\[([^\]]*)\]::TEXT\[\]/g)].map((x) => [...x[1].matchAll(/'([a-z-]+)'/g)].map((y) => y[1]));
+    return lists.length === 2 && lists.every((l) => J(l) === J([...m.REPORT_KEYS])) && (sql.match(/cardinality\("failedKeys"\) <= 18/g) ?? []).length === 2;
+  })());
+  check('the access modes the agent writes are view and custom, never full',
+    J([...m.MANAGED_ACCESS_MODES]) === J(['view', 'custom'])
+      && /"access-mode":\s+\{"view": true, "custom": true\},/.test(go('internal/msa/enforce/args.go')));
   // 0.73: control with clipboard, file transfer and audio; never a tunnel or a remote restart.
   check('the agent\'s compiled ceiling is control with clipboard, files and audio, never tunnel or restart',
     /var Ceiling = grant\.Ceiling\{Mode: "control", Permissions: grant\.Permissions\{Clipboard: true, Files: true, Audio: true\}\}/.test(enf) && !/Tunnel: true|Restart: true/.test(enf));

@@ -14,7 +14,10 @@ import (
 
 // Ceiling is the most a managed computer allows (0.73; 0.72's was
 // view-only): interactive control with clipboard, file transfer and audio,
-// never a TCP tunnel and never a remote restart. Compiled in, not taken from
+// never a TCP tunnel and never a remote restart, and never a permission the
+// grant format does not name (Locked: terminal, camera, remote printer,
+// block-input, privacy mode, recording), which every grant sets to N. From
+// 0.78.1 RustDesk enforces it, not only stores it (F1). Compiled in, not taken from
 // the portal: a portal-supplied (or portal-signed) ceiling would be the
 // portal asking itself, so widening it takes a signed agent release.
 //
@@ -141,6 +144,14 @@ func (e *Enforcer) ReadAll(ctx context.Context) (map[string]string, error) {
 }
 
 // Desired is what a verified grant asks of RustDesk (§3.3), for every key.
+//
+// Control is access-mode custom, never full (0.78.1, F1): RustDesk's Flutter
+// builds read full as every permission on before they look at a single
+// enable-* key, so under 0.73–0.78's full the clipboard, file-transfer,
+// tunnel and restart values were written, read back and ignored, and every
+// option the agent did not write (terminal, camera, remote printer,
+// block-input, privacy mode, recording) was on. Custom makes RustDesk read
+// each key, and every Locked key is N on every grant.
 func Desired(g *grant.Grant) map[string]string {
 	yn := func(b bool) string {
 		if b {
@@ -150,13 +161,13 @@ func Desired(g *grant.Grant) map[string]string {
 	}
 	access := "view"
 	if g.Mode == "control" {
-		access = "full"
+		access = "custom"
 	}
 	approve := "password"
 	if g.Consent == "required" {
 		approve = "click"
 	}
-	return map[string]string{
+	d := map[string]string{
 		"verification-method":  "use-permanent-password",
 		"access-mode":          access,
 		"enable-keyboard":      yn(g.Mode == "control"),
@@ -171,13 +182,74 @@ func Desired(g *grant.Grant) map[string]string {
 		"allow-auto-disconnect":   "Y",
 		"auto-disconnect-timeout": strconv.Itoa(g.IdleMinutes),
 	}
+	// No grant turns these on, whatever its mode or permissions.
+	for _, k := range Locked {
+		d[k] = "N"
+	}
+	return d
+}
+
+// Allowed is, permission by permission, what a grant may have on the
+// controlled computer: keyboard only in control; clipboard, file transfer and
+// audio only in control, only when the grant names them and the Ceiling
+// allows them; every other permission never.
+func Allowed(g *grant.Grant) map[string]bool {
+	control := g.Mode == "control" && Ceiling.Mode == "control"
+	out := map[string]bool{}
+	for _, k := range Permissions {
+		out[k] = false
+	}
+	out["enable-keyboard"] = control
+	out["enable-clipboard"] = control && g.Permissions.Clipboard && Ceiling.Permissions.Clipboard
+	out["enable-file-transfer"] = control && g.Permissions.Files && Ceiling.Permissions.Files
+	out["enable-audio"] = control && g.Permissions.Audio && Ceiling.Permissions.Audio
+	return out
+}
+
+// Beyond lists the permissions RustDesk would grant under values (Effective)
+// that the grant may not have (Allowed), in Permissions order.
+func Beyond(g *grant.Grant, values map[string]string) []string {
+	eff, ok := Effective(values), Allowed(g)
+	var over []string
+	for _, k := range Permissions {
+		if eff[k] && !ok[k] {
+			over = append(over, k)
+		}
+	}
+	return over
+}
+
+// Normalise brings a desired map persisted by an older agent (0.73–0.78,
+// before F1) up to this one: access-mode full becomes custom, and every
+// Locked key it never named is N. The hourly readback then checks — and
+// corrects — the managed values this agent would have set. nil stays nil.
+func Normalise(applied map[string]string) map[string]string {
+	if applied == nil {
+		return nil
+	}
+	out := make(map[string]string, len(applied)+len(Locked))
+	for k, v := range applied {
+		out[k] = v
+	}
+	if refused("access-mode", out["access-mode"]) {
+		out["access-mode"] = "custom"
+	}
+	for _, k := range Locked {
+		if _, ok := out[k]; !ok {
+			out[k] = "N"
+		}
+	}
+	return out
 }
 
 // order: the verification method first, so the moment anything changes
-// only the permanent password works; the password last of all.
+// only the permanent password works; then access-mode, then every
+// permission, the Locked ones included; the password last of all.
 var order = []string{
 	"verification-method", "access-mode", "enable-keyboard", "enable-clipboard", "enable-file-transfer", "enable-audio",
-	"enable-tunnel", "enable-remote-restart", "approve-mode", "allow-auto-disconnect", "auto-disconnect-timeout",
+	"enable-tunnel", "enable-remote-restart",
+	"enable-terminal", "enable-camera", "enable-remote-printer", "enable-block-input", "enable-privacy-mode", "enable-record-session",
+	"approve-mode", "allow-auto-disconnect", "auto-disconnect-timeout",
 }
 
 // Outcome of Apply: OK, or a code and the keys that disagreed.
@@ -234,6 +306,12 @@ func (e *Enforcer) SetPassword(ctx context.Context, pw string) bool {
 // at once (a password nobody is told) and nothing weaker is substituted.
 // The caller has saved the previous values first.
 func (e *Enforcer) Apply(ctx context.Context, g *grant.Grant) Outcome {
+	// Before anything is written: what RustDesk would make of the desired
+	// values must be nothing the grant and the Ceiling do not both allow.
+	if over := Beyond(g, Desired(g)); len(over) > 0 {
+		_ = e.EndSession(ctx)
+		return Outcome{Code: ReadbackMismatch, Keys: over}
+	}
 	if bad := e.Set(ctx, Desired(g)); len(bad) > 0 {
 		_ = e.EndSession(ctx)
 		return Outcome{Code: ReadbackMismatch, Keys: bad}
@@ -298,15 +376,21 @@ func (e *Enforcer) EndSession(ctx context.Context) error {
 }
 
 // Restore puts every saved value back and reads it back; the keys that
-// disagree are returned.
+// disagree are returned. A saved access-mode full goes back as RustDesk's
+// default (RestoreValue). A Locked key missing from a file an older agent
+// saved was never changed by it, so there is nothing to put back.
 func (e *Enforcer) Restore(ctx context.Context, s *Saved) []string {
 	var bad []string
 	for _, k := range Keys {
 		v, ok := s.Values[k]
+		if !ok && isLocked(k) {
+			continue
+		}
 		if !ok {
 			bad = append(bad, k)
 			continue
 		}
+		v = RestoreValue(k, v)
 		if r := e.call(ctx, RestoreArgs(k, v)); !r.ok() {
 			bad = append(bad, k)
 			continue

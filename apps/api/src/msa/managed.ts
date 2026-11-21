@@ -5,7 +5,8 @@
  * §3.11). Pure: zod and two pure sibling modules only.
  *
  * The agent's side is tools/windows-installer/internal/msa/enforce: the same
- * key list (msa/preflight.ts PREFLIGHT_KEYS, Go msa.Keys), the same ceiling,
+ * key list (msa/preflight.ts PREFLIGHT_KEYS then LOCKED_KEYS, Go
+ * enforce.Keys = msa.Keys then enforce.Locked), the same ceiling,
  * the same report events and outcome codes. check-security-invariants §82
  * compares them.
  */
@@ -40,10 +41,37 @@ export const MANAGED_CEILING: { mode: GrantMode; permissions: GrantPermissions }
   permissions: { clipboard: true, files: true, audio: true, tunnel: false, restart: false },
 };
 
-/** The keys the agent sets (and saves first, and restores on rollback): exactly the preflight's eleven. */
-export const MANAGED_KEYS = PREFLIGHT_KEYS;
+/**
+ * 0.78.1 (F1): RustDesk's remaining permission options, which no grant ever
+ * turns on. The agent (enforce.Locked, the same list in the same order) sets
+ * each to N on every grant, view and control alike, and reads it back.
+ * RustDesk counts an option it was never given as on, so before 0.78.1 —
+ * when a control grant was also access-mode `full`, which RustDesk reads as
+ * every permission on — all of these were on in a managed control session.
+ */
+export const LOCKED_KEYS = [
+  'enable-terminal',
+  'enable-camera',
+  'enable-remote-printer',
+  'enable-block-input',
+  'enable-privacy-mode',
+  'enable-record-session',
+] as const;
+
+/**
+ * The keys the agent sets (and saves first, and restores on rollback): the
+ * preflight's eleven, then LOCKED_KEYS (Go enforce.Keys). The preflight still
+ * reads only its eleven.
+ */
+export const MANAGED_KEYS = [...PREFLIGHT_KEYS, ...LOCKED_KEYS] as const;
 /** A failed readback may also name the password (it cannot be read back; RustDesk did not say Done). */
-export const REPORT_KEYS = [...PREFLIGHT_KEYS, 'password'] as const;
+export const REPORT_KEYS = [...MANAGED_KEYS, 'password'] as const;
+
+/**
+ * The access modes the agent ever writes: `view` for a view-only grant and
+ * `custom` for control (each enable-* key read). Never `full` (F1).
+ */
+export const MANAGED_ACCESS_MODES = ['view', 'custom'] as const;
 
 /** What the agent reports, on POST /msa/agent/report with its device secret. */
 export const REPORT_EVENTS = [
