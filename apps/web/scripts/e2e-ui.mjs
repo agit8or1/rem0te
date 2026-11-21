@@ -1752,6 +1752,7 @@ async function combo(browser, f, vp, theme) {
     await toolsPanel(page, f, vp, theme, label);
     await diagnosticsPaletteUi(page, f, vp, theme, label);
     await terminalPanel(page, f, vp, theme, label);
+    await filesPanel(page, f, vp, theme, label);
     if (theme === 'light') await mainPagesSweep(page, f, vp, label);
   } finally { await ctx.close(); }
   await apiKeys(browser, f, vp, theme, label);
@@ -2300,8 +2301,8 @@ async function seedTools(f) {
   };
   return {
     D,
-    // 0.77.0: the first signed agent that runs a terminal.
-    signed: await mk('SIGNED', { updateChannel: 'signed', signedSeenAt: new Date(), agentActions: ACTIONS, agentVersion: '0.77.0' }),
+    // 0.78.0: the first signed agent that transfers files (0.77.0 ran the first terminal).
+    signed: await mk('SIGNED', { updateChannel: 'signed', signedSeenAt: new Date(), agentActions: ACTIONS, agentVersion: '0.78.0' }),
     standard: await mk('STANDARD', {}),
     linux: await mk('LINUX', { platform: 'Linux', osVersion: 'Ubuntu 24.04', agentVersion: '0.33.0' }),
     mac: await mk('MAC', { platform: 'macOS', osVersion: 'macOS 15.1', agentVersion: '0.33.0' }),
@@ -2360,6 +2361,85 @@ async function terminalPanel(page, f, vp, theme, label) {
   await prisma.terminalSession.deleteMany({ where: { endpointId: ep.id } });
 }
 
+/**
+ * The Files tab (0.78) on the signed computer, as the Platform Admin. It
+ * checks:
+ *   - the SYSTEM warning;
+ *   - fetching a file with a reason (and the confirmation when it asks):
+ *     the progress card shows the direction and waits for the computer, then
+ *     Cancel ends it;
+ *   - sending a file the same way, after the browser has hashed it;
+ *   - on the standard computer, the tab says what is needed.
+ * No agent runs here, so nothing moves: e2e-files.mjs drives the agent's
+ * worker. Every width and theme, no sideways scroll, no console error.
+ */
+async function filesPanel(page, f, vp, theme, label) {
+  const ep = f.tools.signed;
+  await prisma.fileTransfer.deleteMany({ where: { endpointId: ep.id } });
+  await go(page, `/endpoints/${ep.id}?tab=files`);
+  await page.getByTestId('files-tab').waitFor({ timeout: 15_000 });
+  const warn = await page.getByTestId('files-identity').innerText();
+  check(/SYSTEM — full control of this computer/.test(warn), `${label}: the Files tab says SYSTEM — full control of this computer`, warn.slice(0, 200));
+  const confirmIfAsked = async () => {
+    const dlg = stepUpDialog(page);
+    if (await dlg.waitFor({ timeout: 3_000 }).then(() => true).catch(() => false)) {
+      check(/transfer a file/.test(await dlg.innerText()), `${label}: a transfer asks to confirm it's you, and says why`, await dlg.innerText().catch(() => ''));
+      await dlg.locator('#stepup-value').fill(PW);
+      await dlg.getByRole('button', { name: 'Confirm' }).click();
+      await dlg.waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {});
+    }
+  };
+  await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
+
+  // Fetch.
+  await page.getByTestId('files-download-path').fill('C:\\Windows\\Logs\\CBS\\CBS.log');
+  await page.getByTestId('files-download-reason').fill(`UI check ${vp} ${theme}`);
+  await page.getByTestId('files-download-button').click();
+  await confirmIfAsked();
+  const card = page.locator('[data-testid="files-progress"][data-direction="download"]');
+  await page.locator('[data-testid="files-progress"][data-direction="download"][data-state="pending"]').waitFor({ timeout: 15_000 }).catch(() => {});
+  const down = await prisma.fileTransfer.findFirst({ where: { endpointId: ep.id, direction: 'from_computer' }, orderBy: { createdAt: 'desc' } });
+  check(await card.getAttribute('data-state') === 'pending' && down?.state === 'pending' && down.technicianId === f.admin.id && down.path === 'C:\\Windows\\Logs\\CBS\\CBS.log',
+    `${label}: a fetch is asked for and waits for the computer`, `${await card.getAttribute('data-state').catch(() => null)} ${down?.state}`);
+  check(/next check-in/.test(await card.getByTestId('files-progress-state').innerText()) && /Fetching from the computer/.test(await card.innerText()),
+    `${label}: the progress card says the direction and that it starts at the next check-in`);
+
+  // Send.
+  await page.getByTestId('files-upload-file').setInputFiles({ name: 'ui-check.txt', mimeType: 'text/plain', buffer: Buffer.from(`ui check ${vp} ${theme}\n`) });
+  const suggested = await page.getByTestId('files-upload-path').inputValue();
+  check(suggested === 'C:\\Windows\\Temp\\ui-check.txt', `${label}: choosing a file suggests an absolute local path`, suggested);
+  await page.getByTestId('files-upload-reason').fill(`UI check ${vp} ${theme}`);
+  await page.getByTestId('files-upload-button').click();
+  await confirmIfAsked();
+  const upCard = page.locator('[data-testid="files-progress"][data-direction="upload"]');
+  await upCard.waitFor({ timeout: 15_000 }).catch(() => {});
+  await page.waitForFunction(() => document.querySelector('[data-testid="files-progress"][data-direction="upload"]')?.getAttribute('data-state') === 'pending', null, { timeout: 15_000 }).catch(() => {});
+  const up = await prisma.fileTransfer.findFirst({ where: { endpointId: ep.id, direction: 'to_computer' }, orderBy: { createdAt: 'desc' } });
+  const body = Buffer.from(`ui check ${vp} ${theme}\n`);
+  check(up?.state === 'pending' && up.sha256 === createHash('sha256').update(body).digest('hex') && Number(up.size) === body.length,
+    `${label}: a send declares the size and the SHA-256 the browser computed`, `${up?.state} ${up?.sha256}`);
+  check(/Sending to the computer/.test(await upCard.innerText().catch(() => '')), `${label}: the send shows its direction`);
+  await themeCheck(page, theme, `${label} Files tab`);
+  if (vp === 'phone') await noSideScroll(page, `${label} Files tab`);
+  await shot(page, `${label}-files`);
+
+  // Cancel both.
+  for (const [c, id, what] of [[card, down?.id, 'fetch'], [upCard, up?.id, 'send']]) {
+    await c.getByTestId('files-cancel').click().catch(() => {});
+    await page.waitForFunction((d) => document.querySelector(`[data-testid="files-progress"][data-direction="${d}"]`)?.getAttribute('data-state') === 'cancelled', what === 'fetch' ? 'download' : 'upload', { timeout: 10_000 }).catch(() => {});
+    const row = await prisma.fileTransfer.findUnique({ where: { id: id ?? '' } });
+    check(row?.state === 'cancelled' && row.endReason === 'cancelled' && await c.getAttribute('data-state') === 'cancelled', `${label}: Cancel ends the ${what}, and the card says so`, `${row?.state} ${row?.endReason}`);
+  }
+  check((await page.getByTestId('files-row').count()) >= 2, `${label}: both appear under Recent transfers`);
+  await cleanCheck(page, `${label} Files tab`);
+  await go(page, `/endpoints/${f.tools.standard.id}?tab=files`);
+  await page.getByTestId('files-unsupported').waitFor({ timeout: 10_000 }).catch(() => {});
+  check(/full \(signed\) agent/.test(await page.getByTestId('files-unsupported').innerText().catch(() => '')) && await page.getByTestId('files-upload').count() === 0,
+    `${label}: on the standard agent the Files tab says what is needed and offers nothing to send`);
+  await cleanCheck(page, `${label} Files tab on the standard agent`);
+  await prisma.fileTransfer.deleteMany({ where: { endpointId: ep.id } });
+}
+
 /** The Tools panel on one computer: open it, and return each tool's state. */
 async function openTools(page, id) {
   if (!new URL(page.url()).pathname.endsWith(`/endpoints/${id}`)) await go(page, `/endpoints/${id}`);
@@ -2400,6 +2480,9 @@ function expectedTools(kind) {
   for (const t of ACTION_TOOLS) e[t] = kind === 'linux' || kind === 'mac' ? 'unsupported' : 'not_configured';
   // 0.77: the terminal needs the signed agent 0.77.0 (the standard ones need a newer agent before offline is looked at); this suite is a Platform Admin.
   e.terminal = kind === 'linux' || kind === 'mac' ? 'unsupported' : kind === 'signed' ? 'available' : 'needs_newer_agent';
+  // 0.78: file transfer, the same rules from the signed agent 0.78.0.
+  e['files-upload'] = e.terminal;
+  e['files-download'] = e.terminal;
   return e;
 }
 
@@ -2423,7 +2506,7 @@ async function toolsPanel(page, f, vp, theme, label) {
     check(wrong.length === 0 && Object.keys(got).length === Object.keys(want).length, `${label}: Tools on the ${kind} computer: all ${Object.keys(want).length} tools in their expected state`, wrong.join('; ') || JSON.stringify(got));
     if (kind === 'signed') {
       const groups = await page.getByTestId('tools-panel').locator('section h3').allInnerTexts();
-      check(groups.join('|').toLowerCase() === 'diagnostics|terminal|powershell / scripts|services & processes|software|windows updates|networking|security|maintenance',
+      check(groups.join('|').toLowerCase() === 'diagnostics|terminal and files|powershell / scripts|services & processes|software|windows updates|networking|security|maintenance',
         `${label}: the nine groups, in order`, groups.join('|'));
       const term = await page.getByTestId('tool-terminal').innerText();
       check(/SYSTEM/.test(term) && /full control/.test(term), `${label}: the terminal tool says SYSTEM, full control`, term.slice(0, 200));

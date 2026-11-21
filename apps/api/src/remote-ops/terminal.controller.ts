@@ -126,4 +126,37 @@ export class RemoteAgentController {
   async output(@Body() body: unknown) {
     return { success: true, data: await this.agent.terminalOutput(body) };
   }
+
+  // File transfer (0.78): the same strict parse and device check first.
+  @Post('files/pull')
+  @Public()
+  @RateLimit(1200)
+  @HttpCode(HttpStatus.OK)
+  async filePull(@Body() body: unknown) {
+    return { success: true, data: await this.agent.filePull(body) };
+  }
+
+  @Post('files/begin')
+  @Public()
+  @RateLimit(60)
+  @HttpCode(HttpStatus.OK)
+  async fileBegin(@Body() body: unknown) {
+    return { success: true, data: await this.agent.fileBegin(body) };
+  }
+
+  @Post('files/push')
+  @Public()
+  @RateLimit(1200)
+  @HttpCode(HttpStatus.OK)
+  async filePush(@Body() body: unknown) {
+    return { success: true, data: await this.agent.filePush(body) };
+  }
+
+  @Post('files/finish')
+  @Public()
+  @RateLimit(60)
+  @HttpCode(HttpStatus.OK)
+  async fileFinish(@Body() body: unknown) {
+    return { success: true, data: await this.agent.fileFinish(body) };
+  }
 }

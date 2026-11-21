@@ -35,10 +35,27 @@ type Instruction struct {
 	Input    []InFrame `json:"input,omitempty"`
 }
 
+// FileJob is what one poll says about one file transfer (0.78): start it, or
+// end it. Path, size and hash are the portal's; the worker checks the path
+// itself (CheckPath, then the file system) and the hash at its own end.
+type FileJob struct {
+	ID        string `json:"id"`
+	Op        string `json:"op"`
+	Direction string `json:"direction,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Overwrite bool   `json:"overwrite,omitempty"`
+	Size      *int64 `json:"size,omitempty"`
+	SHA256    string `json:"sha256,omitempty"`
+	MaxBytes  int64  `json:"maxBytes,omitempty"`
+	NotAfter  string `json:"notAfter,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
 // PollAnswer is one poll's answer.
 type PollAnswer struct {
 	EndpointID string        `json:"endpointId"`
 	Terminals  []Instruction `json:"terminals"`
+	Files      []FileJob     `json:"files"`
 	Superseded bool          `json:"superseded"`
 }
 
@@ -73,8 +90,30 @@ type OutputReply struct {
 // /remote/agent/terminal/output. The device secret and RustDesk ID are the
 // implementation's (HTTPPortal).
 type Portal interface {
-	Poll(ctx context.Context, held []Held, wait bool) (PollAnswer, error)
+	Poll(ctx context.Context, held []Held, files []string, wait bool) (PollAnswer, error)
 	Output(ctx context.Context, p OutputPost) (OutputReply, error)
+}
+
+// FileReply is the portal's answer to a file call. End means the transfer is
+// over at the portal (cancelled, expired, paused, refused) and the worker
+// stops and cleans up; Wait means try the same call again shortly.
+type FileReply struct {
+	End       bool   `json:"end"`
+	Reason    string `json:"reason"`
+	Wait      bool   `json:"wait"`
+	Done      bool   `json:"done"`
+	Duplicate bool   `json:"duplicate"`
+	Seq       int    `json:"seq"`
+	Data      string `json:"data"`
+	SHA256    string `json:"sha256"`
+}
+
+// FilePortal is the worker's side of /remote/agent/files/{pull,begin,push,finish}.
+type FilePortal interface {
+	FilePull(ctx context.Context, id string, seq int) (FileReply, error)
+	FileBegin(ctx context.Context, id string, size int64, sha string) (FileReply, error)
+	FilePush(ctx context.Context, id string, seq int, data, sha string) (FileReply, error)
+	FileFinish(ctx context.Context, id string, ok bool, size int64, sha, code string) (FileReply, error)
 }
 
 // Proc is a running shell and everything it started.

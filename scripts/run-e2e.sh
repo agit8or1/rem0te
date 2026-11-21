@@ -94,8 +94,8 @@ export RESTART_WINDOW_SWEEP=off
 # e2e-sso-identity turns it on, fast, for its own API.
 export SSO_SESSION_SWEEP=off
 # 0.77: the terminal sweep ends expired terminals and prunes opt-in
-# transcripts in the whole database. e2e-terminal turns it on, fast, for its
-# own API.
+# transcripts in the whole database (0.78: and ends stalled or expired file
+# transfers). e2e-terminal and e2e-files turn it on, fast, for their own API.
 export TERMINAL_SWEEP=off
 export ENCRYPTION_KEY="${ENCRYPTION_KEY:-$(openssl rand -hex 32)}"
 export SEED_ADMIN_EMAIL="${SEED_ADMIN_EMAIL:-e2e-admin@example.com}"
@@ -149,6 +149,9 @@ else printf '%-22s SKIPPED (RELEASE_BIN / ACTION_SIM not available)\n' restart-w
 # The background terminal (0.77) drives the agent's real remote worker (REMOTE_SIM, built from tools/windows-installer/cmd/rem0te-remote-sim).
 if [[ -n "${REMOTE_SIM:-}" ]]; then run terminal node scripts/e2e-terminal.mjs
 else printf '%-22s SKIPPED (REMOTE_SIM not set)\n' terminal; skipped+=(terminal); fi
+# File transfer (0.78) drives the same worker, with -files-root a temporary directory.
+if [[ -n "${REMOTE_SIM:-}" ]]; then run files node scripts/e2e-files.mjs
+else printf '%-22s SKIPPED (REMOTE_SIM not set)\n' files; skipped+=(files); fi
 
 # Signed releases on one host (0.37) run deploy/release/ in a temporary prefix
 # and build the agent with Go themselves: they need Go (GO, go on PATH, or

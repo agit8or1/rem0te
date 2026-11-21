@@ -38,7 +38,7 @@ type labPortal struct {
 	posts   []OutputPost
 }
 
-func (f *labPortal) Poll(ctx context.Context, _ []Held, _ bool) (PollAnswer, error) {
+func (f *labPortal) Poll(ctx context.Context, _ []Held, _ []string, _ bool) (PollAnswer, error) {
 	select {
 	case a := <-f.answers:
 		return a, nil
@@ -225,6 +225,9 @@ func TestLabTerminalSystemChild(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(systemDir, "go")); err != nil {
 		t.Skip("not the SYSTEM child")
 	}
+	// File transfer first (0.78): result.json is what the outer test waits for.
+	fb, _ := json.Marshal(exerciseFiles("system"))
+	_ = os.WriteFile(filepath.Join(systemDir, "files.json"), fb, 0o644)
 	b, _ := json.Marshal(exercise())
 	_ = os.WriteFile(filepath.Join(systemDir, "result.json"), b, 0o644)
 }
@@ -273,4 +276,16 @@ func TestLabTerminalAsSystem(t *testing.T) {
 		t.Errorf("the shell ran as %q, not SYSTEM", r.Whoami)
 	}
 	check(t, n, "SYSTEM (scheduled task, session 0)", r)
+
+	// File transfer as SYSTEM (0.78), from the same run.
+	nf := labevidence.Track(t, "agent/files/system")
+	fb, err := os.ReadFile(filepath.Join(systemDir, "files.json"))
+	if err != nil {
+		t.Fatal("no file-transfer result from the SYSTEM run")
+	}
+	var fr fileLabResult
+	if err := json.Unmarshal(fb, &fr); err != nil {
+		t.Fatal(err)
+	}
+	checkFiles(t, nf, "SYSTEM (scheduled task, session 0)", fr)
 }

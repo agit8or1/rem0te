@@ -48,3 +48,34 @@ var Shells = []string{"cmd", "powershell"}
 
 // AgentRefusals: what the worker may say instead of starting a shell.
 var AgentRefusals = []string{"shell_unavailable", "start_failed", "too_many", "bad_request"}
+
+// File transfer (0.78 Courier). The same numbers as the portal's limits.ts;
+// §87 checks they agree.
+const (
+	// FileChunkBytes: one chunk, both directions.
+	FileChunkBytes = 512 * 1024
+	// FileTransferMax: a transfer's hard limit, whatever the portal says.
+	FileTransferMax = 60 * time.Minute
+	// FileMaxBytes: no transfer is larger, whatever the portal says (2 GiB).
+	FileMaxBytes = 2048 * 1024 * 1024
+	// FilePathMin / FilePathMax: a path's length, in characters.
+	FilePathMin = 4
+	FilePathMax = 1024
+	// FileLiveMax: transfers this worker runs at once (the portal allows two a computer).
+	FileLiveMax = 2
+)
+
+// AgentFileErrors: what the worker may report instead of completing; the
+// portal's AGENT_FILE_ERRORS, in the same order.
+var AgentFileErrors = []string{
+	"exists", "not_found", "not_a_file", "no_folder", "reparse_point", "path_refused", "path_changed",
+	"too_large", "hash_mismatch", "size_mismatch", "file_changed", "write_failed", "read_failed",
+}
+
+// ReservedNames: Windows' device names, refused as any path component with or
+// without an extension; the portal's RESERVED_NAMES.
+var ReservedNames = []string{
+	"CON", "PRN", "AUX", "NUL",
+	"COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+	"LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+}

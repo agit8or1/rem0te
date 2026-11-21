@@ -5,7 +5,8 @@ import { EnrollmentService } from '../enrollment/enrollment.service';
 import { runsSignedAgent } from '../common/agent-identity';
 import { isWindowsPlatform } from '../common/platform';
 import { assertAssigned } from '../common/unassigned';
-import { AGENT_REFUSALS, REMOTE_POLL_HOLD_MS, REMOTE_POLL_RECHECK_MS, SESSION_ID_RE } from './limits';
+import { AGENT_FILE_ERRORS, AGENT_REFUSALS, FILE_CHUNK_BYTES, REMOTE_POLL_HOLD_MS, REMOTE_POLL_RECHECK_MS, SESSION_ID_RE, SHA256_RE } from './limits';
+import { FileTransferService } from './file-transfer.service';
 import { RemoteWakeService } from './remote-wake.service';
 import { TerminalService } from './terminal.service';
 
@@ -17,6 +18,19 @@ const PollBody = z.strictObject({
   agentSecret: SECRET,
   wait: z.boolean().optional(),
   terminals: z.array(z.strictObject({ id: z.string().regex(SESSION_ID_RE), inAcked: z.number().int().min(0) })).max(8).optional(),
+  // 0.78: the transfers the worker is running.
+  files: z.array(z.string().regex(SESSION_ID_RE)).max(8).optional(),
+});
+
+const TID = z.string().regex(SESSION_ID_RE);
+const SHA = z.string().regex(SHA256_RE);
+const CHUNK_B64 = z.string().min(1).max(Math.ceil(FILE_CHUNK_BYTES / 3) * 4);
+const PullBody = z.strictObject({ rustdeskId: RID, agentSecret: SECRET, id: TID, seq: z.number().int().min(1).max(1_000_000) });
+const BeginBody = z.strictObject({ rustdeskId: RID, agentSecret: SECRET, id: TID, size: z.number().int().min(0).max(2 ** 31), sha256: SHA });
+const PushBody = z.strictObject({ rustdeskId: RID, agentSecret: SECRET, id: TID, seq: z.number().int().min(1).max(1_000_000), data: CHUNK_B64, sha256: SHA });
+const FinishBody = z.strictObject({
+  rustdeskId: RID, agentSecret: SECRET, id: TID, ok: z.boolean(),
+  size: z.number().int().min(0).max(2 ** 31).optional(), sha256: SHA.optional(), error: z.enum(AGENT_FILE_ERRORS).optional(),
 });
 
 const OutputBody = z.strictObject({
@@ -55,6 +69,7 @@ export class RemoteAgentService {
     private readonly enrollment: EnrollmentService,
     private readonly wake: RemoteWakeService,
     private readonly terminals: TerminalService,
+    private readonly files: FileTransferService,
   ) {}
 
   private async device(rustdeskId: string, agentSecret: string, reason: string) {
@@ -77,13 +92,17 @@ export class RemoteAgentService {
     const dto = p.data;
     const ep = await this.device(dto.rustdeskId, dto.agentSecret, 'remote_poll_unauthenticated');
     const held = dto.terminals ?? [];
+    const heldFiles = dto.files ?? [];
     let out = await this.terminals.forAgent(ep, held);
-    if (!out.work && dto.wait !== false) {
-      const why = await this.wake.hold(ep.id, this.holdMs, REMOTE_POLL_RECHECK_MS, () => this.terminals.agentHasWork(ep.id, held));
-      if (why === 'superseded') return { endpointId: ep.id, terminals: [], superseded: true, holdMs: 0 };
+    let files = await this.files.forAgent(ep, heldFiles);
+    if (!out.work && !files.work && dto.wait !== false) {
+      const why = await this.wake.hold(ep.id, this.holdMs, REMOTE_POLL_RECHECK_MS,
+        async () => (await this.terminals.agentHasWork(ep.id, held)) || (await this.files.agentHasWork(ep.id, heldFiles)));
+      if (why === 'superseded') return { endpointId: ep.id, terminals: [], files: [], superseded: true, holdMs: 0 };
       out = await this.terminals.forAgent(ep, held);
+      files = await this.files.forAgent(ep, heldFiles);
     }
-    return { endpointId: ep.id, terminals: out.terminals, holdMs: this.holdMs };
+    return { endpointId: ep.id, terminals: out.terminals, files: files.files, holdMs: this.holdMs };
   }
 
   async terminalOutput(raw: unknown) {
@@ -92,5 +111,35 @@ export class RemoteAgentService {
     const dto = p.data;
     const ep = await this.device(dto.rustdeskId, dto.agentSecret, 'remote_output_unauthenticated');
     return this.terminals.fromAgent(ep, { sessionId: dto.sessionId, started: dto.started, frames: dto.frames, exited: dto.exited ?? null, refused: dto.refused });
+  }
+
+  // ── File transfer (0.78): the same device check, then the transfer must be this computer's ──
+
+  async filePull(raw: unknown) {
+    const p = PullBody.safeParse(raw ?? {});
+    if (!p.success) throw new BadRequestException({ code: 'REMOTE_FILE_INVALID', message: 'The request is not valid.' });
+    const ep = await this.device(p.data.rustdeskId, p.data.agentSecret, 'remote_file_unauthenticated');
+    return this.files.pull(ep, { id: p.data.id, seq: p.data.seq });
+  }
+
+  async fileBegin(raw: unknown) {
+    const p = BeginBody.safeParse(raw ?? {});
+    if (!p.success) throw new BadRequestException({ code: 'REMOTE_FILE_INVALID', message: 'The request is not valid.' });
+    const ep = await this.device(p.data.rustdeskId, p.data.agentSecret, 'remote_file_unauthenticated');
+    return this.files.begin(ep, { id: p.data.id, size: p.data.size, sha256: p.data.sha256 });
+  }
+
+  async filePush(raw: unknown) {
+    const p = PushBody.safeParse(raw ?? {});
+    if (!p.success) throw new BadRequestException({ code: 'REMOTE_FILE_INVALID', message: 'The request is not valid.' });
+    const ep = await this.device(p.data.rustdeskId, p.data.agentSecret, 'remote_file_unauthenticated');
+    return this.files.push(ep, { id: p.data.id, seq: p.data.seq, data: p.data.data, sha256: p.data.sha256 });
+  }
+
+  async fileFinish(raw: unknown) {
+    const p = FinishBody.safeParse(raw ?? {});
+    if (!p.success) throw new BadRequestException({ code: 'REMOTE_FILE_INVALID', message: 'The request is not valid.' });
+    const ep = await this.device(p.data.rustdeskId, p.data.agentSecret, 'remote_file_unauthenticated');
+    return this.files.finish(ep, { id: p.data.id, ok: p.data.ok, size: p.data.size, sha256: p.data.sha256, error: p.data.error });
   }
 }

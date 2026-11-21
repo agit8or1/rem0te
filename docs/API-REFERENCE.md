@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **650** of them across
-**99** controllers.
+integration, under `/api/integration/v1`). There are **662** of them across
+**100** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -481,6 +481,21 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/enrollment/tokens` | signed in | `COMPUTERS_ADD` |
 | `DELETE` | `/api/v1/enrollment/tokens/:id` | signed in | `COMPUTERS_REMOVE` |
 | `GET` | `/api/v1/enrollment/tokens/:id/status` | signed in | `COMPUTERS_VIEW` |
+
+## File transfer
+
+`apps/api/src/remote-ops/file-transfer.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/endpoints/:id/files` | signed in | `COMPUTERS_VIEW` |
+| `GET` | `/api/v1/endpoints/:id/files/:tid` | signed in, throttled | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/endpoints/:id/files/:tid/cancel` | signed in, throttled | `COMPUTERS_VIEW` |
+| `POST` | `/api/v1/endpoints/:id/files/:tid/chunks` | signed in, throttled | `COMPUTERS_FILES_UPLOAD` |
+| `GET` | `/api/v1/endpoints/:id/files/:tid/chunks/:seq` | signed in, throttled | `COMPUTERS_FILES_DOWNLOAD` |
+| `POST` | `/api/v1/endpoints/:id/files/:tid/received` | signed in, throttled | `COMPUTERS_FILES_DOWNLOAD` |
+| `POST` | `/api/v1/endpoints/:id/files/downloads` | signed in, throttled | `COMPUTERS_FILES_DOWNLOAD` |
+| `POST` | `/api/v1/endpoints/:id/files/uploads` | signed in, throttled | `COMPUTERS_FILES_UPLOAD` |
 
 ## Health
 
@@ -1222,6 +1237,10 @@ Admins and Business Owners are not confined by it; see
 
 | Method | Path | Access | Capability |
 |---|---|---|---|
+| `POST` | `/api/v1/remote/agent/files/begin` | public, throttled | — |
+| `POST` | `/api/v1/remote/agent/files/finish` | public, throttled | — |
+| `POST` | `/api/v1/remote/agent/files/pull` | public, throttled | — |
+| `POST` | `/api/v1/remote/agent/files/push` | public, throttled | — |
 | `POST` | `/api/v1/remote/agent/poll` | public, throttled | — |
 | `POST` | `/api/v1/remote/agent/terminal/output` | public, throttled | — |
 

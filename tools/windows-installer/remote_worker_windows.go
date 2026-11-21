@@ -2,7 +2,8 @@
 
 package main
 
-// `rem0te-agent.exe remote-worker` (0.77.0 Conduit): the background terminal.
+// `rem0te-agent.exe remote-worker` (0.77.0 Conduit): the background terminal,
+// and (0.78.0 Courier) background file transfer.
 // Started detached by the signed heartbeat ONLY when the portal answered
 // remotePoll: true (a terminal is waiting on this computer). It polls the
 // pinned portal outbound with this computer's device secret — it opens no
@@ -12,7 +13,8 @@ package main
 // The decisions are internal/remote's; the exec site is
 // internal/remote.SystemSpawner (cmd.exe or powershell.exe by absolute
 // System32 path, in a Job Object). What is typed and printed passes through
-// this process and is never written to the log.
+// this process and is never written to the log, and neither is a file's
+// content or path.
 
 import (
 	"context"
@@ -64,9 +66,13 @@ func cmdRemoteWorker(args []string) int {
 		return 4
 	}
 	o := agent.Options{PortalHost: portal, Root: embeddedRoot, Paths: paths}
+	portalClient := &remote.HTTPPortal{Base: o.APIBase(), RID: rid, Secret: secret, HC: &http.Client{}}
 	w := &remote.Worker{
-		P: &remote.HTTPPortal{Base: o.APIBase(), RID: rid, Secret: secret, HC: &http.Client{}},
+		P: portalClient,
 		S: remote.SystemSpawner{},
+		// File transfer (0.78): the same client, local drives only.
+		F:  portalClient,
+		FS: remote.WinFS{},
 		Logf: func(f string, a ...any) {
 			fmt.Fprintf(logf, "  "+f+"\n", a...)
 		},

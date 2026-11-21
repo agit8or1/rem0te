@@ -44,9 +44,9 @@ const ALL_ACTIONS = ['windows.service.start@1', 'windows.update.install@1', 'win
   'windows.service.control@1', 'windows.process.stop@1'];
 const base = () => ({
   diagAllowed: null, diagNeedsNewer: null,
-  agentKind: 'signed', readOnlyOs: null, agentVersion: '0.77.0', agentActions: [...ALL_ACTIONS], status: 'ACTIVE', pooled: false, agentBound: true,
+  agentKind: 'signed', readOnlyOs: null, agentVersion: '0.78.0', agentActions: [...ALL_ACTIONS], status: 'ACTIVE', pooled: false, agentBound: true,
   connectivity: 'online', connectivityText: 'Online', signer: { configured: true, approval: 'signed' }, paused: [],
-  perms: { view: true, eventLogs: true, terminal: true, requestLow: true, requestHigh: true }, actionRisk: { 'windows.service.start': 'low' }, restartPending: false,
+  perms: { view: true, eventLogs: true, terminal: true, filesUpload: true, filesDownload: true, requestLow: true, requestHigh: true }, actionRisk: { 'windows.service.start': 'low' }, restartPending: false,
 });
 const tools = T.toolCatalog(EP);
 const kindOf = (t) => t.need.kind;
@@ -70,7 +70,7 @@ function scenario(name, f, expect) {
   const ids = tools.map((t) => t.id);
   check('tool ids are unique', new Set(ids).size === ids.length, j(ids));
   for (const g of T.TOOL_GROUPS) check(`group ${g.id} has at least one tool`, tools.some((t) => t.group === g.id));
-  check('nine groups, in the directive order (0.77: Terminal after Diagnostics)', j(T.TOOL_GROUPS.map((g) => g.label)) === j(['Diagnostics', 'Terminal', 'PowerShell / Scripts', 'Services & Processes', 'Software', 'Windows Updates', 'Networking', 'Security', 'Maintenance']));
+  check('nine groups, in the directive order (0.77: Terminal after Diagnostics; 0.78: and files)', j(T.TOOL_GROUPS.map((g) => g.label)) === j(['Diagnostics', 'Terminal and files', 'PowerShell / Scripts', 'Services & Processes', 'Software', 'Windows Updates', 'Networking', 'Security', 'Maintenance']));
   check('every tool belongs to a known group', tools.every((t) => T.TOOL_GROUPS.some((g) => g.id === t.group)));
   const later = tools.filter((t) => kindOf(t) === 'later').map((t) => t.id);
   check('only one tool is "coming later" (flush DNS / renew DHCP); 0.76 replaced the security-posture placeholder with its checks', j(later) === j(['flush-dns']), j(later));
@@ -124,7 +124,9 @@ function scenario(name, f, expect) {
 
 // ── Scenarios: every tool in every state ────────────────────────────────────
 const isAction = (t) => kindOf(t) === 'action';
-const isTerm = (t) => kindOf(t) === 'terminal';
+// The terminal (0.77) and file transfer (0.78) follow the same rules.
+const isTerm = (t) => kindOf(t) === 'terminal' || kindOf(t) === 'files';
+const isTerminalOnly = (t) => kindOf(t) === 'terminal';
 const later = (t) => kindOf(t) === 'later';
 const palette = (t) => kindOf(t) === 'diagnostic' && t.need.minAgent === '0.76.0';
 
@@ -201,7 +203,7 @@ for (const c of ['offline', 'agent_silent']) {
   const gh = scenario('low-risk requests only', h, (t) => (later(t) ? 'coming_later' : t.id === 'spooler-start' ? 'needs_approval' : isAction(t) ? 'not_permitted' : 'available'));
   check('low-risk only: says higher-risk', /higher-risk/.test(gh['restart-schedule'].reason), gh['restart-schedule'].reason);
   const tn = base(); tn.perms.terminal = false;
-  const gt = scenario('no terminal capability', tn, (t) => (later(t) ? 'coming_later' : isTerm(t) ? 'not_permitted' : isAction(t) ? 'needs_approval' : 'available'));
+  const gt = scenario('no terminal capability', tn, (t) => (later(t) ? 'coming_later' : isTerminalOnly(t) ? 'not_permitted' : isAction(t) ? 'needs_approval' : 'available'));
   check('no terminal capability: says only a Platform Admin, and SYSTEM', /Platform Admin/.test(gt['terminal'].reason) && /SYSTEM/.test(gt['terminal'].reason), gt['terminal'].reason);
   const n = base(); n.perms.requestLow = false; n.perms.requestHigh = false;
   scenario('no requests', n, (t) => (later(t) ? 'coming_later' : isAction(t) ? 'not_permitted' : 'available'));
@@ -223,10 +225,10 @@ for (const c of ['offline', 'agent_silent']) {
   const p = base(); p.status = 'PENDING_ENROLLMENT';
   scenario('not enrolled', p, (t) => (later(t) ? 'coming_later' : kindOf(t) === 'server' ? 'available' : 'inactive'));
   const pool = base(); pool.pooled = true;
-  const gp = scenario('pooled', pool, (t) => (later(t) ? 'coming_later' : ['action', 'diagnostic', 'terminal'].includes(kindOf(t)) ? 'inactive' : 'available'));
+  const gp = scenario('pooled', pool, (t) => (later(t) ? 'coming_later' : ['action', 'diagnostic', 'terminal', 'files'].includes(kindOf(t)) ? 'inactive' : 'available'));
   check('pooled: says adopt it first', /unassigned pool/.test(gp['disk-space'].reason));
   const u = base(); u.agentBound = false;
-  scenario('unbound', u, (t) => (later(t) ? 'coming_later' : ['diagnostic', 'terminal'].includes(kindOf(t)) ? 'inactive' : isAction(t) ? 'needs_approval' : 'available'));
+  scenario('unbound', u, (t) => (later(t) ? 'coming_later' : ['diagnostic', 'terminal', 'files'].includes(kindOf(t)) ? 'inactive' : isAction(t) ? 'needs_approval' : 'available'));
   const unk = base(); unk.agentBound = null;
   scenario('agentBound not read', unk, (t) => (later(t) ? 'coming_later' : isAction(t) ? 'needs_approval' : 'available'));
 }
@@ -262,7 +264,7 @@ for (const c of ['offline', 'agent_silent']) {
 // ── The terminal (0.77) ─────────────────────────────────────────────────────
 {
   const t = tools.find((x) => x.id === 'terminal');
-  check('one terminal tool, in the Terminal group, opening the Terminal tab', !!t && t.group === 'remote' && j(t.target) === j({ kind: 'tab', tab: 'terminal' }) && tools.filter(isTerm).length === 1, j(t));
+  check('one terminal tool, in the Terminal group, opening the Terminal tab', !!t && t.group === 'remote' && j(t.target) === j({ kind: 'tab', tab: 'terminal' }) && tools.filter(isTerminalOnly).length === 1, j(t));
   check('its description says SYSTEM, full control, and no screen sharing', /SYSTEM/.test(t.description) && /full control/.test(t.description) && /no screen sharing/.test(t.description));
   check('it needs agent 0.77.0, the API\'s TERMINAL_MIN_AGENT', t.need.minAgent === '0.77.0' && /TERMINAL_MIN_AGENT = '0\.77\.0'/.test(readFileSync(join(API, 'src', 'remote-ops', 'limits.ts'), 'utf8')));
   const old = base(); old.agentVersion = '0.76.9';
@@ -276,6 +278,31 @@ for (const c of ['offline', 'agent_silent']) {
   check('offline: says a terminal needs a reporting computer', /reporting/.test(states(off)['terminal'].reason), states(off)['terminal'].reason);
   const ctl = readFileSync(join(API, 'src', 'remote-ops', 'terminal.controller.ts'), 'utf8');
   check('the tab it opens is backed by the API\'s terminal routes', /@Controller\('endpoints\/:id\/terminal'\)/.test(ctl));
+}
+
+// ── File transfer (0.78) ────────────────────────────────────────────────────
+{
+  const up = tools.find((x) => x.id === 'files-upload');
+  const down = tools.find((x) => x.id === 'files-download');
+  check('two file tools, upload and download, in the Terminal and files group, opening the Files tab',
+    !!up && !!down && [up, down].every((t) => t.group === 'remote' && j(t.target) === j({ kind: 'tab', tab: 'files' })) && up.need.dir === 'upload' && down.need.dir === 'download'
+      && tools.filter((t) => kindOf(t) === 'files').length === 2, j([up, down]));
+  check('both say SYSTEM and SHA-256', [up, down].every((t) => /SYSTEM/.test(t.description) && /SHA-256/.test(t.description)));
+  check('they need agent 0.78.0, the API\'s FILES_MIN_AGENT', [up, down].every((t) => t.need.minAgent === '0.78.0') && /FILES_MIN_AGENT = '0\.78\.0'/.test(readFileSync(join(API, 'src', 'remote-ops', 'limits.ts'), 'utf8')));
+  const old = base(); old.agentVersion = '0.77.0';
+  const go = states(old);
+  check('a signed agent 0.77.0: the terminal is available, file transfer needs a newer agent',
+    go['terminal'].state === 'available' && go['files-upload'].state === 'needs_newer_agent' && /0\.78\.0/.test(go['files-upload'].reason) && go['files-download'].state === 'needs_newer_agent');
+  const nu = base(); nu.perms.filesUpload = false;
+  const gu = states(nu);
+  check('upload and download are separate permissions', gu['files-upload'].state === 'not_permitted' && /Platform Admin/.test(gu['files-upload'].reason) && gu['files-download'].state === 'available');
+  const nd = base(); nd.perms.filesDownload = false;
+  check('…both ways round', states(nd)['files-download'].state === 'not_permitted' && states(nd)['files-upload'].state === 'available');
+  const r = base(); r.paused = ['remote'];
+  check('a remote pause stops file transfer, and says so', states(r)['files-upload'].state === 'contained' && /file transfer/.test(states(r)['files-upload'].reason));
+  const off = base(); off.connectivity = 'offline'; off.connectivityText = 'Offline';
+  check('offline: says a transfer needs a reporting computer', /reporting/.test(states(off)['files-download'].reason));
+  check('the tab it opens is backed by the API\'s file routes', /@Controller\('endpoints\/:id\/files'\)/.test(readFileSync(join(API, 'src', 'remote-ops', 'file-transfer.controller.ts'), 'utf8')));
 }
 
 check('every state is reached by some scenario', T.TOOL_STATES.every((s) => reached.has(s)), `missing: ${T.TOOL_STATES.filter((s) => !reached.has(s)).join(', ')}`);

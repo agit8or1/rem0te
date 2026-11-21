@@ -49,7 +49,9 @@ type Catalog = { configured: boolean; approval: 'direct' | 'signed' | null; acti
 type BannerPause = { scope: 'global' | 'business'; businessId?: string | null; kinds: string[] };
 
 /** The reads, only while the panel is open, and the facts the pure module decides from. */
-export function useToolFacts(endpointId: string, ep: Record<string, unknown>, patches: Patches | undefined, perms: { view: boolean; eventLogs: boolean; terminal: boolean }, enabled: boolean) {
+type ToolPerms = { view: boolean; eventLogs: boolean; terminal: boolean; filesUpload: boolean; filesDownload: boolean };
+
+export function useToolFacts(endpointId: string, ep: Record<string, unknown>, patches: Patches | undefined, perms: ToolPerms, enabled: boolean) {
   const { data: user } = useCurrentUser();
   const on = enabled && perms.view;
   // The Actions tab's own read and key (endpoint-actions.tsx), with the approval mode.
@@ -105,6 +107,8 @@ export function useToolFacts(endpointId: string, ep: Record<string, unknown>, pa
       view: perms.view,
       eventLogs: perms.eventLogs,
       terminal: perms.terminal,
+      filesUpload: perms.filesUpload,
+      filesDownload: perms.filesDownload,
       requestLow: mayRequestActions(u, endpointId, deviceClass, 'low'),
       requestHigh: mayRequestActions(u, endpointId, deviceClass, 'high'),
     },
@@ -120,7 +124,7 @@ export function ToolsPanel({
   endpointId: string;
   ep: Record<string, unknown>;
   patches: Patches | undefined;
-  perms: { view: boolean; eventLogs: boolean; terminal: boolean };
+  perms: ToolPerms;
   open: boolean;
   onOpenChange: (o: boolean) => void;
   /** Opens the tool's flow: a tab (with its action, check or log) or a page. */

@@ -14,7 +14,12 @@
 //
 //	rem0te-remote-sim -api http://127.0.0.1:PORT/api/v1 -rustdesk-id ID -secret S
 //	    [-sh /bin/sh] [-idle-exit 60s] [-max-session 60m] [-idle-timeout 15m]
-//	    [-disconnect-kill 90s] [-log FILE]
+//	    [-disconnect-kill 90s] [-log FILE] [-files-root DIR]
+//
+// File transfer (0.78) runs the worker's real code against -files-root: a
+// Windows path C:\a\b is DIR/C/a/b, and a reparse point is a symlink. On
+// Windows the path is used as it is (WinFS) and a reparse point is
+// FILE_ATTRIBUTE_REPARSE_POINT.
 //
 // It exits as the worker does: when it has had nothing to do for -idle-exit,
 // or the portal refuses it. Loopback http only: it refuses any other portal.
@@ -44,6 +49,7 @@ func main() {
 	idleTimeout := flag.Duration("idle-timeout", remote.IdleTimeout, "the worker's own idle limit (test knob)")
 	disconnect := flag.Duration("disconnect-kill", remote.DisconnectKill, "end every session after the portal is unreachable this long")
 	logPath := flag.String("log", "", "append the worker's log here")
+	filesRoot := flag.String("files-root", "", "file transfer: a Windows path C:\\a\\b is <files-root>/C/a/b (empty: transfers are refused)")
 	flag.Parse()
 
 	u, err := url.Parse(*api)
@@ -65,8 +71,15 @@ func main() {
 		defer f.Close()
 		logw = f
 	}
+	portal := &remote.HTTPPortal{Base: *api, RID: *rid, Secret: *secret, HC: &http.Client{}}
+	var fs remote.FileSystem
+	if *filesRoot != "" {
+		fs = remote.RootFS{Root: *filesRoot}
+	}
 	w := &remote.Worker{
-		P:              &remote.HTTPPortal{Base: *api, RID: *rid, Secret: *secret, HC: &http.Client{}},
+		P:              portal,
+		F:              portal,
+		FS:             fs,
 		S:              remote.SystemSpawner{Shells: map[string][]string{"cmd": {*sh}, "powershell": {*sh}}},
 		IdleExit:       *idleExit,
 		MaxSession:     *maxSession,

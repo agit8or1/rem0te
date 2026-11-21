@@ -1937,6 +1937,62 @@ worker's own code against `/bin/sh` — simulation, not Windows). Unit:
 `whoami`, the tree killed on end and on expiry). **It has run only on
 Windows Server in the lab**, never on a desktop or the fleet.
 
+§87 (0.78) is background file transfer (`docs/file-transfer.md`). **It
+extends §86's reversal to files, at the owner's request**: the agent writes
+and reads, as SYSTEM, a path a Platform Admin typed. It is the first time the
+agent takes a path from the portal. Nothing else is relaxed, and it travels
+over §86's worker and long-poll (no new exec site, no listener).
+
+- **Who.** Two platform-only capabilities, `computers:files_upload` and
+  `computers:files_download` (`PLATFORM_CAP`, never `CAP`), for the same
+  reason as `computers:terminal`. Only the technician who asked moves bytes
+  (`mine()`: their own transfer, in that direction).
+- **Asking**, in order:
+  1. scope with the direction's capability;
+  2. `checkPath`, a reason (3–500), and for a send the size within the
+     business's `fileMaxMb` (default 100, CHECK 1–2048) and the SHA-256;
+  3. `assertFresh` naming `files.transfer` (default `off`);
+  4. `fileRefusal`: the pool, Windows + `runsSignedAgent`, a device secret,
+     agent ≥ 0.78.0, a `remote` pause, reporting, two live per computer;
+  5. `FILE_TRANSFER_REQUESTED` with `logOrFail`, then the row.
+- **The path rule** is one fixture, `internal/remote/testdata/file-paths.json`,
+  asserted by Go's `CheckPath` and the portal's `checkPath`. It allows only a
+  drive-letter absolute path with backslashes, and refuses UNC, device, `..`,
+  streams, reserved names and trailing dots or spaces. 0095 refuses `..` and
+  `/` too.
+- **On the agent** (`files.go`, `fs_windows.go`):
+  - only a fixed or removable drive;
+  - a reparse point on any folder or the target is `reparse_point`, and no
+    folder is ever created;
+  - the target is an `O_EXCL` temporary file beside it, checked by handle
+    (`GetFinalPathNameByHandle`);
+  - the whole SHA-256 is checked before `MoveFileEx`, which gets
+    `REPLACE_EXISTING` only when the transfer says overwrite;
+  - a fetch is hashed, declared, re-read and refused if it changed.
+
+  The file code runs no process and opens no socket. The worker logs ids,
+  directions and codes only.
+- **Bytes are temporary.**
+  - Chunks are 512 KiB, each with its own SHA-256, at most eight waiting
+    (0095 CHECKs).
+  - Chunks are deleted as they are acknowledged and when a transfer ends, and
+    a finished fetch's after 15 minutes.
+  - Audit rows carry the path, size and SHA-256, never content.
+  - Only `FileTransferService` writes the two tables.
+- **Clocks.** 60 minutes in all (TS, Go, 0095), 10 minutes without progress,
+  ended by every read and by `TERMINAL_SWEEP`. A `remote` pause ends live
+  transfers. Cancelling (the technician; a Platform Admin or the business's
+  own `computers:edit` revokes) never asks.
+
+Publish the 0.78 agent before anyone relies on it; the server refuses older
+agents. Behavioural proof: `e2e-files.mjs` (port 3977, `REMOTE_SIM` with
+`-files-root`: a directory and symbolic links standing in for NTFS and
+reparse points, not Windows). Unit: `unit-files.mjs` (in CI) and the Go
+`internal/remote` file tests. Lab: `TestLabFilesAsAdministrator` and the
+SYSTEM run inside `TestLabTerminalAsSystem` (send, exists then overwrite,
+fetch with hashes, a junction and a UNC path refused). **It has run only on
+Windows Server in the lab**, never on a desktop or the fleet.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

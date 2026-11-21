@@ -27,7 +27,7 @@ type fakePortal struct {
 
 func newPortal() *fakePortal { return &fakePortal{answers: make(chan PollAnswer, 32)} }
 
-func (f *fakePortal) Poll(ctx context.Context, held []Held, wait bool) (PollAnswer, error) {
+func (f *fakePortal) Poll(ctx context.Context, held []Held, _ []string, wait bool) (PollAnswer, error) {
 	f.mu.Lock()
 	f.polls = append(f.polls, append([]Held(nil), held...))
 	err := f.pollErr

@@ -100,6 +100,10 @@ export const CAP = {
 export const PLATFORM_CAP = {
   // A cmd or PowerShell on a Windows computer, as SYSTEM (0.77).
   COMPUTERS_TERMINAL: 'computers:terminal',
+  // Sending a file to a Windows computer, and fetching one from it, as SYSTEM
+  // (0.78). They are two capabilities, so one can be held without the other.
+  COMPUTERS_FILES_UPLOAD: 'computers:files_upload',
+  COMPUTERS_FILES_DOWNLOAD: 'computers:files_download',
 } as const;
 
 export type BusinessCapability = (typeof CAP)[keyof typeof CAP];

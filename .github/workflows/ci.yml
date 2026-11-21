@@ -417,6 +417,14 @@ jobs:
       - name: Terminal tests
         run: node apps/api/scripts/unit-terminal.mjs
 
+      # Background file transfer (0.78): the path rule against the fixture
+      # the agent's Go tests share, the limits and error codes agreeing with
+      # the agent and 0095, the request decision's order, the clocks, chunk
+      # checks, the platform-only capabilities, files.transfer off by
+      # default, and the browser's SHA-256 against node:crypto.
+      - name: File transfer tests
+        run: node apps/api/scripts/unit-files.mjs
+
       # Agit8or Identity P0 (0.59): the decisions made from an identity
       # provider's claims (levels from acr corroborated by amr, the
       # organization gate, Platform Admin, step-up freshness, back-channel

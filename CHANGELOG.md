@@ -5,6 +5,128 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.78.0] — 2026-11-21 · *Courier*
+
+**Background file transfer: a Platform Admin can send a file to a Windows computer running the signed agent, or
+fetch one from it, with no screen sharing.** The agent reads and writes as SYSTEM, and the console says "SYSTEM —
+full control of this computer" on the Files tab. This extends 0.77's reversal (§86) to files, at the owner's request.
+It is the first time the agent takes a path from the portal; `docs/file-transfer.md` and check-security-invariants
+§87 name what changed and prove what still holds. **A new signed agent (0.78.0); publish it before anyone relies on
+file transfer**: the server refuses older agents (`FILES_AGENT_TOO_OLD`). Migration 0095. No signer or sudoers
+change.
+
+### Added
+
+- **Files tab and Tools → Terminal and files** (`apps/web/components/endpoints/workspace/files-tab.tsx`):
+  - Send: choose a file, an absolute local path (suggested as `C:\Windows\Temp\<name>`), *Replace the file if one
+    is already there* (off by default) and a reason.
+  - Fetch: a path and a reason.
+  - Each transfer shows its direction, progress, SHA-256, *Cancel* and, on failure, why.
+  - A fetched file is offered for saving only after the browser has checked its SHA-256.
+  - The Tools group is renamed *Terminal and files* and gains *Send a file* and *Fetch a file*, with the
+    terminal's states.
+- **Who.** Two new platform-only capabilities, `computers:files_upload` and `computers:files_download`, for the
+  terminal's reason: a business capability would let an owner hand out SYSTEM writes and reads on every computer.
+  They are separate so that fetching logs can later be delegated without the power to write. Only the technician
+  who asked moves a transfer's bytes; another Platform Admin can see and cancel it but not read it.
+- **Asking**, in order:
+  1. scope;
+  2. the path rule, the reason, and for a send the size (within the business's limit) and the SHA-256;
+  3. a fresh confirmation under a new §62 key, `files.transfer`, which **defaults to `off`** like every key but
+     `terminal.open`;
+  4. the computer's refusals: pooled, not the signed agent, no device secret, older than 0.78.0, a `remote` pause,
+     not reporting, or two transfers already running;
+  5. `FILE_TRANSFER_REQUESTED` with `logOrFail`, then the row.
+- **The path rule**, the same in TS and Go and asserted by both against one fixture
+  (`internal/remote/testdata/file-paths.json`, 47 cases). It allows a drive-letter absolute path of at most 1,024
+  characters, with backslashes only, and refuses UNC and device paths, `..`, streams, reserved names and trailing
+  dots or spaces.
+- **On the computer**, the agent:
+  - accepts only a fixed or removable drive;
+  - refuses a reparse point anywhere on the path, and never creates a folder;
+  - writes to an exclusive temporary file beside the target and checks it by handle;
+  - checks the whole SHA-256 before the file is put in place;
+  - replaces an existing file only when told to (`MoveFileEx` with `REPLACE_EXISTING` only then).
+
+  A fetch is hashed, declared, then re-read, and refused if the file changed in between.
+- **Transport.** The terminal's outbound worker and long-poll, with four new device-authenticated routes under
+  `/remote/agent/files/`. Files move in 512 KiB chunks, each with its own SHA-256, with at most eight waiting on the
+  server.
+- **Limits.**
+  - Up to 100 MB per file by default. A Platform Admin can set 1 MB to 2 GB per business
+    (`PUT /remote-ops/settings/:businessId`, `fileMaxMb`, audited).
+  - 60 minutes per transfer, and 10 minutes without progress.
+  - Two at once per computer.
+- **Migration 0095.**
+  - `FileTransfer` and `FileTransferChunk`.
+  - CHECKs on the direction, the path, the reason, the sizes, the 60-minute window, the chunk window, the end
+    reasons and the chunk size.
+  - A trigger keeping a transfer in its computer's business.
+  - `RemoteOpsSetting.fileMaxMb`.
+  - Four audit actions: `FILE_TRANSFER_REQUESTED`, `_COMPLETED`, `_FAILED` and `_CANCELLED`.
+- **Simulator.** `rem0te-remote-sim -files-root DIR` runs the worker's own file code against a directory.
+
+### Security
+
+- check-security-invariants **§87**:
+  - the capabilities, every route's capability, and the request's order;
+  - `fileRefusal`'s order and the technician binding;
+  - that cancelling never asks;
+  - audit content and chunk deletion, and the only writer;
+  - no process or socket in the agent's file code;
+  - the reparse, `O_EXCL`, handle and hash-before-place checks;
+  - overwrite only when asked, and worker logs;
+  - the shared path fixture, the limits across TS, Go and 0095, and `files.transfer` defaulting to off;
+  - the console's SYSTEM text, and that the suites prove it.
+- **§86 changes:**
+  - its agent channel list grows to the four file routes;
+  - its log check allows the file service's own failed-sweep warning;
+  - §62's site keys gain `remote-ops/file-transfer.service.ts: files.transfer`.
+- Every chunk is checked against its own SHA-256 on the server and at the other end, and the whole file against the
+  declared hash. The server keeps no copy of any file.
+
+### Changed
+
+- `TERMINAL_SWEEP` also ends stalled and expired transfers and deletes chunks; its §84 cost text says so.
+- The remote worker's poll carries the ids of the transfers it holds, and a transfer it no longer holds (a
+  restarted worker) ends as `agent_error`.
+- The HTTP channel's read cap is 2 MiB, enough for a base64 chunk.
+
+### Tests
+
+- `unit-files.mjs` (46, in CI) covers:
+  - the fixture against `checkPath`;
+  - the limits and error codes against Go and 0095;
+  - the request decision and the clocks;
+  - the chunk checks;
+  - the capabilities and the confirm key;
+  - the browser's SHA-256 (`lib/sha256.ts`) against node:crypto at every padding edge.
+- `e2e-files.mjs` (78, port 3977, `REMOTE_SIM -files-root`) covers:
+  - default deny and cross-business refusal;
+  - `files.transfer` off, then asking;
+  - every refusal;
+  - a three-chunk send whose file has the declared hash;
+  - exists, then overwrite;
+  - no folder, a symbolic link and a wrong hash refused by the agent;
+  - a fetch matching the file;
+  - another technician refused;
+  - cancel and revoke;
+  - the pause leaving nothing on disk;
+  - stalled and expired, through a read and the sweep;
+  - audit rows with the hash and no content.
+
+  It is in `run-e2e.sh`.
+- Go: the shared path fixture, a send across chunks, an empty file, overwrite, the refusals, hash mismatch, a
+  fetch, a fetch's refusals, a portal end with clean-up, all under `-race`. Windows lab:
+  `TestLabFilesAsAdministrator` and the SYSTEM run in `TestLabTerminalAsSystem` (a 1.5 MiB send, exists then
+  overwrite, a fetch with hashes, a junction and a UNC path refused).
+- `unit-device-tools.mjs` covers the two new tools and their states. `e2e-ui.mjs` drives the Files tab at both
+  widths and in both themes, with a fetch and a send started, then cancelled, and the standard agent.
+
+**Not yet tried:** no file has been transferred on a desktop or on the fleet.
+
+---
+
 ## [0.77.0] — 2026-11-21 · *Conduit*
 
 **A background terminal: a Platform Admin can open cmd or PowerShell on a Windows computer running the signed agent,
