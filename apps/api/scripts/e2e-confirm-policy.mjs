@@ -6,6 +6,10 @@
  *   - 0.64: a fresh database (no ConfirmPolicy rows) asks for nothing but
  *     the always-ask set: every catalog function defaults to `off`, so a stale
  *     session's API key creation goes ahead and adding a passkey still asks;
+ *   - 0.77: except terminal.open, which defaults to `ask` (the owner's
+ *     decision for the background terminal): with no row it asks, turning it
+ *     off needs confirm.relax like any other relaxation, and with no row
+ *     after a restart it still asks;
  *   - GET /security/confirm-policy: the catalog, the values and canChange
  *     (true only for a Platform Admin), and the always-ask note;
  *   - "Ask for all" (off → ask) needs no fresh confirmation and writes an
@@ -138,7 +142,10 @@ async function all() {
   const view = r.data;
   const N = view?.catalog?.length ?? 0;
   check(r.status === 200 && Array.isArray(view?.catalog) && N >= 30, 'any signed-in user reads the catalog', msg(r));
-  check(view && Object.values(view.values).every((v) => v === 'off') && view.catalog.every((f) => f.value === 'off' && f.default === 'off'), 'every function defaults to off, and is off', JSON.stringify(view?.values));
+  const defaultOf = (k) => (k === 'terminal.open' ? 'ask' : 'off');
+  check(view && Object.entries(view.values).every(([k, v]) => v === defaultOf(k)) && view.catalog.every((f) => f.value === defaultOf(f.key) && f.default === defaultOf(f.key)),
+    'every function defaults to off and is off, except terminal.open: ask (0.77)', JSON.stringify(view?.values));
+  check(view && view.catalog.filter((f) => f.default === 'ask').map((f) => f.key).join() === 'terminal.open', '0.77: terminal.open is the only key that asks by default');
   check(view?.canChange === false, 'canChange is false for a Business Owner');
   check(view && !view.catalog.some((f) => ['passkey.manage', 'confirm.relax', 'fresh.auth.passkey'].includes(f.key)), 'no always-ask key is offered as a toggle');
   check(view && view.alwaysAsk.some((l) => /password/i.test(l)) && view.alwaysAsk.some((l) => /authenticator/i.test(l)) && view.alwaysAsk.some((l) => /passkeys/i.test(l)), 'the always-ask note names password, authenticator and passkeys', JSON.stringify(view?.alwaysAsk));
@@ -153,11 +160,16 @@ async function all() {
   r = await req('POST', '/auth/passkeys/register/options', { s: S.owner });
   check(isStepUp(r, 'passkey.manage'), 'adding a passkey still asks (always-ask)', msg(r));
   check((await prisma.confirmPolicy.count()) === 0, 'reading the defaults wrote nothing');
+  r = await req('PUT', '/security/confirm-policy', { s: S.admin, body: { values: { 'terminal.open': 'off' } } });
+  check(isStepUp(r, 'confirm.relax'), '0.77: turning terminal.open off from its default needs a fresh confirmation (confirm.relax)', msg(r));
+  check((await prisma.confirmPolicy.count()) === 0, 'and nothing was written');
 
   section('Ask for all: tightening needs no confirmation, and an ask row overrides the default');
   r = await req('PUT', '/security/confirm-policy', { s: S.admin, body: { values: Object.fromEntries(view.catalog.map((f) => [f.key, 'ask'])) } });
   check(r.status === 200 && Object.values(r.data.values).every((v) => v === 'ask'), 'a stale Platform Admin sets every function to ask', msg(r));
-  check((await prisma.confirmPolicy.count({ where: { value: 'ask' } })) === N && (await prisma.confirmPolicy.count()) === N, `one ask row per function (${N})`);
+  // terminal.open is already ask by default (0.77), so it is not a change and gets no row.
+  check((await prisma.confirmPolicy.count({ where: { value: 'ask' } })) === N - 1 && (await prisma.confirmPolicy.count()) === N - 1 && !(await prisma.confirmPolicy.findUnique({ where: { key: 'terminal.open' } })),
+    `one ask row per function that changed (${N - 1}; terminal.open was already ask)`);
 
   section('ask asks');
   r = await newKey(S.owner, false);
@@ -186,7 +198,7 @@ async function all() {
   check(r.status === 400 && code(r) === 'INVALID_CONFIRM_VALUE', "a value other than ask / off: refused", msg(r));
   r = await req('PUT', '/security/confirm-policy', { s: S.admin, fresh: true, body: { value: 'off' } });
   check(r.status === 400 && code(r) === 'INVALID_CONFIRM_POLICY', "0.47's body shape is refused", msg(r));
-  check((await prisma.confirmPolicy.count({ where: { value: 'off' } })) === 0 && (await prisma.confirmPolicy.count()) === N, 'nothing was written by any refusal');
+  check((await prisma.confirmPolicy.count({ where: { value: 'off' } })) === 0 && (await prisma.confirmPolicy.count()) === N - 1, 'nothing was written by any refusal');
 
   section('Relaxing needs a fresh confirmation');
   r = await req('PUT', '/security/confirm-policy', { s: S.admin, body: { values: { 'apikey.create': 'off', 'credential.reveal': 'off' } } });
@@ -246,6 +258,7 @@ async function all() {
   check(r.status === 200 && !('made.up.key' in r.data.values) && !('passkey.manage' in r.data.values), 'rows outside the catalog are not reported', msg(r));
   check(r.status === 200 && r.data.values['software.catalog'] === 'off' && r.data.values['credential.reveal'] === 'off' && r.data.values['email.relay'] === 'ask',
     'a function with no row is its catalog default (off); one with an ask row still asks', msg(r));
+  check(r.status === 200 && r.data.values['terminal.open'] === 'ask', '0.77: terminal.open with no row is still its default, ask', msg(r));
 }
 
 async function cleanup() {

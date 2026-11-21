@@ -713,14 +713,15 @@ const SECTIONS: Section[] = [
           Connect, Tools, Diagnose, Run action and Patch sit beside it; Archive and the other
           rare actions are under More, each with a confirmation. The tabs are
           Overview, Performance, Monitoring, Software, Processes, Services, Network, Patches, Event logs,
-          Diagnostics, Actions and History (sessions, notes, the AI-written summary and who can connect), and
+          Diagnostics, Actions, Terminal (Windows, 0.77) and History (sessions, notes, the AI-written summary and who
+          can connect), and
           each can be linked with <code>?tab=</code>.
         </p>
         <p className="font-medium text-foreground">Tools (0.75)</p>
         <p>
           <strong className="text-foreground">Tools</strong>, beside Connect, lists what can be done to the computer in
-          eight groups — Diagnostics, PowerShell / Scripts, Services &amp; Processes, Software, Windows Updates,
-          Networking, Security and Maintenance — and opens the flow that already does each one: a Diagnostics check
+          nine groups — Diagnostics, Terminal, PowerShell / Scripts, Services &amp; Processes, Software, Windows
+          Updates, Networking, Security and Maintenance — and opens the flow that already does each one: a Diagnostics check
           with its row marked, an approved action already picked on Actions, the Services, Processes, Network,
           Software or Patches tab, the Security log on Event logs, or the script library. Nothing runs from the
           panel; the tab&apos;s own button and confirmation do that, and the server checks your access, containment
@@ -736,9 +737,24 @@ const SECTIONS: Section[] = [
           <em>Coming later</em>: no approved action does it yet. Since 0.76 the Security, Networking and Maintenance
           groups also list the read-only palette checks below, each opening its row on Diagnostics.
         </p>
+        <p className="font-medium text-foreground">Terminal (0.77, Platform Admins)</p>
+        <p>
+          The <strong className="text-foreground">Terminal</strong> tab opens a cmd or PowerShell prompt on a Windows
+          computer running the signed agent 0.77 or later, with no screen sharing and nothing shown on its screen. It
+          runs as <strong className="text-foreground">SYSTEM — full control of this computer</strong>, so only a
+          Platform Admin can open one; a Business Owner cannot, and no grant gives it. You give a reason and confirm it
+          is you (on by default for this one function). The computer reaches out for it on its next heartbeat, so the
+          prompt can take up to about three minutes to appear; after that, typing is close to live. A session ends
+          after 15 minutes without your input and 60 minutes in all, whatever happens; reading the output or
+          reloading the page does not extend it. The technician, a Platform Admin or the business&apos;s own member
+          with Edit computers can end it, and a <em>remote</em> containment pause ends it. The audit log records who,
+          why, how long and how many bytes, never what was typed or shown; transcripts are kept only if a Platform
+          Admin turned them on for the business. More in{' '}
+          <Link href="/docs/remote-terminal" className="underline text-foreground">Background terminal</Link>.
+        </p>
         <p className="font-medium text-foreground">Nothing here is live</p>
         <p>
-          Rem0te has no channel to reach into a computer. Everything on that tab arrived
+          Apart from the Terminal, Rem0te has no channel to reach into a computer. Everything on that tab arrived
           on a heartbeat, which happens about every three minutes, and each card says
           when its contents were collected. Pressing{' '}
           <strong className="text-foreground">Refresh</strong> queues a fresh collection

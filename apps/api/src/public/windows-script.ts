@@ -531,6 +531,15 @@ try {
     if ($resp.data.msaPoll -eq $true -and (Test-Path -LiteralPath $agentExe)) {
         Start-Process -FilePath $agentExe -ArgumentList @('msa-poller') -WindowStyle Hidden
     }
+} catch {}
+try {
+    # The remote worker (0.77): the background terminal. Started only when
+    # the portal says remotePoll (a terminal is waiting on this computer);
+    # it polls the portal outbound, listens on nothing, and exits when idle.
+    # A second start while one runs leaves at once (it holds a lock).
+    if ($resp.data.remotePoll -eq $true -and (Test-Path -LiteralPath $agentExe)) {
+        Start-Process -FilePath $agentExe -ArgumentList @('remote-worker') -WindowStyle Hidden
+    }
 } catch {}`,
     // The tray (0.36): the signed agent installs rem0te-tray.exe itself (a
     // signed target, verified like the agent), and its tray host starts it in

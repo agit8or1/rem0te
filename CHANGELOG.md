@@ -5,6 +5,86 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.77.0] — 2026-11-21 · *Conduit*
+
+**A background terminal: a Platform Admin can open cmd or PowerShell on a Windows computer running the signed agent,
+with no screen sharing and nothing shown on its screen.** It runs as SYSTEM, and the console says "SYSTEM — full
+control of this computer" wherever one can be opened. This is a deliberate reversal, at the owner's request, of three
+rules for this feature only (§14's closed catalog, "the agent runs no process" and §39's constant command line);
+`docs/remote-terminal.md` and check-security-invariants §87 name exactly what changed and prove what still holds.
+**A new signed agent (0.77.0); publish it before anyone relies on the terminal** — the server refuses older agents
+(`TERMINAL_AGENT_TOO_OLD`). Migration 0094. No signer or sudoers change.
+
+### Added
+
+- **Terminal tab and Tools → Terminal** (`apps/web/components/endpoints/workspace/terminal-tab.tsx`): pick the
+  shell, give a reason, *Open as SYSTEM*; then a live screen, input, *Keep alive*, *End session*, both countdowns,
+  the list of sessions on the computer with *End session* (revoke) for those allowed, and a transcript viewer. The
+  Tools panel gains a ninth group, Terminal, whose states follow the same rules as the server (not permitted, needs
+  the 0.77 signed agent, unassigned, paused, offline).
+- **Who.** A new platform-only capability, `computers:terminal`. Business Owners do not hold it: an owner holds every
+  business capability and grants them to others, so making the terminal one would turn default deny into a setting
+  the business could switch off. No grant, preset or SSO mapping can carry it, and the stored-grant sanitisers drop
+  it. The person who opens a terminal is the only one who sees its output or types; everyone who can view the
+  computer sees that it exists.
+- **Opening** asks for a fresh confirmation under a new §62 catalog key, `terminal.open` — **the one key that
+  defaults to `ask`** (every other key has been `off` since 0.64). A Platform Admin can turn it off; that needs
+  `confirm.relax`, as for any key. Refusals, in order: unassigned (`ENDPOINT_UNASSIGNED`), not the signed Windows
+  agent, no device secret, agent older than 0.77.0, a `remote` containment pause (`CONTAINED`), not reporting, one
+  already open by you, three already open.
+- **Limits**, the same constants in the API, the agent and the database: 15 minutes without input, 60 minutes in
+  all, never extended. Reading, reloading or reconnecting does not move the idle clock — only input and *Keep
+  alive* do. Input frames are capped at 4 KB, output frames at 16 KB, a session at 1 MB in and 8 MB out. The agent
+  enforces all of them itself and kills every shell 90 seconds after it loses the server.
+- **Ending**: the technician (`TERMINAL_CLOSED`); a Platform Admin or the business's own member with *Edit
+  computers* (`TERMINAL_REVOKED`); the limits (`TERMINAL_EXPIRED`); a `remote` pause, which also refuses new ones;
+  the shell exiting or the agent failing (`TERMINAL_ENDED`). `TERMINAL_OPENED` is written with `logOrFail` before
+  the session exists, and `TERMINAL_STARTED` when the computer starts the shell. Audit rows carry ids, the shell,
+  the reason, durations and byte counts, never what was typed or shown.
+- **Transport**, outbound only and independent of `MSA_GRANTS`. While a terminal is waiting, the signed heartbeat's
+  answer carries `remotePoll: true` and the heartbeat starts `rem0te-agent.exe remote-worker`, which long-polls
+  `POST /api/v1/remote/agent/poll` (held 20 s) and posts output to `/remote/agent/terminal/output`, each call
+  authenticated by the device secret before anything is read. Latency: up to about three minutes for the shell to
+  start (the next heartbeat), then input well under a second and output about a second. The computer listens on
+  nothing; the worker exits after a minute idle and only one runs at a time.
+- **The shell** is started from one exec site (`internal/remote/spawn_windows.go`): System32's `cmd.exe /D` or
+  `powershell.exe -NoLogo -NoProfile -NonInteractive -Command -`, by absolute path, with constant arguments, created
+  suspended and put in a Job Object with `KILL_ON_JOB_CLOSE` before it runs, so ending a session kills the shell and
+  everything it started. Pipes, not a pseudo-console: no Ctrl-C, no full-screen programs, and cmd's output is shown
+  as UTF-8 (`chcp 65001` helps).
+- **Transcripts** are per business, **off by default**, a Platform Admin's setting
+  (`PUT /remote-ops/settings/:businessId`, audited as `REMOTE_OPS_SETTINGS_CHANGED`), kept 30 days by default
+  (1–365). Without one, frames are deleted once delivered and with the session.
+- **`TERMINAL_SWEEP`** (every 30 s) ends sessions nobody is touching and prunes transcripts. `TERMINAL_SWEEP=off` is
+  exact, exported by `run-e2e.sh`, set by `e2e-ui.mjs`, and listed in Admin → Security's off switches. Never set it
+  in production.
+
+### Tests
+
+- `unit-terminal.mjs` (66 checks, in CI): the open decision and its order, the clocks, who may end, frame caps, and
+  that the TS limits agree with the Go constants and 0094's CHECKs.
+- `e2e-terminal.mjs` (73 checks, port 3975, in `run-e2e.sh` and CI): default deny for an owner, a user and a
+  technician; another business's computer; the step-up; every refusal; the device secret; start, input, stderr and
+  output through `rem0te-remote-sim` — the agent's own worker code driving `/bin/sh`, **a simulation, not Windows**;
+  reconnecting not moving the clock; revocation killing a child process; idle and hard-limit expiry, the latter by
+  the sweep; the pause; a restarted worker; transcripts; and no typed or printed text in the audit log, the API's log
+  or the worker's log.
+- Go `internal/remote` tests (with `-race`): the worker's start, I/O, exit code, tree kill, hard limit, idle,
+  disconnect, refusals and caps. **Windows lab**: `TestLabTerminalAsAdministrator` and `TestLabTerminalAsSystem`
+  open cmd and PowerShell through the real exec site, check `whoami` is `nt authority\system`, and prove the shell
+  and a child it started are gone after ending and after the hard limit. It has run only on Windows Server in the
+  lab, never on a desktop or the fleet.
+- `unit-confirm-policy.mjs` and `e2e-confirm-policy.mjs` now expect exactly one key, `terminal.open`, to ask by
+  default. `unit-device-tools.mjs` covers the Terminal tool; `e2e-ui.mjs` drives the panel in both themes and at
+  phone width.
+
+### Not yet
+
+Running as the signed-in user, delegating `computers:terminal` to a named person, a pseudo-console, and file
+transfer (0.78) are planned. The Windows wire fixtures need a new capture for this release's heartbeat script.
+
+---
+
 ## [0.76.1] — 2026-11-21 · *Litmus*
 
 **Documentation only. This release audits the owner's four-phase directive of 2026-11-21 (remote session

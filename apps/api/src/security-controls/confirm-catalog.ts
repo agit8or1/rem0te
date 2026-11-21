@@ -21,6 +21,9 @@
  * key, an always-ask key, or a policy not yet read from the database still
  * asks, and a row saying `ask` still asks.
  *
+ * 0.77, again at the owner's request: one key, `terminal.open`, defaults to
+ * `ask` — a terminal runs as SYSTEM. Every other key still defaults to `off`.
+ *
  * ALWAYS_ASK is not configurable and never shown as a toggle: changing your
  * own password, authenticator or passkeys, the step-up itself, a
  * protected-device exception's passkey, and turning a confirmation off here.
@@ -130,6 +133,13 @@ export const CONFIRM_CATALOG = [
   { key: 'adoption.mappings', group: 'Devices & enrolment', label: 'Assignment rules', default: 'off',
     prompt: 'add an assignment rule',
     description: 'Adding a rule that suggests a business and site for unassigned computers. Removing one never asks.' },
+  // 0.77 Conduit: the background terminal. The one key that defaults to
+  // `ask` (the owner, 2026-11-21: "maybe 2fa for dos/powershell"). A
+  // Platform Admin can still set it `off` through the ordinary path, which
+  // itself asks (confirm.relax). Ending a session never asks.
+  { key: 'terminal.open', group: 'Devices & enrolment', label: 'Opening a terminal', default: 'ask',
+    prompt: 'open a terminal on this computer',
+    description: 'Opening a background cmd or PowerShell on a Windows computer. It runs as SYSTEM: full control of the computer (0.77). On by default.' },
 
   // ── Monitoring & notifications ──────────────────────────────────────────
   { key: 'monitoring.notify', group: 'Monitoring & notifications', label: 'Who is notified', default: 'off',

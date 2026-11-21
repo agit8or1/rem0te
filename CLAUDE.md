@@ -1874,6 +1874,69 @@ Behavioural: `e2e-diagnostics-palette.mjs` (port 4011, in `run-e2e.sh`).
 Lab: `agent-lab-windows (diagnostics palette)`. **It has run only on GitHub's
 Windows Server runner**, never on a desktop or the fleet.
 
+§87 (0.77) is the background terminal (`docs/remote-terminal.md`). **It
+reverses three rules for this feature only, at the owner's request**
+("background terminal … both directions"), as §41, §62, §67, §75 and §76
+were:
+
+- §14's closed catalog: a terminal is not a catalog action and the approval
+  signer never sees it;
+- "the agent runs no process" (§14, §61): the remote worker starts
+  `cmd.exe` or `powershell.exe`;
+- §39's constant command line: the command line is still constant, but the
+  shell's stdin is what the technician types.
+
+Approved actions, scripts, patching and software are unchanged, and the
+signer gains nothing. What contains it:
+
+- **Who.** `computers:terminal` is in `PLATFORM_CAP`, never `CAP`, so no
+  Business Owner, grant, preset or SSO mapping holds it (an owner holds every
+  business capability, so a business capability would make default deny a
+  setting the business could switch off). The opener is the only one who reads
+  or types; others with `computers:view` see that it exists.
+- **Opening**, in order: scope, the shell (`cmd` / `powershell`), a reason
+  (3–500), `assertFresh` naming `terminal.open` — **the one catalog key whose
+  default is `ask`** (§62; still relaxable through `confirm.relax`) — then
+  `openRefusal`: the pool (§70), Windows + `runsSignedAgent`, a device
+  secret, agent ≥ 0.77.0, a `remote` pause, reporting, one per technician,
+  three per computer; `TERMINAL_OPENED` with `logOrFail`, then the row.
+- **Clocks.** 15 minutes idle, 60 in all (`limits.ts`, Go `limits.go`, 0094's
+  CHECK). Only input and Keep alive move the idle clock; reading or
+  reconnecting never does; the hard limit is never extended. Every read,
+  write and agent call settles first; `TERMINAL_SWEEP` (every 30 s) ends the
+  rest; the worker enforces both from its own start and kills everything 90 s
+  after losing the portal.
+- **Ending.** The technician (`TERMINAL_CLOSED`), a Platform Admin or the
+  business's own member with `computers:edit` (`TERMINAL_REVOKED`); never a
+  fresh confirmation. A `remote` pause refuses new terminals and ends live
+  ones (`paused`).
+- **Transport.** Outbound only, independent of `MSA_GRANTS`: the heartbeat
+  says `remotePoll` only to an authenticated signed agent that may act, the
+  signed heartbeat starts `rem0te-agent.exe remote-worker` (no argument), and
+  the worker long-polls `POST /remote/agent/poll` (20 s) and posts to
+  `/remote/agent/terminal/output`, each with the device secret checked first.
+  Nothing listens on the computer.
+- **One exec site** (`internal/remote/spawn_windows.go`): System32's
+  `cmd.exe /D` or `powershell.exe -NoLogo -NoProfile -NonInteractive -Command -`
+  by absolute path, constant arguments, created suspended, in a Job Object
+  with `KILL_ON_JOB_CLOSE` before it runs; ending terminates the job (the
+  whole tree). The worker is told only the shell's name.
+- **The record.** Audit rows carry ids, the shell, the reason, durations and
+  byte counts, never input or output; nothing in `remote-ops/` or the worker
+  logs content. Frames are deleted once delivered and with the session.
+  Transcripts are opt-in per business (`RemoteOpsSetting`, a Platform Admin's,
+  `REMOTE_OPS_SETTINGS_CHANGED`), 30 days by default.
+- `TERMINAL_SWEEP=off` is exact, exported by `run-e2e.sh`, set by `e2e-ui.mjs`
+  and in §84's `OFF_SWITCHES`. **Never set it in production.**
+
+Publish the 0.77 agent before anyone relies on it; the server refuses older
+agents. Behavioural proof: `e2e-terminal.mjs` (port 3975, `REMOTE_SIM`, the
+worker's own code against `/bin/sh` — simulation, not Windows). Unit:
+`unit-terminal.mjs` (in CI) and the Go `internal/remote` tests. Lab:
+`TestLabTerminalAsAdministrator` / `TestLabTerminalAsSystem` (output,
+`whoami`, the tree killed on end and on expiry). **It has run only on
+Windows Server in the lab**, never on a desktop or the fleet.
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

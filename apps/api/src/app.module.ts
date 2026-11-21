@@ -67,6 +67,7 @@ import { AgentAutoUpdateModule } from './agent-auto-update/agent-auto-update.mod
 import { AgentAutoMigrationModule } from './agent-auto-migration/agent-auto-migration.module';
 import { MsaModule } from './msa/msa.module';
 import { MsaGrantsModule } from './msa/msa-grants.module';
+import { RemoteOpsModule } from './remote-ops/remote-ops.module';
 import { SupportRequestsModule } from './support-requests/support-requests.module';
 import { OffboardingModule } from './offboarding/offboarding.module';
 import { SsoModule } from './sso/sso.module';
@@ -161,6 +162,7 @@ import { TrayModule } from './tray/tray.module';
     AgentAutoMigrationModule,
     MsaModule,
     MsaGrantsModule,
+    RemoteOpsModule,
     DeviceViewsModule,
     AdoptionModule,
     SupportRequestsModule,

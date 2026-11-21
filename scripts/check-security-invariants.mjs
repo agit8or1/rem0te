@@ -935,7 +935,8 @@ check(
   const runRoutes = [...read(RUN_CTL).matchAll(/@(Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)')?\s*\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''}`);
   const RUN_EXPECT = ['GET versions/:versionId', 'POST versions/:versionId/allowlist', 'POST versions/:versionId/allowlist/revoke', 'POST '];
   const elsewhere = walk('apps/api/src').filter((f) => /controller\.ts$/.test(f) && !f.startsWith(dir))
-    .filter((f) => /@(?:Get|Post|Put|Patch|Delete)\('[^']*scripts?\b|@Controller\(\s*\[?\s*'[^']*scripts?\b/i.test(read(f)))
+    // 0.77: a terminal session's `transcript` route is not a script (the word only contains it).
+    .filter((f) => /@(?:Get|Post|Put|Patch|Delete)\('[^']*scripts?\b|@Controller\(\s*\[?\s*'[^']*scripts?\b/i.test(read(f).replace(/'sessions\/:sid\/transcript'/g, "''")))
     .filter((f) => !(f === RUN_CTL && /@Controller\('script-runs'\)/.test(read(f)) && JSON.stringify(runRoutes) === JSON.stringify(RUN_EXPECT)));
   check('the script library has no run route, here or anywhere else',
     /@Controller\('scripts'\)/.test(ctl) && JSON.stringify(routes) === JSON.stringify(EXPECT) && !routes.some((r) => /run|exec|dispatch|deploy|send|schedule|push|approve/i.test(r)) && elsewhere.length === 0,
@@ -4483,10 +4484,15 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const ALWAYS = [...alwaysBody.matchAll(/\{ key: '([a-z.]+)'/g)].map((m) => m[1]);
   const isKey = (k) => KEYS.includes(k) || ALWAYS.includes(k);
 
-  check('confirm: the catalog is plain data (no imports) with unique keys, each defaulting to off (0.64, the owner\'s "just on login")',
+  // 0.77 (§87): exactly one key defaults to ask, terminal.open, at the
+  // owner's request for the background terminal (a SYSTEM shell). It stays
+  // configurable to off through confirm.relax like any other key.
+  const ASK_DEFAULTS = [...catBody.matchAll(/\{ key: '([a-z.]+)'[^}]*?default: 'ask'/g)].map((m) => m[1]);
+  check('confirm: the catalog is plain data (no imports) with unique keys, each defaulting to off (0.64, the owner\'s "just on login") except terminal.open, ask (0.77)',
     !/^import /m.test(cat) && KEYS.length >= 30 && new Set(KEYS).size === KEYS.length
-      && (catBody.match(/default: 'off'/g) ?? []).length === KEYS.length && !/default: 'ask'/.test(catBody),
-    `confirm-catalog.ts: ${KEYS.length} keys`);
+      && (catBody.match(/default: 'off'/g) ?? []).length === KEYS.length - 1 && (catBody.match(/default: 'ask'/g) ?? []).length === 1
+      && JSON.stringify(ASK_DEFAULTS) === JSON.stringify(['terminal.open']),
+    `confirm-catalog.ts: ${KEYS.length} keys; ask by default: ${JSON.stringify(ASK_DEFAULTS)}`);
   check('confirm: the always-ask set is exactly passkey.manage, fresh.auth.passkey, confirm.relax, and none is in the catalog',
     JSON.stringify(ALWAYS) === JSON.stringify(['passkey.manage', 'fresh.auth.passkey', 'confirm.relax']) && ALWAYS.every((k) => !KEYS.includes(k)),
     `ALWAYS_ASK is ${JSON.stringify(ALWAYS)}`);
@@ -4549,6 +4555,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'patching/series.service.ts': ['patching.override'],
     'platform/public-url.controller.ts': ['platform.configure'],
     'psa/psa.controller.ts': ['psa.connector'],
+    'remote-ops/terminal.service.ts': ['terminal.open'],
     'reports/report-schedules.controller.ts': ['reports.schedule'],
     'script-library/script-library.service.ts': ['scripts.review'],
     'script-run/script-run.service.ts': ['scripts.direct'],
@@ -7371,6 +7378,182 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('palette: the suites prove it',
     /unit-diagnostics-palette\.mjs/.test(read('.github/workflows/ci.yml')) && /diagnostics-lab\.mjs/.test(read('.github/workflows/lab-windows.yml')),
     'unit-diagnostics-palette.mjs in CI; the Windows lab job runs diagnostics-lab.mjs');
+}
+
+// ── §87 (0.77): the background terminal — a reversal, contained ──────────────
+//     At the owner's request, the background terminal reverses three rules
+//     for this feature only: §14's closed action catalog (a terminal is not a
+//     catalog action and runs what the technician types), "the agent runs no
+//     process" (the remote worker starts cmd.exe or powershell.exe), and §39's
+//     constant command line (the shell's stdin is the technician's input).
+//     Everything else holds, and this section proves the containment:
+//       - Platform Admin only: computers:terminal is in PLATFORM_CAP, not CAP,
+//         so no business, owner, user, technician, preset or SSO mapping holds
+//         or grants it (the sanitisers keep only ALL_BUSINESS_CAPABILITIES).
+//       - Every console route names its capability; opening checks scope,
+//         the shell and the reason, then assertFresh('terminal.open') — the one
+//         catalog key that defaults to ask (§62) — then openRefusal (pool,
+//         Windows + signed agent, device secret, agent version, a `remote`
+//         pause, connectivity, one live per technician, three per computer),
+//         then logOrFail before the row exists.
+//       - The agent channel is @Public with the device secret checked first
+//         (authenticateDevice), then Windows + runsSignedAgent, then
+//         assertAssigned. It does not depend on MSA_GRANTS. The heartbeat
+//         says remotePoll only to an authenticated signed agent that may act.
+//       - One exec site on the agent: internal/remote's SystemSpawner, the
+//         installed System32 cmd.exe /D or powershell.exe -NoProfile ... by
+//         absolute path, argument constants, CREATE_SUSPENDED, a Job Object
+//         with KILL_ON_JOB_CLOSE assigned before it runs. Nothing from the
+//         portal reaches a path or an argument: Start takes only the shell's
+//         name. The worker listens on nothing.
+//       - Limits agree across TS, Go and SQL (15 min idle, 60 min total,
+//         frame and session caps), and the agent enforces them itself.
+//       - Nothing typed or printed reaches a log or an audit row; frames are
+//         deleted when delivered and with the session; transcripts only for a
+//         business that turned them on (a Platform Admin's setting).
+//       - Only TerminalService writes the terminal tables; only
+//         RemoteOpsSettingsService writes the setting.
+//       - TERMINAL_SWEEP=off is exact, exported by run-e2e.sh, set by
+//         e2e-ui.mjs and listed in §84's OFF_SWITCHES.
+{
+  console.log('\n§87 Background terminal (a reversal of §14 / §39 for this feature, contained)');
+  const SRC = 'apps/api/src';
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const caps = read(`${SRC}/rbac/capabilities.ts`);
+  const capBody = (caps.match(/export const CAP = \{([\s\S]*?)\} as const;/) ?? [])[1] ?? '';
+  const platBody = (caps.match(/export const PLATFORM_CAP = \{([\s\S]*?)\} as const;/) ?? [])[1] ?? '';
+  check('terminal: computers:terminal is platform-only (PLATFORM_CAP, never CAP), held by a Platform Admin and dropped from every stored grant',
+    /COMPUTERS_TERMINAL: 'computers:terminal'/.test(platBody) && !/computers:terminal/.test(capBody)
+      && /export const ALL_BUSINESS_CAPABILITIES: Capability\[\] = Object\.values\(CAP\);/.test(caps)
+      && /const allowed = new Set<string>\(ALL_BUSINESS_CAPABILITIES\);/.test(caps)
+      && /if \(actor\.isPlatformAdmin\) return \[\.\.\.ALL_BUSINESS_CAPABILITIES, \.\.\.PLATFORM_ONLY_CAPABILITIES\];/.test(caps)
+      && (code(caps).match(/PLATFORM_ONLY_CAPABILITIES/g) ?? []).length === 2,
+    'rbac/capabilities.ts');
+
+  const ctl = read(`${SRC}/remote-ops/terminal.controller.ts`);
+  const routeCaps = [...code(ctl).matchAll(/@(Get|Post|Put)\(\s*(?:'([^']*)')?\s*\)\s*\n\s*@RequireCapability\(([A-Z_.]+)\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''} ${m[3]}`);
+  check('terminal: every console route names its capability — open, read, type, keep alive and transcript computers:terminal; list and end computers:view',
+    JSON.stringify(routeCaps) === JSON.stringify([
+      'GET  CAP.COMPUTERS_VIEW', 'POST  PLATFORM_CAP.COMPUTERS_TERMINAL', 'GET sessions/:sid PLATFORM_CAP.COMPUTERS_TERMINAL',
+      'POST sessions/:sid/input PLATFORM_CAP.COMPUTERS_TERMINAL', 'POST sessions/:sid/keepalive PLATFORM_CAP.COMPUTERS_TERMINAL',
+      'POST sessions/:sid/end CAP.COMPUTERS_VIEW', 'GET sessions/:sid/transcript PLATFORM_CAP.COMPUTERS_TERMINAL',
+    ]) && /@Controller\('endpoints\/:id\/terminal'\)\s*\n@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)/.test(ctl)
+      && /@Controller\('remote-ops\/settings'\)\s*\n@UseGuards\(JwtAuthGuard, PlatformAdminGuard\)/.test(ctl),
+    JSON.stringify(routeCaps));
+  const agentCtl = code(ctl).slice(code(ctl).indexOf("@Controller('remote/agent')"));
+  const agentRoutes = [...agentCtl.matchAll(/@Post\('([^']+)'\)\s*\n\s*@Public\(\)/g)].map((m) => m[1]);
+  check('terminal: the agent channel is exactly poll and output, @Public, under remote/agent',
+    /@Controller\('remote\/agent'\)/.test(ctl) && JSON.stringify(agentRoutes) === JSON.stringify(['poll', 'terminal/output'])
+      && (agentCtl.match(/@(Get|Post|Put|Patch|Delete)\(/g) ?? []).length === 2 && (code(ctl).match(/@Public\(\)/g) ?? []).length === 2,
+    JSON.stringify(agentRoutes));
+
+  const svc = read(`${SRC}/remote-ops/terminal.service.ts`);
+  const openBody = svc.slice(svc.indexOf('  async open('), svc.indexOf('\n  }\n', svc.indexOf('  async open(')));
+  const order = ['this.visible(actor, endpointId, PLATFORM_CAP.COMPUTERS_TERMINAL)', 'isShell(body?.shell)', 'cleanReason(body?.reason)',
+    "assertFresh(freshMethod, { action: 'terminal.open'", 'this.settle(s, ep.customerId, now)', 'openRefusal({', "action: 'TERMINAL_OPENED'", 'this.prisma.terminalSession.create('];
+  const at = order.map((o) => openBody.indexOf(o));
+  check('terminal: opening is scope, shell, reason, the fresh confirmation (terminal.open), settle, openRefusal, the audit row (logOrFail), then the row',
+    at.every((i, n) => i >= 0 && (n === 0 || i > at[n - 1])) && /await this\.audit\.logOrFail\(\{\s*action: 'TERMINAL_OPENED'/.test(openBody),
+    JSON.stringify(Object.fromEntries(order.map((o, n) => [o.slice(0, 40), at[n]]))));
+  const pol = read(`${SRC}/remote-ops/policy.ts`);
+  const refusalOrder = ['ENDPOINT_UNASSIGNED', 'TERMINAL_SIGNED_AGENT_REQUIRED', 'TERMINAL_NO_DEVICE_SECRET', 'TERMINAL_AGENT_TOO_OLD', "'CONTAINED'", 'TERMINAL_OFFLINE', 'TERMINAL_ALREADY_OPEN', 'TERMINAL_TOO_MANY'];
+  const rAt = refusalOrder.map((c) => pol.indexOf(c));
+  check('terminal: openRefusal refuses, in order, the pool, anything but the signed Windows agent, no device secret, an old agent, a remote pause, offline, a second own, a fourth',
+    rAt.every((i, n) => i >= 0 && (n === 0 || i > rAt[n - 1])) && !/^\s*import\s[^;]*from '(?!\.\/limits')/m.test(pol), JSON.stringify(rAt));
+  check('terminal: every read, write and agent call settles first — a limit or a `remote` pause ends the session — and only input and Keep alive move the idle clock',
+    /const due = expiry\(s, now\);[\s\S]*?activePause\(this\.prisma, 'remote', customerId\)[\s\S]*?this\.end\(s, 'paused'\)/.test(svc)
+      && (code(svc).match(/\btouch\(/g) ?? []).length === 2
+      && /lastActivityAt: touch\(s, now\)/.test(svc.slice(svc.indexOf('  async input('), svc.indexOf('  async keepAlive(')))
+      && /lastActivityAt: touch\(s, now\)/.test(svc.slice(svc.indexOf('  async keepAlive('), svc.indexOf('  async endBy('))),
+    'remote-ops/terminal.service.ts');
+  check('terminal: a session is bound to its technician — reading output, typing and Keep alive are the technician\'s own; anyone else is told nothing exists',
+    /if \(s0\.technicianId !== actor\.userId\) throw new NotFoundException/.test(svc) && /const mine = s\.technicianId === actor\.userId;\s*let frames[^\n]*\n\s*if \(mine\) \{/.test(svc),
+    'terminal.service.ts mine()/read()');
+  const endMeta = (svc.match(/action: endAction\(reason\)[\s\S]*?meta: \{([\s\S]*?)\n      \},/) ?? [])[1] ?? '';
+  const openMeta = (openBody.match(/meta: \{([^}]*)\}/) ?? [])[1] ?? '';
+  check('terminal: audit rows carry ids, the shell, the reason, durations and byte counts — never input or output',
+    endMeta.length > 0 && !/\bdata\b|frames|input/.test(endMeta) && /bytesIn/.test(endMeta) && /durationMs/.test(endMeta)
+      && /reason/.test(openMeta) && !/\bdata\b|frames/.test(openMeta),
+    `end meta: ${endMeta.replace(/\s+/g, ' ').slice(0, 200)}`);
+  const remoteFiles = walk(`${SRC}/remote-ops`);
+  const logs = remoteFiles.flatMap((f) => [...code(read(f)).matchAll(/\b(?:this\.)?logger\.(log|warn|error|debug|verbose)\(([^;]*)\);|console\.\w+\(/g)].map((m) => `${f}: ${m[0].slice(0, 80)}`));
+  check('terminal: the remote-ops module logs nothing but two fixed warnings (the switch, a failed sweep)',
+    logs.length === 2 && logs.every((l) => /TERMINAL_SWEEP=off|sweep: \$\{String\(e\)\}/.test(l)), logs.join(' | '));
+  const writers = walk(SRC).filter((f) => f !== `${SRC}/remote-ops/terminal.service.ts`)
+    .filter((f) => /\.(terminalSession|terminalFrame|terminalTranscriptChunk)\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/.test(read(f)));
+  const settingWriters = walk(SRC).filter((f) => f !== `${SRC}/remote-ops/remote-ops-settings.service.ts`)
+    .filter((f) => /\.remoteOpsSetting\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/.test(read(f)));
+  check('terminal: only TerminalService writes the terminal tables, only RemoteOpsSettingsService the setting',
+    writers.length === 0 && settingWriters.length === 0, [...writers, ...settingWriters].join(', '));
+
+  const ras = read(`${SRC}/remote-ops/remote-agent.service.ts`);
+  const dev = ras.slice(ras.indexOf('  private async device('), ras.indexOf('  async poll('));
+  check('terminal: the agent channel checks the device secret first, then Windows and the signed agent, then the pool; strict bodies; no MSA_GRANTS',
+    /^\s*const dev = await this\.enrollment\.authenticateDevice\(rustdeskId, agentSecret, reason\);/m.test(dev)
+      && dev.indexOf('authenticateDevice') < dev.indexOf('this.prisma') && /runsSignedAgent\(/.test(dev) && /isWindowsPlatform\(/.test(dev) && /assertAssigned\(ep\)/.test(dev)
+      && (ras.match(/z\.strictObject\(/g) ?? []).length >= 4 && !remoteFiles.some((f) => /msaGrantsEnabled|MSA_GRANTS/.test(code(read(f)))),
+    'remote-ops/remote-agent.service.ts');
+  const enr = read(`${SRC}/enrollment/enrollment.service.ts`);
+  const ws = read(`${SRC}/public/windows-script.ts`);
+  check('terminal: the heartbeat says remotePoll only to an authenticated signed agent that may act, and the signed heartbeat starts only `remote-worker`, with no argument from the portal',
+    /let remotePoll = false;\s*if \(authenticated && mayAct && kind === 'signed'\) \{\s*try \{\s*remotePoll = await remoteWorkWanted\(this\.prisma, node\.endpointId\);/.test(enr)
+      && /\.\.\.\(remotePoll \? \{ remotePoll: true \} : \{\}\)/.test(enr)
+      && /if \(\$resp\.data\.remotePoll -eq \$true -and \(Test-Path -LiteralPath \$agentExe\)\) \{\s*Start-Process -FilePath \$agentExe -ArgumentList @\('remote-worker'\) -WindowStyle Hidden\s*\}/.test(ws)
+      && (ws.match(/remote-worker/g) ?? []).length === 1,
+    'enrollment.service.ts / windows-script.ts');
+
+  // The agent.
+  const GO = 'tools/windows-installer';
+  // walk() lists TypeScript only; the Go package is one flat directory.
+  const goFiles = readdirSync(join(ROOT, `${GO}/internal/remote`)).filter((f) => f.endsWith('.go') && !f.endsWith('_test.go')).map((f) => `${GO}/internal/remote/${f}`);
+  const execs = goFiles.flatMap((f) => [...read(f).matchAll(/exec\.Command(?:Context)?\(([^)]*)\)/g)].map((m) => `${f.slice(GO.length + 1)}: ${m[1]}`));
+  check('terminal: internal/remote has two exec sites, one per platform, each an argument array (path, args / the simulator\'s argv) — never a shell string',
+    goFiles.length >= 6 && JSON.stringify(execs.sort()) === JSON.stringify(['internal/remote/spawn_unix.go: argv[0], argv[1:]...', 'internal/remote/spawn_windows.go: path, args...']), execs.join('; ') || `${goFiles.length} files`);
+  const sw = read(`${GO}/internal/remote/spawn_windows.go`);
+  check('terminal: on Windows the shell is System32\'s, by absolute path, from ShellCommand, created suspended in a Job Object (KILL_ON_JOB_CLOSE) and resumed only after it is assigned',
+    /sys, err := windows\.GetSystemDirectory\(\)/.test(sw) && /path, args, ok := ShellCommand\(sys, shell\)/.test(sw) && /os\.Lstat\(path\)/.test(sw)
+      && /CREATE_SUSPENDED/.test(sw) && /JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/.test(sw)
+      && sw.indexOf('AssignProcessToJobObject(job, ph)') > 0 && sw.indexOf('return resumeThreads(') > sw.indexOf('AssignProcessToJobObject(job, ph)')
+      && /TerminateJobObject\(p\.job, 1\)/.test(sw) && !/"\/c"|"\/C"|-EncodedCommand|ExecutionPolicy/.test(sw),
+    'internal/remote/spawn_windows.go');
+  const sh = read(`${GO}/internal/remote/shell.go`);
+  check('terminal: ShellCommand names exactly cmd.exe /D and powershell.exe -NoLogo -NoProfile -NonInteractive -Command - (stdin), and refuses UNC, device and relative paths and ".."',
+    /case "cmd":\s*return joinWin\(system32, "cmd\.exe"\), \[\]string\{"\/D"\}, true/.test(sh)
+      && /case "powershell":\s*return joinWin\(system32, `WindowsPowerShell\\v1\.0\\powershell\.exe`\), \[\]string\{"-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "-"\}, true/.test(sh)
+      && /strings\.HasPrefix\(system32, `\\\\`\) \|\| strings\.HasPrefix\(system32, "\/\/"\) \|\| strings\.Contains\(system32, "\.\."\)/.test(sh),
+    'internal/remote/shell.go');
+  const wk = read(`${GO}/internal/remote/worker.go`);
+  check('terminal: the worker starts a shell from its name only (Spawner.Start(shell)), and logs no input, output or secret',
+    /Start\(shell string\) \(Proc, error\)/.test(read(`${GO}/internal/remote/protocol.go`)) && /proc, err := w\.S\.Start\(in\.Shell\)/.test(wk)
+      && [...wk.matchAll(/w\.logf\(([^\n]*)\)/g)].every((m) => !/\bb\b|\.data|Input|Frames|frames|Secret|pending/.test(m[1].replace(/"[^"]*"/g, ''))),
+    'internal/remote/worker.go');
+  const listen = [...goFiles, `${GO}/remote_worker_windows.go`, `${GO}/cmd/rem0te-remote-sim/main.go`].filter((f) => /net\.Listen|ListenAndServe|http\.Serve\(|ListenPacket/.test(read(f)));
+  check('terminal: the worker listens on nothing (outbound polls only)', goFiles.length >= 6 && listen.length === 0, listen.join(', '));
+  const goL = read(`${GO}/internal/remote/limits.go`);
+  const tsL = read(`${SRC}/remote-ops/limits.ts`);
+  const mig = read('apps/api/prisma/migrations/0094_terminal_sessions/migration.sql');
+  check('terminal: the limits agree — 15 minutes idle, 60 in all, 4,096 / 16,384-byte frames — in TS, Go and 0094',
+    /TERMINAL_IDLE_MS = 15 \* 60_000/.test(tsL) && /TERMINAL_MAX_MS = 60 \* 60_000/.test(tsL) && /IdleTimeout = 15 \* time\.Minute/.test(goL) && /MaxSession = 60 \* time\.Minute/.test(goL)
+      && /TERMINAL_INPUT_FRAME_MAX = 4096/.test(tsL) && /InputFrameMax = 4096/.test(goL) && /TERMINAL_OUTPUT_FRAME_MAX = 16384/.test(tsL) && /OutputFrameMax = 16384/.test(goL)
+      && /"notAfter" <= "createdAt" \+ interval '60 minutes'/.test(mig) && /CREATE UNIQUE INDEX "TerminalSession_one_live_key"/.test(mig),
+    'limits.ts / limits.go / 0094');
+  check('terminal: the worker enforces the hard limit from its own start, whatever the portal says (the portal may only shorten it)',
+    /notAfter: now\.Add\(w\.d\(w\.MaxSession, MaxSession\)\)/.test(wk) && /t\.Before\(s\.notAfter\)/.test(wk) && /w\.stop\(s, "expired"\)/.test(wk) && /w\.stopAll\("disconnected"\)/.test(wk),
+    'internal/remote/worker.go');
+
+  // Switches, the console, the proof.
+  check('terminal: TERMINAL_SWEEP=off is exact, exported by run-e2e.sh, set by e2e-ui.mjs and listed in OFF_SWITCHES',
+    /process\.env\.TERMINAL_SWEEP === 'off'/.test(svc) && /^export TERMINAL_SWEEP=off$/m.test(read('scripts/run-e2e.sh'))
+      && /TERMINAL_SWEEP: 'off'/.test(read('apps/web/scripts/e2e-ui.mjs')) && /name: 'TERMINAL_SWEEP'/.test(read(`${SRC}/admin/host-security/posture.ts`)),
+    'TERMINAL_SWEEP');
+  const tab = read('apps/web/components/endpoints/workspace/terminal-tab.tsx');
+  check('terminal: the console says "SYSTEM — full control of this computer" and renders output as text',
+    /SYSTEM — full control of this computer/.test(tab) && !/dangerouslySetInnerHTML|innerHTML/.test(tab), 'terminal-tab.tsx');
+  check('terminal: the suites prove it (unit in CI, e2e with the agent\'s worker, the browser, the Windows lab)',
+    /unit-terminal\.mjs/.test(read('.github/workflows/ci.yml')) && /rem0te-remote-sim/.test(read('.github/workflows/ci.yml'))
+      && /run terminal node scripts\/e2e-terminal\.mjs/.test(read('scripts/run-e2e.sh')) && /async function terminalPanel\(/.test(read('apps/web/scripts/e2e-ui.mjs'))
+      && /\.\/internal\/remote\//.test(read('.github/workflows/lab-windows.yml')),
+    'ci.yml / run-e2e.sh / e2e-ui.mjs / lab-windows.yml');
 }
 
 // ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──

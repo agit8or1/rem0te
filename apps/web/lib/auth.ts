@@ -35,6 +35,8 @@ export const CAP = {
   MONITORING_CONFIGURE: 'monitoring:configure',
   SCRIPTS_AUTHOR: 'scripts:author',
   SCRIPTS_REVIEW: 'scripts:review',
+  // 0.77: platform-only (a Platform Admin holds it; no business can grant it).
+  COMPUTERS_TERMINAL: 'computers:terminal',
 } as const;
 
 export type Capability = (typeof CAP)[keyof typeof CAP];

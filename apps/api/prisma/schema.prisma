@@ -429,6 +429,19 @@ enum ActivityAction {
   // own when the evidence changed, the check resolved or it expired.
   SECURITY_FINDING_ACCEPTED
   SECURITY_FINDING_UNACCEPTED
+  // 0.77 Conduit (migration 0094): the background terminal. Opened (ids,
+  // shell, reason), started by the agent, closed by its technician, expired
+  // (idle or the hard limit), revoked (a Platform Admin or the business's own
+  // member), ended (the shell exited, a pause, the agent refused or an output
+  // cap). Meta carries ids, the shell, durations and byte counts, never a
+  // command or any output. Plus a business's terminal settings changing.
+  TERMINAL_OPENED
+  TERMINAL_STARTED
+  TERMINAL_CLOSED
+  TERMINAL_EXPIRED
+  TERMINAL_REVOKED
+  TERMINAL_ENDED
+  REMOTE_OPS_SETTINGS_CHANGED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -764,6 +777,9 @@ model Customer {
 
   @@index([tenantId])
   @@index([tenantId, name])
+
+  /// 0.77: terminal (and, from 0.78, file transfer) settings; no row = the defaults.
+  remoteOpsSetting RemoteOpsSetting?
 }
 
 model Site {
@@ -934,6 +950,8 @@ model Endpoint {
   msaManaged        MsaManagedComputer?
   msaRevocations    MsaRevocation[]
   msaCutoverMembers MsaCutoverMember[]
+  /// 0.77: background terminal sessions on this computer.
+  terminalSessions  TerminalSession[]
   /// 0.67: false-positive reports about this computer's alerts, and rules scoped to it.
   falsePositiveReports AlertFalsePositiveReport[]
   alertQualityRules    AlertQualityRule[]
@@ -5052,4 +5070,96 @@ model SecurityFindingAcceptance {
   reopenedById String?
 
   @@index([findingId, acceptedAt])
+}
+
+/// 0.77 (Conduit): a background cmd or PowerShell on one Windows computer,
+/// for one technician (remote-ops/terminal.service.ts, the only writer).
+/// Short-lived: `notAfter` is the hard limit (createdAt + 60 minutes, 0094
+/// CHECK), and the idle limit runs from `lastActivityAt`, which only the
+/// technician's input moves. Neither is ever extended. No command text or
+/// output is stored here: in transit it is a TerminalFrame row, deleted once
+/// delivered and when the session ends; kept only as TerminalTranscriptChunk
+/// rows when the business turned transcripts on before the session opened.
+model TerminalSession {
+  /// 32 lowercase hex characters.
+  id             String    @id
+  endpointId     String
+  endpoint       Endpoint  @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  businessId     String
+  technicianId   String
+  /// cmd | powershell (0094 CHECK).
+  shell          String
+  reason         String
+  /// pending | open | ended (0094 CHECK).
+  state          String    @default("pending")
+  /// The business's transcript setting when it opened.
+  retained       Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  notAfter       DateTime
+  lastActivityAt DateTime  @default(now())
+  startedAt      DateTime?
+  endedAt        DateTime?
+  /// A closed code (0094 CHECK).
+  endReason      String?
+  endedById      String?
+  /// The last input frame issued, and the last one the agent took.
+  inSeq          Int       @default(0)
+  inAcked        Int       @default(0)
+  /// The last output frame received.
+  outSeq         Int       @default(0)
+  bytesIn        Int       @default(0)
+  bytesOut       Int       @default(0)
+  exitCode       Int?
+  frames         TerminalFrame[]
+  transcript     TerminalTranscriptChunk[]
+
+  @@index([endpointId, state])
+  @@index([state, notAfter])
+  @@index([technicianId, state])
+}
+
+/// 0.77: one frame in transit. `in` frames wait for the agent, `out` frames
+/// for the technician's browser; each is deleted once taken, and every frame
+/// of a session goes when it ends.
+model TerminalFrame {
+  id        String          @id @default(cuid())
+  sessionId String
+  session   TerminalSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  /// in | out.
+  dir       String
+  seq       Int
+  /// stdin | stdout | stderr.
+  stream    String
+  data      Bytes
+  createdAt DateTime        @default(now())
+
+  @@unique([sessionId, dir, seq])
+}
+
+/// 0.77: the opt-in transcript (RemoteOpsSetting.terminalTranscripts), read
+/// only with computers:terminal in scope, pruned by TERMINAL_SWEEP after the
+/// business's transcriptDays.
+model TerminalTranscriptChunk {
+  id        String          @id @default(cuid())
+  sessionId String
+  session   TerminalSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  dir       String
+  seq       Int
+  stream    String
+  data      Bytes
+  createdAt DateTime        @default(now())
+
+  @@unique([sessionId, dir, seq])
+  @@index([createdAt])
+}
+
+/// 0.77: a business's terminal settings (and, from 0.78, file transfer).
+/// Written only by RemoteOpsSettingsService, by a Platform Admin, audited.
+model RemoteOpsSetting {
+  businessId          String   @id
+  business            Customer @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  terminalTranscripts Boolean  @default(false)
+  transcriptDays      Int      @default(30)
+  updatedAt           DateTime @updatedAt
+  updatedById         String?
 }

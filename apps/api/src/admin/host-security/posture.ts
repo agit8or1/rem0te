@@ -111,6 +111,7 @@ export function scoreOf(findings: Finding[]): Score {
 export const OFF_SWITCHES: ReadonlyArray<{ name: string; severity: Severity; cost: string }> = [
   { name: 'STALE_SWEEP', severity: 'critical', cost: 'No computer is ever marked offline again.' },
   { name: 'SSO_SESSION_SWEEP', severity: 'critical', cost: 'A session ended at the identity provider without back-channel logout never ends here.' },
+  { name: 'TERMINAL_SWEEP', severity: 'high', cost: 'A terminal nobody is reading is not ended at its idle or 60-minute limit (it ends when next read, polled or written), and opt-in transcripts are never pruned.' },
   { name: 'AUDIT_SEALER', severity: 'critical', cost: 'New audit entries are not sealed into the tamper-evident chain or exported.' },
   { name: 'MONITOR_SWEEP', severity: 'high', cost: 'Alerts are not raised, resolved, notified or ticketed, and quality rules do not expire.' },
   { name: 'SNAPSHOT_SWEEP', severity: 'medium', cost: 'Automatic Processes, Services and Network snapshots stop.' },

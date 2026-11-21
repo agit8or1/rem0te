@@ -1,0 +1,62 @@
+/**
+ * The background terminal's limits (0.77 Conduit, docs/remote-terminal.md).
+ *
+ * Pure constants: no imports. The agent compiles the same numbers
+ * (tools/windows-installer/internal/remote/limits.go) and enforces them
+ * itself, so a portal that asked for more would still be cut off at these;
+ * §87 of the security invariants checks the two files agree.
+ */
+
+/** Without the technician's input for this long, the session ends. Only input moves it; output, reads and reconnects never do. */
+export const TERMINAL_IDLE_MS = 15 * 60_000;
+/** The hard limit, from when it was opened. Never extended, by anything. */
+export const TERMINAL_MAX_MS = 60 * 60_000;
+
+/** The only two shells. The agent maps each to one absolute System32 path. */
+export const TERMINAL_SHELLS = ['cmd', 'powershell'] as const;
+export type TerminalShell = (typeof TERMINAL_SHELLS)[number];
+
+/** One input frame (what one Send carries), in bytes of UTF-8. */
+export const TERMINAL_INPUT_FRAME_MAX = 4096;
+/** One output frame, in bytes. */
+export const TERMINAL_OUTPUT_FRAME_MAX = 16384;
+/** Everything typed in one session. Beyond it the session ends (input_cap). */
+export const TERMINAL_SESSION_INPUT_MAX = 1024 * 1024;
+/** Everything printed in one session. Beyond it the session ends (output_cap). */
+export const TERMINAL_SESSION_OUTPUT_MAX = 8 * 1024 * 1024;
+/** Output frames in one agent post, and input frames in one poll answer. */
+export const TERMINAL_OUTPUT_FRAMES_PER_POST = 16;
+export const TERMINAL_INPUT_FRAMES_PER_POLL = 32;
+/** Output frames in one read by the browser. */
+export const TERMINAL_READ_FRAMES = 64;
+/** Live (pending or open) terminals on one computer, from everyone. One per technician (0094 index). */
+export const TERMINAL_LIVE_PER_COMPUTER = 3;
+
+/** The agent release that first carries the remote worker. */
+export const TERMINAL_MIN_AGENT = '0.77.0';
+
+/** How long a worker's poll is held when there is nothing for it. */
+export const REMOTE_POLL_HOLD_MS = 20_000;
+/** A held poll also re-reads the database this often (another API process may have the news). */
+export const REMOTE_POLL_RECHECK_MS = 2_000;
+
+export const TERMINAL_REASON_MIN = 3;
+export const TERMINAL_REASON_MAX = 500;
+
+/** Transcript retention, when a business turned transcripts on. */
+export const TRANSCRIPT_DAYS_DEFAULT = 30;
+export const TRANSCRIPT_DAYS_MIN = 1;
+export const TRANSCRIPT_DAYS_MAX = 365;
+
+/** Why a session ended: a closed list (0094 CHECK). */
+export const END_REASONS = [
+  'closed', 'revoked', 'expired_idle', 'expired_max', 'paused', 'exited',
+  'agent_refused', 'agent_error', 'output_cap', 'input_cap', 'endpoint_unavailable',
+] as const;
+export type EndReason = (typeof END_REASONS)[number];
+
+/** What the agent may say when it will not start a shell: a closed list. */
+export const AGENT_REFUSALS = ['shell_unavailable', 'start_failed', 'too_many', 'bad_request'] as const;
+
+export const SESSION_ID_RE = /^[0-9a-f]{32}$/;
+export const ENDPOINT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;

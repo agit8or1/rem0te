@@ -43,6 +43,10 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   restart status, and what the agent will and will not read (0.31); the Processes,
   Services and Network snapshot tabs (0.33), and the buttons on them that start, stop or restart a service, change
   its startup type, or end a process (0.45).
+- **[remote-terminal.md](remote-terminal.md)** — the background terminal (0.77): a cmd or PowerShell on a Windows
+  computer as SYSTEM with no screen sharing, for Platform Admins only; how it reaches the computer (outbound, up to
+  three minutes to start), the 15-minute idle and 60-minute limits, ending and revocation, opt-in transcripts, and
+  exactly which rules it reverses.
 - **[monitoring.md](monitoring.md)** — monitors (offline, disk, CPU, memory,
   services, event log, pending restart), inheritance, alerts, site outages,
   maintenance windows, escalation and ClientSt0r tickets (0.29).

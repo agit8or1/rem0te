@@ -29,7 +29,9 @@
  *                     says it predates the check), or it is the standard
  *                     agent and the action needs the full (signed) agent
  *   contained         a containment pause stops it for this business
+ *                     (`actions` for an action, `remote` for the terminal)
  *   offline           not reporting; the request waits for a check-in
+ *                     (a terminal is refused: it needs a reporting computer)
  *   needs_approval    a signed action: two approvers authorize it first
  *   available         opens and can be used now
  *
@@ -39,10 +41,11 @@
  */
 
 export type ToolGroup =
-  | 'diagnostics' | 'scripts' | 'services' | 'software' | 'updates' | 'networking' | 'security' | 'maintenance';
+  | 'diagnostics' | 'remote' | 'scripts' | 'services' | 'software' | 'updates' | 'networking' | 'security' | 'maintenance';
 
 export const TOOL_GROUPS: readonly { id: ToolGroup; label: string }[] = [
   { id: 'diagnostics', label: 'Diagnostics' },
+  { id: 'remote', label: 'Terminal' },
   { id: 'scripts', label: 'PowerShell / Scripts' },
   { id: 'services', label: 'Services & Processes' },
   { id: 'software', label: 'Software' },
@@ -80,7 +83,7 @@ export const OPENS: readonly ToolState[] = ['available', 'needs_approval', 'offl
 export const opens = (s: ToolState) => OPENS.includes(s);
 
 /** The workspace tabs a tool can open (device-model.ts WorkspaceTab, the ones used here). */
-export type ToolTab = 'diagnostics' | 'actions' | 'processes' | 'services' | 'network' | 'software' | 'patches' | 'events';
+export type ToolTab = 'diagnostics' | 'actions' | 'processes' | 'services' | 'network' | 'software' | 'patches' | 'events' | 'terminal';
 
 /** Where a tool goes: a tab with what to open in it, a page, or a download. */
 export type ToolTarget =
@@ -105,6 +108,12 @@ type Need =
   | { kind: 'status' }
   /** An approved catalog action, by id@version, on the signed agent. */
   | { kind: 'action'; action: string; version: number; eventLogs?: boolean }
+  /**
+   * 0.77: the background terminal on the signed Windows agent, from
+   * `minAgent`. Not an approved action: the person needs computers:terminal
+   * (a Platform Admin only) and confirms it is them when the policy asks.
+   */
+  | { kind: 'terminal'; minAgent: string }
   /** Nothing behind it yet. */
   | { kind: 'later' };
 
@@ -137,6 +146,9 @@ export function toolCatalog(endpointId: string): ToolDef[] {
     { id: 'top-processes', group: 'diagnostics', label: 'Top processes', description: 'The ten processes using the most processor time and memory. Read-only.', need: { kind: 'diagnostic', key: 'top_processes' }, target: diag('top_processes') },
     { id: 'recent-errors', group: 'diagnostics', label: 'Recent system errors', description: 'Critical and Error events from the last 24 hours, grouped. Read-only.', need: { kind: 'diagnostic', key: 'recent_system_errors', eventLogs: true }, target: diag('recent_system_errors') },
     { id: 'diagnostics-report', group: 'diagnostics', label: 'Download diagnostics report', description: 'The connection checks and what the computer last reported, as one file.', need: { kind: 'server' }, target: { kind: 'download', href: `/api/v1/endpoints/${e}/diagnostics/report` } },
+
+    // ── Terminal (0.77) ──
+    { id: 'terminal', group: 'remote', label: 'Open a terminal (cmd or PowerShell)', description: 'A background shell as SYSTEM — full control of this computer — with no screen sharing. Needs a reason; ends after 15 minutes idle or 60 in all. Terminal tab.', need: { kind: 'terminal', minAgent: '0.77.0' }, target: { kind: 'tab', tab: 'terminal' } },
 
     // ── PowerShell / Scripts ──
     { id: 'run-script', group: 'scripts', label: 'Run an approved script', description: 'An approved version from the script library, with its typed arguments. Opens Automation → Scripts.', need: { kind: 'action', action: 'windows.script.run', version: 1 }, target: { kind: 'href', href: '/automation/scripts' } },
@@ -232,6 +244,8 @@ export interface ToolFacts {
   perms: {
     view: boolean;
     eventLogs: boolean;
+    /** 0.77: holds computers:terminal (a Platform Admin only). */
+    terminal: boolean;
     /** May request approved actions of this risk on this computer (mayRequestActions()). */
     requestLow: boolean;
     requestHigh: boolean;
@@ -274,8 +288,8 @@ function inactive(f: ToolFacts, need: Need): string | null {
   if (f.status === 'ARCHIVED') return 'This computer is archived.';
   if (f.status === 'PENDING_ENROLLMENT') return 'This computer has not finished enrolment.';
   // Reading what it reported is how a pooled computer is inspected; nothing runs on it (§70).
-  if (f.pooled && (need.kind === 'action' || need.kind === 'diagnostic')) return 'This computer is in the unassigned pool: adopt it into a business first (Devices → Unassigned).';
-  if (need.kind === 'diagnostic' && f.agentBound === false) return 'This computer has never authenticated with a device secret, so it cannot be asked to run anything. Re-run the installer on it once.';
+  if (f.pooled && (need.kind === 'action' || need.kind === 'diagnostic' || need.kind === 'terminal')) return 'This computer is in the unassigned pool: adopt it into a business first (Devices → Unassigned).';
+  if ((need.kind === 'diagnostic' || need.kind === 'terminal') && f.agentBound === false) return 'This computer has never authenticated with a device secret, so it cannot be asked to run anything. Re-run the installer on it once.';
   return null;
 }
 
@@ -287,6 +301,7 @@ function notPermitted(f: ToolFacts, need: Need): string | null {
   if (need.kind === 'diagnostic' && f.diagAllowed && f.diagAllowed[need.key] === false) {
     return need.connect ? 'Needs the “Remote connect” permission: this check makes the computer reach a host you name.' : need.eventLogs ? 'Needs the “Read event logs” permission.' : 'Your role does not allow this check.';
   }
+  if (need.kind === 'terminal' && !f.perms.terminal) return 'Only a Platform Admin can open a terminal: it runs as SYSTEM, with full control of the computer.';
   if (need.kind === 'action') {
     const risk = f.actionRisk[need.action] ?? 'high';
     if (!(risk === 'low' ? f.perms.requestLow : f.perms.requestHigh)) {
@@ -297,6 +312,12 @@ function notPermitted(f: ToolFacts, need: Need): string | null {
 }
 
 function newerAgent(f: ToolFacts, need: Need): string | null {
+  if (need.kind === 'terminal') {
+    if (f.agentKind !== 'signed') return 'Needs the full (signed) agent; this computer runs the standard agent. Upgrade it from the Agent card.';
+    const c = f.agentVersion ? compareVersions(f.agentVersion, need.minAgent) : null;
+    if (c === null || c < 0) return `Needs the signed agent ${need.minAgent} or later${f.agentVersion ? ` (this computer reports ${f.agentVersion})` : ''}. Let it update first.`;
+    return null;
+  }
   if (need.kind === 'action') {
     if (f.agentKind !== 'signed') return 'Needs the full (signed) agent; this computer runs the standard agent. Upgrade it from the Agent card.';
     if (!f.agentActions.includes(`${need.action}@${need.version}`)) return 'This computer’s agent does not report support for this action yet. Let it update first.';
@@ -335,6 +356,9 @@ export function toolState(def: ToolDef, f: ToolFacts): { state: ToolState; reaso
   if (need.kind === 'action' && f.paused.includes('actions')) {
     return { state: 'contained', reason: 'Approved actions are paused by containment for this business (Settings → Security → Containment).' };
   }
+  if (need.kind === 'terminal' && f.paused.includes('remote')) {
+    return { state: 'contained', reason: 'Remote connections and chat are paused by containment for this business, and a terminal is one of them.' };
+  }
   const reachesAgent = need.kind !== 'server' && need.kind !== 'status';
   if (reachesAgent && f.connectivity !== 'online') {
     return {
@@ -343,8 +367,13 @@ export function toolState(def: ToolDef, f: ToolFacts): { state: ToolState; reaso
         ? `${f.connectivityText}: what is shown is from its last report.`
         : need.kind === 'diagnostic'
           ? `${f.connectivityText}: the request waits fifteen minutes for its next check-in, then expires.`
-          : `${f.connectivityText}: the request waits for its next check-in.`,
+          : need.kind === 'terminal'
+            ? `${f.connectivityText}: a terminal can only be opened on a computer that is reporting.`
+            : `${f.connectivityText}: the request waits for its next check-in.`,
     };
+  }
+  if (need.kind === 'terminal') {
+    return { state: 'available', reason: 'Asks you to confirm it is you (unless that is turned off), then starts at the computer’s next check-in — up to about three minutes.' };
   }
   if (need.kind === 'action') {
     if (f.signer.approval === 'direct') return { state: 'available', reason: 'Direct mode: signed when you request it, after a fresh sign-in, and run at its next check-in.' };

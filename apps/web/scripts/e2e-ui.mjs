@@ -255,6 +255,8 @@ function startApi() {
     RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off', TRAY_SWEEP: 'off', AUTO_MIGRATION_SWEEP: 'off', WINGET_INDEX_SWEEP: 'off', WARRANTY_SWEEP: 'off', AUTOMATION_SWEEP: 'off', RESTART_WINDOW_SWEEP: 'off',
     // 0.59: the SSO session safety-net.
     SSO_SESSION_SWEEP: 'off',
+    // 0.77: the terminal sweep (expiry and transcript pruning).
+    TERMINAL_SWEEP: 'off',
     // 0.72: Managed Secure Access is off, as in production; the suite checks
     // the console asks no gated /msa/managed or /msa/grants route.
     MSA_GRANTS: 'off',
@@ -1749,6 +1751,7 @@ async function combo(browser, f, vp, theme) {
     await headerAgentUpgrade(page, f, vp, theme, label);
     await toolsPanel(page, f, vp, theme, label);
     await diagnosticsPaletteUi(page, f, vp, theme, label);
+    await terminalPanel(page, f, vp, theme, label);
     if (theme === 'light') await mainPagesSweep(page, f, vp, label);
   } finally { await ctx.close(); }
   await apiKeys(browser, f, vp, theme, label);
@@ -2297,12 +2300,64 @@ async function seedTools(f) {
   };
   return {
     D,
-    signed: await mk('SIGNED', { updateChannel: 'signed', signedSeenAt: new Date(), agentActions: ACTIONS, agentVersion: '0.76.0' }),
+    // 0.77.0: the first signed agent that runs a terminal.
+    signed: await mk('SIGNED', { updateChannel: 'signed', signedSeenAt: new Date(), agentActions: ACTIONS, agentVersion: '0.77.0' }),
     standard: await mk('STANDARD', {}),
     linux: await mk('LINUX', { platform: 'Linux', osVersion: 'Ubuntu 24.04', agentVersion: '0.33.0' }),
     mac: await mk('MAC', { platform: 'macOS', osVersion: 'macOS 15.1', agentVersion: '0.33.0' }),
     offline: await mk('OFFLINE', { isOnline: false, lastSeenAt: new Date(Date.now() - 3 * 86400_000) }),
   };
+}
+
+/**
+ * The Terminal tab (0.77) on the signed computer, as the Platform Admin: the
+ * SYSTEM warning, opening with a reason (and the confirmation when it asks),
+ * the waiting state with both clocks, End session; on the standard computer
+ * it says what is needed. No agent runs here, so the shell never starts:
+ * e2e-terminal.mjs drives the agent's worker. Every width and theme, no
+ * sideways scroll, no console error.
+ */
+async function terminalPanel(page, f, vp, theme, label) {
+  const ep = f.tools.signed;
+  await prisma.terminalSession.deleteMany({ where: { endpointId: ep.id } });
+  await go(page, `/endpoints/${ep.id}?tab=terminal`);
+  await page.getByTestId('terminal-tab').waitFor({ timeout: 15_000 });
+  const warn = await page.getByTestId('terminal-identity').innerText();
+  check(/SYSTEM — full control of this computer/.test(warn), `${label}: the Terminal tab says SYSTEM — full control of this computer`, warn.slice(0, 200));
+  await page.getByTestId('terminal-reason').fill(`UI check ${vp} ${theme}`);
+  await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
+  await page.getByTestId('terminal-open-button').click();
+  const dlg = stepUpDialog(page);
+  const asked = await dlg.waitFor({ timeout: 4_000 }).then(() => true).catch(() => false);
+  if (asked) {
+    check(/open a terminal/.test(await dlg.innerText()), `${label}: opening a terminal asks to confirm it's you, and says why`, await dlg.innerText().catch(() => ''));
+    await dlg.locator('#stepup-value').fill(PW);
+    await dlg.getByRole('button', { name: 'Confirm' }).click();
+    await dlg.waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {});
+  }
+  const live = page.getByTestId('terminal-live');
+  await page.locator('[data-testid="terminal-live"][data-state="pending"]').waitFor({ timeout: 15_000 }).catch(() => {});
+  const row = await prisma.terminalSession.findFirst({ where: { endpointId: ep.id }, orderBy: { createdAt: 'desc' } });
+  check(await live.getAttribute('data-state') === 'pending' && row?.state === 'pending' && row.technicianId === f.admin.id,
+    `${label}: the terminal opens and waits for the computer`, `${await live.getAttribute('data-state').catch(() => null)} ${row?.state}`);
+  const idle = await page.getByTestId('terminal-idle').innerText().catch(() => '');
+  const total = await page.getByTestId('terminal-total').innerText().catch(() => '');
+  check(/^1[45]:\d\d$/.test(idle) && /^(59|60):\d\d$/.test(total), `${label}: both clocks are shown (idle ${idle}, total ${total})`);
+  check(/next check-in/.test(await page.getByTestId('terminal-state').innerText()), `${label}: the waiting state says it starts at the next check-in`);
+  await themeCheck(page, theme, `${label} Terminal tab`);
+  if (vp === 'phone') await noSideScroll(page, `${label} Terminal tab`);
+  await shot(page, `${label}-terminal`);
+  await page.getByTestId('terminal-end').click();
+  await page.locator('[data-testid="terminal-live"][data-state="ended"]').waitFor({ timeout: 10_000 }).catch(() => {});
+  const ended = await prisma.terminalSession.findUnique({ where: { id: row?.id ?? '' } });
+  check(ended?.state === 'ended' && ended.endReason === 'closed', `${label}: End session closes it`, `${ended?.state} ${ended?.endReason}`);
+  await cleanCheck(page, `${label} Terminal tab`);
+  await go(page, `/endpoints/${f.tools.standard.id}?tab=terminal`);
+  await page.getByTestId('terminal-unsupported').waitFor({ timeout: 10_000 }).catch(() => {});
+  check(/full \(signed\) agent/.test(await page.getByTestId('terminal-unsupported').innerText().catch(() => '')) && await page.getByTestId('terminal-open').count() === 0,
+    `${label}: on the standard agent the Terminal tab says what is needed and offers no Open`);
+  await cleanCheck(page, `${label} Terminal tab on the standard agent`);
+  await prisma.terminalSession.deleteMany({ where: { endpointId: ep.id } });
 }
 
 /** The Tools panel on one computer: open it, and return each tool's state. */
@@ -2343,6 +2398,8 @@ function expectedTools(kind) {
   for (const t of Object.keys(PALETTE_TOOLS)) e[t] = kind === 'linux' || kind === 'mac' ? 'unsupported' : kind === 'signed' ? 'available' : 'needs_newer_agent';
   // No approval signer here: every action says so, before the agent is looked at — except where the OS cannot run it at all.
   for (const t of ACTION_TOOLS) e[t] = kind === 'linux' || kind === 'mac' ? 'unsupported' : 'not_configured';
+  // 0.77: the terminal needs the signed agent 0.77.0 (the standard ones need a newer agent before offline is looked at); this suite is a Platform Admin.
+  e.terminal = kind === 'linux' || kind === 'mac' ? 'unsupported' : kind === 'signed' ? 'available' : 'needs_newer_agent';
   return e;
 }
 
@@ -2366,8 +2423,10 @@ async function toolsPanel(page, f, vp, theme, label) {
     check(wrong.length === 0 && Object.keys(got).length === Object.keys(want).length, `${label}: Tools on the ${kind} computer: all ${Object.keys(want).length} tools in their expected state`, wrong.join('; ') || JSON.stringify(got));
     if (kind === 'signed') {
       const groups = await page.getByTestId('tools-panel').locator('section h3').allInnerTexts();
-      check(groups.join('|').toLowerCase() === 'diagnostics|powershell / scripts|services & processes|software|windows updates|networking|security|maintenance',
-        `${label}: the eight groups, in order`, groups.join('|'));
+      check(groups.join('|').toLowerCase() === 'diagnostics|terminal|powershell / scripts|services & processes|software|windows updates|networking|security|maintenance',
+        `${label}: the nine groups, in order`, groups.join('|'));
+      const term = await page.getByTestId('tool-terminal').innerText();
+      check(/SYSTEM/.test(term) && /full control/.test(term), `${label}: the terminal tool says SYSTEM, full control`, term.slice(0, 200));
       const reason = await page.getByTestId('tool-restart-schedule').innerText();
       check(/No approval signer is configured/.test(reason) && await page.getByTestId('tool-restart-schedule').getAttribute('data-disabled') === 'true',
         `${label}: an action with no signer is shown disabled, saying why`, reason.slice(0, 200));
@@ -2422,6 +2481,7 @@ async function toolsPanel(page, f, vp, theme, label) {
     // 0.76: each palette check, and the server's own Windows support row.
     ...Object.fromEntries(Object.entries(PALETTE_TOOLS).map(([t, k]) => [t, { tab: 'diagnostics', check: k }])),
     'os-support': { tab: 'diagnostics', check: 'os_support' },
+    terminal: { tab: 'terminal' },
   };
   const before = await prisma.diagnosticRun.count({ where: { endpointId: ep.id } });
   for (const [tool, want] of Object.entries(landing)) {
