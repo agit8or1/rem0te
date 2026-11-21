@@ -5,6 +5,114 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.79.0] — 2026-11-21 · *Tally*
+
+**Every approved action now says how it is undone and whether running it again is harmless.** This is roadmap
+item 2.1 of `docs/session-maintenance-mdm-backup-audit.md`. Before it, the twelve catalog actions documented neither,
+and the audit page listed "Rollback documented per action" and the safe-to-repeat flag as **planned**. Both are now
+data in the closed catalog, on the agent and on the portal, and a new invariant, §89, fails the build if the two
+copies disagree. The console shows them wherever an action is offered or a job is shown. Nothing retries
+automatically yet; that is 2.2. No migration, no route change, no signer change. The agent's copy is compiled into
+the next signed build, but nothing on the agent reads it.
+
+### Added
+
+- **Rollback and repeatability in the catalog** (§89).
+  - Portal: `CatalogAction.rollback` (`{ kind, via?, how }`) and `.repeat` (`{ safe, why }`) in
+    `apps/api/src/actions/catalog.ts`, with `ROLLBACK_KINDS = ['none', 'inverse', 'read_only']`.
+  - Agent: `Action.Rollback` (`Rollback{Kind, Via}`) and `Action.Repeatable` in
+    `tools/windows-installer/internal/action/catalog.go`, with `RollbackKinds` in the same order.
+  - `inverse` names the catalog action that undoes it. `none` means nothing Rem0te can send undoes it, and `how`
+    says what a person can do. `read_only` changes nothing.
+
+  | Action | Rollback | Safe to repeat |
+  |---|---|---|
+  | `windows.service.start` | inverse, `windows.service.control` (stop it) | yes |
+  | `windows.update.install` | none (uninstall on the computer, where Microsoft allows it) | yes |
+  | `windows.service.restart` | none (it ends running, as it was) | yes |
+  | `windows.reboot.schedule` | inverse, `windows.reboot.cancel` (before the warning runs out) | **no** |
+  | `windows.reboot.cancel` | inverse, `windows.reboot.schedule` (a new restart) | yes |
+  | `windows.logs.collect` | read-only | yes |
+  | `windows.script.run` | none (the script's own business) | **no** |
+  | `windows.software.install` | inverse, `windows.software.uninstall` | yes |
+  | `windows.software.uninstall` | inverse, `windows.software.install` | yes |
+  | `windows.software.remove` | none (the program's own uninstaller ran) | yes |
+  | `windows.service.control` | inverse, `windows.service.control` (the opposite operation) | yes |
+  | `windows.process.stop` | none (an ended process cannot be resumed) | yes |
+
+  Each "safe" is what the agent's code already does on a second run, read from it rather than assumed. A started,
+  running spooler is `already_running`. Installed updates are skipped, and nothing installed means no restart. The
+  software detection rule is checked first. A missing uninstall key is `no_change`. A process that has ended is
+  `not_running`, and a reused PID is `process_changed`. A start of a running service, a stop of a stopped one and
+  an unchanged startup type are `no_change`. The two that are not safe: once a scheduled restart has happened, a
+  second run restarts again (while the first is pending, Windows refuses the second); and the catalog cannot know
+  whether a script is idempotent.
+- **The console shows both:**
+  - on the Actions tab before a request;
+  - beside each action in the Tools panel, as one line such as *Can be undone: Cancel a scheduled restart · Not
+    safe to repeat*;
+  - on every job in the history.
+
+  The text comes only from `GET /actions/catalog` and the job view; the web holds no copy.
+- **Partial failures on a multi-computer plan.** A plan can name up to 25 computers: an update ring, a script run
+  or a software deployment. On one computer's Actions tab, a job showed only that computer's row under the plan's
+  rolled-up status, so a computer that succeeded showed **Failed** because another one failed, with nothing saying
+  how many. The list now carries `ringTally`, which counts how every computer of the plan stands, for example *Of 3
+  computers: 1 succeeded, 1 failed, 1 refused by the computer*. A job is marked **Partial** when some computers
+  succeeded and others failed, were refused, did not run or are uncertain. It carries counts only, never other
+  computers' names or results (`apps/api/src/actions/target-tally.ts`, pure). An unknown status counts as
+  uncertain, never as success.
+- **Without an approval signer**, the Actions tab still lists each action's rollback and repeatability (folded),
+  and still shows earlier jobs. Before, it showed only "not available", which hid the history too. Nothing there can
+  request anything.
+- **Docs:** a table in `docs/approved-actions.md` (*Rollback and repeating an action*) and a paragraph in /help.
+  The audit page marks 2.1 as 0.79.0 and updates its three rows: rollback documented, the repeat flag (the retry
+  itself is still planned), and partial failures shown.
+
+### Security
+
+- check-security-invariants **§89**:
+  - every Go catalog entry declares a closed rollback kind and `Repeatable`, in §14's order;
+  - every TS entry declares `rollback` (kind, how) and `repeat` (safe, why);
+  - the kinds are the same list in the same order on both sides;
+  - the two copies agree action by action, and so does the shared fixture;
+  - an `inverse` names a catalog action and nothing else does, and `read_only` is always safe;
+  - nothing on the agent reads the fields, and the portal only serves them (the catalog route and the job view);
+  - the docs, /help, the Actions tab, Tools, CI and `e2e-ui.mjs` carry it.
+- §14 is unchanged. It still holds the exact ordered list and the closed parameter forms, and CLAUDE.md's §14
+  paragraph now points to §89.
+
+### Which build carries it
+
+- **Signed agent:** the next build compiles the two fields in, inert. No plan, envelope, heartbeat or result field
+  changes, and an older agent behaves exactly as before. Nothing needs publishing for 0.79 to work.
+- **Approval signer:** it loads the same `catalog.ts` and ignores both fields. No reinstall.
+- **Portal:** API and web.
+
+### Tests
+
+- `unit-action-rollback.mjs` (in CI) covers:
+  - every action declares both, with sentences of a bounded length and no other keys;
+  - the closed kinds;
+  - exactly the restart and the script run are not safe;
+  - the portal against the shared fixture;
+  - `ActionsService.catalog()` serving both, and the job view and tally in the source;
+  - the docs table against the catalog;
+  - the tally (partial, waiting, canceled, unknown statuses);
+  - the web's `tallyText`, `noteLine` and the Tools panel's notes.
+- Go: `internal/action/rollback_test.go`:
+  - the kinds against the fixture;
+  - every entry's kind and `Via`;
+  - the catalog against the fixture;
+  - exactly two not repeatable.
+- `e2e-ui.mjs`, at both widths and in both themes:
+  - every action tool's note in the Tools panel, and no other tool's;
+  - the restart's note naming the cancel;
+  - the Actions tab's five notes with no signer;
+  - a seeded three-computer software plan's job note, and its *Partial* tally on the computer that succeeded.
+
+---
+
 ## [0.78.0] — 2026-11-21 · *Courier*
 
 **Background file transfer: a Platform Admin can send a file to a Windows computer running the signed agent, or

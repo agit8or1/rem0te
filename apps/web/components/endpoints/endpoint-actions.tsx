@@ -13,7 +13,9 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { DIRECT_REQUEST_NOTE, DIRECT_TOAST, directApproved, oldAgentRefusal } from '@/lib/direct-mode';
 import { RestartOptions, defaultRestart, restartAtBody, restartParams, type RestartValue } from '@/components/endpoints/restart-options';
-import { AlertTriangle, ExternalLink, Loader2, RefreshCw, ShieldCheck, Wrench } from 'lucide-react';
+import { AlertTriangle, ExternalLink, Loader2, RefreshCw, Repeat2, ShieldCheck, Undo2, Wrench } from 'lucide-react';
+import { ROLLBACK_LABEL, type ActionNote } from '@/lib/device-tools';
+import { tallyProblems, tallyText, type TargetTally } from '@/lib/action-notes';
 
 /**
  * Approved catalog actions on one computer (v0.26).
@@ -42,11 +44,13 @@ interface CatalogAction {
   direct: boolean; acknowledge: string; maxWindowHours: number; workstationRisk: 'low' | 'high';
   choice: { field: string; label: string; options: { value: string | number; label: string }[] } | null;
   requiresCapability: string | null;
+  /** 0.79 (§89): how it is undone and whether a second run is harmless. */
+  rollback: ActionNote['rollback']; repeat: ActionNote['repeat'];
 }
 type LogSection = { source: string; text: string; truncated: boolean; note?: string };
 interface Job {
   id: string; status: string; statusReason: string | null;
-  action: { id: string; version: number; title: string; warnings: string[] };
+  action: { id: string; version: number; title: string; warnings: string[]; rollback?: ActionNote['rollback'] | null; repeat?: ActionNote['repeat'] | null };
   params?: { service?: unknown; delayMinutes?: unknown; onlyIfRequired?: unknown; ignoreRemoteSession?: unknown } | null;
   reason: string; origin: string; via: string; ticketRef: string | null; requestedById: string;
   risk: 'low' | 'high'; approvalsRequired: number; customerSignoff: boolean;
@@ -63,6 +67,8 @@ interface Job {
   // v0.27: one plan can name several computers (a patch ring). From one
   // computer's page the list carries that computer's row only, plus ringSize.
   deploymentId: string | null; ring: number | null; ringSize?: number;
+  /** 0.79: how every computer of the plan stands, counted (only when it names more than one). */
+  ringTally?: TargetTally;
   targets: { endpointId: string; hostname: string | null; status: string; statusReason: string | null; outcome: string | null;
     result: JobResult | null; reconciled: { at: string; note: string } | null; scriptOutput?: ScriptOutput | { pruned: true } | null }[];
 }
@@ -181,6 +187,8 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
 
   // Updates are requested through a staged deployment, never one computer at a time from here.
   const direct = (catalog?.actions ?? []).filter((a) => a.direct);
+  // 0.79: names for the action that undoes another.
+  const titles: Record<string, string> = Object.fromEntries((catalog?.actions ?? []).map((a) => [a.id, a.title]));
   const supported = (a: CatalogAction) => agentActions.includes(`${a.id}@${a.version}`);
   const action = direct.find((a) => a.id === picked) ?? direct.find(supported) ?? direct[0];
   // 0.47.1: the service this action names, so its current state can be shown from the latest service list.
@@ -226,8 +234,28 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
     return (
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><Wrench className="h-4 w-4" />Approved actions</CardTitle></CardHeader>
-        <CardContent className="text-sm text-muted-foreground">
-          Not available on this server: no approval signer is configured. See <Link className="underline" href="/docs/approved-actions">Approved actions</Link>.
+        <CardContent className="text-sm text-muted-foreground space-y-3">
+          <p>Not available on this server: no approval signer is configured. See <Link className="underline" href="/docs/approved-actions">Approved actions</Link>.</p>
+          {/* 0.79: what each action would do, and earlier jobs, stay readable: nothing here can request one. */}
+          {direct.length > 0 && (
+            <details data-testid="action-notes-unconfigured">
+              <summary className="cursor-pointer text-xs">How each action is undone, and whether it is safe to repeat</summary>
+              <div className="mt-2 space-y-2">
+                {direct.map((a) => (
+                  <div key={a.id} className="space-y-1">
+                    <p className="text-xs font-medium text-foreground">{a.title}</p>
+                    {a.rollback && a.repeat && <NoteView note={{ rollback: a.rollback, repeat: a.repeat }} titles={titles} testId="action-note" />}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+          {jobs.length > 0 && (
+            <div className="space-y-3 text-foreground">
+              <p className="text-xs font-medium">History</p>
+              {jobs.map((j) => <JobRow key={j.id} job={j} titles={titles} onCancel={() => cancel.mutate(j.id)} onChanged={refresh} />)}
+            </div>
+          )}
         </CardContent>
       </Card>
     );
@@ -266,6 +294,7 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
             <p className="text-xs text-muted-foreground">
               {action.verification} It does not show {action.doesNotProve.join(', ')}.
             </p>
+            {action.rollback && action.repeat && <NoteView note={{ rollback: action.rollback, repeat: action.repeat }} titles={titles} testId="action-note" />}
             {directMode ? (
               <p className="text-xs text-muted-foreground flex gap-2" data-testid="direct-mode-note">
                 <ShieldCheck className="h-3.5 w-3.5 shrink-0 mt-0.5" />
@@ -329,7 +358,7 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
         <CardHeader className="pb-3"><CardTitle className="text-sm">History</CardTitle></CardHeader>
         <CardContent className="space-y-3 text-sm">
           {isLoading ? <p className="text-muted-foreground">Loading…</p> : jobs.length === 0 ? <p className="text-muted-foreground">No actions have been requested on this computer.</p> : jobs.map((j) => (
-            <JobRow key={j.id} job={j} onCancel={() => cancel.mutate(j.id)} onChanged={refresh} />
+            <JobRow key={j.id} job={j} titles={titles} onCancel={() => cancel.mutate(j.id)} onChanged={refresh} />
           ))}
         </CardContent>
       </Card>
@@ -337,7 +366,24 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
   );
 }
 
-function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => void; onChanged: () => void }) {
+/**
+ * 0.79 (§89): how an action is undone and whether a second run is harmless,
+ * from the catalog the server serves. Before a request, and on every job.
+ */
+function NoteView({ note, titles, testId, compact = false }: { note: ActionNote; titles: Record<string, string>; testId: string; compact?: boolean }) {
+  const via = note.rollback.kind === 'inverse' && note.rollback.via ? titles[note.rollback.via] ?? note.rollback.via : null;
+  return (
+    <div className={compact ? 'space-y-0.5 text-xs text-muted-foreground' : 'rounded-md border bg-muted/30 p-2 space-y-1 text-xs'} data-testid={testId}
+      data-rollback={note.rollback.kind} data-repeat={note.repeat.safe ? 'safe' : 'unsafe'}>
+      <p className="flex gap-2"><Undo2 className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden="true" />
+        <span><strong className={compact ? 'font-medium' : ''}>{ROLLBACK_LABEL[note.rollback.kind]}{via ? `: ${via}` : ''}.</strong> {note.rollback.how}</span></p>
+      <p className="flex gap-2"><Repeat2 className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden="true" />
+        <span><strong className={compact ? 'font-medium' : ''}>{note.repeat.safe ? 'Safe to repeat.' : 'Not safe to repeat.'}</strong> {note.repeat.why}</span></p>
+    </div>
+  );
+}
+
+function JobRow({ job: j, titles, onCancel, onChanged }: { job: Job; titles: Record<string, string>; onCancel: () => void; onChanged: () => void }) {
   const { toast } = useToast();
   const isUpdate = j.action.id === UPDATE_ACTION;
   const rec = reconcileFor(j.action.id, ((j.targets?.[0]?.result ?? j.result) as JobResult | null)?.observed);
@@ -390,6 +436,13 @@ function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => voi
       {j.statusReason && <p className="text-xs text-muted-foreground">Reason: {j.statusReason.replace(/_/g, ' ')}</p>}
       {(j.statusReason === 'revoked' || mine?.statusReason === 'revoked') && <p className="text-xs text-muted-foreground">The script or software entry this runs was revoked after the plan was signed, so it will never run here.</p>}
       {(j.ringSize ?? 1) > 1 && mine && <p className="text-xs text-muted-foreground">This computer: {mine.status.toLowerCase().replace(/_/g, ' ')}{mine.statusReason ? ` (${mine.statusReason.replace(/_/g, ' ')})` : ''}</p>}
+      {j.ringTally && j.ringTally.total > 1 && (
+        <p className="text-xs flex flex-wrap items-center gap-2" data-testid="job-tally" data-partial={j.ringTally.partial ? 'true' : 'false'}>
+          {j.ringTally.partial && <Badge variant="warning">Partial</Badge>}
+          <span className={tallyProblems(j.ringTally) ? '' : 'text-muted-foreground'}>{tallyText(j.ringTally)}</span>
+          {j.deploymentId && <Link href={`/patching/${j.deploymentId}`} className="underline">Each computer</Link>}
+        </p>
+      )}
       {result && (
         <p className="text-xs">
           Computer reported <strong>{outcome?.replace(/_/g, ' ')}</strong>
@@ -419,6 +472,7 @@ function JobRow({ job: j, onCancel, onChanged }: { job: Job; onCancel: () => voi
           {result.updates.map((u) => <li key={u.updateId}>{u.kb ?? u.updateId}: {u.state.replace(/_/g, ' ')}{u.reason ? ` — ${u.reason}` : ''}{u.hresult && u.state === 'failed' ? ` (${u.hresult})` : ''}</li>)}
         </ul>
       ) : null}
+      {j.action.rollback && j.action.repeat && <NoteView note={{ rollback: j.action.rollback, repeat: j.action.repeat }} titles={titles} testId="job-note" compact />}
       <p className="text-[11px] text-muted-foreground font-mono break-all">plan {j.digest}</p>
       {uncertain && (
         <div className="rounded-md border border-destructive/40 p-2 space-y-2">

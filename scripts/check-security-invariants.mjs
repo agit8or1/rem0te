@@ -7744,6 +7744,87 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     existsSync(wireDir) && leaks.length === 0, leaks.slice(0, 5).join('; ') || 'scripts/compat/wire');
 }
 
+// ── §89 (0.79): every catalog action declares rollback and repeatability ──────
+//     Roadmap 2.1. Each of §14's twelve actions says how it is undone (a
+//     closed kind: none, inverse with the action that undoes it, or
+//     read_only) and whether a second run with the same parameters is
+//     harmless. Both are data in the closed catalog on both sides, and the
+//     two copies must agree action by action, in §14's order:
+//       - Go: Action.Rollback (Rollback{Kind, Via}) and Action.Repeatable in
+//         internal/action/catalog.go, and RollbackKinds;
+//       - TS: CatalogAction.rollback ({ kind, via?, how }) and .repeat
+//         ({ safe, why }) in actions/catalog.ts, and ROLLBACK_KINDS.
+//     An inverse names a catalog action; read-only is always safe to repeat.
+//     In 0.79 it is data only: nothing on the agent reads either field (no
+//     plan, envelope, heartbeat or result changes), and on the portal they
+//     are only served (the catalog route and the job view), never decided
+//     on. Roadmap 2.2's bounded retry is the release that may read
+//     `repeat.safe`; it changes the last two checks in the same commit.
+{
+  console.log('\n§89 Rollback and repeatability per catalog action (the same on the agent and the portal)');
+  const CATALOG_IDS = ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect', 'windows.script.run', 'windows.software.install', 'windows.software.uninstall', 'windows.software.remove', 'windows.service.control', 'windows.process.stop'];
+  const goCat = read('tools/windows-installer/internal/action/catalog.go');
+  const goKindName = { RollbackNone: 'none', RollbackInverse: 'inverse', RollbackReadOnly: 'read_only' };
+  const goEntries = goCat.slice(goCat.indexOf('var catalog = []Action{')).split(/\n\t\{\n/).slice(1).map((e) => {
+    const id = (e.match(/ID: "([^"]+)"/) ?? [])[1];
+    const rb = e.match(/\n\t\tRollback:\s+Rollback\{Kind: (Rollback(?:None|Inverse|ReadOnly))(?:, Via: "([a-z.]+)")?\},\n/);
+    const rp = e.match(/\n\t\tRepeatable:\s+(true|false),\n/);
+    return { id, kind: rb ? goKindName[rb[1]] : null, via: rb?.[2] ?? '', safe: rp ? rp[1] === 'true' : null };
+  });
+  const goKinds = ((goCat.match(/var RollbackKinds = \[\]string\{([^}]*)\}/) ?? [])[1] ?? '').split(',').map((x) => goKindName[x.trim()]);
+  check('§89: the agent declares a closed rollback kind and Repeatable on every catalog entry, in §14\'s order',
+    JSON.stringify(goEntries.map((e) => e.id)) === JSON.stringify(CATALOG_IDS) && goEntries.every((e) => e.kind && typeof e.safe === 'boolean')
+      && /const \(\s*RollbackNone\s+= "none"\s*RollbackInverse\s+= "inverse"\s*RollbackReadOnly = "read_only"\s*\)/.test(goCat)
+      && /\n\tRollback\s+Rollback\n\tRepeatable bool\n\}/.test(goCat),
+    `missing: ${goEntries.filter((e) => !e.kind || typeof e.safe !== 'boolean').map((e) => e.id).join(', ')}`);
+  const tsCat = read('apps/api/src/actions/catalog.ts');
+  const tsKinds = [...((tsCat.match(/export const ROLLBACK_KINDS = \[([^\]]*)\] as const;/) ?? [])[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  const tsEntries = [...tsCat.matchAll(/^export const [A-Z_]+: CatalogAction = \{\s*id: '([^']+)'[\s\S]*?\n\};$/gm)].map((m) => {
+    const rb = m[0].match(/\n {2}rollback: \{ kind: '(none|inverse|read_only)'(?:, via: '([a-z.]+)')?, how: '(?:[^'\\]|\\.){20,300}' \},\n/);
+    const rp = m[0].match(/\n {2}repeat: \{ safe: (true|false), why: '(?:[^'\\]|\\.){20,300}' \},\n/);
+    return { id: m[1], kind: rb?.[1] ?? null, via: rb?.[2] ?? '', safe: rp ? rp[1] === 'true' : null };
+  });
+  check('§89: the portal declares rollback (kind, how) and repeat (safe, why) on every catalog action, in §14\'s order',
+    JSON.stringify(tsEntries.map((e) => e.id)) === JSON.stringify(CATALOG_IDS) && tsEntries.every((e) => e.kind && typeof e.safe === 'boolean')
+      && /\n {2}rollback: Rollback;\n[\s\S]{0,200}\n {2}repeat: Repeat;\n\}/.test(tsCat),
+    `missing: ${tsEntries.filter((e) => !e.kind || typeof e.safe !== 'boolean').map((e) => e.id).join(', ')}`);
+  check('§89: the rollback kinds are the same closed list, in the same order, on both sides',
+    JSON.stringify(goKinds) === JSON.stringify(['none', 'inverse', 'read_only']) && JSON.stringify(tsKinds) === JSON.stringify(goKinds),
+    `agent ${JSON.stringify(goKinds)}, portal ${JSON.stringify(tsKinds)}`);
+  const differ = CATALOG_IDS.filter((id, i) => JSON.stringify(goEntries[i]) !== JSON.stringify(tsEntries[i]));
+  check('§89: the agent and the portal agree on every action\'s rollback kind, the action that undoes it, and whether it is safe to repeat',
+    differ.length === 0, differ.map((id) => `${id}: agent ${JSON.stringify(goEntries.find((e) => e.id === id))}, portal ${JSON.stringify(tsEntries.find((e) => e.id === id))}`).join('; '));
+  check('§89: an inverse names a catalog action and nothing else names one; read-only is always safe to repeat',
+    tsEntries.every((e) => (e.kind === 'inverse' ? CATALOG_IDS.includes(e.via) : e.via === '') && (e.kind !== 'read_only' || e.safe === true)));
+  const fx = JSON.parse(read('tools/windows-installer/internal/action/testdata/rollback-repeat.json'));
+  check('§89: the shared fixture (Go test and unit test) says the same as both catalogs',
+    JSON.stringify(fx.rollbackKinds) === JSON.stringify(tsKinds)
+      && JSON.stringify(fx.actions.map((a) => ({ id: a.id, kind: a.rollback, via: a.via, safe: a.repeatable }))) === JSON.stringify(tsEntries),
+    'testdata/rollback-repeat.json');
+  // Data only in 0.79: nothing on the agent reads the fields outside catalog.go and its tests.
+  const goFiles = [];
+  const goWalk = (d) => { for (const n of readdirSync(join(ROOT, d))) { const r = `${d}/${n}`; if (statSync(join(ROOT, r)).isDirectory()) goWalk(r); else if (n.endsWith('.go')) goFiles.push(r); } };
+  goWalk('tools/windows-installer');
+  const goReaders = goFiles.filter((f) => !f.endsWith('_test.go') && f !== 'tools/windows-installer/internal/action/catalog.go')
+    .filter((f) => /\.Rollback\.(?:Kind|Via)\b|\.Repeatable\b|\bRollback(?:Kinds|None|Inverse|ReadOnly)\b/.test(read(f)));
+  check('§89: the agent reads neither field (data only; no plan, envelope or heartbeat change)', goFiles.length > 50 && goReaders.length === 0, goReaders.join(', ') || `${goFiles.length} Go files`);
+  // Every file that loads the catalog, and any .rollback / .repeat it reads (a call, e.g. String#repeat, is not a read).
+  const tsReaders = walk('apps/api/src').filter((f) => f.endsWith('.ts') && !f.endsWith('actions/catalog.ts'))
+    .filter((f) => /from '(?:\.\/|(?:\.\.\/)+actions\/)catalog'/.test(read(f)) && /\.(rollback|repeat)\b(?!\s*\()/.test(read(f)));
+  check('§89: on the portal they are only served (the catalog route and the job view), never decided on',
+    JSON.stringify(tsReaders.map((f) => f.slice(f.indexOf('apps/api/src')))) === JSON.stringify(['apps/api/src/actions/actions.service.ts'])
+      && (read('apps/api/src/actions/actions.service.ts').match(/\.(rollback|repeat)\b(?!\()/g) ?? []).length === 4,
+    tsReaders.join(', '));
+  check('§89: the docs table, the console and the suites carry it',
+    /## Rollback and repeating an action \(0\.79\)/.test(read('docs/approved-actions.md'))
+      && /data-help="rollback-repeat"/.test(read('apps/web/app/(app)/help/page.tsx'))
+      && /testId="action-note"/.test(read('apps/web/components/endpoints/endpoint-actions.tsx')) && /testId="job-note"/.test(read('apps/web/components/endpoints/endpoint-actions.tsx'))
+      && /data-testid="tool-note"/.test(read('apps/web/components/endpoints/workspace/tools-panel.tsx'))
+      && /unit-action-rollback\.mjs/.test(read('.github/workflows/ci.yml')) && existsSync(join(ROOT, 'tools/windows-installer/internal/action/rollback_test.go'))
+      && /action-note/.test(read('apps/web/scripts/e2e-ui.mjs')) && /tool-note/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    'docs/approved-actions.md, /help, Actions tab, Tools panel, unit-action-rollback.mjs in CI, rollback_test.go, e2e-ui.mjs');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);
