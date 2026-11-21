@@ -5,6 +5,61 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.81.1] — 2026-11-21 · *Vault*
+
+**Design only: Rem0te becomes its own MDM.** On 2026-11-21 the owner decided *"I don't have an MDM, I want our
+OWN"*: Rem0te will be the MDM server for iPhones and iPads and the EMM for Android, with provider setup in
+**Settings → Mobile devices** as a step-by-step wizard. This supersedes decision 18 of the 0.76.1 audit, which had
+put a read-only connector to a third-party MDM first and native Apple MDM "last, if ever". Nothing is built in this
+release: no code, migration, route, agent, signer or host change. No Apple or Google API was called, and no phone
+or tablet was used.
+
+### Added
+
+- **`docs/own-mdm.md`**, the design, with every Apple and Google fact cited to the vendor's own documentation and
+  anything that could not be confirmed marked **unconfirmed**:
+  - **Apple.** Rem0te is the MDM server. The protocol core (check-in, the command loop, the APNs push client) is
+    built in the Nest API, modelled on NanoMDM (MIT), rather than embedding NanoMDM: NanoMDM would keep the push key
+    outside secret-box and duplicate `MdmCommand`'s states, and it does none of profiles, ADE or device identity
+    anyway. Device identity is ACME with Apple attestation, which Apple recommends over SCEP and PKCS#12, issued by
+    **step-ca** (Apache-2.0) as a separate loopback service under its own user, so the portal never holds the CA
+    key (the §56 pattern). `SignMessage` is on, because Caddy terminates TLS. iOS/iPadOS 16 is the floor.
+  - **The APNs push certificate**, exactly: no `.p8` token is possible for MDM; the CSR must be signed with an MDM
+    Vendor CSR Signing Certificate, which the Account Holder of an Apple Developer Program organization (99 USD a
+    year, D-U-N-S number) requests from Apple; an organization may sign its own CSR; renew yearly with the same
+    account. mdmcert.download only for a first test device, because a third party's vendor certificate would stand
+    behind the fleet.
+  - **Android.** Rem0te is the EMM through the Android Management API; Google's Android Device Policy is the only
+    agent, and no Rem0te app runs on a phone. Polling first, Pub/Sub pull later, so Android needs **no inbound
+    endpoint at all**. An own DPC is closed to new Play EMM API registrations and is not recommended.
+  - **The permitted-use risk** (new decision 21): Google restricts the API to commercial EMMs selling to entities
+    outside their company and prohibits solutions used only in-house; an initial quota of up to 500 devices needs a
+    business justification. Rem0te, an MSP's platform for its customers, should apply describing exactly that.
+  - **What the owner must obtain**, with cost and lead time; the **Settings wizard**, step by step, with what Rem0te
+    checks and what it cannot; the **security model** (decision 16's second approver plus an always-ask
+    `mdm.destructive`; containment per pause kind; sealed purposes; no full wipe of a personal device); how
+    outbound calls fit `safe-https` (APNs needs a sibling, `safe-h2`, for HTTP/2 and a client certificate); the
+    **one Caddy route** needed (`/mdm/acme/*`; the check-in endpoints sit under the existing `/api/*`), documented
+    and not applied; what this host can prove (the mdmb device simulator, loopback stubs) and what needs real
+    accounts and devices; an **invariant sketch** extending §90; and a **roadmap**, M1–M9, ordered so the wizard
+    (M1, no account needed) and Apple enrollment and inventory (M2, the first real driver of 0.80's `MdmDriver`)
+    come first, then Android (M3).
+- `docs/README.md` and the in-app docs bundle list the page.
+
+### Changed
+
+- **`docs/session-maintenance-mdm-backup-audit.md`**: decision 18 marked superseded by "own MDM (owner,
+  2026-11-21)"; Phase 3's sub-items and roadmap rows 3.2–3.4 point to own-mdm.md's M1–M5. Decisions **1–7** are
+  recorded as **decided (owner, 2026-11-21): accept the recommendations**, as a table: 1a (no lighter approval tier),
+  2a (a portal-authenticated stop), 3 console only for now, 4 already decided, 5a recovery settings read-only, 6b a
+  pinned URL and hash with no upload, 7b wait for the signed macOS agent.
+- **`docs/rmm-expansion-audit.md`**: the conflicts table records the same decisions on conflicts 1, 3, 4, 6, 8, 9
+  and 13, and its MDM cross-reference points to own-mdm.md.
+- **`docs/mobile-devices.md`** and **`docs/capabilities.md`**: the own-MDM decision, the new order of work, and
+  planned rows for the wizard, Apple and Android enrollment, ADE and Apple BYOD.
+
+---
+
 ## [0.81.0] — 2026-11-21 · *Vault*
 
 **Backups: Rem0te shows what a backup provider reports, read-only, and never calls a successful backup a verified

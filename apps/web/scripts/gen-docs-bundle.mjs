@@ -63,6 +63,7 @@ const ORDER = [
   ['backups.md', 'Backups', 'Computers and monitoring', 'Backup status from a provider: completion, integrity and verified restore kept apart, RPO/RTO, the opt-in backup monitors and agent templates.'],
   ['warranty.md', 'Hardware warranty', 'Computers and monitoring', 'Support and driver links per vendor, warranty dates by hand or from Dell and Lenovo, the list filter, the report and the expiring monitor.'],
   ['mobile-devices.md', 'Mobile devices (MDM)', 'Computers and monitoring', 'iPhones, iPads and Android devices read from an MDM provider: what each provider needs, who can see them, what is kept, and accepted versus completed commands. Read-only; requires setup.'],
+  ['own-mdm.md', 'Own MDM (design)', 'Computers and monitoring', 'Rem0te as the MDM server for iPhones and iPads and the EMM for Android: what Apple and Google require, the Settings wizard, the security model and the roadmap. Design only.'],
   ['email.md', 'Email and scheduled reports', 'Computers and monitoring', 'The SMTP relay, confirmed recipients, alert emails, and reports emailed weekly or monthly.'],
   ['ai-and-tickets.md', 'AI and tickets', 'Computers and monitoring', 'Ask AI about an event-log entry or alert, and create a ticket in the PSA: providers, redaction, connectors and limits.'],
   ['updates.md', 'Updates', 'Computers and monitoring', 'Updating the portal, RustDesk and the agent, and client rollouts.'],
