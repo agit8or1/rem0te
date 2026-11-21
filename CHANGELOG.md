@@ -5,6 +5,95 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.76.1] — 2026-11-21 · *Litmus*
+
+**Documentation only. This release audits the owner's four-phase directive of 2026-11-21 (remote session
+controls, endpoint maintenance, MDM, and backup with verified recovery) and sets a phased roadmap for it. It also
+reports one finding in Managed Secure Access. No code, migration, agent or signer change, and nothing to deploy
+beyond the docs.** The audit is against **0.75.1** (main `a68d269`). PR #187 (0.76.0 *Litmus*) is open at the
+same time and touches none of these pages except the version lines.
+
+### New: `docs/session-maintenance-mdm-backup-audit.md` (in the app at `/docs`)
+
+- **Every item and sub-bullet** of the directive gets:
+  - what exists today, with file paths;
+  - the component that actually enforces it;
+  - a state: *available*, *requires setup*, *unsupported* or *planned*;
+  - platforms and versions;
+  - the evidence that exists. Simulation is never counted as real Windows.
+- **RustDesk facts, from RustDesk's source** (client 1.5.3, and 1.4.4 where it matters) and its
+  advanced-settings documentation:
+  - Clipboard and file transfer are each one switch on the controlled side, covering both directions.
+  - "Computer → technician" clipboard, and "upload only" files, can be turned off only through *built-in*
+    settings. Those are filled only from a custom-client config signed with RustDesk's own key, so
+    `--option` cannot set them.
+  - Nothing can block technician → computer clipboard alone, allow download only, or limit bytes.
+  - File clipboard needs file transfer on.
+  - "Request elevation" does nothing for an installed RustDesk.
+  - Only `stop-service` ends sessions, and it ends every session at once. There is an idle limit, not a
+    maximum length.
+  - **RustDesk 1.4.1+ ships a terminal, on by default.** It runs as the console user, or as SYSTEM when given
+    an administrator's credentials. It is open on every Legacy computer to anyone with the permanent password.
+  - A table says which session modes must be refused when a business requires a control the mode cannot
+    enforce.
+- **Finding F1 (behind `MSA_GRANTS`, off; no production computer exposed).** A Managed Secure Access *control*
+  grant writes `access-mode=full`. In RustDesk's Flutter builds, `full` turns every permission on before any
+  `enable-*` key is read (`Connection::is_permission_enabled_locally`).
+  - So clipboard off, file transfer off, no tunnel and no remote restart are written and read back, but not
+    enforced.
+  - Terminal, camera, remote printer, block-input, privacy mode and recording are on, because the agent never
+    writes them.
+  - View-only grants are correct.
+  - The lab proves readback, not behaviour, so it did not catch this.
+  - The fix (`access-mode=custom`, those six keys `N`, a test that `full` is never written) is Phase 1's first
+    pull request.
+- **The owner's decisions of 2026-11-21, recorded as decided:**
+  - A background terminal (cmd and PowerShell) and background file transfer ship, with no screen session.
+  - Opening a terminal asks for a fresh confirmation through a new §62 key, `terminal.open`, defaulting to
+    **ask**: a narrow exception to 0.64's "every key defaults off", with the options kept.
+  - The first terminal runs the shell as SYSTEM, shown as such; run-as-user and least privilege are planned.
+  - File transfer has its own key, `files.transfer`, default off, with separate upload and download
+    permissions.
+  - These settle the 0.73.2 audit's conflict 6. The page names the invariants this reverses (§14's closed
+    catalog, "the agent runs no process", §39's constant command line as it applies to a shell) and the
+    containment that keeps the rest intact.
+  - **0.77.0 *Conduit*** (terminal) and **0.78.0 *Courier*** (file transfer) are first in the roadmap, in
+    progress on separate branches.
+- **Customer chat (item 5) is largely built** (§45, §55). What is missing:
+  - a retention period per business;
+  - a permission to read transcripts;
+  - linking a chat to a remote session;
+  - chat without an agent.
+- **MDM.** Native Apple MDM, the Android Management API and a third-party provider API are compared. For each:
+  prerequisites (Apple's MDM vendor CSR certificate and the yearly per-customer APNs renewal; Google's device
+  quota, which since October 2025 must be requested), ownership models, accepted vs completed, and what this
+  host can validate (only stand-ins). The recommendation is a provider-neutral interface first, then the
+  owner's existing provider, read-only.
+- **Backup.**
+  - St0r (the owner's UrBackup front end) already separates backup, replication and verified recovery, and
+    never counts a simulated drill as verified. It has no integration token, only user sessions.
+  - Comet's admin API, from its public reference: read-only token methods, restore through a live device,
+    deep verify, and no test-restore method.
+  - Neither offers controlled failover.
+- **Seven conflicts with invariants**, and **owner decisions 8–20** (with 14a), continuing the 0.73.2 audit's
+  seven.
+- **A phased roadmap** of reviewable pull requests. Each names its enforcing component, its tests and the
+  evidence it can claim, and says what blocks it.
+
+### Updated
+
+- **`docs/rmm-expansion-audit.md`**: a pointer to the new audit, backup rows, and a cross-reference table, so
+  there is one matrix to read.
+- **`docs/capabilities.md`**: session controls, the terminal, MDM and backup, in the four states, Legacy vs
+  Managed.
+- **`docs/managed-secure-access.md`** §3.12: a correction note for F1.
+- **The docs index** and the in-app docs bundle list the new page.
+
+### GitHub
+
+Rem0te keeps no roadmap on GitHub: it has two closed issues and no milestones, and the *ClientSt0r Roadmap*
+project holds only ClientSt0r items. The docs remain the roadmap of record.
+
 ## [0.76.0] — 2026-11-20 · *Litmus*
 
 **The read-only diagnostics palette: thirteen more checks in Security, Networking and Maintenance groups, a DNS
@@ -141,7 +230,6 @@ signed targets.
 - **Agents.** Reinstall or update standard agents to pick up the checks. For signed agents, run
   `rem0te-signed-publish` after committing 0.76.0. Until then those computers show "Needs agent 0.76.0 or later"
   on the palette rows; every older check keeps working.
-
 ## [0.75.1] — 2026-11-21 · *Spanner*
 
 **Admin → Security: hbbs's UDP socket is no longer an "unexpected public listener", the SSH ordering rule is

@@ -51,6 +51,7 @@ const ORDER = [
   ['readiness.md', 'Readiness and evidence', 'Computers and monitoring', 'Feature by feature: what works on which computers, who enforces it, and what evidence there is that it works on a real machine.'],
   ['lab-testing.md', 'Windows lab testing', 'Computers and monitoring', 'What the Windows lab job runs on a disposable GitHub runner, how to read its evidence, and what it cannot prove.'],
   ['rmm-expansion-audit.md', 'RMM expansion audit', 'Computers and monitoring', 'The 0.73 audit of the full-RMM directive: status and strongest evidence per item, conflicts with security invariants, the P0 release sequence and what still needs real-device validation.'],
+  ['session-maintenance-mdm-backup-audit.md', 'Session, maintenance, MDM and backup audit', 'Computers and monitoring', 'The 0.76.1 audit of the four-phase directive: what RustDesk can enforce, the background terminal and file transfer decision, MDM and backup providers, owner decisions and the roadmap.'],
   ['inventory.md', 'Inventory and event logs', 'Computers and monitoring', 'Specs, installed software, change history, pending updates and event-log slices.'],
   ['diagnostics.md', 'One-click diagnostics', 'Computers and monitoring', 'Read-only checks a technician runs with one click: disk, services, errors, network, DNS, updates, restart.'],
   ['monitoring.md', 'Monitoring and alerts', 'Computers and monitoring', 'Monitors, inheritance, alerts, site outages, maintenance windows and escalation.'],

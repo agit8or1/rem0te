@@ -82,6 +82,33 @@ refuses too, so the two never fight over a computer.
 confirmation. It never carries update titles, error text, computer identifiers, user names, addresses or registry
 values.
 
+## Session controls, terminal, MDM and backup (0.76.1)
+
+These rows use four states: **available**, **requires setup**, **unsupported** and **planned**. Each one names
+the component that enforces it. The full audit, with sources and evidence, is
+[session-maintenance-mdm-backup-audit.md](session-maintenance-mdm-backup-audit.md). *Legacy* is today's Connect
+on every production computer. *Managed* is a computer moved into Managed Secure Access, which needs
+`MSA_GRANTS=on` (off everywhere in production) and the signed Windows agent.
+
+| Capability | Legacy | Managed | Enforced by | Evidence |
+|---|---|---|---|---|
+| Clipboard off | **unsupported** (RustDesk default, on) | **requires setup** in view; **planned** in control (finding F1: `access-mode=full` overrides it) | RustDesk on the computer, set by the agent | Lab (readback only, Windows Server) |
+| Clipboard one way (either direction) | **unsupported** | **unsupported**. Stock RustDesk has no setting; a custom client can block only "computer → technician" | — | RustDesk source |
+| Text clipboard without file clipboard | **unsupported** | Only by turning file transfer off | RustDesk | RustDesk source |
+| In-session file transfer off | **unsupported** | **requires setup** in view; **planned** in control (F1) | RustDesk | Lab (readback) |
+| In-session upload / download separately, size limits | **unsupported** | **unsupported** | — | RustDesk source |
+| Background file transfer, separate upload and download, size limits, per-file audit | **planned**: 0.78.0 *Courier*, in progress (owner decision 2026-11-21) | Same | Signed agent + portal | None yet |
+| Background terminal (cmd, Windows PowerShell) | **planned**: 0.77.0 *Conduit*, in progress, as SYSTEM, with a fresh confirmation (`terminal.open`, default ask) | Same | Signed agent + portal | None yet |
+| RustDesk's own terminal (1.4.1+) | **On by default and ungoverned**: anyone with the permanent password; SYSTEM with an administrator's credentials | **planned** to be closed (F1) | — | RustDesk source |
+| Session elevation | **unsupported** (refused: `elevation_unavailable`) | **unsupported**; **planned** only after decision 13 | Portal (refuses) | API |
+| Maximum session length | **unsupported** (advisory) | **requires setup**: the agent ends it at `maxMinutes` | Signed agent + RustDesk (`stop-service`) | Lab (termination, Windows Server); Unit |
+| Ending a session from the console | **unsupported** | **requires setup** (signed revocation) | Signed agent | API; Unit |
+| Customer chat (Windows tray) | **available** | **available** | Portal + tray | Fleet (observed); API |
+| Chat retention period per business | **planned** (on/off per business is available) | Same | Portal | API |
+| MDM for iOS/iPadOS and Android | **planned** (an external provider; nothing installed by Rem0te) | — | External provider | None |
+| Backup status, verified restore, drills | **planned** (St0r and Comet evaluated) | — | External provider | None |
+| Failover and failback | **unsupported** by either provider | — | — | Provider docs |
+
 ## What needs configuring
 
 | To use | You need |

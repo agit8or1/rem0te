@@ -31,6 +31,10 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[rmm-expansion-audit.md](rmm-expansion-audit.md)** — the 0.73.2 audit of the full-RMM directive: each item's
   status and strongest evidence, where it conflicts with a security invariant, the P0 release sequence, and what
   still needs a real computer to prove it.
+- **[session-maintenance-mdm-backup-audit.md](session-maintenance-mdm-backup-audit.md)** — the 0.76.1 audit of
+  the four-phase directive: what RustDesk can and cannot enforce for clipboard, file transfer, elevation and
+  session length (with sources), the owner's decision on a background terminal and file transfer, MDM and backup
+  provider options, owner decisions 8–20, and the phased roadmap.
 - **[inventory.md](inventory.md)** — the specs a managed computer reports, its
   installed software and change history, its pending Windows updates, and how
   to read a slice of its event log.
