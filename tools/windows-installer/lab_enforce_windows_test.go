@@ -149,12 +149,22 @@ func runEnforceCycle(ctx context.Context) enforceCycle {
 	if err != nil {
 		return fail("read after restore: %v", err)
 	}
+	restoredFull := false
 	for _, k := range enforce.Keys {
-		if !enforce.Matches(k, again[k], saved[k]) {
-			return fail("after restore %s reads %q, saved %q", k, again[k], saved[k])
+		// 0.78.1 (F1): a saved access-mode full goes back as RustDesk's
+		// default (RestoreValue), never full. The lab's own probe leaves
+		// full behind, so this is exercised on every release.
+		want := enforce.RestoreValue(k, saved[k])
+		restoredFull = restoredFull || want != saved[k]
+		if !enforce.Matches(k, again[k], want) {
+			return fail("after restore %s reads %q, want %q (saved %q)", k, again[k], want, saved[k])
 		}
 	}
-	step("restored and read back every saved setting")
+	if restoredFull {
+		step("restored and read back every saved setting; the saved access-mode full went back as RustDesk's default (Custom), never full")
+	} else {
+		step("restored and read back every saved setting")
+	}
 	c.OK = true
 	return c
 }
