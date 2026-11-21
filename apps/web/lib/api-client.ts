@@ -596,6 +596,10 @@ export const securityApi = {
   getOsUpdateStatus: () => api.get('/admin/security/os-updates/status'),
   getDependencyAudit: (refresh = false) => api.get('/admin/security/audit', { params: refresh ? { refresh: 1 } : {} }),
   getTls: (refresh = false) => api.get('/admin/security/tls', { params: refresh ? { refresh: 1 } : {} }),
+  // 0.75.1 accepted risks: accepting may answer 403 STEP_UP_REQUIRED (server.security); re-opening never does.
+  acceptFinding: (id: string, body: { reason: string; expiresInDays?: number; fingerprint?: string }) => api.post(`/admin/security/findings/${encodeURIComponent(id)}/accept`, body),
+  unacceptFinding: (id: string) => api.delete(`/admin/security/findings/${encodeURIComponent(id)}/accept`),
+  getAcceptances: () => api.get('/admin/security/findings/acceptances'),
 };
 
 // ─── Notes ───────────────────────────────────────────────────────────────────

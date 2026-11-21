@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
-import { IsBoolean, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { SecurityService } from './security.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { Actor } from '../common/decorators/actor.decorator';
@@ -15,6 +15,14 @@ class LockoutDto {
   @IsOptional() @IsInt() @Min(1) @Max(1440) lockoutMinutes?: number;
   // Clears the stored GeoIP / IP rules that nothing ever enforced.
   @IsOptional() @IsBoolean() clearUnenforced?: boolean;
+}
+class AcceptFindingDto {
+  // Checked again (trimmed, no control characters) by acceptance.ts cleanReason; 0093 CHECKs 3–300.
+  @IsString() @MinLength(3) @MaxLength(300) reason!: string;
+  // None by default; at most a year (0093 CHECK).
+  @IsOptional() @IsInt() @Min(1) @Max(365) expiresInDays?: number;
+  // The fingerprint the page read: a moved one is 409 EVIDENCE_CHANGED.
+  @IsOptional() @IsString() @Matches(/^[0-9a-f]{64}$/) fingerprint?: string;
 }
 class AddressDto { @IsString() @MaxLength(64) ip!: string }
 class JailAddressDto { @IsString() @MaxLength(64) jail!: string; @IsString() @MaxLength(64) ip!: string }
@@ -59,6 +67,33 @@ export class SecurityController {
   async posture(@Actor() a: ActorContext, @Query('refresh') refresh?: string) {
     this.acl.assertPlatformAdmin(a);
     return this.ok(await this.security.getPosture(refresh === '1'));
+  }
+
+  // ── Accepted risks (0.75.1) ───────────────────────────────────────────────
+  // Accepting hides a warning, so it names server.security (§62) and is
+  // recorded with logOrFail. Re-opening only shows a warning again and never
+  // asks. The finding id is checked against acceptance.ts's closed list.
+
+  @Get('findings/acceptances')
+  async acceptances(@Actor() a: ActorContext) {
+    this.acl.assertPlatformAdmin(a);
+    return this.ok(await this.security.acceptanceHistory());
+  }
+
+  @Post('findings/:id/accept')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(20)
+  async acceptFinding(@Actor() a: ActorContext, @Param('id') id: string, @Body() dto: AcceptFindingDto, @Req() req: Request) {
+    this.acl.assertPlatformAdmin(a);
+    assertFresh(this.fresh(req), { action: 'server.security' });
+    return this.ok(await this.security.acceptFinding(a, id, dto));
+  }
+
+  @Delete('findings/:id/accept')
+  @RateLimit(20)
+  async unacceptFinding(@Actor() a: ActorContext, @Param('id') id: string) {
+    this.acl.assertPlatformAdmin(a);
+    return this.ok(await this.security.unacceptFinding(a, id));
   }
 
   // ── Access rules (the lockout policy) ─────────────────────────────────────

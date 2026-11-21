@@ -1669,7 +1669,10 @@ const SECTIONS: Section[] = [
           score over SSH, the firewall, listening ports, pending updates and restarts, fail2ban, certificates, security
           headers, MFA coverage, API keys, the audit chain and the API&apos;s own off switches. A check that could not be
           read says <em>Unknown</em>, never OK. Bans, never-ban entries, jail settings, installing fail2ban and OS upgrades
-          are audited and may ask you to confirm it is you. See{' '}
+          are audited and may ask you to confirm it is you. A deliberate decision (SSH behind your own firewall, no second
+          disk for the audit export) can be <em>accepted</em> with a reason and an optional expiry (0.75.1): it moves to
+          Accepted risks, is never shown as OK, and re-opens on its own when its evidence changes or it expires. A
+          Platform Admin without MFA, test switches and certificates cannot be accepted. See{' '}
           <Link href="/docs/server-security" className="underline text-foreground">Server security</Link>.
         </p>
         <p>

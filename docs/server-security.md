@@ -19,8 +19,9 @@ Every check ends in one of four states:
 | **Needs attention** (red) | Read, and not fine. Each one has a severity and a fix. |
 | **Unknown** (grey, ?) | Could not be read: a file the service user cannot open, a command that failed, a source that is not there. Each one says why. |
 | **Info** (blue) | Read, and worth knowing, but not a problem (for example, no approval signer is configured). |
+| **Accepted** / **Accepted (unknown)** (slate) | Failing or unknown, and a Platform Admin decided to accept it, with a reason. See [Accepted risks](#accepted-risks). |
 
-A check that could not be read is never shown as OK. A page that is still loading,
+A check that could not be read is never shown as OK, and neither is an accepted one. A page that is still loading,
 or that could not load, says so and shows no state at all.
 
 ## Overview: the score
@@ -35,6 +36,8 @@ over what was decided. The coverage figure beside it is the share of checks that
 could be read; a high score with low coverage means little. The posture is *poor*
 when any critical check fails or the score is under 60, *fair* under 85 or with a
 high check failing, else *good*. With nothing readable there is no score.
+An [accepted](#accepted-risks) finding costs nothing and is counted as
+*accepted*, not as OK; it does not change the coverage.
 
 Readings are cached for a few minutes; the refresh button reads again.
 
@@ -45,10 +48,16 @@ Readings are cached for a few minutes; the refresh button reads again.
 - **SSH**: root login, password authentication, empty passwords and X11
   forwarding, from `/etc/ssh/sshd_config` and its `Include`d files, first value
   wins as sshd reads them. `sshd -T` needs root, so the files are parsed instead.
-  If an included file cannot be read (on Ubuntu, `50-cloud-init.conf` is 0600),
-  any setting that file could have decided is **Unknown**, because it may override
-  what the readable files say. To decide it, run `sudo sshd -T | grep -Ei
-  'permitrootlogin|passwordauthentication'`.
+  sshd keeps the **first** value it reads, reading `sshd_config` from the top and
+  each `Include`d drop-in in lexical order where the `Include` stands (on Ubuntu,
+  at the top). If an included file cannot be read (`50-cloud-init.conf` is 0600),
+  a setting is **Unknown** only when that file comes before the first readable
+  value: it may set the directive first. A readable drop-in that sorts earlier
+  decides it for certain — `40-rem0te.conf` with `PermitRootLogin no` is read
+  before `50-cloud-init.conf`, so root login is known to be off. The finding names
+  the unreadable file. To decide an Unknown one, run `sudo sshd -T | grep -Ei
+  'permitrootlogin|passwordauthentication'`, or set the directive in a drop-in
+  that sorts first (for example `01-rem0te.conf`).
 - **Firewall**: whether ufw is enabled and active. Its rules need root to list;
   run `sudo ufw status verbose`.
 - **Updates**: pending packages, how many are security updates, and how old the
@@ -65,7 +74,17 @@ Readings are cached for a few minutes; the refresh button reads again.
 
 - **Listening ports** that are reachable from outside (not loopback), compared with
   what a Rem0te server is expected to listen on: TCP 22, 80, 443 and 21115–21119,
-  UDP 443 and 21116. Anything else is listed with its process when `ss` shows it.
+  UDP 443 and 21116. Anything else is listed with its process when `ss -p` shows
+  it, which it does only for the service user's own processes (never root's; the
+  page does not ask for root to find out).
+- **Ephemeral client sockets** (0.75.1, information): an unconnected UDP socket on
+  a port inside the kernel's ephemeral range
+  (`/proc/sys/net/ipv4/ip_local_port_range`, usually 32768–60999) is a client
+  that let the kernel pick its port, not a service. The RustDesk server (`hbbs`)
+  keeps one, which 0.74 reported as an unexpected public listener (`udp/33344`).
+  These are listed on their own line and are not a finding. A TCP listener is
+  judged as before whatever its port, and so is a UDP socket outside the range. If
+  the range cannot be read, nothing is excused and the finding says so.
 
 **Web and TLS**
 
@@ -112,6 +131,54 @@ Readings are cached for a few minutes; the refresh button reads again.
 - `npm audit` of the API's production dependencies. Fixing one is a dependency
   bump in the repository and a deploy with the manifest regenerated (see
   `CLAUDE.md`), never `npm audit fix` on the server.
+
+## Accepted risks
+
+Some findings are deliberate. SSH may be reachable only behind a hardware
+firewall; a single-disk server has nowhere to export the audit log to yet. A
+Platform Admin can **accept** such a finding so it stops showing as a warning:
+
+- **Accept…** on the finding asks for a **reason** (3 to 300 characters) and an
+  optional **expiry** (none by default, at most a year). It may ask you to
+  [confirm it is you](sign-in.md) (*Server security changes*), because it hides a
+  warning. It is audited as `SECURITY_FINDING_ACCEPTED` with the finding, its
+  status, the reason, the expiry and the evidence fingerprint.
+- The finding moves to **Accepted risks**, a collapsed section at the end of the
+  Overview showing who accepted it, when, why and until when. It keeps its status
+  underneath (*Accepted* for a failing check, *Accepted (unknown)* for one that
+  could not be read) and is never shown as OK. It costs nothing in the score and
+  is counted as *accepted* in the summary.
+- **It re-opens on its own** when the evidence changes, when the check passes or
+  disappears, or when the expiry passes. An acceptance is bound to a fingerprint
+  of the facts the check decided on — the offending ports, the effective sshd
+  value and the file it came from, the pending package versions — not to the
+  wording or the time it was read. Accept the listener finding for `udp/5353`,
+  and a new public `tcp/9000` re-opens it. Each automatic re-open is audited as
+  `SECURITY_FINDING_UNACCEPTED` with its cause (`evidence_changed`, `resolved`,
+  `expired`); a re-opened acceptance never comes back, even if the evidence
+  returns to what it was.
+- **Re-open** puts it back by hand. It never asks you to confirm it is you, since
+  it only shows a warning again. Audited as `SECURITY_FINDING_UNACCEPTED`
+  (`unaccepted`).
+
+Every acceptance is kept, open or closed (`GET
+/api/v1/admin/security/findings/acceptances` lists the last 200).
+
+**Some findings cannot be accepted** — they must be fixed. The row says why:
+
+| Finding | Why it cannot be accepted |
+|---|---|
+| A Platform Admin without MFA | One stolen password is everything Rem0te can do. |
+| A break-glass account without both an authenticator and a passkey | It breaks the rule break-glass exists under. |
+| The audit chain does not verify | Entries were changed or lost: an incident, not a risk. |
+| SSH accepts empty passwords | Never deliberate on a server. |
+| `NODE_ENV` is not `production` | Test-only endpoints and a host fixture are admitted. |
+| A `*_SWEEP` / `*_SEALER` / test switch is `off` | Each silently stops a safety job; they exist for test stacks. |
+| A TLS certificate (each site) | Expired, untrusted or failing renewal breaks every agent and browser. |
+
+Only a closed list of checks can be accepted; the database refuses any other
+(`0093`'s CHECK), and refuses a reason outside 3–300 characters or an expiry
+over 365 days.
 
 ## Access rules
 
@@ -184,15 +251,16 @@ proves it. See [Technician access](technician-access.md).
 
 ## For operators
 
-- **Deploy**: migration `0091_server_security_audit` adds two audit actions; apply
-  it and regenerate the Prisma client at the target (`CLAUDE.md`, *A schema change
-  needs two more steps*).
+- **Deploy**: migration `0091_server_security_audit` adds two audit actions, and
+  `0093_security_risk_acceptance` (0.75.1) the accepted-risks table and two more;
+  apply them and regenerate the Prisma client at the target (`CLAUDE.md`, *A
+  schema change needs two more steps*).
 - **Nothing in sudoers changed.** The page uses only the lines the installer
   already grants.
 - **Tests**: `apps/api/scripts/unit-host-security.mjs` (every parser, the command
   list against the sudoers lines, the score) and
-  `apps/api/scripts/e2e-host-security.mjs` (scratch API on 3991–3993, the host a
-  fixture). Under `NODE_ENV=test` a fixture (`SECURITY_HOST_FIXTURE`) stands in
+  `apps/api/scripts/e2e-host-security.mjs` (scratch API on 3991–3994, the host a
+  fixture; 3994 is the same host after its evidence changed, for re-opening). Under `NODE_ENV=test` a fixture (`SECURITY_HOST_FIXTURE`) stands in
   for the host, and without one no change is made. The browser suite opens every
   tab. Security invariant §84 keeps the command list closed and every change
   confirmed and audited.

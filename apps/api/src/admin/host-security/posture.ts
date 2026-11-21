@@ -30,6 +30,28 @@ export interface Finding {
   fix?: string;
   /** A console page that holds the setting, when there is one. */
   link?: string;
+  /**
+   * The facts the check was decided on, for its fingerprint (acceptance.ts).
+   * Never the wording or the time it was read. Not sent to the page.
+   */
+  basis?: unknown;
+  /** sha256 of id, status and basis (0.75.1): what an acceptance is bound to. */
+  fingerprint?: string;
+  /** Whether a Platform Admin may accept it, and if not, why not. */
+  acceptable?: boolean;
+  notAcceptableWhy?: string;
+  /** Set when an acceptance holds against this reading (0.75.1). The status is unchanged. */
+  acceptance?: FindingAcceptance;
+}
+
+export interface FindingAcceptance {
+  id: string;
+  reason: string;
+  acceptedAt: string;
+  acceptedBy: string | null;
+  expiresAt: string | null;
+  /** The evidence as it read when it was accepted. */
+  evidence: string;
 }
 
 export const SEVERITY_WEIGHT: Record<Severity, number> = { critical: 25, high: 12, medium: 6, low: 2, info: 0 };
@@ -38,7 +60,11 @@ export interface Score {
   /** 0–100 over the checks that could be decided, or null when none could. */
   score: number | null;
   grade: 'good' | 'fair' | 'poor' | 'unknown';
-  counts: Record<FindingStatus, number>;
+  /**
+   * fail and unknown count only findings nobody accepted; `accepted` counts
+   * the accepted ones (fail or unknown underneath), never as pass (0.75.1).
+   */
+  counts: Record<FindingStatus | 'accepted', number>;
   failing: Record<Severity, number>;
   /** Decided checks over all scored checks: how much of the score is evidence. */
   coverage: number;
@@ -49,17 +75,26 @@ export interface Score {
  * decided. Unknown checks are excluded from the score and reported through
  * `coverage`, so an unreadable source can neither raise nor hide the score.
  * Any failing critical caps the grade at poor.
+ *
+ * An accepted finding (0.75.1) carries no penalty and is counted as
+ * `accepted`, not as fail or unknown. Coverage is unchanged by acceptance: an
+ * accepted unknown was still not read, so it stays outside `decided`.
  */
 export function scoreOf(findings: Finding[]): Score {
-  const counts: Record<FindingStatus, number> = { pass: 0, fail: 0, unknown: 0, info: 0 };
+  const counts: Record<FindingStatus | 'accepted', number> = { pass: 0, fail: 0, unknown: 0, info: 0, accepted: 0 };
   const failing: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
-  let penalty = 0;
+  let penalty = 0, acceptedFail = 0, acceptedUnknown = 0;
   for (const f of findings) {
+    if (f.acceptance && (f.status === 'fail' || f.status === 'unknown')) {
+      counts.accepted++;
+      if (f.status === 'fail') acceptedFail++; else acceptedUnknown++;
+      continue;
+    }
     counts[f.status]++;
     if (f.status === 'fail') { failing[f.severity]++; penalty += SEVERITY_WEIGHT[f.severity]; }
   }
-  const scored = counts.pass + counts.fail + counts.unknown;
-  const decided = counts.pass + counts.fail;
+  const scored = counts.pass + counts.fail + counts.unknown + acceptedFail + acceptedUnknown;
+  const decided = counts.pass + counts.fail + acceptedFail;
   const coverage = scored ? Math.round((decided / scored) * 100) : 0;
   if (!decided) return { score: null, grade: 'unknown', counts, failing, coverage };
   const score = Math.max(0, 100 - penalty);

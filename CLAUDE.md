@@ -1788,9 +1788,42 @@ installer already grants.
   and the score counts only decided checks. Release root keys are always
   unknown (§56); the web shows `sudo rem0te-signed-status`.
 
-Behavioural proof: `e2e-host-security.mjs` (ports 3991–3993, in
-`run-e2e.sh`); unit: `unit-host-security.mjs` (in CI); `e2e-ui.mjs` opens
-every tab against the fixture host.
+0.75.1 extended §84 for accepted risks and two false positives:
+
+- **Accepting a finding** (`POST findings/:id/accept`) is Platform Admin,
+  then `assertFresh` naming `server.security` (it hides a warning), then
+  `acceptFinding`. **Re-opening** (`DELETE` on the same path) is Platform
+  Admin and never asks. It is the one mutating route without a step-up.
+- **One closed list.** Only `ACCEPTABLE_FINDINGS` in
+  `admin/host-security/acceptance.ts` can be accepted; 0093's CHECK names the
+  same ids in the same order. `NEVER_ACCEPTABLE` is disjoint from it and
+  holds a Platform Admin without MFA, break-glass without both factors, the
+  audit chain, empty SSH passwords, `NODE_ENV`, every `process.switch.*`
+  and every `web.tls*`. `acceptance.ts` is pure (`node:crypto`, posture's
+  types).
+- **Audited.** An acceptance is written with `logOrFail`
+  (`SECURITY_FINDING_ACCEPTED`), and closed again if the audit write fails.
+  Every end of one is a conditional write audited as
+  `SECURITY_FINDING_UNACCEPTED` with its cause (`unaccepted`, `expired`,
+  `resolved`, `evidence_changed`). Only `SecurityService` writes
+  `SecurityFindingAcceptance`, and no row is deleted.
+- **It holds only on the same fingerprint** (sha256 of id, status and the
+  finding's `basis`) and before its expiry (none by default, at most 365
+  days). The basis never leaves the API. An accepted finding keeps its
+  status, is never shown as OK, and carries no penalty; coverage is
+  unchanged.
+- **Listeners.** `ss -Htlnup` runs as `reboot`, never through sudo. An
+  unconnected UDP socket inside `/proc/sys/net/ipv4/ip_local_port_range`
+  is an ephemeral client socket (hbbs's), shown as information. TCP, and
+  UDP outside the range, are judged as before; an unreadable range excuses
+  nothing.
+- **SSH** is first match wins: a value is Unknown only when an unreadable
+  file comes before its first readable setting (`unreadableBefore`).
+
+Behavioural proof: `e2e-host-security.mjs` (ports 3991–3994, in
+`run-e2e.sh`; 3994 is the host after its evidence changed); unit:
+`unit-host-security.mjs` (in CI); `e2e-ui.mjs` opens every tab against the
+fixture host and drives the accept dialog.
 
 §85 (0.75) is the device page's **Tools** panel: a menu of what can be done to
 a computer that opens the flow that already does it, never a second way in.

@@ -22,19 +22,29 @@
  *   - tightening the lockout never asks; the stored, never-enforced GeoIP
  *     and IP rules cannot be set and can be cleared;
  *   - under NODE_ENV=test with no fixture, host changes are refused
- *     (HOST_CHANGES_OFF_IN_TEST), so a scratch API cannot touch its host.
+ *     (HOST_CHANGES_OFF_IN_TEST), so a scratch API cannot touch its host;
+ *   - 0.75.1: hbbs's unconnected UDP socket on an ephemeral port (udp/33344)
+ *     is an ephemeral client socket, not a public listener; udp/5353 and
+ *     tcp/8080 still are;
+ *   - 0.75.1 accepted risks: accepting is Platform Admin only, asks for a
+ *     fresh confirmation (server.security), refuses the never-acceptable
+ *     findings, bad reasons and expiries, passing checks and moved evidence,
+ *     and is audited (SECURITY_FINDING_ACCEPTED); re-opening never asks and
+ *     is audited (SECURITY_FINDING_UNACCEPTED); an acceptance re-opens on its
+ *     own at expiry, when its evidence changes (a new port) and when its
+ *     check resolves (a readable earlier sshd drop-in), on a fourth API.
  *
  *   cd apps/api && npx nest build
  *   DATABASE_URL=postgresql://…/<name containing scratch or test> node scripts/e2e-host-security.mjs
  *
  * Self-starting: its APIs run from dist/ on HOSTSEC_API_PORT (3991) and the
- * two ports after it. Nothing here runs a host command.
+ * three ports after it. Nothing here runs a host command.
  */
 import { PrismaClient } from '@prisma/client';
 import argon2 from 'argon2';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,7 +55,7 @@ const DB = process.env.DATABASE_URL ?? '';
 const dbName = DB.split('/').pop()?.split('?')[0] ?? '';
 if (!/scratch|test/.test(dbName)) { console.error(`Refusing to run against database "${dbName}": name must contain "scratch" or "test".`); process.exit(2); }
 const BASE_PORT = Number(process.env.HOSTSEC_API_PORT ?? 3991);
-for (const p of [BASE_PORT, BASE_PORT + 1, BASE_PORT + 2]) {
+for (const p of [BASE_PORT, BASE_PORT + 1, BASE_PORT + 2, BASE_PORT + 3]) {
   if ([3000, 3001, 3201, 3202, 4000, 4001, 443].includes(p)) { console.error(`Refusing port ${p}`); process.exit(2); }
 }
 const prisma = new PrismaClient();
@@ -55,6 +65,17 @@ const FIXTURE = path.join(here, 'fixtures', 'host-security.json');
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'rem0te-hostsec-'));
 const EMPTY = path.join(tmp, 'empty.json');
 writeFileSync(EMPTY, JSON.stringify({ files: {}, commands: {} }));
+// 0.75.1: the same host after two changes — a new public port (tcp/9000), and
+// a readable 40-rem0te.conf that sorts before the unreadable 50-cloud-init.conf
+// and sets PermitRootLogin no.
+const CHANGED = path.join(tmp, 'changed.json');
+{
+  const fx = JSON.parse(readFileSync(FIXTURE, 'utf8'));
+  fx.commands['ss -Htlnup'].stdout += 'tcp LISTEN 0      511                0.0.0.0:9000   0.0.0.0:*\n';
+  fx.files['/etc/ssh/sshd_config.d/40-rem0te.conf'] = 'PermitRootLogin no\n';
+  fx.dirs['/etc/ssh/sshd_config.d'] = [...fx.dirs['/etc/ssh/sshd_config.d'], '40-rem0te.conf'];
+  writeFileSync(CHANGED, JSON.stringify(fx));
+}
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -121,7 +142,9 @@ let savedAsk = [];
 const KEYS = ['server.security', 'login.lockout'];
 
 const READS = ['/admin/security/posture', '/admin/security/config', '/admin/security/fail2ban', '/admin/security/fail2ban/ignore',
-  '/admin/security/fail2ban/jail/sshd/config', '/admin/security/os-updates', '/admin/security/os-updates/status', '/admin/security/audit', '/admin/security/tls'];
+  '/admin/security/fail2ban/jail/sshd/config', '/admin/security/os-updates', '/admin/security/os-updates/status', '/admin/security/audit', '/admin/security/tls',
+  '/admin/security/findings/acceptances'];
+const ACCEPT_ROUTES = [['POST', '/admin/security/findings/network.listeners/accept', { reason: 'not for a business owner' }], ['DELETE', '/admin/security/findings/network.listeners/accept', undefined]];
 const WRITES = [['POST', '/admin/security/fail2ban/ban', { jail: 'sshd', ip: '192.0.2.50' }], ['POST', '/admin/security/fail2ban/unban', { jail: 'sshd', ip: '192.0.2.50' }],
   ['POST', '/admin/security/fail2ban/ignore', { ip: '192.0.2.0/24' }], ['DELETE', '/admin/security/fail2ban/ignore/192.0.2.1', undefined],
   ['PATCH', '/admin/security/fail2ban/jail/sshd/config', { bantime: 3600 }], ['POST', '/admin/security/fail2ban/install', undefined],
@@ -161,7 +184,8 @@ async function all() {
   for (const p of READS) { const r = await c.req('GET', p); check(r.status === 401, `no session: GET ${p} is 401`, msg(r)); }
   const so = await c.login(owner.email);
   for (const p of READS) { const r = await c.req('GET', p, { s: so }); check(r.status === 403, `Business Owner: GET ${p} is 403`, msg(r)); }
-  for (const [m, p, b] of WRITES) { const r = await c.req(m, p, { s: so, body: b }); check(r.status === 403 && code(r) !== 'STEP_UP_REQUIRED', `Business Owner: ${m} ${p} is 403 (before any step-up)`, msg(r)); }
+  for (const [m, p, b] of [...WRITES, ...ACCEPT_ROUTES]) { const r = await c.req(m, p, { s: so, body: b }); check(r.status === 403 && code(r) !== 'STEP_UP_REQUIRED', `Business Owner: ${m} ${p} is 403 (before any step-up)`, msg(r)); }
+  for (const [m, p, b] of ACCEPT_ROUTES) { const r = await c.req(m, p, { body: b }); check(r.status === 401, `no session: ${m} ${p} is 401`, msg(r)); }
   check((await audits(owner.id, since)).length === 0, 'nothing the Business Owner tried was recorded as a change');
 
   const sa = await c.login(admin.email, '198.51.100.20');
@@ -175,7 +199,15 @@ async function all() {
     'SSH root login: "yes" behind an unreadable include is unknown, never pass, and says why', JSON.stringify(F['host.ssh.root_login']));
   check(st('host.ssh.x11') === undefined || st('host.ssh.x11') === 'unknown', 'SSH X11: uncertain, so not decided', JSON.stringify(F['host.ssh.x11']));
   check(st('host.firewall') === 'pass' && /sudo ufw status/.test(F['host.firewall'].evidence), 'firewall: ufw enabled and active, and it says the rules need root', JSON.stringify(F['host.firewall']));
-  check(st('network.listeners') === 'fail' && /udp\/33344/.test(F['network.listeners'].evidence), 'listeners: the unexpected public UDP port is a finding', JSON.stringify(F['network.listeners']));
+  check(st('network.listeners') === 'fail' && /udp\/5353/.test(F['network.listeners'].evidence) && /tcp\/8080 on 0\.0\.0\.0 \(node\)/.test(F['network.listeners'].evidence) && !/33344/.test(F['network.listeners'].evidence),
+    'listeners: udp/5353 and tcp/8080 (owner named, from ss -p) are findings; hbbs\'s udp/33344 is not', JSON.stringify(F['network.listeners']));
+  check(st('network.ephemeral_sockets') === 'info' && /udp\/33344/.test(F['network.ephemeral_sockets'].evidence) && /32768–60999/.test(F['network.ephemeral_sockets'].evidence),
+    'listeners: udp/33344 is shown as an ephemeral client socket (information, not a pass)', JSON.stringify(F['network.ephemeral_sockets']));
+  check(st('host.ssh.password_auth') === 'unknown' && /50-cloud-init\.conf could not be read and is read first/.test(F['host.ssh.password_auth'].evidence),
+    'SSH passwords: first readable after the unreadable 50-cloud-init.conf, so unknown, naming the file', JSON.stringify(F['host.ssh.password_auth']));
+  check(po.data.findings.every((f) => /^[0-9a-f]{64}$/.test(f.fingerprint) && !('basis' in f)), 'every finding carries a fingerprint, and never its basis');
+  check(F['network.listeners'].acceptable === true && F['portal.mfa.admins'].acceptable === false && /Platform Admin without MFA/.test(F['portal.mfa.admins'].notAcceptableWhy) && F['host.firewall'].acceptable === false,
+    'acceptable: a failing listener check yes; a Platform Admin without MFA no, with why; a passing check no');
   check(st('host.updates.security') === 'pass' && st('host.updates.other') === 'fail', 'updates: eleven pending, none security', JSON.stringify([F['host.updates.security'], F['host.updates.other']]));
   check(st('host.reboot') === 'fail' && /linux-image-6\.8\.0-151-generic/.test(F['host.reboot'].evidence), 'a pending restart, with the packages asking', JSON.stringify(F['host.reboot']));
   check(st('host.updates.unattended') === 'pass', 'unattended upgrades on', JSON.stringify(F['host.updates.unattended']));
@@ -261,6 +293,93 @@ async function all() {
   check(failedRow?.metadata.address === '192.0.2.66' && /refused/.test(failedRow.metadata.error), 'the failed ban names its address and error', JSON.stringify(failedRow?.metadata));
   check(rows.every((r) => r.actorIp && r.resource === 'server_security'), 'each row carries the actor and the address they came from');
 
+  section('Accepted risks (0.75.1): asking, refusals, audit, the score, re-opening');
+  const AC = '/admin/security/findings';
+  const acceptRows = () => prisma.securityFindingAcceptance.findMany({ where: { acceptedById: admin.id }, orderBy: { acceptedAt: 'asc' } });
+  const accAudits = () => prisma.activityLog.findMany({ where: { action: { in: ['SECURITY_FINDING_ACCEPTED', 'SECURITY_FINDING_UNACCEPTED'] }, createdAt: { gte: since } }, orderBy: { seq: 'asc' } });
+  const pa = await c.req('GET', '/admin/security/posture?refresh=1', { s: sa });
+  const PA = Object.fromEntries(pa.data.findings.map((f) => [f.id, f]));
+  const fpL = PA['network.listeners'].fingerprint;
+  const noAsk = await c.req('POST', `${AC}/network.listeners/accept`, { s: sa, body: { reason: 'Behind the hardware firewall', fingerprint: fpL } });
+  check(noAsk.status === 403 && code(noAsk) === 'STEP_UP_REQUIRED' && noAsk.body?.action === 'server.security', 'accepting asks for a fresh confirmation (server.security)', msg(noAsk));
+  check((await acceptRows()).length === 0 && (await accAudits()).length === 0, 'nothing was stored or recorded before the confirmation');
+  const refusals = [
+    [`${AC}/network.listeners/accept`, { reason: 'ab' }, 400, null, 'a reason under 3 characters'],
+    [`${AC}/network.listeners/accept`, { reason: 'x'.repeat(301) }, 400, null, 'a reason over 300 characters'],
+    [`${AC}/network.listeners/accept`, { reason: '   \u0000\u0001  ' }, 400, 'INVALID_REASON', 'a reason of control characters'],
+    [`${AC}/network.listeners/accept`, { reason: 'fine reason', expiresInDays: 366 }, 400, null, 'an expiry over 365 days'],
+    [`${AC}/network.listeners/accept`, { reason: 'fine reason', expiresInDays: 0 }, 400, null, 'an expiry of 0 days'],
+    [`${AC}/portal.mfa.admins/accept`, { reason: 'we trust them' }, 400, 'FINDING_NOT_ACCEPTABLE', 'a Platform Admin without MFA (never acceptable)'],
+    [`${AC}/process.switch.STALE_SWEEP/accept`, { reason: 'test stack' }, 400, 'FINDING_NOT_ACCEPTABLE', 'a dangerous test switch (never acceptable)'],
+    [`${AC}/process.node_env/accept`, { reason: 'test stack' }, 400, 'FINDING_NOT_ACCEPTABLE', 'NODE_ENV=test (never acceptable)'],
+    [`${AC}/web.tls.approve.example.com/accept`, { reason: 'renewing soon' }, 400, 'FINDING_NOT_ACCEPTABLE', 'a failing certificate (never acceptable)'],
+    [`${AC}/host.nope/accept`, { reason: 'no such check' }, 404, 'UNKNOWN_FINDING', 'an id outside the closed list'],
+    [`${AC}/host.firewall/accept`, { reason: 'nothing to accept' }, 409, 'FINDING_NOT_OPEN', 'a passing check'],
+    [`${AC}/network.listeners/accept`, { reason: 'stale page', fingerprint: 'a'.repeat(64) }, 409, 'EVIDENCE_CHANGED', 'evidence that moved since the page read it'],
+    [`${AC}/network.listeners/accept`, { reason: 'fine reason', extra: 1 }, 400, null, 'an unknown field'],
+  ];
+  for (const [p, b, want, wantCode, what] of refusals) {
+    const r = await c.req('POST', p, { s: sf, body: b });
+    check(r.status === want && (!wantCode || code(r) === wantCode), `refused: ${what} (${want}${wantCode ? ` ${wantCode}` : ''})`, msg(r));
+  }
+  check((await acceptRows()).length === 0, 'no refused request stored anything');
+  const acc1 = await c.req('POST', `${AC}/network.listeners/accept`, { s: sf, body: { reason: '  udp/5353 and tcp/8080 are blocked upstream  ', expiresInDays: 30, fingerprint: fpL } });
+  check(acc1.status === 200 && acc1.data.reason === 'udp/5353 and tcp/8080 are blocked upstream' && Math.abs(Date.parse(acc1.data.expiresAt) - Date.now() - 30 * 86_400_000) < 120_000,
+    'accepting a failing finding with a reason and a 30-day expiry (reason trimmed)', msg(acc1));
+  const acc2 = await c.req('POST', `${AC}/host.ssh.root_login/accept`, { s: sf, body: { reason: 'SSH is reachable only behind the hardware firewall' } });
+  check(acc2.status === 200 && acc2.data.status === 'unknown' && acc2.data.expiresAt === null, 'accepting an unknown finding, with no expiry (the default)', msg(acc2));
+  const dup = await c.req('POST', `${AC}/network.listeners/accept`, { s: sf, body: { reason: 'again' } });
+  check(dup.status === 409 && code(dup) === 'ALREADY_ACCEPTED', 'accepting it twice is 409', msg(dup));
+  const pb = await c.req('GET', '/admin/security/posture', { s: sa });
+  const PB = Object.fromEntries(pb.data.findings.map((f) => [f.id, f]));
+  check(PB['network.listeners'].status === 'fail' && PB['network.listeners'].acceptance?.reason === 'udp/5353 and tcp/8080 are blocked upstream' && PB['network.listeners'].acceptance.acceptedBy === admin.email && PB['network.listeners'].acceptance.expiresAt,
+    'an accepted finding keeps its status (never pass) and says who, when, why and until when', JSON.stringify(PB['network.listeners']));
+  check(PB['host.ssh.root_login'].status === 'unknown' && PB['host.ssh.root_login'].acceptance, 'an accepted unknown stays unknown (Accepted (unknown) on the page)');
+  const s0 = pa.data.summary, s1 = pb.data.summary;
+  // The fixture host fails far more than 100 points' worth, so the score itself sits at 0: the penalty shows in `failing`.
+  check(s1.counts.accepted === 2 && s1.counts.fail === s0.counts.fail - 1 && s1.counts.unknown === s0.counts.unknown - 1 && s1.counts.pass === s0.counts.pass
+    && s1.failing.medium === s0.failing.medium - 1 && s1.failing.high === s0.failing.high && s1.coverage === s0.coverage,
+    'the summary: two accepted, out of fail and unknown, no penalty for the medium listener finding, coverage unchanged', JSON.stringify({ before: s0, after: s1 }));
+  const a1 = await accAudits();
+  check(a1.length === 2 && a1.every((r) => r.action === 'SECURITY_FINDING_ACCEPTED' && r.actorId === admin.id && r.actorIp && r.resource === 'server_security')
+    && a1[0].metadata.findingId === 'network.listeners' && a1[0].metadata.reason === 'udp/5353 and tcp/8080 are blocked upstream' && a1[0].metadata.fingerprint === fpL && a1[0].metadata.expiresAt
+    && a1[1].metadata.findingId === 'host.ssh.root_login' && a1[1].metadata.status === 'unknown' && a1[1].metadata.expiresAt === null,
+    'SECURITY_FINDING_ACCEPTED for each: the finding, status, reason, expiry and fingerprint', JSON.stringify(a1.map((r) => r.metadata)));
+  const tooLate = await prisma.securityFindingAcceptance.create({ data: { findingId: 'host.reboot', status: 'fail', severity: 'medium', fingerprint: 'b'.repeat(64), evidence: 'e', reason: 'ok', acceptedAt: new Date(), expiresAt: new Date(Date.now() + 400 * 86_400_000) } }).then(() => 'stored', (e) => e.message);
+  const badId = await prisma.securityFindingAcceptance.create({ data: { findingId: 'portal.mfa.admins', status: 'fail', severity: 'critical', fingerprint: 'b'.repeat(64), evidence: 'e', reason: 'ok!' } }).then(() => 'stored', (e) => e.message);
+  check(/expiry_check/.test(tooLate) && /findingId_check/.test(badId), "the database refuses an expiry over 365 days and a never-acceptable id (0093's CHECKs)", `${tooLate.slice(-120)} | ${badId.slice(-120)}`);
+
+  section('Re-opening never asks; acceptances lapse at expiry');
+  const un = await c.req('DELETE', `${AC}/host.ssh.root_login/accept`, { s: sa });
+  check(un.status === 200 && un.data.reopened === true, 're-opening needs no fresh confirmation', msg(un));
+  const un2 = await c.req('DELETE', `${AC}/host.ssh.root_login/accept`, { s: sa });
+  check(un2.status === 404 && code(un2) === 'NOT_ACCEPTED', 're-opening twice is 404', msg(un2));
+  const unN = await c.req('DELETE', `${AC}/portal.mfa.admins/accept`, { s: sa });
+  check(unN.status === 404 && code(unN) === 'UNKNOWN_FINDING', 're-opening an id outside the list is 404', msg(unN));
+  const a2 = (await accAudits()).filter((r) => r.action === 'SECURITY_FINDING_UNACCEPTED');
+  check(a2.length === 1 && a2[0].actorId === admin.id && a2[0].metadata.cause === 'unaccepted' && a2[0].metadata.automatic === false && a2[0].metadata.findingId === 'host.ssh.root_login',
+    'SECURITY_FINDING_UNACCEPTED by the admin, cause unaccepted', JSON.stringify(a2.map((r) => r.metadata)));
+  const pc = await c.req('GET', '/admin/security/posture', { s: sa });
+  check(!pc.data.findings.find((f) => f.id === 'host.ssh.root_login').acceptance && pc.data.summary.counts.accepted === 1, 'the re-opened finding is a warning again');
+  // Move the listener acceptance's dates into the past: it expired yesterday.
+  const lRow = (await acceptRows()).find((r) => r.findingId === 'network.listeners' && !r.reopenedAt);
+  await prisma.securityFindingAcceptance.update({ where: { id: lRow.id }, data: { acceptedAt: new Date(Date.now() - 2 * 86_400_000), expiresAt: new Date(Date.now() - 86_400_000) } });
+  const pd = await c.req('GET', '/admin/security/posture', { s: sa });
+  const lAfter = await prisma.securityFindingAcceptance.findUnique({ where: { id: lRow.id } });
+  check(!pd.data.findings.find((f) => f.id === 'network.listeners').acceptance && lAfter.reopenCause === 'expired' && lAfter.reopenedAt && lAfter.reopenedById === null,
+    'at its expiry the acceptance lapses on the next read (reopenCause expired, nobody re-opened it)', JSON.stringify(lAfter));
+  const exp = (await accAudits()).filter((r) => r.action === 'SECURITY_FINDING_UNACCEPTED' && r.metadata.cause === 'expired');
+  check(exp.length === 1 && exp[0].actorId === null && exp[0].metadata.automatic === true, 'the lapse is audited once, as automatic', JSON.stringify(exp.map((r) => r.metadata)));
+  await c.req('GET', '/admin/security/posture', { s: sa });
+  check((await accAudits()).filter((r) => r.metadata.cause === 'expired').length === 1, 'reading again does not record it twice');
+  // Accept both again, for the evidence-change run on API 4.
+  const pe1 = await c.req('GET', '/admin/security/posture', { s: sa });
+  const fpL2 = pe1.data.findings.find((f) => f.id === 'network.listeners').fingerprint;
+  const re1 = await c.req('POST', `${AC}/network.listeners/accept`, { s: sf, body: { reason: 'blocked upstream', fingerprint: fpL2 } });
+  const re2 = await c.req('POST', `${AC}/host.ssh.root_login/accept`, { s: sf, body: { reason: 'behind the hardware firewall' } });
+  const re3 = await c.req('POST', `${AC}/portal.audit_export/accept`, { s: sf, body: { reason: 'single disk; no second host yet' } });
+  check(re1.status === 200 && re2.status === 200 && re3.status === 200 && fpL2 === fpL, 'accepted again (the listener fingerprint is stable across reads)', `${msg(re1)} ${msg(re2)} ${msg(re3)}`);
+
   section('The lockout: weakening asks, tightening does not; the unenforced rules can only be cleared');
   const weak = await c.req('PATCH', '/admin/security/config', { s: sa, body: { maxLoginAttempts: 10 } });
   check(weak.status === 403 && code(weak) === 'STEP_UP_REQUIRED' && weak.body?.action === 'login.lockout', 'more attempts asks (login.lockout)', msg(weak));
@@ -279,6 +398,31 @@ async function all() {
   const po2 = await c.req('GET', '/admin/security/posture?refresh=1', { s: sa });
   check(!po2.data.findings.some((f) => f.id === 'portal.unenforced_rules'), 'the unenforced-rules finding is gone after clearing');
   await stopApi(api1);
+
+  // ── 1b. The evidence changed ──────────────────────────────────────────────
+  section(`API 4 (port ${BASE_PORT + 3}): the host gained a public port and a readable earlier sshd drop-in`);
+  const api4 = await startApi(BASE_PORT + 3, { SECURITY_HOST_FIXTURE: CHANGED });
+  const c4 = client(BASE_PORT + 3);
+  const s4 = await c4.login(admin.email);
+  const p4 = await c4.req('GET', '/admin/security/posture', { s: s4 });
+  const F4 = Object.fromEntries(p4.data.findings.map((f) => [f.id, f]));
+  check(F4['host.ssh.root_login'].status === 'pass' && /PermitRootLogin no|permitrootlogin no/i.test(F4['host.ssh.root_login'].evidence) && /40-rem0te\.conf/.test(F4['host.ssh.root_login'].evidence),
+    'SSH root login: decided by the readable 40-rem0te.conf read before the unreadable 50-cloud-init.conf (pass, not unknown)', JSON.stringify(F4['host.ssh.root_login']));
+  check(F4['host.ssh.password_auth'].status === 'unknown', 'SSH passwords: still unknown (first set after the unreadable file)');
+  check(F4['network.listeners'].status === 'fail' && /tcp\/9000/.test(F4['network.listeners'].evidence) && !F4['network.listeners'].acceptance, 'a new public port re-opens the accepted listener finding', JSON.stringify(F4['network.listeners']));
+  check(!F4['host.ssh.root_login'].acceptance, 'a resolved check drops its acceptance');
+  check(!!F4['portal.audit_export'].acceptance && p4.data.summary.counts.accepted === 1, 'an acceptance whose evidence did not move still holds');
+  const causes = Object.fromEntries((await prisma.securityFindingAcceptance.findMany({ where: { acceptedById: admin.id, reopenedAt: { gte: since } }, orderBy: { reopenedAt: 'asc' } })).map((r) => [`${r.findingId}:${r.reopenCause}`, true]));
+  check(causes['network.listeners:evidence_changed'] && causes['host.ssh.root_login:resolved'] && causes['network.listeners:expired'] && causes['host.ssh.root_login:unaccepted'],
+    'the history keeps every acceptance and why it ended: unaccepted, expired, evidence_changed, resolved', JSON.stringify(Object.keys(causes)));
+  const hist = await c4.req('GET', '/admin/security/findings/acceptances', { s: s4 });
+  check(hist.status === 200 && hist.data.length >= 5 && hist.data.some((h) => h.findingId === 'network.listeners' && h.reopenCause === 'evidence_changed' && h.reopenedBy === null)
+    && hist.data.some((h) => h.reopenCause === 'unaccepted' && h.reopenedBy === admin.email), 'GET findings/acceptances lists the history with who re-opened', msg(hist));
+  const auto = (await prisma.activityLog.findMany({ where: { action: 'SECURITY_FINDING_UNACCEPTED', createdAt: { gte: since } } })).filter((r) => r.metadata.automatic);
+  check(auto.some((r) => r.metadata.cause === 'evidence_changed' && r.metadata.findingId === 'network.listeners') && auto.some((r) => r.metadata.cause === 'resolved' && r.metadata.findingId === 'host.ssh.root_login'),
+    'each automatic re-open is audited with its cause', JSON.stringify(auto.map((r) => r.metadata)));
+  await c4.req('DELETE', '/admin/security/findings/portal.audit_export/accept', { s: s4 });
+  await stopApi(api4);
 
   // ── 2. Nothing readable ───────────────────────────────────────────────────
   section(`API 2 (port ${BASE_PORT + 1}): a host where nothing can be read`);
@@ -313,6 +457,7 @@ async function all() {
     check(r.status === 503 && code(r) === 'HOST_CHANGES_OFF_IN_TEST', `${m} ${p} is refused: a test process changes nothing on its host`, msg(r));
   }
   await stopApi(api3);
+
 }
 
 async function cleanup() {
@@ -323,6 +468,8 @@ async function cleanup() {
       ipAllowlistEnabled: savedConfig.ipAllowlistEnabled, blockedCountries: savedConfig.blockedCountries, blockedIpRanges: savedConfig.blockedIpRanges, allowedIpRanges: savedConfig.allowedIpRanges } });
     else await prisma.platformSecurityConfig.deleteMany({});
     await prisma.confirmPolicy.deleteMany({ where: { key: { in: KEYS } } });
+    // Acceptances are not audit rows; the ones this suite made go with it.
+    await prisma.securityFindingAcceptance.deleteMany({ where: { acceptedById: { in: created.users } } }).catch((e) => console.error('acceptances:', e.message.slice(0, 200)));
     for (const r of savedAsk) await prisma.confirmPolicy.create({ data: r }).catch(() => undefined);
     await prisma.membership.deleteMany({ where: { customerId: { in: created.businesses } } });
     await prisma.customer.deleteMany({ where: { id: { in: created.businesses } } }).catch((e) => console.error('businesses:', e.message.slice(0, 200)));

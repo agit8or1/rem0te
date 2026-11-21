@@ -423,6 +423,12 @@ enum ActivityAction {
   // lockout policy. Meta carries the operation, its inputs and the outcome.
   HOST_SECURITY_CHANGED
   LOGIN_POLICY_CHANGED
+  // 0.75.1 Accepted risks (migration 0093): a Platform Admin accepting one
+  // Admin → Security finding (meta: finding id, status, severity, reason,
+  // expiry, fingerprint), and an acceptance ending — by a person, or on its
+  // own when the evidence changed, the check resolved or it expired.
+  SECURITY_FINDING_ACCEPTED
+  SECURITY_FINDING_UNACCEPTED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -5014,4 +5020,33 @@ model MsaManagedComputer {
   runId                 String?
   run                   MsaCutoverRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
   updatedAt             DateTime  @updatedAt
+}
+
+/// 0.75.1: one Admin → Security finding a Platform Admin accepted as a risk
+/// (admin/host-security/acceptance.ts). Only SecurityService writes it. A row
+/// holds while `reopenedAt` is null and the finding's fingerprint is the one
+/// stored; it is never deleted, so the history of every acceptance stays.
+/// 0093 CHECKs the finding id (ACCEPTABLE_FINDINGS), the reason length, the
+/// expiry (at most 365 days) and the reopen cause, and keeps one open row per
+/// finding (partial unique index).
+model SecurityFindingAcceptance {
+  id           String    @id @default(cuid())
+  findingId    String
+  /// fail | unknown: what it was when accepted.
+  status       String
+  severity     String
+  /// sha256 hex of the finding's id, status and basis at acceptance.
+  fingerprint  String
+  /// The evidence as it read then, for the page (at most 2,000 characters).
+  evidence     String
+  reason       String
+  acceptedById String?
+  acceptedAt   DateTime  @default(now())
+  expiresAt    DateTime?
+  reopenedAt   DateTime?
+  /// evidence_changed | expired | resolved | unaccepted (0093 CHECK).
+  reopenCause  String?
+  reopenedById String?
+
+  @@index([findingId, acceptedAt])
 }
