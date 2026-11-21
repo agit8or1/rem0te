@@ -9,9 +9,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 **Background file transfer: a Platform Admin can send a file to a Windows computer running the signed agent, or
 fetch one from it, with no screen sharing.** The agent reads and writes as SYSTEM, and the console says "SYSTEM —
-full control of this computer" on the Files tab. This extends 0.77's reversal (§86) to files, at the owner's request.
+full control of this computer" on the Files tab. This extends 0.77's reversal (§87) to files, at the owner's request.
 It is the first time the agent takes a path from the portal; `docs/file-transfer.md` and check-security-invariants
-§87 name what changed and prove what still holds. **A new signed agent (0.78.0); publish it before anyone relies on
+§88 name what changed and prove what still holds. **A new signed agent (0.78.0); publish it before anyone relies on
 file transfer**: the server refuses older agents (`FILES_AGENT_TOO_OLD`). Migration 0095. No signer or sudoers
 change.
 
@@ -68,7 +68,7 @@ change.
 
 ### Security
 
-- check-security-invariants **§87**:
+- check-security-invariants **§88**:
   - the capabilities, every route's capability, and the request's order;
   - `fileRefusal`'s order and the technician binding;
   - that cancelling never asks;
@@ -78,7 +78,7 @@ change.
   - overwrite only when asked, and worker logs;
   - the shared path fixture, the limits across TS, Go and 0095, and `files.transfer` defaulting to off;
   - the console's SYSTEM text, and that the suites prove it.
-- **§86 changes:**
+- **§87 changes:**
   - its agent channel list grows to the four file routes;
   - its log check allows the file service's own failed-sweep warning;
   - §62's site keys gain `remote-ops/file-transfer.service.ts: files.transfer`.

@@ -1937,11 +1937,11 @@ worker's own code against `/bin/sh` — simulation, not Windows). Unit:
 `whoami`, the tree killed on end and on expiry). **It has run only on
 Windows Server in the lab**, never on a desktop or the fleet.
 
-§87 (0.78) is background file transfer (`docs/file-transfer.md`). **It
-extends §86's reversal to files, at the owner's request**: the agent writes
+§88 (0.78) is background file transfer (`docs/file-transfer.md`). **It
+extends §87's reversal to files, at the owner's request**: the agent writes
 and reads, as SYSTEM, a path a Platform Admin typed. It is the first time the
 agent takes a path from the portal. Nothing else is relaxed, and it travels
-over §86's worker and long-poll (no new exec site, no listener).
+over §87's worker and long-poll (no new exec site, no listener).
 
 - **Who.** Two platform-only capabilities, `computers:files_upload` and
   `computers:files_download` (`PLATFORM_CAP`, never `CAP`), for the same

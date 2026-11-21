@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * End-to-end proof of background file transfer (0.78 Courier,
- * check-security-invariants §87). It runs through the real routes and the
+ * check-security-invariants §88). It runs through the real routes and the
  * agent's real remote worker (rem0te-remote-sim, built from
  * tools/windows-installer/internal/remote, with -files-root).
  *
@@ -216,8 +216,6 @@ async function all() {
   const ownerB = await mkUser('owner-b', bizB, roleOwner);
   const userA = await mkUser('user-a', bizA, roleUser, { capabilities: ['computers:view', 'computers:edit', 'computers:connect', 'computers:files_upload', 'computers:files_download'] });
   const tech = await mkUser('tech', null, null);
-  const preset = await prisma.technicianPreset.findUnique({ where: { key: 'l2-technician' } });
-  if (preset) await prisma.technicianAssignment.create({ data: { tenantId: tenant.id, customerId: bizA.id, userId: tech.id, presetId: preset.id, capabilities: [] } });
   const mkEp = async (tag, biz, { channel = 'signed', pooled = false, platform = 'Windows', agentVersion = '0.78.0', online = true } = {}) => {
     const hostname = `FILES-${tag}-${sfx}`;
     const e = await prisma.endpoint.create({ data: {
@@ -240,6 +238,10 @@ async function all() {
   const B1 = await mkEp('B1', bizB);
 
   await startApi();
+  // The built-in presets are written when the API starts, so a fresh database has them only now.
+  const preset = await prisma.technicianPreset.findUnique({ where: { key: 'l2-technician' } });
+  if (!preset) throw new Error('the l2-technician preset is missing after the API started');
+  await prisma.technicianAssignment.create({ data: { tenantId: tenant.id, customerId: bizA.id, userId: tech.id, presetId: preset.id, capabilities: [] } });
   const SAdmin = await login(admin.email);
   const SAd = await stepUp(SAdmin);
   const SAd2 = await stepUp(await login(admin2.email));

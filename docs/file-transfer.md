@@ -208,7 +208,7 @@ that, for files only:
 - **The agent writes and reads a path the portal sends.** Before 0.78 the
   agent never took a path from the portal.
 
-Everything else still holds, and `check-security-invariants.mjs` §87 checks
+Everything else still holds, and `check-security-invariants.mjs` §88 checks
 it:
 
 - **Who.** A Platform Admin only, sending and fetching separately, with a

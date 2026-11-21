@@ -62,7 +62,7 @@ export const SESSION_ID_RE = /^[0-9a-f]{32}$/;
 export const ENDPOINT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 // ── File transfer (0.78 Courier, docs/file-transfer.md) ──────────────────────
-// The agent compiles the same numbers (internal/remote/limits.go), and §87 of
+// The agent compiles the same numbers (internal/remote/limits.go), and §88 of
 // the security invariants checks that they agree.
 
 /**

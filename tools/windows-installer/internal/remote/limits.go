@@ -50,7 +50,7 @@ var Shells = []string{"cmd", "powershell"}
 var AgentRefusals = []string{"shell_unavailable", "start_failed", "too_many", "bad_request"}
 
 // File transfer (0.78 Courier). The same numbers as the portal's limits.ts;
-// §87 checks they agree.
+// §88 checks they agree.
 const (
 	// FileChunkBytes: one chunk, both directions.
 	FileChunkBytes = 512 * 1024

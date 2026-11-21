@@ -7443,7 +7443,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     JSON.stringify(routeCaps));
   const agentCtl = code(ctl).slice(code(ctl).indexOf("@Controller('remote/agent')"));
   const agentRoutes = [...agentCtl.matchAll(/@Post\('([^']+)'\)\s*\n\s*@Public\(\)/g)].map((m) => m[1]);
-  // 0.78 (§87) adds the four file routes; nothing else.
+  // 0.78 (§88) adds the four file routes; nothing else.
   check('terminal: the agent channel is exactly poll, output and the four file routes, @Public, under remote/agent',
     /@Controller\('remote\/agent'\)/.test(ctl) && JSON.stringify(agentRoutes) === JSON.stringify(['poll', 'terminal/output', 'files/pull', 'files/begin', 'files/push', 'files/finish'])
       && (agentCtl.match(/@(Get|Post|Put|Patch|Delete)\(/g) ?? []).length === 6 && (code(ctl).match(/@Public\(\)/g) ?? []).length === 6,
@@ -7559,8 +7559,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'ci.yml / run-e2e.sh / e2e-ui.mjs / lab-windows.yml');
 }
 
-// ── §87 (0.78): background file transfer — the same reversal, contained ─────
-//     File transfer extends §86's reversal (the agent acting on what a
+// ── §88 (0.78): background file transfer — the same reversal, contained ─────
+//     File transfer extends §87's reversal (the agent acting on what a
 //     technician sends) to files. The agent writes and reads, as SYSTEM, a
 //     path a Platform Admin typed. It is contained the same way:
 //       - Upload and download are two platform-only capabilities
@@ -7585,7 +7585,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //         transfer's end and by the sweep. Audit rows carry the path, size
 //         and SHA-256, never content.
 {
-  console.log('\n§87 Background file transfer (§86\'s reversal, extended to files, contained)');
+  console.log('\n§88 Background file transfer (§87\'s reversal, extended to files, contained)');
   const SRC = 'apps/api/src';
   const GO = 'tools/windows-installer';
   const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
