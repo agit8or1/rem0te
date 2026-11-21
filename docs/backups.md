@@ -70,13 +70,18 @@ St0r is the owner's front end for UrBackup. It already keeps backup, offsite rep
 separate statuses, and records simulated drills as simulated. Its routes need a signed-in user, and it has no
 service token. So Rem0te does not connect to it. St0r pushes to Rem0te instead (decision 17).
 
-1. **Create the connection.** A Platform Admin opens **Backups**, picks the business, and presses **Connect St0r**.
-   If *Settings → Confirm it is you* asks for `backup.connection`, confirm it is you first. The push token is shown
-   **once**. Rem0te keeps only its SHA-256 and its last four characters.
-2. **Configure St0r.** Give St0r the token and this portal's address. St0r must be 3.2.140 or later, *with the
-   Rem0te push added*, which is not yet written on the St0r side.
+1. **Create the connection.** A Platform Admin opens **Settings → Backups** (from 0.82), picks the business, and
+   presses **Create St0r connection**. If *Settings → Confirm it is you* asks for `backup.connection`, confirm it is
+   you first. The push token is shown **once**, masked until you press **Reveal**, with a **Copy** button. Rem0te
+   keeps only its SHA-256 and its last four characters.
+2. **Configure St0r.** The page lists exactly what St0r needs: the push address, the token and the headers, with a
+   curl example. St0r must be 3.2.140 or later, *with the Rem0te push added*, which is still being written on the
+   St0r side. Its developers build to the [St0r push contract](st0r-push-contract.md).
 3. **Make the portal reachable.** The St0r host must reach the portal over HTTPS. Rem0te never opens a connection
-   to a St0r host.
+   to a St0r host. The push address is built from *Settings → General → Public address*, and the page warns when
+   that address is not HTTPS or is not set.
+4. **Test it.** St0r sends the same request with `?dryRun=1`. The page shows the newest test push and whether it
+   was valid.
 
 **Limitations:**
 
@@ -101,7 +106,98 @@ Comet is planned and is not built in 0.81. When it is built, it will need:
 - **Read-only.** Many write methods refuse token authentication. Rem0te would only read.
 - **No failover.** Standby is readiness only.
 
+## Settings → Backups (0.82)
+
+**Settings → Backups** is where a Platform Admin sets St0r up for one business. After picking the business, the
+page shows:
+
+- **Five steps:**
+  1. create the connection (the token shown once);
+  2. what to give St0r: the address, the token and the headers;
+  3. a test push, with a curl example whose token is masked until revealed;
+  4. the real push;
+  5. backup monitors and linking assets.
+- **The connections.** Each one shows:
+  - its last push, its last result and how many assets it reported (and how many are linked to a computer);
+  - the token's last four characters, and when it was created and rotated;
+  - why the last push was refused, if it was. This is Rem0te's own parse message, never the feed.
+- **Rotate and Revoke** for each connection.
+- **What works for this business**, each capability in one of the four states: **available**, **requires setup**,
+  **planned** or **unsupported**:
+
+  | Capability | State |
+  |---|---|
+  | The St0r push, the test push, the three separate facts, linked assets and backup alerts | **Requires setup** until done, then **available** |
+  | Comet | **Planned** |
+  | Starting a drill from Rem0te | **Planned** |
+  | Failover | **Unsupported** |
+- **Comet**, shown as planned, with what it will need.
+
+The **Backups** page keeps a short list of the connections, for a Platform Admin, and points here. A credential is
+managed in one place.
+
+**Why only a Platform Admin.** A push token is a credential that writes a business's backup status and raises its
+alerts. 0.81 made connections a Platform Admin's, and 0.82 keeps that. A Business Owner cannot create, rotate or
+revoke one.
+
+### Rotating a token
+
+**Rotate token** issues a new token for the same connection, shown once. **The old token stops working at once:
+there is no overlap.**
+
+- **Why no overlap.** A token is usually rotated because it may be known to someone else, and an overlap would be a
+  window in which it still works.
+- **Nothing is lost by the gap.** The pushes refused until St0r has the new token are simply sent again, and
+  re-sending is safe.
+
+Rotation:
+
+- asks the person to confirm it is them when `backup.connection` asks, as creating does;
+- is audited before it happens (`BACKUP_CONNECTION_ROTATED`, with the last four characters before and after);
+- succeeds only if nobody rotated or revoked the connection in the meantime.
+
+Revoking still never asks, and is final.
+
+### The test push (dry run)
+
+`POST /api/v1/backups/push?dryRun=1` takes the same token and is checked against the same schema as a real push.
+It writes **nothing but one audit row** (`BACKUP_PUSH_DRY_RUN`, counts only):
+
+- no asset, job, point or drill;
+- not the connection's last result.
+
+It answers `200` with:
+
+- `valid`, and the problems if it is not;
+- what a real push would write;
+- how each asset would link: by Rem0te id, by hostname, by a person's choice, or not at all. It never says which
+  computer;
+- warnings, such as a drill whose recovery point Rem0te does not hold, or a simulated drill.
+
+### Linking an asset by hand
+
+When St0r's name for a machine matches no computer, someone who configures the business can link it on the
+**Backups** page. That is a Business Owner, a Platform Admin, or someone with *Monitoring: configure* for the whole
+business: the same people who set RPO and RTO targets, because the link decides which computer a backup alert is
+raised on. In the asset's **Computer** column, they choose one of:
+
+- **A computer** of that business. A report never changes the link afterwards.
+- **Not a computer.** A report never links it.
+- **Automatic.** The provider's report decides again. The asset is unlinked until the next report.
+
+The rules:
+
+- **Where.** Only a computer of the asset's own business, and one the person can see.
+- **Who can see the asset.** A Business User never sees an unlinked asset, so they cannot link one either.
+- **Audit.** Every change is audited (`BACKUP_ASSET_LINKED`, before and after).
+- **When it ends.** A computer that moves to another business loses the link, and the asset goes back to automatic
+  (migration 0099).
+
 ## The push (St0r)
+
+**[The St0r push contract](st0r-push-contract.md)** is the full specification for St0r's developers, version 1:
+the body, limits, idempotency, errors, retries and clocks, with examples that CI checks against the API. A summary
+follows.
 
 ```
 POST /api/v1/backups/push
@@ -117,7 +213,8 @@ The checks run in this order, and nothing is written before they all pass:
 2. **The connection.** The connection the token names must exist, be a live push connection, and have a stored
    SHA-256 that matches the secret. The comparison is constant-time. An unknown connection, a wrong secret and a
    revoked token all get the same `401 BACKUP_PUSH_UNAUTHORIZED`.
-3. **The body.** The body must be a strict feed, or it is refused with `400 BAD_FEED`.
+3. **The body.** The body must be a strict feed, or it is refused with `400 BAD_FEED`. The reason is kept on
+   the connection for Settings → Backups.
 
 **The business comes from the token, never from the body.** The feed has no business field, so a feed that names
 one is refused. A feed that names another business's computer links nothing.
@@ -133,6 +230,21 @@ The route is public, rate-limited, and capped by the API's 1 MB body limit. A fe
 
 A push is accepted during an `integration` containment pause, because it is inbound monitoring data. A pull is
 not made during one.
+
+**Re-sending is safe in any order (0.82).** Every item is keyed by its `externalId`. A fact never moves backwards:
+
+- a finished job is never put back to `running`;
+- an integrity result is never put back to `not_checked`;
+- a finished drill is never put back to `running`.
+
+So a push retried late cannot undo a newer one. The answer's `kept` counts what was held back.
+
+**From 0.82, a drill must name the recovery point it restored** (`recoveryPointExternalId`). A drill that names
+none could never verify anything, so it is refused.
+
+**Errors are coded.** A body over 1 MB answers `413 PAYLOAD_TOO_LARGE`, and a body that is not JSON answers
+`400 BAD_REQUEST`. Both were `500` before 0.82, for every route. The rate limit answers `429 TOO_MANY_REQUESTS`
+with `Retry-After-main`; before 0.82 its code was `INTERNAL_ERROR`.
 
 Each asset in the feed is:
 
@@ -155,7 +267,8 @@ An asset is linked to a computer of the token's business in one of two ways:
 - **By hostname.** It names a hostname that matches **exactly one** active computer in that business.
 
 An asset that matches no computer, such as a mailbox or a file share, appears on the page as **Not linked**. A
-computer that moves to another business loses its links.
+computer that moves to another business loses its links. From 0.82, an asset can be
+[linked by hand](#linking-an-asset-by-hand).
 
 ## Who can see it
 
@@ -179,7 +292,11 @@ audited (`BACKUP_OBJECTIVE_SET`, before and after).
 
 - **Creating one** asks the person to confirm it is them when the `backup.connection` key asks. It is audited with
   `logOrFail` before the row exists.
+- **Rotating one** (0.82) asks the same way, and is audited before the write.
 - **Revoking one** never asks. It drops the token hash and the credential, and keeps what was reported.
+
+**Linking an asset by hand** (0.82) needs what targets need: *Monitoring: configure* for the whole business, or a
+Business Owner or Platform Admin. It is audited (`BACKUP_ASSET_LINKED`).
 
 ## How RPO and RTO are measured
 
@@ -255,7 +372,22 @@ agent.
   - a stale backup raising and clearing;
   - `DRILL_FAILED` and `RPO_EXCEEDED`;
   - the pull sweep skipping a paused business.
-- **Browser:** `apps/web/scripts/e2e-ui.mjs` drives the page at both widths and in both themes.
+- **Browser:** `apps/web/scripts/e2e-ui.mjs` drives the page at both widths and in both themes, and from 0.82
+  Settings → Backups and the link control too.
+- **0.82, unit:** `apps/api/scripts/unit-backup-setup.mjs`, in CI. It checks:
+  - every example in the St0r push contract against the API's own schema;
+  - that the JSON Schema file is regenerated identically;
+  - idempotency, rotation, the push address and the four states.
+- **0.82, behavioural:** `apps/api/scripts/e2e-backup-setup.mjs`, on ports 4061 and 4062, in `run-e2e.sh`. It
+  proves:
+  - create and the one-time token;
+  - the dry run writing nothing;
+  - re-sending in any order;
+  - rotation refusing the old token at once;
+  - linking by hand, scoped and audited;
+  - another business refused;
+  - fresh authentication on `ask`;
+  - 413 and 429.
 
 **Not yet tested against a real provider:**
 

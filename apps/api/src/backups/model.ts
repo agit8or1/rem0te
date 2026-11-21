@@ -81,7 +81,13 @@ export const FeedPoint = z.object({
 
 export const FeedDrill = z.object({
   externalId: z.string().regex(EXTERNAL_ID),
-  recoveryPointExternalId: z.string().regex(EXTERNAL_ID).nullable().optional(),
+  /**
+   * The recovery point this drill restored. Required from 0.82 (contract
+   * version 1, docs/st0r-push-contract.md): a drill that does not say what it
+   * restored cannot verify anything. A point Rem0te has not stored (in this
+   * feed or an earlier one) is kept as the drill's claim and counts for no job.
+   */
+  recoveryPointExternalId: z.string().regex(EXTERNAL_ID),
   recoveryPointAt: when.nullable().optional(),
   target: z.enum(DRILL_TARGETS),
   scope: z.enum(DRILL_SCOPES),
@@ -121,6 +127,7 @@ export const FeedAsset = z.object({
  * fetched it, never from the body.
  */
 export const Feed = z.object({
+  /** The contract version (CONTRACT_VERSION). */
   v: z.literal(1),
   assets: z.array(FeedAsset).max(FEED_LIMITS.assets),
 }).strict().superRefine((f, ctx) => {
@@ -140,10 +147,77 @@ export const Feed = z.object({
 export type FeedT = z.infer<typeof Feed>;
 export type FeedAssetT = z.infer<typeof FeedAsset>;
 
-export function parseFeed(raw: unknown): { ok: true; feed: FeedT } | { ok: false; error: string } {
+/** The St0r push contract's version (docs/st0r-push-contract.md). A feed's `v` must equal it. */
+export const CONTRACT_VERSION = 1 as const;
+
+export interface FeedIssue { path: string; message: string }
+/** At most this many issues are reported for one refused feed. */
+export const MAX_ISSUES = 20;
+
+/**
+ * Parse a feed strictly. A refused feed gives its first issues (path and
+ * rule, as Rem0te words them — never a value from the feed beyond what zod's
+ * message names) and a one-line `error` of the first five.
+ */
+export function parseFeed(raw: unknown): { ok: true; feed: FeedT } | { ok: false; error: string; issues: FeedIssue[] } {
   const r = Feed.safeParse(raw);
-  if (!r.success) return { ok: false, error: r.error.issues.slice(0, 5).map((i) => `${i.path.join('.') || 'feed'}: ${i.message}`).join('; ') };
+  if (!r.success) {
+    const issues = r.error.issues.slice(0, MAX_ISSUES).map((i) => ({ path: i.path.join('.') || 'feed', message: i.message }));
+    return { ok: false, error: issues.slice(0, 5).map((i) => `${i.path}: ${i.message}`).join('; '), issues };
+  }
   return { ok: true, feed: r.data };
+}
+
+/**
+ * A refusal Rem0te keeps on the connection (BackupConnection.lastError, 0099
+ * CHECK): printable ASCII only, at most 300 characters.
+ */
+export function errorLine(s: string): string {
+  const t = s.replace(/[^\x20-\x7e]/g, '?').trim().slice(0, 300);
+  return t || 'refused';
+}
+
+// ── Idempotency: re-sending is safe, in any order (contract §Idempotency) ──
+
+const JOB_TERMINAL: ReadonlySet<string> = new Set(['succeeded', 'partial', 'failed', 'cancelled']);
+const DRILL_TERMINAL: ReadonlySet<string> = new Set(['passed', 'failed', 'partial']);
+
+export interface StoredJobFacts { completion: string; finishedAt: Date | null; integrity: string; integrityCheckedAt: Date | null }
+export interface StoredDrillFacts { result: string; finishedAt: Date | null }
+
+/**
+ * What a re-sent job writes over the stored one. Every item is keyed by its
+ * externalId, so the same id never makes a second row; its fields are
+ * replaced by the newest report, except that a fact never moves backwards:
+ *
+ *   - a finished job (succeeded, partial, failed, cancelled) is never put
+ *     back to running or unknown — an older report retried late cannot undo
+ *     a newer one. A finished job may still be corrected to another finished
+ *     completion (the provider is the source of truth for its own job);
+ *   - an integrity result (passed or failed) is never put back to not_checked.
+ *
+ * `regressed` names what was kept, for the push's answer.
+ */
+export function mergeJob(stored: StoredJobFacts | null, incoming: StoredJobFacts): { facts: StoredJobFacts; regressed: string[] } {
+  if (!stored) return { facts: incoming, regressed: [] };
+  const out = { ...incoming };
+  const regressed: string[] = [];
+  if (JOB_TERMINAL.has(stored.completion) && !JOB_TERMINAL.has(incoming.completion)) {
+    out.completion = stored.completion; out.finishedAt = stored.finishedAt; regressed.push('completion');
+  }
+  if (stored.integrity !== 'not_checked' && incoming.integrity === 'not_checked') {
+    out.integrity = stored.integrity; out.integrityCheckedAt = stored.integrityCheckedAt; regressed.push('integrity');
+  }
+  return { facts: out, regressed };
+}
+
+/**
+ * The same rule for a drill: a finished drill (passed, failed, partial) is
+ * never put back to running or unknown. Such a report is skipped whole — its
+ * other fields belong to the older, unfinished drill.
+ */
+export function drillRegresses(stored: StoredDrillFacts | null, incoming: StoredDrillFacts): boolean {
+  return !!stored && DRILL_TERMINAL.has(stored.result) && !DRILL_TERMINAL.has(incoming.result);
 }
 
 // ── Restore tests: decided here, from drills ───────────────────────────────

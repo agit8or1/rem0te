@@ -1766,6 +1766,7 @@ async function combo(browser, f, vp, theme) {
     await filesPanel(page, f, vp, theme, label);
     await mobileDevicesUi(page, f, vp, theme, label);
     await backupsUi(page, f, vp, theme, label);
+    await backupSettingsUi(page, f, vp, theme, label);
     if (theme === 'light') await mainPagesSweep(page, f, vp, label);
   } finally { await ctx.close(); }
   await mobileRequiresSetup(browser, f, vp, theme, label);
@@ -2342,11 +2343,57 @@ async function backupsUi(page, f, vp, theme, label) {
   check(facts.backup === 'ok' && facts.completion === 'succeeded' && facts.integrity === 'passed' && facts.restore === 'not_tested' && facts.drill === 'simulated_only' && /Simulated only \(not verified\)/.test(text) && !/\bVerified\b/.test(text),
     `${label}: succeeded, integrity passed, restore not tested, simulated only — never "Verified"`, JSON.stringify({ facts, text: text.slice(0, 300) }));
   const prov = await page.getByTestId('backups-providers').innerText().catch(() => '');
-  check(/St0r/.test(prov) && /Comet/.test(prov) && await page.getByTestId('backups-connections').count() === 1, `${label}: providers and (Platform Admin) connections are shown`, prov.slice(0, 200));
+  check(/St0r/.test(prov) && /Comet/.test(prov) && await page.getByTestId('backups-connections').count() === 1 && await page.getByTestId('backups-settings-link').count() === 1,
+    `${label}: providers, and (Platform Admin) connections pointing to Settings → Backups`, prov.slice(0, 200));
+  // 0.82: the link-to-computer control opens, lists the business's computers and the two choices, and is cancelled (nothing saved).
+  await row.getByTestId('backups-link-open').click().catch(() => {});
+  const linkSel = row.getByTestId('backups-link-select');
+  await linkSel.waitFor({ timeout: 10_000 }).catch(() => {});
+  await page.waitForFunction((id) => !!document.querySelector(`[data-testid="backups-link-select"] option[value="${id}"]`), f.backups.ep.id, { timeout: 10_000 }).catch(() => {});
+  const linkOpts = await linkSel.locator('option').allInnerTexts().catch(() => []);
+  check(linkOpts.some((o) => o.includes(`BKP-${sfx}-FS`)) && linkOpts.some((o) => /Not a computer/.test(o)) && linkOpts.some((o) => /Automatic/.test(o)), `${label}: "Link to computer" offers the business's computers, "not a computer" and automatic`, JSON.stringify(linkOpts));
+  if (vp === 'phone') await noSideScroll(page, `${label} Backups link control`);
+  await row.getByRole('button', { name: 'Cancel' }).click().catch(() => {});
   await themeCheck(page, theme, `${label} Backups`);
   if (vp === 'phone') await noSideScroll(page, `${label} Backups`);
   await shot(page, `${label}-backups`);
   await cleanCheck(page, `${label} Backups`);
+}
+
+/**
+ * Settings → Backups (0.82), as the Platform Admin, at both widths and in both
+ * themes, read-only (nothing is created, rotated or revoked here): the steps
+ * with the push address from the public address and a masked curl example,
+ * the connection with its asset count and last result, the capabilities in
+ * the four states (Comet planned, failover unsupported); no sideways scroll
+ * at 375 px.
+ */
+async function backupSettingsUi(page, f, vp, theme, label) {
+  await go(page, '/settings/backups');
+  const sel = page.getByTestId('backup-settings-business');
+  await sel.waitFor({ timeout: 15_000 }).catch(() => {});
+  await page.waitForFunction((id) => !!document.querySelector(`[data-testid="backup-settings-business"] option[value="${id}"]`), f.backups.E.id, { timeout: 15_000 }).catch(() => {});
+  await sel.selectOption(f.backups.E.id).catch(() => {});
+  await page.getByTestId('backup-settings-steps').waitFor({ timeout: 15_000 }).catch(() => {});
+  const url = await page.getByTestId('backup-push-url').innerText().catch(() => '');
+  const curl = await page.getByTestId('backup-curl').innerText().catch(() => '');
+  check(/\/api\/v1\/backups\/push$/.test(url.trim()) && /\?dryRun=1/.test(curl) && /Authorization: Bearer rbk_bkc[0-9a-f]+_•+ab12/.test(curl) && !/[0-9a-f]{64}/.test(curl),
+    `${label}: Settings → Backups gives the push address and a curl example with the token masked`, `${url} | ${curl.slice(0, 200)}`);
+  const steps = await page.getByTestId('backup-settings-steps').innerText().catch(() => '');
+  check(/Create the St0r connection/.test(steps) && /Send a test push \(dry run\)/.test(steps) && /Token ends in/.test(steps) && /St0r push contract/.test(steps), `${label}: the five steps, the token's last four, and the contract`, steps.slice(0, 300));
+  const conn = page.getByTestId('backup-connection').first();
+  const connText = await conn.innerText().catch(() => '');
+  check(/1 \(1 linked to a computer\)/.test(connText) && await page.getByTestId('backup-rotate').count() === 1 && await page.getByTestId('backup-revoke').count() === 1,
+    `${label}: the connection shows its assets, and Rotate and Revoke`, connText.slice(0, 300));
+  const states = await page.locator('[data-testid="backup-settings-capabilities"] [data-capability]').evaluateAll((els) => els.map((e) => [e.getAttribute('data-capability'), e.getAttribute('data-state')]));
+  const st = Object.fromEntries(states);
+  check(st['st0r.push'] === 'available' && st.comet === 'planned' && st.failover === 'unsupported' && states.every(([, v]) => ['available', 'requires_setup', 'unsupported', 'planned'].includes(v)),
+    `${label}: capabilities in the four states (push available, Comet planned, failover unsupported)`, JSON.stringify(st));
+  check(await page.getByTestId('backup-settings-comet').count() === 1, `${label}: Comet shown as planned, with what it needs`);
+  await themeCheck(page, theme, `${label} Settings → Backups`);
+  if (vp === 'phone') await noSideScroll(page, `${label} Settings → Backups`);
+  await shot(page, `${label}-settings-backups`);
+  await cleanCheck(page, `${label} Settings → Backups`);
 }
 
 // ── 0.75: the device page's Tools panel ────────────────────────────────────

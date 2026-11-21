@@ -13,12 +13,23 @@ import { PROVIDERS, PROVIDER_ORDER } from './providers';
 import { DRIVERS } from './drivers';
 import { newPushToken } from './push-token';
 import { assetState, pageState, type AssetFacts } from './state';
+import { PublicUrlService } from '../platform/public-url.service';
+import { BackupIngestService } from './backup-ingest.service';
+import { BACKUP_KINDS } from '../monitoring/engine';
+import { capabilityStates, pushInstructions, rotationRefusal } from './setup';
 
 const ID = /^[A-Za-z0-9_-]{8,64}$/;
 const bad = (e: z.ZodError) => new BadRequestException({ code: 'INVALID_REQUEST', message: e.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ') });
 /** Rows per asset read for the page: enough for the latest job, the last verified restore and the failed drills. */
 const PER_ASSET = { jobs: 20, points: 5, drills: 20 } as const;
 const MAX_ASSETS = 500;
+
+/** 0.82: link an asset to a computer by hand, mark it as no computer, or give the choice back to the provider's report. */
+const LinkInput = z.discriminatedUnion('link', [
+  z.object({ link: z.literal('manual'), endpointId: z.string().regex(ID) }).strict(),
+  z.object({ link: z.literal('none') }).strict(),
+  z.object({ link: z.literal('auto') }).strict(),
+]);
 
 const CreateConnection = z.object({
   businessId: z.string().regex(ID),
@@ -56,6 +67,8 @@ export class BackupsService {
     private readonly audit: AuditService,
     private readonly acl: AccessControlService,
     config: ConfigService,
+    private readonly urls: PublicUrlService,
+    private readonly ingest: BackupIngestService,
   ) {
     this.encKey = config.get<string>('ENCRYPTION_KEY');
   }
@@ -96,6 +109,8 @@ export class BackupsService {
     return {
       id: c.id, businessId: c.customerId, kind: c.kind, label: PROVIDERS[c.kind as ConnectionKind]?.label ?? c.kind, transport: c.transport,
       enabled: c.enabled, lastSyncAt: c.lastSyncAt, lastResult: c.lastResult, createdAt: c.createdAt, revokedAt: c.revokedAt,
+      // 0.82: why the last report was refused (Rem0te's own parse message, never the feed), and the last rotation.
+      lastErrorAt: c.lastErrorAt, lastError: c.lastError, tokenRotatedAt: c.tokenRotatedAt,
       // Never the token or the credential: their last four characters only.
       pushTokenLast4: c.pushTokenLast4, credentialLast4: c.credentialLast4,
     };
@@ -130,6 +145,8 @@ export class BackupsService {
       const s = assetState(facts, now);
       return {
         id: x.id, name: x.name, type: x.assetType, business: x.customer, computer: x.endpoint, provider: x.connection.kind,
+        // 0.82: who decides the computer — the provider's report ('auto'), or a person ('manual', 'none').
+        linkSource: x.linkSource, linkedAt: x.linkedAt,
         providerLastSyncAt: x.connection.lastSyncAt, firstSeenAt: x.firstSeenAt, lastSeenAt: x.lastSeenAt,
         state: s,
         latestPoint: x.recoveryPoints[0] ? { at: x.recoveryPoints[0].pointAt, location: x.recoveryPoints[0].location } : null,
@@ -186,9 +203,122 @@ export class BackupsService {
 
   // ── Connections (Platform Admin; the controller's guard and fresh check come first) ──
 
+  /**
+   * Settings → Backups (0.82): the connections (live and revoked) with their
+   * asset counts and last dry run, what St0r is told (the push address from
+   * the public address setting, headers, limits), and — for one business —
+   * every capability in the four states. Platform Admin (the controller's
+   * class guard). Never a token, hash or credential.
+   */
   async listConnections(businessId?: string | null) {
-    const rows = await this.prisma.backupConnection.findMany({ where: businessId && ID.test(businessId) ? { customerId: businessId } : {}, orderBy: { createdAt: 'desc' }, take: 500 });
-    return { connections: rows.map((c) => this.connectionView(c)), providers: PROVIDER_ORDER.map((k) => PROVIDERS[k]) };
+    const biz = businessId && ID.test(businessId) ? businessId : null;
+    const rows = await this.prisma.backupConnection.findMany({ where: biz ? { customerId: biz } : {}, orderBy: { createdAt: 'desc' }, take: 500 });
+    const ids = rows.map((c) => c.id);
+    const counts = new Map((await this.prisma.backupProtectedAsset.groupBy({ by: ['connectionId'], where: { connectionId: { in: ids } }, _count: { _all: true } }))
+      .map((g) => [g.connectionId, g._count._all]));
+    const linked = new Map((await this.prisma.backupProtectedAsset.groupBy({ by: ['connectionId'], where: { connectionId: { in: ids }, endpointId: { not: null } }, _count: { _all: true } }))
+      .map((g) => [g.connectionId, g._count._all]));
+    // The newest dry run per connection: the only record a dry run leaves is its audit row.
+    const dry = new Map<string, { at: Date; valid: boolean; issues: number; warnings: number }>();
+    for (const r of await this.prisma.activityLog.findMany({
+      where: { action: 'BACKUP_PUSH_DRY_RUN', resource: 'backup_connection', resourceId: { in: ids } }, orderBy: { createdAt: 'desc' }, take: 500,
+      select: { resourceId: true, createdAt: true, metadata: true },
+    })) {
+      if (!r.resourceId || dry.has(r.resourceId)) continue;
+      const m = (r.metadata ?? {}) as { valid?: unknown; issues?: unknown; warnings?: unknown };
+      dry.set(r.resourceId, { at: r.createdAt, valid: m.valid === true, issues: typeof m.issues === 'number' ? m.issues : 0, warnings: typeof m.warnings === 'number' ? m.warnings : 0 });
+    }
+    const described = this.urls.describe();
+    const setup = pushInstructions(this.urls.api(), described.source);
+    let capabilities = null;
+    if (biz) {
+      const st0r = rows.find((c) => c.kind === 'st0r' && !c.revokedAt) ?? null;
+      const backupMonitors = await this.prisma.monitorRule.count({ where: { kind: { in: [...BACKUP_KINDS] }, enabled: true, OR: [{ scopeKey: 'global' }, { customerId: biz }] } });
+      capabilities = capabilityStates({
+        st0r: st0r ? { lastSyncAt: st0r.lastSyncAt, lastResult: st0r.lastResult } : null,
+        dryRunSeen: !!st0r && dry.has(st0r.id),
+        assets: rows.filter((c) => !c.revokedAt).reduce((s, c) => s + (counts.get(c.id) ?? 0), 0),
+        linkedAssets: rows.filter((c) => !c.revokedAt).reduce((s, c) => s + (linked.get(c.id) ?? 0), 0),
+        backupMonitors, addressOk: setup.warning === null,
+      });
+    }
+    return {
+      connections: rows.map((c) => ({ ...this.connectionView(c), assetCount: counts.get(c.id) ?? 0, linkedCount: linked.get(c.id) ?? 0, lastDryRun: dry.get(c.id) ?? null })),
+      providers: PROVIDER_ORDER.map((k) => PROVIDERS[k]),
+      setup, capabilities,
+    };
+  }
+
+  /**
+   * Rotate a St0r push token (0.82): a new token, returned ONCE, replaces the
+   * old one at once — no overlap (setup.ts rotationRefusal says why). The
+   * write is conditional on the hash read, so two rotations cannot both
+   * succeed, and is audited with logOrFail before it happens. The
+   * controller asks for fresh authentication first (backup.connection).
+   */
+  async rotateConnection(a: ActorContext, id: string) {
+    if (!ID.test(id)) throw new NotFoundException('Connection not found');
+    const c = await this.prisma.backupConnection.findUnique({ where: { id }, include: { customer: { select: { tenantId: true } } } });
+    if (!c) throw new NotFoundException('Connection not found');
+    const refusal = rotationRefusal(c);
+    if (refusal === 'BACKUP_CONNECTION_REVOKED') throw new NotFoundException('Connection not found');
+    if (refusal) throw new ConflictException({ code: refusal, message: 'Only a live push (St0r) connection has a token to rotate.' });
+    const tok = newPushToken(c.id);
+    await this.audit.logOrFail({
+      action: 'BACKUP_CONNECTION_ROTATED', tenantId: c.customer.tenantId, customerId: c.customerId, actorId: a.userId, actorIp: a.ip,
+      resource: 'backup_connection', resourceId: c.id, meta: { kind: c.kind, beforeLast4: c.pushTokenLast4, afterLast4: tok.last4, overlap: 'none' },
+    });
+    const now = new Date();
+    const r = await this.prisma.backupConnection.updateMany({
+      where: { id: c.id, revokedAt: null, enabled: true, pushTokenHash: c.pushTokenHash },
+      data: { pushTokenHash: tok.hash, pushTokenLast4: tok.last4, tokenRotatedAt: now },
+    });
+    if (!r.count) throw new ConflictException({ code: 'BACKUP_CONNECTION_CHANGED', message: 'The connection changed while rotating (rotated or revoked by someone else). Reload and try again.' });
+    const fresh = await this.prisma.backupConnection.findUniqueOrThrow({ where: { id: c.id } });
+    return { connection: this.connectionView(fresh), pushToken: tok.token, shownOnce: true, previousStopped: now };
+  }
+
+  // ── Linking an asset to a computer by hand (0.82) ────────────────────────
+
+  /**
+   * Link a backup asset to a computer when the provider's name for it does
+   * not match one. Scoped and audited:
+   *   - the asset must be readable by the caller (assetWhere) and the caller
+   *     must configure the asset's business (mayConfigure: the owner, a
+   *     Platform Admin, or monitoring:configure for the whole business —
+   *     the same rule as RPO/RTO targets, because the link decides which
+   *     computer a backup alert is raised on);
+   *   - the computer must be an active computer of the SAME business that
+   *     the caller can see (endpointVisibilityWhere), else 404;
+   *   - audited with before and after (BACKUP_ASSET_LINKED).
+   * 'none' marks it as no computer (reports never link it); 'auto' hands the
+   * choice back to the provider's report (unlinked until the next one).
+   */
+  async linkAsset(a: ActorContext, assetId: string, raw: unknown) {
+    if (!ID.test(assetId)) throw new NotFoundException('Asset not found');
+    const d = LinkInput.safeParse(raw ?? {});
+    if (!d.success) throw bad(d.error);
+    const x = await this.prisma.backupProtectedAsset.findFirst({
+      where: { AND: [{ id: assetId }, this.assetWhere(a)] },
+      select: { id: true, customerId: true, endpointId: true, linkSource: true, customer: { select: { tenantId: true } } },
+    });
+    if (!x) throw new NotFoundException('Asset not found');
+    if (!this.mayConfigure(a, x.customerId)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Linking a backup asset to a computer needs the monitoring:configure permission for the whole business.' });
+    let endpointId: string | null = null;
+    if (d.data.link === 'manual') {
+      const ep = await this.prisma.endpoint.findFirst({
+        where: { AND: [{ id: d.data.endpointId, customerId: x.customerId, status: 'ACTIVE' }, this.acl.endpointVisibilityWhere(a, x.customerId)] }, select: { id: true },
+      });
+      if (!ep) throw new NotFoundException({ code: 'COMPUTER_NOT_FOUND', message: 'No such computer in this asset\'s business.' });
+      endpointId = ep.id;
+    }
+    const r = await this.ingest.setLink(x.id, x.customerId, { source: d.data.link, endpointId, by: a.userId });
+    if (!r.count) throw new NotFoundException('Asset not found');
+    await this.audit.log({
+      action: 'BACKUP_ASSET_LINKED', tenantId: x.customer.tenantId, customerId: x.customerId, actorId: a.userId, actorIp: a.ip, resource: 'backup_asset', resourceId: x.id,
+      meta: { before: { source: x.linkSource, endpointId: x.endpointId }, after: { source: d.data.link, endpointId } },
+    });
+    return { assetId: x.id, linkSource: d.data.link, endpointId };
   }
 
   /**

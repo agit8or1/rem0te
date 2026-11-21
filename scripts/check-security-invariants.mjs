@@ -8034,6 +8034,17 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //     stored rows; the 4.2 templates are SERVICE_STOPPED with alertIfMissing
 //     false, from cited vendor sources, added only through createRule.
 //   - BACKUP_SYNC_SWEEP=off is exact and exported by run-e2e.sh.
+//   0.82 (Wharf, Settings → Backups and the St0r push contract):
+//   - the dry run (?dryRun=1) passes the same token check and schema, then
+//     only reads (preview) and writes one audit row, never a provider row or
+//     the connection's result, and names no computer;
+//   - rotate is the class guard plus assertFresh('backup.connection'),
+//     logOrFail before a write conditional on the hash read (no overlap);
+//   - linking an asset by hand: assetWhere, mayConfigure, a visible computer
+//     of the asset's own business, audited; setLink writes only the link
+//     columns; a person's choice outlives reports;
+//   - contract v1: a drill names its recovery point; a fact never moves
+//     backwards; the document and its generated schema are checked in CI.
 {
   console.log('\n§91 Backups (provider facts, read-only; completion, integrity and restore kept apart)');
   const SRC = 'apps/api/src';
@@ -8078,10 +8089,13 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 
   const ctl = src(`${B}/backups.controller.ts`);
   const push = (ctl.match(/export class BackupPushController[\s\S]*$/) ?? [''])[0];
+  const setupSrc = src(`${B}/setup.ts`);
   check('push: @Public, @RateLimit, token parsed from the Authorization header, the same 401 for every refusal',
-    /@Post\(\)\s*@Public\(\)\s*@RateLimit\(\d+\)/.test(push) && /parsePushAuth\(auth\)/.test(push) && /if \(!secretMatches\(t\.secret, live \? conn!\.pushTokenHash : null\) \|\| !live\) throw refuse\(\);/.test(push), 'BackupPushController');
+    /@Post\(\)\s*@Public\(\)\s*@RateLimit\((\d+|PUSH_PER_MINUTE)\)/.test(push) && /export const PUSH_PER_MINUTE = \d+;/.test(setupSrc) && /parsePushAuth\(auth\)/.test(push)
+      && /if \(!secretMatches\(t\.secret, live \? conn!\.pushTokenHash : null\) \|\| !live\) throw refuse\(\);/.test(push), 'BackupPushController');
+  // 0.82: the dry run's audit row names the connection's business (conn!.customerId) — the only business the push code names.
   check('push: the body never chooses a business — the ingest gets the token\'s connection',
-    !/businessId|customerId/.test(push) && /this\.ingest\.ingest\(conn!, f\.feed\)/.test(push) && /parseFeed\(body\)/.test(push), 'BackupPushController');
+    !/businessId|customerId/.test(push.replace(/customerId: conn!\.customerId/g, '')) && /this\.ingest\.ingest\(conn!, f\.feed\)/.test(push) && /parseFeed\(body\)/.test(push), 'BackupPushController');
   const tok = src(`${B}/push-token.ts`);
   check('push token: stored only as SHA-256, compared with timingSafeEqual', /createHash\('sha256'\)/.test(tok) && /timingSafeEqual/.test(tok) && !/sealSecret/.test(tok), 'push-token.ts');
   const ingest = src(`${B}/backup-ingest.service.ts`);
@@ -8098,6 +8112,45 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('connections: logOrFail before the row; no token, hash or credential in a view', /logOrFail\(\{\s*action: 'BACKUP_CONNECTION_CREATED'/.test(svc)
     && !/(pushTokenHash|credentialEnc)\s*[:,]/.test((svc.match(/private connectionView[\s\S]*?\n  \}/) ?? [''])[0]), 'backups.service.ts');
   check('backups: no route starts a backup, a restore, a drill or a failover', !/@(Post|Put)\('[^']*(restore|drill|failover|run|start)[^']*'\)/.test(ctl), 'backups.controller.ts');
+
+  // ── 0.82 (Wharf): the dry run, rotation, linking by hand, the contract ──
+  const dryBlock = (push.match(/if \(dryRun\) \{[\s\S]*?\n    \}\n/) ?? [''])[0];
+  check('dry run: after the same token check and parse, it calls only preview and one audit row, and returns before any write',
+    !!dryBlock && push.indexOf('if (dryRun) {') > push.indexOf('throw refuse();\n    const f = parseFeed(body);') && /this\.ingest\.preview\(conn!, f\.feed\)/.test(dryBlock) && /action: 'BACKUP_PUSH_DRY_RUN'/.test(dryBlock)
+      && /return \{/.test(dryBlock) && !/ingest\.(ingest|failed|setLink)|prisma\.\w+\.(create|update|upsert|delete)/.test(dryBlock), 'BackupPushController dry run');
+  const preview = (ingest.match(/async preview\([\s\S]*?\n  \}\n/) ?? [''])[0];
+  check('dry run: BackupIngestService.preview only reads, and never returns a computer id',
+    !!preview && !/\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/.test(preview) && !/endpointId: [a-z]/.test(preview.replace(/select: \{[^}]*\}/g, '')), 'preview');
+  const rot = (conns.match(/async rotate[\s\S]*?\n  \}/) ?? [''])[0];
+  check('rotate: Platform Admin (class guard), assertFresh naming backup.connection before the service call',
+    /assertFresh\([^;]*action: 'backup\.connection'[^;]*\);\s*return \{ success: true, data: await this\.svc\.rotateConnection/.test(rot), 'BackupConnectionsController.rotate');
+  const rotSvc = (svc.match(/async rotateConnection[\s\S]*?\n  \}/) ?? [''])[0];
+  check('rotate: logOrFail before a write conditional on the hash read (no overlap: the old hash is replaced), the token returned once',
+    /logOrFail\(\{\s*action: 'BACKUP_CONNECTION_ROTATED'/.test(rotSvc) && rotSvc.indexOf('logOrFail') < rotSvc.indexOf('updateMany')
+      && /where: \{ id: c\.id, revokedAt: null, enabled: true, pushTokenHash: c\.pushTokenHash \}/.test(rotSvc) && /data: \{ pushTokenHash: tok\.hash, pushTokenLast4: tok\.last4/.test(rotSvc)
+      && !/(beforeLast4|afterLast4): tok\.(token|hash)/.test(rotSvc), 'rotateConnection');
+  const linkSvc = (svc.match(/async linkAsset[\s\S]*?\n  \}/) ?? [''])[0];
+  check('link: the asset through assetWhere, mayConfigure for its business, a computer of THAT business the caller can see, audited',
+    /AND: \[\{ id: assetId \}, this\.assetWhere\(a\)\]/.test(linkSvc) && /this\.mayConfigure\(a, x\.customerId\)/.test(linkSvc)
+      && /AND: \[\{ id: d\.data\.endpointId, customerId: x\.customerId, status: 'ACTIVE' \}, this\.acl\.endpointVisibilityWhere\(a, x\.customerId\)\]/.test(linkSvc)
+      && /action: 'BACKUP_ASSET_LINKED'/.test(linkSvc) && /before: \{[^}]*\}, after: \{/.test(linkSvc), 'linkAsset');
+  const setLink = (ingest.match(/async setLink[\s\S]*?\n  \}/) ?? [''])[0];
+  const setKeys = [...(setLink.match(/data: [\s\S]*$/) ?? [''])[0].matchAll(/\b(\w+): /g)].map((m) => m[1]).filter((k) => !['data', 'endpointId'].includes(k));
+  check('link: setLink changes only endpointId and the link columns, within the asset\'s business',
+    !!setLink && /where: \{ id: assetId, customerId \}/.test(setLink) && setKeys.every((k) => ['linkSource', 'linkedById', 'linkedAt'].includes(k)), setKeys.join(','));
+  check('link: a person\'s link outlives every report (ingest skips endpointId for manual and none)',
+    /const personal = !!held && \(held\.linkSource === 'none' \|\| \(held\.linkSource === 'manual' && !!held\.endpointId\)\);/.test(ingest) && /\.\.\.\(personal \? \{\} : \{ endpointId/.test(ingest), 'backup-ingest.service.ts');
+  check('contract v1: a drill must name its recovery point; re-sending never moves a fact backwards',
+    /recoveryPointExternalId: z\.string\(\)\.regex\(EXTERNAL_ID\),/.test(model) && /export function mergeJob/.test(model) && /export function drillRegresses/.test(model)
+      && /mergeJob\(storedJobs\.get/.test(ingest) && /if \(drillRegresses\(/.test(ingest), 'model.ts / ingest');
+  const order = read('apps/web/scripts/gen-docs-bundle.mjs');
+  check('contract: docs/st0r-push-contract.md and its generated JSON Schema exist, the page is in the docs bundle, and CI checks both',
+    existsSync(join(ROOT, 'docs/st0r-push-contract.md')) && existsSync(join(ROOT, 'docs/st0r-push-contract.schema.json')) && /\['st0r-push-contract\.md',/.test(order)
+      && /unit-backup-setup\.mjs/.test(read('.github/workflows/ci.yml')), 'docs / ci.yml');
+  const m99 = read('apps/api/prisma/migrations/0099_backup_setup/migration.sql');
+  check('0099: the link source is CHECKed, "none" links nothing, and a computer that moves business drops a person\'s link',
+    /"linkSource" IN \('auto', 'manual', 'none'\)/.test(m99) && /"linkSource" <> 'none' OR "endpointId" IS NULL/.test(m99)
+      && /SET "endpointId" = NULL, "linkSource" = 'auto'/.test(m99) && /"lastError" ~ '\^\[\\x20-\\x7e\]\+\$'/.test(m99), '0099');
 
   const eng = src(`${SRC}/monitoring/engine.ts`);
   const rec = (eng.match(/export const RECOMMENDED[\s\S]*?\n\];/) ?? [''])[0];

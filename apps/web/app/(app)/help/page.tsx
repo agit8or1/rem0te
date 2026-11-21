@@ -1023,6 +1023,14 @@ const SECTIONS: Section[] = [
           with <em>Monitoring: configure</em>.
         </p>
         <p>
+          From 0.82, a Platform Admin sets St0r up in <Link href="/settings/backups" className="underline text-foreground">Settings → Backups</Link>,
+          step by step: create the connection and copy its token, give St0r the push address and headers, and have St0r send a
+          test push (<code>?dryRun=1</code>), which writes nothing. <strong className="text-foreground">Rotating a token stops the old one at once.</strong>{' '}
+          When St0r&apos;s name for a machine matches no computer, someone with <em>Monitoring: configure</em> links it by hand in the
+          asset&apos;s Computer column; reports never undo that. St0r&apos;s developers build to the{' '}
+          <Link href="/docs/st0r-push-contract" className="underline text-foreground">St0r push contract</Link>.
+        </p>
+        <p>
           Business Users need <em>See backup status</em> (<code>backups:view</code>), which is not a default, and see only assets on
           computers they can see. Four monitors — <em>Backup stale</em>, <em>Backup failed</em>, <em>Restore drill failed</em> and
           <em> RPO exceeded</em> — and templates for the UrBackup and Comet agents&apos; Windows services are in Settings → Monitoring.

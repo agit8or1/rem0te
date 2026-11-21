@@ -75,6 +75,12 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[backups.md](backups.md)** — backup status from a provider (0.81): completion, integrity and a verified
   restore kept apart, the St0r push and its token, Comet (planned), RPO/RTO against target, the four opt-in backup
   monitors and the UrBackup and Comet service templates. Read-only: nothing starts a backup, restore or failover.
+  From 0.82, **Settings → Backups** sets St0r up per business, step by step: the token shown once, the push
+  address, a test push, rotation and revocation, and linking an asset to a computer by hand.
+- **[st0r-push-contract.md](st0r-push-contract.md)** — for St0r's developers (0.82): how St0r pushes backup status
+  to Rem0te, contract version 1. The token, the exact body
+  ([JSON Schema](https://github.com/agit8or1/rem0te/blob/main/docs/st0r-push-contract.schema.json)), limits, idempotency, the dry run, error codes, retries and
+  clocks, with worked examples that CI checks against the API.
 - **[email.md](email.md)** — outbound email (0.34): the SMTP relay and which hosts it may be, confirmed recipients,
   alert emails, scheduled reports (exactly once per period, evaluated as their owner), and stopping all mail.
 - **[ai-and-tickets.md](ai-and-tickets.md)** — Ask AI and Create ticket on event-log entries and alerts (0.48):

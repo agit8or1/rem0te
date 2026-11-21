@@ -44,7 +44,8 @@ const rule = (key, kind, params = {}) => ({ id: `r-${key}`, scopeKey: 'global', 
 
 // ── The feed ────────────────────────────────────────────────────────────────
 const job = (o = {}) => ({ externalId: 'j1', startedAt: iso(h(3)), finishedAt: iso(h(2)), completion: 'succeeded', integrity: 'passed', ...o });
-const drill = (o = {}) => ({ externalId: 'd1', target: 'isolated_vm', scope: 'full_image', result: 'passed', simulated: false, validation: 'boot', startedAt: iso(h(1.5)), finishedAt: iso(h(1)), elapsedSeconds: 900, ...o });
+// 0.82: a drill names the recovery point it restored (required).
+const drill = (o = {}) => ({ externalId: 'd1', recoveryPointExternalId: 'p1', target: 'isolated_vm', scope: 'full_image', result: 'passed', simulated: false, validation: 'boot', startedAt: iso(h(1.5)), finishedAt: iso(h(1)), elapsedSeconds: 900, ...o });
 const asset = (o = {}) => ({ externalId: 'a1', name: 'FS-01 C: volume', type: 'server', jobs: [job()], recoveryPoints: [{ externalId: 'p1', pointAt: iso(h(2)), location: 'offsite', jobExternalId: 'j1' }], drills: [drill({ recoveryPointExternalId: 'p1' })], ...o });
 const feed = (assets = [asset()]) => ({ v: 1, assets });
 {

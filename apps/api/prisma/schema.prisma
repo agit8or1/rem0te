@@ -449,6 +449,9 @@ enum ActivityAction {
   BACKUP_CONNECTION_CREATED
   BACKUP_CONNECTION_REVOKED
   BACKUP_OBJECTIVE_SET
+  BACKUP_CONNECTION_ROTATED
+  BACKUP_PUSH_DRY_RUN
+  BACKUP_ASSET_LINKED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -5365,6 +5368,11 @@ model BackupConnection {
   pushTokenLast4  String?
   lastSyncAt      DateTime?
   lastResult      String?
+  /// 0.82: when the last push or pull was refused, and why (a parse message, never the feed).
+  lastErrorAt     DateTime?
+  lastError       String?
+  /// 0.82: when the push token was last replaced (rotate). The old one stopped working then.
+  tokenRotatedAt  DateTime?
   createdById     String
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -5389,6 +5397,12 @@ model BackupProtectedAsset {
   /// The Rem0te computer this asset is, when it is one of this business's.
   endpointId   String?
   endpoint     Endpoint?        @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+  /// 0.82: 'auto' (the provider's rem0teId or hostname decides on every report),
+  /// 'manual' (a person linked it to endpointId on the Backups page; reports never change it),
+  /// or 'none' (a person said it is no computer; reports never link it).
+  linkSource   String           @default("auto")
+  linkedById   String?
+  linkedAt     DateTime?
   firstSeenAt  DateTime         @default(now())
   lastSeenAt   DateTime         @default(now())
 
