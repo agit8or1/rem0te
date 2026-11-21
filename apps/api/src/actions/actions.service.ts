@@ -25,6 +25,7 @@ import { assertFresh } from '../security-controls/review';
 import { Schedule, scheduledStart } from '../common/schedule';
 import { compareVersions } from '../common/agent-contract';
 import { RESTART_FLAGS_MIN_AGENT, restartFlagsUsed } from './catalog';
+import { targetTally } from './target-tally';
 
 /**
  * Approved actions, portal side (v0.26; one plan, many computers since
@@ -202,6 +203,8 @@ export class ActionsService {
         id: a.id, version: a.version, title: a.title, description: a.description, warnings: a.warnings, verification: a.verification, doesNotProve: a.doesNotProve,
         direct: a.direct, maxTargets: a.maxTargets, acknowledge: a.acknowledge, choice: a.choice ?? null, requiresCapability: a.requiresCapability ?? null,
         maxWindowHours: a.maxWindowHours ?? MAX_WINDOW_HOURS,
+        // 0.79 (§89): how it is undone and whether a second run is harmless.
+        rollback: a.rollback, repeat: a.repeat,
         // What one standard workstation needs; anything else is always high.
         workstationRisk: a.risk([{ deviceClass: 'WORKSTATION' }]),
       })),
@@ -477,7 +480,7 @@ export class ActionsService {
     const script = j.actionId === SCRIPT_RUN_ACTION ? (j.plan as unknown as Plan).script ?? null : null;
     return {
       id: j.id, status: j.status, statusReason: j.statusReason, endpointId: j.endpointId, businessId: j.customerId,
-      action: { id: j.actionId, version: j.actionVersion, title: a?.title ?? j.actionId, warnings: a?.warnings ?? [] },
+      action: { id: j.actionId, version: j.actionVersion, title: a?.title ?? j.actionId, warnings: a?.warnings ?? [], rollback: a?.rollback ?? null, repeat: a?.repeat ?? null },
       params: j.params, reason: j.reason, origin: j.origin, via: j.via, ticketRef: j.ticketRef, requestedById: j.requestedById,
       risk: j.risk, approvalsRequired: j.approvalsRequired, customerSignoff: j.customerSignoff,
       // 0.40: signed at the request in direct mode; the signed plan names who asked.
@@ -602,7 +605,8 @@ export class ActionsService {
       const j = await this.load(r.id);
       const v = await this.view(j, actor);
       // A ring plan, seen from one computer: that computer's row only.
-      out.push(v.targets.length > 1 ? { ...v, targets: v.targets.filter((t) => t.endpointId === endpointId), ringSize: v.targets.length } : v);
+      // 0.79: with how every computer of the plan stands, counted, so a partial failure shows from any one of them.
+      out.push(v.targets.length > 1 ? { ...v, targets: v.targets.filter((t) => t.endpointId === endpointId), ringSize: v.targets.length, ringTally: targetTally(v.targets) } : v);
     }
     return out;
   }

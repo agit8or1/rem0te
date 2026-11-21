@@ -296,11 +296,11 @@ are rollback notes, retries for repeatable actions, and concurrency.
 | Per-device results | `ActionTarget` per computer, `GET /tasks` (§65) | Portal | **available** | API, Sim |
 | Exit codes, timeouts | Script runs: exit code, duration, `TIMEOUT_MINUTES` [1,5,10,15,30] | Agent | **requires setup** | Lab |
 | Offline behaviour | `notAfter` on every plan; automation `run_when_online` | Signer + agent | **requires setup** | Sim |
-| Bounded retries for safe-to-repeat actions | Signer retry limits exist (`ring_retry_limit`, `restart_retry_limit`); nothing retries automatically, and no action is marked safe to repeat | — | **planned** | Sim (limits) |
+| Bounded retries for safe-to-repeat actions | Signer retry limits exist (`ring_retry_limit`, `restart_retry_limit`); nothing retries automatically. From 0.79.0 *Tally* every catalog action is marked safe to repeat or not, the same on the agent and the portal (§89); ten are, the scheduled restart and the script run are not | Portal + agent catalog (data); the retry itself is 2.2 | **planned** (the retry); the flag **available** (0.79.0 *Tally*) | Unit (flag) |
 | Duplicate-job protection | One open plan per computer; `ring_already_signed`; automation "no overlap" (§71) | Portal, signer | **requires setup** | Sim |
 | Post-execution state verification | Software `effective`, patch confirmed by a later scan, service control reads back | Agent, portal | **requires setup** | Sim; Lab (service control) |
-| Rollback documented per action | Not documented per action | Docs | **planned** | — |
-| Partial failures shown | Per-target states and the agent's `outcome` (`restart_required`, `partial`) (`tasks/lifecycle.ts`) | Portal | **available** | API |
+| Rollback documented per action | Each of the twelve catalog actions declares its rollback (`none`, `inverse` with the action that undoes it, or `read_only`) and says how, in the closed catalog on both sides (§89), in [approved-actions.md](approved-actions.md#rollback-and-repeating-an-action-079) and on the Actions tab, the Tools panel and every job | Portal + agent catalog (data), docs | **available** (0.79.0 *Tally*) | Unit |
+| Partial failures shown | Per-target states and the agent's `outcome` (`restart_required`, `partial`) (`tasks/lifecycle.ts`). From 0.79.0 a plan seen from one computer's Actions tab also counts how every computer of it stands and says *Partial* (`actions/target-tally.ts`) | Portal | **available** | API, Unit |
 | Recurring execution only through approved catalog actions and tenant scope | Automation schedules (§71): signer-approved document, business or group scope, approved scripts or catalog software only | Signer | **requires setup** | Sim |
 
 ## Phase 3: MDM (iOS/iPadOS and Android)
@@ -618,7 +618,7 @@ The owner's priority (2026-11-21), first in the sequence, ahead of every phase b
 
 | # | Pull request | Scope | Enforcing component | Tests | Evidence | Blocked |
 |---|---|---|---|---|---|---|
-| 2.1 | **Rollback and repeatability per action** (docs + catalog data) | Each of the twelve catalog actions documents its rollback (or "none: …") and whether it is safe to repeat; the flag is data in the closed catalog on both sides (§14 lists it) | Portal + agent catalog | Unit; §14 extended | Unit | — |
+| 2.1 | **Rollback and repeatability per action** (docs + catalog data): **0.79.0 *Tally*** | Each of the twelve catalog actions documents its rollback (or "none: …") and whether it is safe to repeat; the flag is data in the closed catalog on both sides (§14 lists it) | Portal + agent catalog | Unit; §14 extended | Unit | — |
 | 2.2 | **Bounded automatic retry for safe-to-repeat actions** | Retry an offline or transient failure of an action marked safe to repeat, within the signer's existing limits, audited | Portal, signer | e2e, `unit-approval-signer.mjs` | Sim | 2.1 |
 | 2.3–2.5 | **The previous audit's P0 #4–#6** | Built-in reviewed library; bulk runs with preview, concurrency and pace; `windows.script.run@2` | See [rmm-expansion-audit.md](rmm-expansion-audit.md#p0-in-order) | — | — | As listed there (decision 2 for stopping a running script) |
 | 2.6 | **Terminal identity: run-as-user and least privilege** | After *Conduit*: the signed-in user, and a low-privilege identity (`LOCAL SERVICE` or `rem0te-run`) proven in the lab | Signed agent | Go unit, Lab | Lab | T1 |
@@ -649,7 +649,7 @@ The owner's priority (2026-11-21), first in the sequence, ahead of every phase b
 - **Phase 1: 1.1**, the F1 fix: **0.78.1**. Small, inside the existing ceiling, and it closes RustDesk's terminal,
   tunnel and restart on Managed computers before anyone turns `MSA_GRANTS` on. Next: 1.3 and 1.6 (unblocked by
   decisions 8 and 9), and 1.8 as docs.
-- **Phase 2: 2.1**, rollback and repeatability per catalog action (the terminal itself is T1). Data and docs, no new surface. The library,
+- **Phase 2: 2.1**, rollback and repeatability per catalog action (the terminal itself is T1), built as 0.79.0 *Tally*. Data and docs, no new surface. The library,
   bulk and `@2` items already have a place in the previous audit's sequence.
 - **Phase 3: 3.1**, the MDM model and driver interface against a stand-in. It needs no account.
 - **Phase 4: 4.2** is the quickest: monitor templates, no provider. **4.1** is the foundation for everything else.

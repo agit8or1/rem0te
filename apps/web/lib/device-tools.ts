@@ -272,11 +272,43 @@ export interface ToolFacts {
   actionRisk: Record<string, 'low' | 'high'>;
   /** The last update scan's restart flag, and when it was taken; null when unknown. */
   restartPending: boolean | null;
+  /**
+   * 0.79: each catalog action's rollback and repeatability, as GET
+   * /actions/catalog serves them (actions/catalog.ts is the one copy; the
+   * web holds none). Absent while the catalog has not been read.
+   */
+  actionNotes?: Record<string, ActionNote>;
+}
+
+/** 0.79 (§89): how an action is undone, and whether a second run is harmless. */
+export interface ActionNote {
+  rollback: { kind: 'none' | 'inverse' | 'read_only'; via?: string; how: string };
+  repeat: { safe: boolean; why: string };
 }
 
 export interface ToolView extends ToolDef {
   state: ToolState;
   reason: string;
+  /** 0.79: an action tool's rollback and repeatability; null for every other tool, or before the catalog is read. */
+  note: ActionNote | null;
+}
+
+/** 0.79: the short label for each rollback kind. */
+export const ROLLBACK_LABEL: Record<ActionNote['rollback']['kind'], string> = {
+  inverse: 'Can be undone',
+  none: 'No undo from here',
+  read_only: 'Read-only',
+};
+
+/** 0.79: one line, e.g. "Can be undone: Cancel a scheduled restart · Not safe to repeat". `titles` names the via action. */
+export function noteLine(n: ActionNote, titles: Record<string, string> = {}): string {
+  const via = n.rollback.kind === 'inverse' && n.rollback.via ? `: ${titles[n.rollback.via] ?? n.rollback.via}` : '';
+  return `${ROLLBACK_LABEL[n.rollback.kind]}${via} · ${n.repeat.safe ? 'Safe to repeat' : 'Not safe to repeat'}`;
+}
+
+/** The note for an action tool, or null. */
+export function toolNote(def: ToolDef, f: ToolFacts): ActionNote | null {
+  return def.need.kind === 'action' ? f.actionNotes?.[def.need.action] ?? null : null;
 }
 
 /** a.b.c compared as numbers; null when either is not a version. */
@@ -416,7 +448,7 @@ export function toolState(def: ToolDef, f: ToolFacts): { state: ToolState; reaso
 }
 
 export function deviceTools(endpointId: string, f: ToolFacts): ToolView[] {
-  return toolCatalog(endpointId).map((d) => ({ ...d, ...toolState(d, f) }));
+  return toolCatalog(endpointId).map((d) => ({ ...d, ...toolState(d, f), note: toolNote(d, f) }));
 }
 
 /** The tools of one group, in catalog order. */
