@@ -471,7 +471,8 @@ actions: the six through 0.32, then `windows.script.run`,
 `windows.process.stop`. It is the same on the agent and in the portal, with
 `scriptParamsOK`, `softwareParamsOK`, `removeParamsOK`, `serviceControlParamsOK`
 and `processStopParamsOK` among the closed forms and ten `integration: false`
-entries.
+entries. From 0.79 every entry also declares its rollback and whether it is
+safe to repeat, the same on both sides (§89).
 
 §41 (0.48, reversing 0.34's "AI without a provider key" at the owner's
 request) is AI providers and PSA tickets. Provider endpoints, key headers and
@@ -1992,6 +1993,34 @@ reparse points, not Windows). Unit: `unit-files.mjs` (in CI) and the Go
 SYSTEM run inside `TestLabTerminalAsSystem` (send, exists then overwrite,
 fetch with hashes, a junction and a UNC path refused). **It has run only on
 Windows Server in the lab**, never on a desktop or the fleet.
+
+§89 (0.79) is rollback and repeatability per catalog action (roadmap 2.1).
+Every one of §14's twelve actions declares how it is undone and whether a
+second run with the same parameters is harmless, as data in the closed
+catalog on both sides:
+
+- **The agent**: `Action.Rollback` (`Rollback{Kind, Via}`) and
+  `Action.Repeatable` in `internal/action/catalog.go`, with `RollbackKinds`.
+- **The portal**: `CatalogAction.rollback` (`{ kind, via?, how }`) and
+  `.repeat` (`{ safe, why }`) in `actions/catalog.ts`, with `ROLLBACK_KINDS`.
+
+The kinds are a closed list, `none`, `inverse` and `read_only`, in that order
+on both sides. An `inverse` names the catalog action that undoes it, and
+nothing else names one. `read_only` is always safe to repeat. The two copies
+agree action by action in §14's order, and with the shared fixture
+`internal/action/testdata/rollback-repeat.json`, which the Go test and the
+unit test both assert. Ten actions are safe to repeat; the scheduled restart
+and the script run are not. **It is data only in 0.79**: nothing on the agent
+reads either field, so no plan, envelope, heartbeat or result changes. It
+ships inert in the next signed agent build, and an older agent is unaffected.
+On the portal both are only served, by `GET /actions/catalog` and the job
+view; nothing decides on them. Roadmap 2.2's bounded retry is the release
+that may read `repeat.safe`, and it changes §89's last two checks in the same
+commit. Adding a catalog action means declaring both on both sides and in the
+fixture and the `docs/approved-actions.md` table. The same release counts a
+multi-computer plan's targets for the Actions tab (`actions/target-tally.ts`,
+counts only) and marks it *Partial*. Unit: `unit-action-rollback.mjs` (in CI)
+and the Go `internal/action/rollback_test.go`; browser: `e2e-ui.mjs`.
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 

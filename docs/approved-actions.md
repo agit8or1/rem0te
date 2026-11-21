@@ -207,6 +207,49 @@ and records what they found under **Reconcile** on the Actions tab. That's possi
 longer run the job: either it answered from its journal, or the signed window has closed. A reconciled job can never
 run alongside a retry.
 
+## Rollback and repeating an action (0.79)
+
+Every catalog action says how it is undone and whether running it again is harmless. Both are data in the closed
+catalog, the same on the portal (`apps/api/src/actions/catalog.ts`, `rollback` and `repeat`) and on the agent
+(`internal/action/catalog.go`, `Rollback` and `Repeatable`), and a security invariant (§89) fails the build if the two
+disagree. The console shows them on the **Actions** tab before you request, in the **Tools** panel beside each
+action, and on every job in the history.
+
+- **Rollback** is one of three kinds. *Inverse*: another catalog action, or the same one with other parameters, undoes
+  it. *None*: nothing Rem0te can send undoes it, and the text says what a person can do. *Read-only*: it changes
+  nothing.
+- **Safe to repeat** means a second run of the same action with the same parameters changes nothing the first did not.
+  It is what the bounded retry planned next (roadmap 2.2) will be allowed to retry. **Nothing retries automatically
+  in 0.79**: an uncertain outcome is still reconciled by a person before any new request, as above.
+
+| Action | Rollback | How | Safe to repeat | Why |
+|---|---|---|---|---|
+| `windows.service.start` | inverse, `windows.service.control` | Stop the spooler again from the Services tab. Anything that printed when it started can't be recalled | Yes | Starting a running spooler changes nothing: the computer reports *already running* |
+| `windows.update.install` | none | No catalog action uninstalls an update. Remove it on the computer (Settings › Windows Update › Update history › Uninstall updates) where Microsoft allows it; servicing stack updates and some cumulative updates can't be removed | Yes | Windows Update skips an installed update, so a second run installs nothing and so restarts nothing for that plan |
+| `windows.service.restart` | none | Usually nothing to undo: the service ends running, as it was. If it had been stopped, stop it again from the Services tab (not RustDesk, which is kept running) | Yes | It always ends with the service running. Each run interrupts the service once more, and a RustDesk restart still waits for no open session |
+| `windows.reboot.schedule` | inverse, `windows.reboot.cancel` | Cancel it before the warning runs out. Once the computer has restarted there is nothing to undo, and unsaved work doesn't come back | **No** | After the first restart, a second run restarts the computer again. While the first is pending, Windows refuses the second (`restart_already_scheduled`) |
+| `windows.reboot.cancel` | inverse, `windows.reboot.schedule` | Schedule a new restart. It can't bring back the canceled one at its original time or with its original message | Yes | With no restart pending the computer reports *no change* |
+| `windows.logs.collect` | read-only | Nothing to undo: it only reads | Yes | It only reads; a second run collects a newer copy |
+| `windows.script.run` | none | What a script changes is its own. Its library version should say how to undo it, and undoing it is another approved script | **No** | The catalog can't know whether a script does the same thing twice, so a run is never treated as safe to repeat |
+| `windows.software.install` | inverse, `windows.software.uninstall` | Uninstall the same package from the Software tab. An install that upgraded an older version doesn't bring that version back | Yes | The detection rule is checked first: already installed is *no change*, and nothing runs |
+| `windows.software.uninstall` | inverse, `windows.software.install` | Install the catalog's pinned version again. It may not be the version removed, and settings or data the uninstaller deleted don't come back | Yes | The detection rule is checked first: not installed is *no change*, and nothing runs |
+| `windows.software.remove` | none | The program's own uninstaller ran. Reinstall it from its vendor, or install its package if it is in the software catalog. What the uninstaller deleted doesn't come back | Yes | The uninstall key is read first: once it is gone a second run is *no change*, and a key whose name changed is refused (`program_changed`) |
+| `windows.service.control` | inverse, `windows.service.control` | The opposite operation from the Services tab: stop after a start, start after a stop, or the earlier startup type, which the result shows | Yes | Starting a running service, stopping a stopped one and an unchanged startup type are *no change*. A restart interrupts the service once more |
+| `windows.process.stop` | none | An ended process can't be resumed, and what it hadn't saved is lost. Start the program again, or restart its service | Yes | The plan names the process id and start time: once it has ended a second run reports *not running*, and a new process given the same id is refused (`process_changed`) |
+
+"Safe to repeat" is about the computer, not about the request. The portal still refuses a second request while the
+first is pending or uncertain, whatever the flag says.
+
+**Which build carries it.** The agent's copy is compiled into the signed agent, so it ships with the next signed
+build, but the agent reads neither field in 0.79: no plan, envelope, heartbeat or result changes, and an older agent
+behaves exactly as before. The portal's copy is what the console shows. The approval signer loads the same
+`catalog.ts`, and ignores both fields; it needs no reinstall for 0.79.
+
+**Several computers, one plan.** An update ring, a script run or a software deployment can name up to 25 computers.
+From 0.79, a job on one computer's Actions tab also counts how every computer of that plan stands (succeeded, failed,
+refused, not executed, uncertain, waiting, canceled) and marks it **Partial** when some succeeded and some did not.
+Counts only: the other computers' names and results stay on the deployment or Tasks page.
+
 ## Rechecked at dispatch
 
 Between approval and the first delivery, the portal rechecks everything that may have changed:

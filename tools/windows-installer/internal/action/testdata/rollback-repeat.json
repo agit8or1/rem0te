@@ -1,0 +1,18 @@
+{
+  "_comment": "0.79 (§89): each catalog action's rollback and repeatability, in catalog order. The agent's Go test (rollback_test.go) and the portal's unit test (apps/api/scripts/unit-action-rollback.mjs) both assert their own catalog against this file, so the two copies cannot drift apart without one of them failing.",
+  "rollbackKinds": ["none", "inverse", "read_only"],
+  "actions": [
+    { "id": "windows.service.start", "version": 1, "rollback": "inverse", "via": "windows.service.control", "repeatable": true },
+    { "id": "windows.update.install", "version": 1, "rollback": "none", "via": "", "repeatable": true },
+    { "id": "windows.service.restart", "version": 1, "rollback": "none", "via": "", "repeatable": true },
+    { "id": "windows.reboot.schedule", "version": 1, "rollback": "inverse", "via": "windows.reboot.cancel", "repeatable": false },
+    { "id": "windows.reboot.cancel", "version": 1, "rollback": "inverse", "via": "windows.reboot.schedule", "repeatable": true },
+    { "id": "windows.logs.collect", "version": 1, "rollback": "read_only", "via": "", "repeatable": true },
+    { "id": "windows.script.run", "version": 1, "rollback": "none", "via": "", "repeatable": false },
+    { "id": "windows.software.install", "version": 1, "rollback": "inverse", "via": "windows.software.uninstall", "repeatable": true },
+    { "id": "windows.software.uninstall", "version": 1, "rollback": "inverse", "via": "windows.software.install", "repeatable": true },
+    { "id": "windows.software.remove", "version": 1, "rollback": "none", "via": "", "repeatable": true },
+    { "id": "windows.service.control", "version": 1, "rollback": "inverse", "via": "windows.service.control", "repeatable": true },
+    { "id": "windows.process.stop", "version": 1, "rollback": "none", "via": "", "repeatable": true }
+  ]
+}
