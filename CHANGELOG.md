@@ -13,6 +13,11 @@ reports one finding in Managed Secure Access. No code, migration, agent or signe
 beyond the docs.** The audit is against **0.75.1** (main `a68d269`). PR #187 (0.76.0 *Litmus*) is open at the
 same time and touches none of these pages except the version lines.
 
+**One test fix (not documentation).** `unit-diagnostics-palette.mjs` judged the PowerShell stubs' evidence at a fixed
+time, 2026-11-20 12:00 UTC, while the stubs date it from the real clock (`(Get-Date).AddDays(-9)`). From 2026-11-21 the
+"signatures 9 days → Critical" case read 7 days, Warning, and CI's `check` job failed on every branch. Those checks now
+judge at the real time; the pure checks keep the fixed time. No product code changed.
+
 ### New: `docs/session-maintenance-mdm-backup-audit.md` (in the app at `/docs`)
 
 - **Every item and sub-bullet** of the directive gets:
