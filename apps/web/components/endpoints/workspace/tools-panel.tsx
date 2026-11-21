@@ -18,8 +18,8 @@ import type { Patches } from '@/components/endpoints/endpoint-patches';
 /**
  * Tools (0.75): one panel on the device page that lists what can be done to
  * this computer, grouped, and opens the existing flow for each — the
- * Diagnostics, Actions, Services, Processes, Network, Software, Patches and
- * Event logs tabs, or the script library. It adds no route and no action, and
+ * Diagnostics, Actions, Services, Processes, Network, Software, Patches,
+ * Event logs and (0.77) Terminal tabs, or the script library. It adds no route and no action, and
  * runs nothing itself: picking a tool opens its tab (with the action, check
  * or log chosen), where the existing confirm dialog and route decide.
  *
@@ -49,7 +49,7 @@ type Catalog = { configured: boolean; approval: 'direct' | 'signed' | null; acti
 type BannerPause = { scope: 'global' | 'business'; businessId?: string | null; kinds: string[] };
 
 /** The reads, only while the panel is open, and the facts the pure module decides from. */
-export function useToolFacts(endpointId: string, ep: Record<string, unknown>, patches: Patches | undefined, perms: { view: boolean; eventLogs: boolean }, enabled: boolean) {
+export function useToolFacts(endpointId: string, ep: Record<string, unknown>, patches: Patches | undefined, perms: { view: boolean; eventLogs: boolean; terminal: boolean }, enabled: boolean) {
   const { data: user } = useCurrentUser();
   const on = enabled && perms.view;
   // The Actions tab's own read and key (endpoint-actions.tsx), with the approval mode.
@@ -104,6 +104,7 @@ export function useToolFacts(endpointId: string, ep: Record<string, unknown>, pa
     perms: {
       view: perms.view,
       eventLogs: perms.eventLogs,
+      terminal: perms.terminal,
       requestLow: mayRequestActions(u, endpointId, deviceClass, 'low'),
       requestHigh: mayRequestActions(u, endpointId, deviceClass, 'high'),
     },
@@ -119,7 +120,7 @@ export function ToolsPanel({
   endpointId: string;
   ep: Record<string, unknown>;
   patches: Patches | undefined;
-  perms: { view: boolean; eventLogs: boolean };
+  perms: { view: boolean; eventLogs: boolean; terminal: boolean };
   open: boolean;
   onOpenChange: (o: boolean) => void;
   /** Opens the tool's flow: a tab (with its action, check or log) or a page. */

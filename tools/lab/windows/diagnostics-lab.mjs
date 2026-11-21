@@ -20,7 +20,8 @@
 // firewall profiles, scheduled task paths and enabled state, BitLocker volume
 // statuses, the Windows Time parameters — and must be unchanged. Service and
 // task run states are recorded too, but only reported: a Windows runner
-// starts and stops trigger-start services on its own.
+// starts and stops trigger-start services on its own. BITS's start type is
+// reported the same way, because Windows changes it on its own (see below).
 //
 // Network: none beyond the computer itself. Windows Update is pointed by
 // policy at a WSUS on 127.0.0.1:8530 that does not exist first (the registry
@@ -231,8 +232,16 @@ function evaluate(caller, dir, r, secs) {
 
   const fb = readJson(join(dir, 'fingerprint-before.json')), fa = readJson(join(dir, 'fingerprint-after.json'));
   const diff = (x, y) => { const sx = new Set(x), sy = new Set(y); return [...x.filter((l) => !sy.has(l)).map((l) => `-${l}`), ...y.filter((l) => !sx.has(l)).map((l) => `+${l}`)]; };
-  const cfgDiff = diff([].concat(fb.config ?? []), [].concat(fa.config ?? []));
-  const stDiff = diff([].concat(fb.states ?? []), [].concat(fa.states ?? []));
+  // Windows-managed configuration: Windows itself moves BITS's start type
+  // between Auto and Manual (it is delayed auto-start and is demoted when idle,
+  // then restored by its triggers). It happened during the SYSTEM run on #189
+  // and again on #191, with no check touching it. So BITS's start type is not
+  // compared; a change is reported with the run states, not attributed.
+  const WINDOWS_MANAGED = /^svc\|BITS\|/i;
+  const cfg = (f) => [].concat(f.config ?? []).filter((l) => !WINDOWS_MANAGED.test(l));
+  const managed = (f) => [].concat(f.config ?? []).filter((l) => WINDOWS_MANAGED.test(l));
+  const cfgDiff = diff(cfg(fb), cfg(fa));
+  const stDiff = [...diff(managed(fb), managed(fa)).map((l) => `${l} (Windows-managed start type)`), ...diff([].concat(fb.states ?? []), [].concat(fa.states ?? []))];
   add(`diagnostics/${caller}/read-only`, cfgDiff.length ? 'fail' : 'pass',
     `${(fb.config ?? []).length} configuration facts before and after (service start types, firewall profiles, task enabled state, BitLocker, W32Time parameters): ${cfgDiff.length ? `changed ${cfgDiff.slice(0, 12).join(', ')}` : 'unchanged'}; run states that moved meanwhile, not attributed: ${stDiff.length ? stDiff.slice(0, 10).join(', ') : 'none'}`);
 

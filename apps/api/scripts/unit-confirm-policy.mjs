@@ -40,8 +40,14 @@ const ALWAYS = C.ALWAYS_ASK_KEYS;
 
 // ── The catalog ────────────────────────────────────────────────────────────
 check('the catalog has unique keys', new Set(KEYS).size === KEYS.length);
-check('every function has a known group, a label, a description, a prompt and default off (0.64)',
-  C.CONFIRM_CATALOG.every((f) => C.CONFIRM_GROUPS.includes(f.group) && f.label && f.description && f.prompt && f.default === 'off'));
+// 0.77: every key defaults to off except terminal.open, which defaults to
+// ask (the owner's decision for the background terminal); it stays
+// configurable to off through confirm.relax like any other key.
+const ASK_BY_DEFAULT = ['terminal.open'];
+const defaultOf = (k) => (ASK_BY_DEFAULT.includes(k) ? 'ask' : 'off');
+check('every function has a known group, a label, a description, a prompt and default off (0.64), terminal.open ask (0.77)',
+  C.CONFIRM_CATALOG.every((f) => C.CONFIRM_GROUPS.includes(f.group) && f.label && f.description && f.prompt && f.default === defaultOf(f.key)));
+check('0.77: exactly one key defaults to ask, terminal.open', JSON.stringify(C.CONFIRM_CATALOG.filter((f) => f.default === 'ask').map((f) => f.key)) === JSON.stringify(ASK_BY_DEFAULT));
 check('every group has at least one function', C.CONFIRM_GROUPS.every((g) => C.CONFIRM_CATALOG.some((f) => f.group === g)));
 check('no always-ask key is in the configurable catalog', ALWAYS.every((k) => !KEYS.includes(k)));
 check('the always-ask set is passkey.manage, fresh.auth.passkey and confirm.relax',
@@ -64,10 +70,11 @@ R.resetConfirmPolicy();
 check('before the policy is read, every key asks', KEYS.every((k) => R.confirmRequired(k)) && refuses(() => R.assertFresh(null, { action: 'software.catalog' })));
 
 R.setConfirmPolicy([]);
-check('0.64: a policy read with no rows skips every catalog key (its default is off)', KEYS.every((k) => !R.confirmRequired(k) && !refuses(() => R.assertFresh(null, { action: k }))));
+check('0.64: a policy read with no rows skips every catalog key whose default is off', KEYS.filter((k) => defaultOf(k) === 'off').every((k) => !R.confirmRequired(k) && !refuses(() => R.assertFresh(null, { action: k }))));
+check('0.77: with no rows, terminal.open asks (its default is ask), and a fresh method passes', R.confirmRequired('terminal.open') && refuses(() => R.assertFresh(null, { action: 'terminal.open' })) && !refuses(() => R.assertFresh('totp', { action: 'terminal.open' })));
 check('0.64: with no rows, the always-ask keys and an unknown key still ask', ALWAYS.every((k) => R.confirmRequired(k) && refuses(() => R.assertFresh(null, { action: k }))) && R.confirmRequired('made.up'));
 check('0.64: with no rows, a phishing-resistant check still asks', refuses(() => R.assertFresh(null, { action: 'temporary.access', phishingResistant: true })));
-check('0.64: confirmValues reports the defaults, all off', Object.values(R.confirmValues()).every((v) => v === 'off'));
+check('0.64: confirmValues reports the defaults, off but terminal.open ask (0.77)', Object.entries(R.confirmValues()).every(([k, v]) => v === defaultOf(k)));
 R.setConfirmPolicy([{ key: 'apikey.create', value: 'ask' }]);
 check("0.64: an 'ask' row overrides the default; a key with no row keeps it", R.confirmRequired('apikey.create') && refuses(() => R.assertFresh(null, { action: 'apikey.create' })) && !R.confirmRequired('software.catalog'));
 
@@ -112,7 +119,7 @@ const owner = { userId: 'u-owner', isPlatformAdmin: false, ip: '127.0.0.1' };
 R.resetConfirmPolicy();
 const fresh = new ConfirmPolicyService(fakePrisma(), audit);
 const e0 = fresh.view(await fresh.load(), owner);
-check('0.64: a fresh database (no rows) shows every function off, at its default', e0.catalog.length === KEYS.length && e0.catalog.every((f) => f.value === 'off' && f.default === 'off'));
+check('0.64: a fresh database (no rows) shows every function at its default (off, terminal.open ask)', e0.catalog.length === KEYS.length && e0.catalog.every((f) => f.value === defaultOf(f.key) && f.default === defaultOf(f.key)));
 
 // From here, a database whose every function was set to ask.
 R.resetConfirmPolicy();

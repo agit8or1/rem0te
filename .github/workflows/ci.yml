@@ -409,6 +409,14 @@ jobs:
       - name: Confirm policy tests
         run: node apps/api/scripts/unit-confirm-policy.mjs
 
+      # The background terminal (0.77): the open decision's order, the two
+      # shells, the idle and hard limits (and that nothing but the
+      # technician's input moves the idle clock), who may end a session, the
+      # frame and session caps, and that the limits agree with the agent's Go
+      # constants.
+      - name: Terminal tests
+        run: node apps/api/scripts/unit-terminal.mjs
+
       # Agit8or Identity P0 (0.59): the decisions made from an identity
       # provider's claims (levels from acr corroborated by amr, the
       # organization gate, Platform Admin, step-up freshness, back-channel
@@ -549,8 +557,10 @@ jobs:
         run: |
           go build -o "$RUNNER_TEMP/rem0te-release" ./cmd/rem0te-release
           go build -o "$RUNNER_TEMP/rem0te-action-sim" ./cmd/rem0te-action-sim
+          go build -o "$RUNNER_TEMP/rem0te-remote-sim" ./cmd/rem0te-remote-sim
           echo "RELEASE_BIN=$RUNNER_TEMP/rem0te-release" >> "$GITHUB_ENV"
           echo "ACTION_SIM=$RUNNER_TEMP/rem0te-action-sim" >> "$GITHUB_ENV"
+          echo "REMOTE_SIM=$RUNNER_TEMP/rem0te-remote-sim" >> "$GITHUB_ENV"
       # e2e-add-device downloads real .msi packages (0.65) and reads them
       # back with msiinfo; under CI it fails without msitools.
       - name: Install msitools

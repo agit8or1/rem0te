@@ -10,7 +10,7 @@ import type { AlertRow } from '@/components/monitoring/alerts';
 import { connectivityFrom, connectivityHint, connectivityLabel, HEARTBEAT_STALE_MS } from '@/lib/connectivity';
 
 export type WorkspaceTab =
-  | 'overview' | 'performance' | 'monitoring' | 'software' | 'processes' | 'services' | 'network' | 'patches' | 'events' | 'diagnostics' | 'actions' | 'chat' | 'history';
+  | 'overview' | 'performance' | 'monitoring' | 'software' | 'processes' | 'services' | 'network' | 'patches' | 'events' | 'diagnostics' | 'actions' | 'terminal' | 'chat' | 'history';
 
 export const TAB_LABEL: Record<WorkspaceTab, string> = {
   overview: 'Overview',
@@ -24,6 +24,7 @@ export const TAB_LABEL: Record<WorkspaceTab, string> = {
   events: 'Event logs',
   diagnostics: 'Diagnostics',
   actions: 'Actions',
+  terminal: 'Terminal',
   chat: 'Chat',
   history: 'History',
 };

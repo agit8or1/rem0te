@@ -43,10 +43,10 @@ const ALL_ACTIONS = ['windows.service.start@1', 'windows.update.install@1', 'win
   'windows.logs.collect@1', 'windows.script.run@1', 'windows.software.install@1', 'windows.software.uninstall@1', 'windows.software.remove@1',
   'windows.service.control@1', 'windows.process.stop@1'];
 const base = () => ({
-  agentKind: 'signed', readOnlyOs: null, agentVersion: '0.76.0', agentActions: [...ALL_ACTIONS], status: 'ACTIVE', pooled: false, agentBound: true,
   diagAllowed: null, diagNeedsNewer: null,
+  agentKind: 'signed', readOnlyOs: null, agentVersion: '0.77.0', agentActions: [...ALL_ACTIONS], status: 'ACTIVE', pooled: false, agentBound: true,
   connectivity: 'online', connectivityText: 'Online', signer: { configured: true, approval: 'signed' }, paused: [],
-  perms: { view: true, eventLogs: true, requestLow: true, requestHigh: true }, actionRisk: { 'windows.service.start': 'low' }, restartPending: false,
+  perms: { view: true, eventLogs: true, terminal: true, requestLow: true, requestHigh: true }, actionRisk: { 'windows.service.start': 'low' }, restartPending: false,
 });
 const tools = T.toolCatalog(EP);
 const kindOf = (t) => t.need.kind;
@@ -70,7 +70,7 @@ function scenario(name, f, expect) {
   const ids = tools.map((t) => t.id);
   check('tool ids are unique', new Set(ids).size === ids.length, j(ids));
   for (const g of T.TOOL_GROUPS) check(`group ${g.id} has at least one tool`, tools.some((t) => t.group === g.id));
-  check('eight groups, in the directive order', j(T.TOOL_GROUPS.map((g) => g.label)) === j(['Diagnostics', 'PowerShell / Scripts', 'Services & Processes', 'Software', 'Windows Updates', 'Networking', 'Security', 'Maintenance']));
+  check('nine groups, in the directive order (0.77: Terminal after Diagnostics)', j(T.TOOL_GROUPS.map((g) => g.label)) === j(['Diagnostics', 'Terminal', 'PowerShell / Scripts', 'Services & Processes', 'Software', 'Windows Updates', 'Networking', 'Security', 'Maintenance']));
   check('every tool belongs to a known group', tools.every((t) => T.TOOL_GROUPS.some((g) => g.id === t.group)));
   const later = tools.filter((t) => kindOf(t) === 'later').map((t) => t.id);
   check('only one tool is "coming later" (flush DNS / renew DHCP); 0.76 replaced the security-posture placeholder with its checks', j(later) === j(['flush-dns']), j(later));
@@ -124,6 +124,7 @@ function scenario(name, f, expect) {
 
 // ── Scenarios: every tool in every state ────────────────────────────────────
 const isAction = (t) => kindOf(t) === 'action';
+const isTerm = (t) => kindOf(t) === 'terminal';
 const later = (t) => kindOf(t) === 'later';
 const palette = (t) => kindOf(t) === 'diagnostic' && t.need.minAgent === '0.76.0';
 
@@ -147,7 +148,8 @@ const palette = (t) => kindOf(t) === 'diagnostic' && t.need.minAgent === '0.76.0
 // 3. The standard Windows agent: every action needs the full agent; reads work.
 {
   const f = base(); f.agentKind = 'standard'; f.agentActions = [];
-  const got = scenario('standard', f, (t) => (later(t) ? 'coming_later' : isAction(t) ? 'needs_newer_agent' : 'available'));
+  const got = scenario('standard', f, (t) => (later(t) ? 'coming_later' : isAction(t) || isTerm(t) ? 'needs_newer_agent' : 'available'));
+  check('standard: the terminal needs the full (signed) agent', /full \(signed\) agent/.test(got['terminal'].reason), got['terminal'].reason);
   check('standard: the reason says the full (signed) agent', /full \(signed\) agent/.test(got['service-restart'].reason), got['service-restart'].reason);
 }
 // 4. A signed agent that does not report one action.
@@ -176,7 +178,8 @@ for (const os of ['Linux', 'macOS']) {
   const got = scenario('contained', f, (t) => (later(t) ? 'coming_later' : isAction(t) ? 'contained' : 'available'));
   check('contained: says where the pause is', /Containment/.test(got['run-script'].reason), got['run-script'].reason);
   const r = base(); r.paused = ['remote', 'updates'];
-  scenario('other pauses', r, (t) => (later(t) ? 'coming_later' : isAction(t) ? 'needs_approval' : 'available'));
+  const gr = scenario('other pauses', r, (t) => (later(t) ? 'coming_later' : isTerm(t) ? 'contained' : isAction(t) ? 'needs_approval' : 'available'));
+  check('a remote pause stops the terminal (0.77), and says so', /paused by containment/.test(gr['terminal'].reason), gr['terminal'].reason);
 }
 // 9. Offline, and reachable with a silent agent: what reaches the agent waits; status and server checks do not.
 for (const c of ['offline', 'agent_silent']) {
@@ -197,6 +200,9 @@ for (const c of ['offline', 'agent_silent']) {
   const h = base(); h.perms.requestHigh = false;
   const gh = scenario('low-risk requests only', h, (t) => (later(t) ? 'coming_later' : t.id === 'spooler-start' ? 'needs_approval' : isAction(t) ? 'not_permitted' : 'available'));
   check('low-risk only: says higher-risk', /higher-risk/.test(gh['restart-schedule'].reason), gh['restart-schedule'].reason);
+  const tn = base(); tn.perms.terminal = false;
+  const gt = scenario('no terminal capability', tn, (t) => (later(t) ? 'coming_later' : isTerm(t) ? 'not_permitted' : isAction(t) ? 'needs_approval' : 'available'));
+  check('no terminal capability: says only a Platform Admin, and SYSTEM', /Platform Admin/.test(gt['terminal'].reason) && /SYSTEM/.test(gt['terminal'].reason), gt['terminal'].reason);
   const n = base(); n.perms.requestLow = false; n.perms.requestHigh = false;
   scenario('no requests', n, (t) => (later(t) ? 'coming_later' : isAction(t) ? 'not_permitted' : 'available'));
   const srv = base(); srv.actionRisk = {}; srv.perms.requestHigh = false;
@@ -217,17 +223,17 @@ for (const c of ['offline', 'agent_silent']) {
   const p = base(); p.status = 'PENDING_ENROLLMENT';
   scenario('not enrolled', p, (t) => (later(t) ? 'coming_later' : kindOf(t) === 'server' ? 'available' : 'inactive'));
   const pool = base(); pool.pooled = true;
-  const gp = scenario('pooled', pool, (t) => (later(t) ? 'coming_later' : ['action', 'diagnostic'].includes(kindOf(t)) ? 'inactive' : 'available'));
+  const gp = scenario('pooled', pool, (t) => (later(t) ? 'coming_later' : ['action', 'diagnostic', 'terminal'].includes(kindOf(t)) ? 'inactive' : 'available'));
   check('pooled: says adopt it first', /unassigned pool/.test(gp['disk-space'].reason));
   const u = base(); u.agentBound = false;
-  scenario('unbound', u, (t) => (later(t) ? 'coming_later' : kindOf(t) === 'diagnostic' ? 'inactive' : isAction(t) ? 'needs_approval' : 'available'));
+  scenario('unbound', u, (t) => (later(t) ? 'coming_later' : ['diagnostic', 'terminal'].includes(kindOf(t)) ? 'inactive' : isAction(t) ? 'needs_approval' : 'available'));
   const unk = base(); unk.agentBound = null;
   scenario('agentBound not read', unk, (t) => (later(t) ? 'coming_later' : isAction(t) ? 'needs_approval' : 'available'));
 }
 // 13. An agent older than the snapshots (0.33.0).
 {
   const f = base(); f.agentKind = 'standard'; f.agentActions = []; f.agentVersion = '0.32.4';
-  scenario('agent 0.32.4', f, (t) => (later(t) ? 'coming_later' : ['services', 'processes', 'network'].includes(t.id) || palette(t) || isAction(t) ? 'needs_newer_agent' : 'available'));
+  scenario('agent 0.32.4', f, (t) => (later(t) ? 'coming_later' : ['services', 'processes', 'network'].includes(t.id) || palette(t) || isAction(t) || isTerm(t) ? 'needs_newer_agent' : 'available'));
   const g = base(); g.agentVersion = 'garbage';
   check('an unparseable version is not "too old"', states(g)['services'].state === 'available');
   const x = base(); x.agentVersion = '0.33.0';
@@ -237,7 +243,7 @@ for (const c of ['offline', 'agent_silent']) {
 // 14. 0.76: the palette, from the diagnostics catalog's allowed and needsNewerAgent.
 {
   const f = base(); f.agentVersion = '0.75.0';
-  const g = scenario('agent 0.75.0', f, (t) => (later(t) ? 'coming_later' : palette(t) ? 'needs_newer_agent' : isAction(t) ? 'needs_approval' : 'available'));
+  const g = scenario('agent 0.75.0', f, (t) => (later(t) ? 'coming_later' : palette(t) || isTerm(t) ? 'needs_newer_agent' : isAction(t) ? 'needs_approval' : 'available'));
   check('0.75 agent: a palette check names 0.76.0', /0\.76\.0/.test(g['defender'].reason), g['defender'].reason);
   const n = base(); n.diagNeedsNewer = { defender_status: true };
   const gn = states(n);
@@ -251,6 +257,25 @@ for (const c of ['offline', 'agent_silent']) {
   check('order: permission before agent', states(w)['dns-lookup'].state === 'not_permitted');
   const os = base(); os.agentKind = 'rustdesk-only'; os.agentActions = []; os.agentVersion = null;
   check('the OS support row is available with RustDesk only (it reads the inventory on the server)', states(os)['os-support'].state === 'available');
+}
+
+// ── The terminal (0.77) ─────────────────────────────────────────────────────
+{
+  const t = tools.find((x) => x.id === 'terminal');
+  check('one terminal tool, in the Terminal group, opening the Terminal tab', !!t && t.group === 'remote' && j(t.target) === j({ kind: 'tab', tab: 'terminal' }) && tools.filter(isTerm).length === 1, j(t));
+  check('its description says SYSTEM, full control, and no screen sharing', /SYSTEM/.test(t.description) && /full control/.test(t.description) && /no screen sharing/.test(t.description));
+  check('it needs agent 0.77.0, the API\'s TERMINAL_MIN_AGENT', t.need.minAgent === '0.77.0' && /TERMINAL_MIN_AGENT = '0\.77\.0'/.test(readFileSync(join(API, 'src', 'remote-ops', 'limits.ts'), 'utf8')));
+  const old = base(); old.agentVersion = '0.76.9';
+  const go = states(old);
+  check('a signed agent 0.76.9: the terminal needs a newer agent, the rest unchanged', go['terminal'].state === 'needs_newer_agent' && /0\.77\.0/.test(go['terminal'].reason) && go['restart-schedule'].state === 'needs_approval', go['terminal'].reason);
+  const none = base(); none.agentVersion = null;
+  check('a signed agent that never said its version: needs a newer agent (unknown is not new enough)', states(none)['terminal'].state === 'needs_newer_agent');
+  const ok = states(base())['terminal'];
+  check('available: says it asks for confirmation and how long it takes to start', ok.state === 'available' && /confirm it is you/.test(ok.reason) && /three minutes/.test(ok.reason), ok.reason);
+  const off = base(); off.connectivity = 'offline'; off.connectivityText = 'Offline';
+  check('offline: says a terminal needs a reporting computer', /reporting/.test(states(off)['terminal'].reason), states(off)['terminal'].reason);
+  const ctl = readFileSync(join(API, 'src', 'remote-ops', 'terminal.controller.ts'), 'utf8');
+  check('the tab it opens is backed by the API\'s terminal routes', /@Controller\('endpoints\/:id\/terminal'\)/.test(ctl));
 }
 
 check('every state is reached by some scenario', T.TOOL_STATES.every((s) => reached.has(s)), `missing: ${T.TOOL_STATES.filter((s) => !reached.has(s)).join(', ')}`);

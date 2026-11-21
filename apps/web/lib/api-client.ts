@@ -1055,6 +1055,24 @@ export const msaApi = {
   forEndpoint: (endpointId: string) => api.get(`/msa/readiness/${endpointId}`),
 };
 
+// The background terminal (0.77 Conduit). Opening needs computers:terminal (a
+// Platform Admin only) and a fresh confirmation (terminal.open, which
+// defaults to ask: the interceptor prompts and retries). Reading, typing and
+// Keep alive are the session's own technician's; ending is also a Platform
+// Admin's or the business's own member with Edit computers. Remote-ops
+// settings (transcripts) are a Platform Admin's.
+export const terminalApi = {
+  list: (endpointId: string) => api.get(`/endpoints/${endpointId}/terminal`),
+  open: (endpointId: string, body: { shell: 'cmd' | 'powershell'; reason: string }) => api.post(`/endpoints/${endpointId}/terminal`, body),
+  read: (endpointId: string, sid: string, after: number) => api.get(`/endpoints/${endpointId}/terminal/sessions/${sid}`, { params: { after } }),
+  input: (endpointId: string, sid: string, data: string) => api.post(`/endpoints/${endpointId}/terminal/sessions/${sid}/input`, { data }),
+  keepAlive: (endpointId: string, sid: string) => api.post(`/endpoints/${endpointId}/terminal/sessions/${sid}/keepalive`),
+  end: (endpointId: string, sid: string) => api.post(`/endpoints/${endpointId}/terminal/sessions/${sid}/end`),
+  transcript: (endpointId: string, sid: string) => api.get(`/endpoints/${endpointId}/terminal/sessions/${sid}/transcript`),
+  settings: (businessId: string) => api.get(`/remote-ops/settings/${businessId}`),
+  putSettings: (businessId: string, body: { terminalTranscripts?: boolean; transcriptDays?: number }) => api.put(`/remote-ops/settings/${businessId}`, body),
+};
+
 // Managed Secure Access cutover (0.72, build step 4), behind MSA_GRANTS: every
 // route answers 404 MSA_NOT_ENABLED while the switch is off, and the card
 // then shows nothing new. Changes are a Platform Admin's, one computer at a

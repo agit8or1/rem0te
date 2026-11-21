@@ -21,6 +21,7 @@ import { DeviceSoftwareTab } from '@/components/endpoints/workspace/software-tab
 import { DeviceNetworkTab, DeviceProcessesTab, DeviceServicesTab } from '@/components/endpoints/workspace/snapshot-tabs';
 import { DeviceHistoryTab, type SessionRow } from '@/components/endpoints/workspace/history-tab';
 import { DeviceChatTab } from '@/components/endpoints/workspace/chat-tab';
+import { DeviceTerminalTab } from '@/components/endpoints/workspace/terminal-tab';
 import { OPEN_CHAT_EVENT } from '@/components/chat/chat-inbox';
 import { DiagnosticsPanel } from '@/components/endpoints/workspace/diagnostics-panel';
 import { AgentCard } from '@/components/endpoints/workspace/agent-card';
@@ -46,7 +47,7 @@ import { useToast } from '@/hooks/use-toast';
  * the tabs already make. Primary actions: Connect, Diagnose, Run action,
  * Patch, and More for archive and the other rare things. Tabs, each
  * deep-linkable with `?tab=`: Overview · Performance · Monitoring · Software ·
- * Processes · Services · Network · Patches · Event logs · Diagnostics · Actions · History.
+ * Processes · Services · Network · Patches · Event logs · Diagnostics · Actions · Terminal (0.77) · Chat · History.
  *
  * Processes, Services and Network (0.33) are read-only snapshots from the
  * standard Windows agent, requested through the diagnostics catalog and shown
@@ -235,6 +236,10 @@ export default function EndpointDetailPage() {
     ...(canView ? (['patches'] as const) : []),
     ...(canEventLogs && windowsDetail ? (['events'] as const) : []),
     ...(canView ? (['diagnostics', 'actions'] as const) : []),
+    // Terminal (0.77): Windows agents only. Anyone who can see the computer
+    // sees who opened one (and may end it with Edit computers); only a
+    // Platform Admin opens one, and the tab says why the computer cannot.
+    ...(canView && windowsDetail ? (['terminal'] as const) : []),
     // Chat (0.34): on every computer the viewer can see; the tab itself says
     // when this one cannot chat (Linux, macOS, the standard agent) and why.
     ...(canView ? (['chat'] as const) : []),
@@ -294,7 +299,7 @@ export default function EndpointDetailPage() {
           endpointId={id}
           ep={ep}
           patches={patches.data}
-          perms={{ view: canView, eventLogs: canEventLogs }}
+          perms={{ view: canView, eventLogs: canEventLogs, terminal: can(CAP.COMPUTERS_TERMINAL) }}
           open={toolsOpen}
           onOpenChange={setToolsOpen}
           onPick={openTool}
@@ -404,6 +409,12 @@ export default function EndpointDetailPage() {
         {tabs.includes('actions') && (
           <TabsContent value="actions" className="mt-4">
             {active === 'actions' && <EndpointActions key={`actions-${focus.n}`} initialAction={focus.action} endpointId={id} isOnline={isOnline} unavailableReason={actionReason === 'Checking…' ? null : actionReason} agentActions={agentActionKeys(ep)} />}
+          </TabsContent>
+        )}
+
+        {tabs.includes('terminal') && (
+          <TabsContent value="terminal" className="mt-4">
+            {active === 'terminal' && <DeviceTerminalTab endpointId={id} ep={ep} />}
           </TabsContent>
         )}
 

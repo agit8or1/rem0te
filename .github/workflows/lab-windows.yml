@@ -133,7 +133,7 @@ jobs:
         env:
           REM0TE_LAB: '1'
           REM0TE_LAB_EVIDENCE: ${{ runner.temp }}\lab-part\go-evidence.jsonl
-        run: go test -tags labwindows -count=1 -v -timeout 35m -run '^TestLab' . ./internal/action/
+        run: go test -tags labwindows -count=1 -v -timeout 35m -run '^TestLab' . ./internal/action/ ./internal/remote/
       - name: Keep the part
         if: always()
         uses: actions/upload-artifact@v7

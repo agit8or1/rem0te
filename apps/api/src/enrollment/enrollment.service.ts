@@ -39,6 +39,7 @@ import { ChatService } from '../chat/chat.service';
 import { AgentAutoUpdateService } from '../agent-auto-update/agent-auto-update.service';
 import { keyState } from '../adoption/deployment-key';
 import { isUnassigned } from '../common/unassigned';
+import { remoteWorkWanted } from '../remote-ops/presence';
 
 const execFileAsync = promisify(execFile);
 
@@ -1310,6 +1311,19 @@ export class EnrollmentService {
       }
     }
 
+    // The remote worker (0.77, §87): only an authenticated signed heartbeat
+    // that may act (and so not a pooled computer, which returned above), and
+    // only while the computer has a live terminal, is told to start
+    // `rem0te-agent.exe remote-worker`. An older agent ignores the field.
+    let remotePoll = false;
+    if (authenticated && mayAct && kind === 'signed') {
+      try {
+        remotePoll = await remoteWorkWanted(this.prisma, node.endpointId);
+      } catch (e) {
+        this.logger.warn(`Remote step failed for endpoint ${node.endpointId}: ${String(e)}`);
+      }
+    }
+
     // Chat (0.34): whether a conversation is open, so the signed agent starts
     // its chat host. A flag only — no names, no text: the host fetches those
     // over /enrollment/chat/poll with the device secret. Asked only of an
@@ -1348,6 +1362,7 @@ export class EnrollmentService {
       patchScan,
       ...(rustdeskPreflightAck ? { rustdeskPreflightAck } : {}),
       ...(msaPoll ? { msaPoll: true } : {}),
+      ...(remotePoll ? { remotePoll: true } : {}),
       monitor,
       diagnostics,
       chat,

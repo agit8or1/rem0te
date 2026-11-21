@@ -53,6 +53,7 @@ const ORDER = [
   ['rmm-expansion-audit.md', 'RMM expansion audit', 'Computers and monitoring', 'The 0.73 audit of the full-RMM directive: status and strongest evidence per item, conflicts with security invariants, the P0 release sequence and what still needs real-device validation.'],
   ['session-maintenance-mdm-backup-audit.md', 'Session, maintenance, MDM and backup audit', 'Computers and monitoring', 'The 0.76.1 audit of the four-phase directive: what RustDesk can enforce, the background terminal and file transfer decision, MDM and backup providers, owner decisions and the roadmap.'],
   ['inventory.md', 'Inventory and event logs', 'Computers and monitoring', 'Specs, installed software, change history, pending updates and event-log slices.'],
+  ['remote-terminal.md', 'Background terminal', 'Computers and monitoring', 'A cmd or PowerShell on a Windows computer as SYSTEM, with no screen sharing: who can open one, how it reaches the computer, the limits, ending, transcripts and what it reverses.'],
   ['diagnostics.md', 'One-click diagnostics', 'Computers and monitoring', 'Read-only checks a technician runs with one click: disk, services, errors, network, DNS, updates, restart.'],
   ['monitoring.md', 'Monitoring and alerts', 'Computers and monitoring', 'Monitors, inheritance, alerts, site outages, maintenance windows and escalation.'],
   ['group-policies.md', 'Device-group policies', 'Computers and monitoring', 'Monitors and client-update policies for a device group: precedence, priorities, live membership and cost.'],

@@ -78,7 +78,36 @@ export const CAP = {
   SCRIPTS_REVIEW: 'scripts:review',
 } as const;
 
-export type Capability = (typeof CAP)[keyof typeof CAP];
+/**
+ * Capabilities no business can hand out (0.77 Conduit).
+ *
+ * A background terminal runs as SYSTEM: full control of the computer. In this
+ * release a Platform Admin holds it and nobody else does, by design:
+ *
+ *   - they are not in ALL_BUSINESS_CAPABILITIES, so a Business Owner (whose
+ *     capabilities are computed as that list) does not hold them;
+ *   - sanitizeCapabilities and sanitizeTechnicianCapabilities drop them, so
+ *     no Business User grant, technician assignment, preset, group or SSO
+ *     mapping can carry them, and CAPABILITY_GROUPS shows no checkbox;
+ *   - a Platform Admin passes every capability check.
+ *
+ * A Business Owner manages who in their business may connect; letting that
+ * role also hand out a SYSTEM shell on every computer (to themselves or any
+ * Business User) would make default-deny a setting the business can turn
+ * off. Delegating these to a named person is planned, as a Platform Admin
+ * grant of its own (docs/remote-terminal.md, "Planned").
+ */
+export const PLATFORM_CAP = {
+  // A cmd or PowerShell on a Windows computer, as SYSTEM (0.77).
+  COMPUTERS_TERMINAL: 'computers:terminal',
+} as const;
+
+export type BusinessCapability = (typeof CAP)[keyof typeof CAP];
+export type PlatformCapability = (typeof PLATFORM_CAP)[keyof typeof PLATFORM_CAP];
+export type Capability = BusinessCapability | PlatformCapability;
+
+/** Held by a Platform Admin only, never grantable (see PLATFORM_CAP). */
+export const PLATFORM_ONLY_CAPABILITIES: PlatformCapability[] = Object.values(PLATFORM_CAP);
 
 /** Every capability a business can hand out. A Business Owner holds all of them. */
 export const ALL_BUSINESS_CAPABILITIES: Capability[] = Object.values(CAP);
@@ -222,7 +251,8 @@ export function effectiveCapabilities(actor: {
   roleType?: RoleType | null;
   capabilities?: string[] | null;
 }): Capability[] {
-  if (actor.isPlatformAdmin) return ALL_BUSINESS_CAPABILITIES;
+  if (actor.isPlatformAdmin) return [...ALL_BUSINESS_CAPABILITIES, ...PLATFORM_ONLY_CAPABILITIES];
+  // Never the platform-only ones (0.77): see PLATFORM_CAP.
   if (isOwnerRole(actor.roleType)) return ALL_BUSINESS_CAPABILITIES;
 
   const stored = sanitizeCapabilities(actor.capabilities);
