@@ -305,8 +305,16 @@ are rollback notes, retries for repeatable actions, and concurrency.
 
 ## Phase 3: MDM (iOS/iPadOS and Android)
 
-Nothing is built. Rem0te only *detects* Intune as a Windows patch manager (`managed_elsewhere`). Every sub-item of
-item 8 is **planned**, and every one needs an external provider. The evaluation below is what has to happen first.
+> **Superseded in part (owner, 2026-11-21): Rem0te becomes its own MDM.** The owner decided *"I don't have an
+> MDM, I want our OWN"*: Rem0te is the MDM server for iOS and iPadOS and the EMM (through the Android Management
+> API) for Android, with provider setup in **Settings → Mobile devices** as a step-by-step wizard. That replaces
+> decision 18 below and the third-party connector (3.2). The design, prerequisites and the new roadmap (M1–M9)
+> are in **[own-mdm.md](own-mdm.md)**. The provider comparison below is kept as the record of what was evaluated;
+> where it disagrees with own-mdm.md (for example "Native Apple MDM last, if ever"), own-mdm.md is right.
+
+0.80.0 *Tablet* built the provider-neutral model, driver interface and a loopback stand-in (3.1). Rem0te still
+only *detects* Intune as a Windows patch manager (`managed_elsewhere`). The evaluation below is what had to
+happen first.
 
 ### Provider options
 
@@ -320,7 +328,7 @@ item 8 is **planned**, and every one needs an external provider. The evaluation 
 | Effort | Highest: a protocol server, certificates, renewals | Medium | Lowest: a connector, like `PsaDriver` |
 | What this host can validate | Plist and protocol handling against recorded fixtures only. No APNs without a certificate, no device | Enterprise and policy calls only after quota; no enrollment without a phone | A loopback stand-in only, until the owner provides a tenant |
 
-**Recommendation (decision 18).** First, a provider-neutral `MdmDriver` interface and a read-only data model,
+**Recommendation (decision 18, superseded 2026-11-21 by [own-mdm.md](own-mdm.md)).** First, a provider-neutral `MdmDriver` interface and a read-only data model,
 proven against a loopback stand-in, which needs no account. Then the owner's existing provider as a
 **read-only connector**: enrollment state, inventory, ownership, compliance. Intune is the likely one, since the
 fleet's Windows patch detection already meets it, but the choice is the owner's. Ask Google for Android
@@ -331,19 +339,19 @@ vendor certificate and a yearly renewal per customer, and the host cannot prove 
 
 | Sub-item | Enforcing component | State | Blocked on |
 |---|---|---|---|
-| Enrollment | External provider (enrollment happens there) | **planned** | Decision 18, provider account |
-| Inventory | External provider, read by the portal | **planned** | As above |
-| Ownership type (corporate vs BYOD) | Provider | **planned** | As above |
-| Compliance | Provider evaluates; portal shows | **planned** | As above |
-| Policy assignment | Provider | **planned** (after read-only) | As above |
-| Action history | Portal (audit) + provider | **planned** | As above |
+| Enrollment | Rem0te (Apple MDM server; Android EMM through Google) | **planned** ([own-mdm.md](own-mdm.md) M2, M3) | The APNs push certificate; Google quota |
+| Inventory | Rem0te (Apple commands; AMAPI device reports) | **planned** (M2, M3) | As above |
+| Ownership type (corporate vs BYOD) | Rem0te (enrollment type; `allowPersonalUsage`) | **planned** (M2, M3; Apple BYOD M8) | As above |
+| Compliance | Google evaluates for Android; Rem0te for Apple | **planned** | As above |
+| Policy assignment | Rem0te | **planned** (after read-only) | As above |
+| Action history | Portal (audit) | **planned** (M4, M5) | As above |
 | Evaluate providers, document prerequisites and limitations first | — | This page | — |
 | Enrollment and inventory first, then compliance and lost-device actions | — | Roadmap order below | — |
-| Work-profile or managed-data removal (BYOD) | Provider | **planned** | Decision 16 |
+| Work-profile or managed-data removal (BYOD) | Rem0te (Apple `RemoveProfile`; Android `WIPE` of the profile) | **planned** (M5) | Decision 16 |
 | Separate permissions and approval for destructive actions | Portal | **planned** | Decision 16 |
-| States queued, sent, acknowledged, completed, failed, expired | Portal, from provider states | **requires setup** (0.80: a pure state machine and 0096 CHECKs; a stand-in only) | A provider (3.2) |
-| Provider acceptance ≠ device completion | Portal | **requires setup** (0.80: separate `providerAcceptedAt` and `deviceCompletedAt`, shown side by side) | A provider (3.2) |
-| Platforms | iOS/iPadOS and Android only through a provider; never through the Rem0te agent | — | — |
+| States queued, sent, acknowledged, completed, failed, expired | Portal | **requires setup** (0.80: a pure state machine and 0096 CHECKs; a stand-in only) | M2, M3 |
+| Provider acceptance ≠ device completion | Portal | **requires setup** (0.80: separate `providerAcceptedAt` and `deviceCompletedAt`, shown side by side) | M2, M3 |
+| Platforms | iOS/iPadOS through Rem0te's own MDM server, Android through Google's Android Device Policy; never through the Rem0te agent | — | — |
 
 ## Phase 4: backup, verified recovery and standby
 
@@ -542,20 +550,24 @@ should always ask (c) is open until run-as-user ships.
 | C2 | Session elevation | MSA ceiling (§82, §83): control, clipboard, files, audio, never more; `elevated` refused everywhere | (a) none: elevated work through signed actions as SYSTEM; (b) a signed action that creates a temporary local administrator, hands its password over once, and removes it at expiry; (c) an external privilege manager | Decision 13. (a) now; (b) only with its own section, after F1 |
 | C3 | Chat for any authorized session or request | §45 and §55: chat is per computer, reached only through the tray's pipes and `/assist`'s one-time cookie | Link chats to MSA sessions (design); a browser chat for agentless customers is a new unauthenticated surface | Design for the link; decision 15 for agentless chat |
 | C4 | Recurring execution | §71: signer-approved schedule, approved scripts and catalog software only | — | **No conflict.** §71 already satisfies "only via approved catalog actions and tenant-defined scope" |
-| C5 | MDM and backup providers | §41: provider calls only through `safe-https` (public DNS, resolved and judged each call, TLS verified), keys sealed, never in a response, audit or log | (a) public hosts only; (b) an allow-listed private address per connector; (c) the provider pushes signed summaries to Rem0te | Decision 17. (a) for cloud providers; (c) or (a) behind a reverse proxy for St0r and self-hosted Comet. Never (b) silently |
+| C5 | MDM and backup providers | §41: provider calls only through `safe-https` (public DNS, resolved and judged each call, TLS verified), keys sealed, never in a response, audit or log | (a) public hosts only; (b) an allow-listed private address per connector; (c) the provider pushes signed summaries to Rem0te | Decision 17. (a) for cloud providers; (c) or (a) behind a reverse proxy for St0r and self-hosted Comet. Never (b) silently. Own MDM (2026-11-21): Apple's and Google's hosts are public and fixed; APNs needs HTTP/2 and a client certificate, so a `safe-https` sibling with the same rules ([own-mdm.md](own-mdm.md#outbound-calls-and-safe-https)) |
 | C6 | Destructive MDM and backup actions with approval | §62 (0.64): every confirm key defaults to `off`; the always-ask set is three keys | (a) new keys, default off like every other; (b) add them to the always-ask set; (c) the temporary-access pattern (a second person approves) | Decision 16: (c) plus (b) for wipe, retire, restore over production and failover |
 | C7 | Per-direction clipboard and file controls | MSA's ceiling is compiled into the agent; RustDesk cannot enforce most directions | Refuse, degrade to off, or a custom client | Decisions 9 and 10 |
 
 ## Owner decisions
 
-Decisions **1–7** are the seven in [rmm-expansion-audit.md](rmm-expansion-audit.md#conflicts-with-existing-invariants):
-1. a lighter approval tier for read-only scripts (its conflict 1);
-2. who may stop a running script (conflict 3);
-3. ClientSt0r requesting the ten `integration: false` actions (conflict 4);
-4. an interactive PowerShell terminal (conflict 6): **decided 2026-11-21**: it ships (cmd and PowerShell, background), see decision 14;
-5. service recovery settings (conflict 8);
-6. an MSI/EXE catalog (conflict 9);
-7. widening §32 for macOS health reads (conflict 13).
+Decisions **1–7** are the seven in [rmm-expansion-audit.md](rmm-expansion-audit.md#conflicts-with-existing-invariants).
+**Decided (owner, 2026-11-21): accept the recommendations.** The conflicts table there records each one.
+
+| # | Decision (its conflict there) | Options | Decision |
+|---|---|---|---|
+| 1 | A lighter approval tier for read-only scripts (conflict 1) | (a) none: read-only checks go in the diagnostics catalog, everything else through the allowlist; (b) a lighter tier | **Decided (owner, 2026-11-21): (a)** |
+| 2 | Who may stop a running script (conflict 3) | (a) portal-authenticated: a compromised portal can only stop things; (b) signed like the pause (§16) | **Decided (owner, 2026-11-21): (a)** |
+| 3 | ClientSt0r requesting the ten `integration: false` actions (conflict 4) | Open some per action, or none | **Decided (owner, 2026-11-21): console only for now.** All ten stay `integration: false`; §14 unchanged |
+| 4 | An interactive PowerShell terminal (conflict 6) | — | **Decided 2026-11-21** (earlier): it ships, cmd and PowerShell, background; decision 14, 0.77.0 *Conduit* |
+| 5 | Service recovery settings (conflict 8) | (a) read-only; (b) writable (reverses part of §61) | **Decided (owner, 2026-11-21): (a) read-only.** §61 unchanged |
+| 6 | An MSI/EXE catalog (conflict 9) | (a) none; (b) a pinned URL and SHA-256, no upload; (c) uploads (reverses §40) | **Decided (owner, 2026-11-21): (b)**, a pinned URL and hash with no upload route |
+| 7 | Widening §32 for macOS health reads (conflict 13) | (a) widen §32's read list; (b) wait for the signed macOS agent (A4) | **Decided (owner, 2026-11-21): (b)**. §32 unchanged |
 
 New. **On 2026-11-21 the owner accepted every recommendation for decisions 8–20** ("accept all recs"); each row
 says what was decided. 11, 14 and 14a had been decided earlier the same day.
@@ -573,7 +585,7 @@ says what was decided. 11, 14 and 14a had been decided earlier the same day.
 | 15 | **Chat without an agent**, for support-link customers | (a) none; (b) a browser chat bound to the support request's one-time link | **Decided (owner, 2026-11-21): (a)**. Quick Connect and the tray cover it |
 | 16 | **Approval for destructive MDM and backup actions** (C6) | (a) a confirm key, default off; (b) always-ask; (c) a second person approves, as temporary access does | **Decided (owner, 2026-11-21): (c) plus (b)** |
 | 17 | **Providers on private networks** (C5) | (a) public DNS and TLS only; (b) an allow-listed private address; (c) push from the provider | **Decided (owner, 2026-11-21): (a)**, and (c) for St0r |
-| 18 | **First MDM implementation** | Native Apple, Android Management API, or a third-party provider's API | **Decided (owner, 2026-11-21): the interface and a stand-in first**, then the owner's existing provider, read-only. Request Android quota early |
+| 18 | **First MDM implementation** | Native Apple, Android Management API, or a third-party provider's API | ~~The interface and a stand-in first, then the owner's existing provider, read-only~~. **Superseded (owner, 2026-11-21): own MDM.** Rem0te is the Apple MDM server and the Android EMM; setup in Settings. The interface and stand-in (0.80) stay and become its drivers. See [own-mdm.md](own-mdm.md), which raises decisions 21–24. Request Android quota early |
 | 19 | **First backup provider** | St0r (needs a read-only token added to St0r) or Comet (read-only token methods exist) | **Decided (owner, 2026-11-21): St0r**, if the token is added; else Comet |
 | 20 | **Failover and failback** | (a) readiness only; (b) Rem0te orchestrates through Depl0y/Proxmox | **Decided (owner, 2026-11-21): (a)** |
 
@@ -629,9 +641,9 @@ The owner's priority (2026-11-21), first in the sequence, ahead of every phase b
 | # | Pull request | Scope | Enforcing component | Tests | Evidence | Blocked |
 |---|---|---|---|---|---|---|
 | 3.1 | **MDM data model and driver interface** (**built: 0.80.0 *Tablet***, [mobile-devices.md](mobile-devices.md)) | `MobileDevice` (ownership, compliance, provider ids), `MdmCommand` with separate `providerAcceptedAt` and `deviceCompletedAt` and the directive's states; an `MdmDriver` interface on the `PsaDriver` pattern; a loopback stand-in; read-only routes through `endpointVisibilityWhere`'s business scope | Portal | Unit, e2e against the stand-in | API (stand-in only) | — |
-| 3.2 | **First provider connector, read-only** | Enrollment state, inventory, ownership, compliance; credential sealed under its own secret-box purpose; `safe-https` only | External provider | Unit, e2e against a stand-in in the provider's shape | API (stand-in). Real only once the owner connects a tenant | A provider account (decisions 17 and 18 decided) |
-| 3.3 | **Lost-device actions** | Lock, lost mode, locate; a separate capability; audited; accepted vs completed shown | Provider | e2e | API | 3.2 |
-| 3.4 | **Destructive actions** | Wipe, retire, work-profile removal; second-person approval | Provider | e2e | API | 3.2 (decision 16 decided) |
+| 3.2 | ~~First provider connector, read-only~~ **Replaced** (owner, 2026-11-21: own MDM) by [own-mdm.md](own-mdm.md) **M1** (Settings wizard and Apple push certificates), **M2** (Apple enrollment, check-in and inventory, the first real driver) and **M3** (Android enterprise sign-up and read-only inventory) | See own-mdm.md | Rem0te | See own-mdm.md | — | M1: nothing. M2: the APNs push certificate. M3: Google quota |
+| 3.3 | **Lost-device actions**: now [own-mdm.md](own-mdm.md) **M4** | Lock, lost mode, locate; a separate capability; audited; accepted vs completed shown | Rem0te (Apple commands; AMAPI) | e2e | API | M2 or M3 |
+| 3.4 | **Destructive actions**: now [own-mdm.md](own-mdm.md) **M5** | Wipe, retire, work-profile removal; second-person approval and an always-ask check | Rem0te | e2e | API | M4 (decision 16 decided) |
 
 ### Phase 4: backup, verified recovery, standby
 
@@ -652,7 +664,8 @@ The owner's priority (2026-11-21), first in the sequence, ahead of every phase b
   decisions 8 and 9), and 1.8 as docs.
 - **Phase 2: 2.1**, rollback and repeatability per catalog action (the terminal itself is T1), built as 0.79.0 *Tally*. Data and docs, no new surface. The library,
   bulk and `@2` items already have a place in the previous audit's sequence.
-- **Phase 3: 3.1**, the MDM model and driver interface against a stand-in. It needs no account.
+- **Phase 3: 3.1**, the MDM model and driver interface against a stand-in. It needs no account. Shipped as 0.80.0 *Tablet*. Next (own MDM, 2026-11-21): **M1**, the Settings wizard and Apple push
+  certificates, which needs no account either ([own-mdm.md](own-mdm.md#roadmap)).
 - **Phase 4: 4.2** is the quickest: monitor templates, no provider. **4.1** is the foundation for everything else.
 
 ## Corrections made in this release

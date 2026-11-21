@@ -326,21 +326,27 @@ Each of these is where the directive's wording assumes something an invariant fo
 an invariant would have to be reversed, as §41, §62, §67, §75 and §76 were. *Design* means it can be built
 without relaxing anything.
 
+**Decided (owner, 2026-11-21): accept the recommendations.** The 0.76.1 audit numbers the seven owner decisions
+here as decisions 1–7 ([its table](session-maintenance-mdm-backup-audit.md#owner-decisions)): 1 is conflict 1,
+2 is conflict 3, 3 is conflict 4, 4 is conflict 6, 5 is conflict 8, 6 is conflict 9 and 7 is conflict 13. The
+owner chose **1a, 2a, 3 console-only for now, 5a read-only, 6b a pinned URL and hash with no upload, and 7b wait
+for the signed macOS agent**; 4 had been decided earlier the same day. Each row below says what that means.
+
 | # | Directive assumes | Invariant | Resolution |
 |---|---|---|---|
-| 1 | **One-click** built-in scripts | §39: library review, then two passkey approvals on the signer's allowlist, then two approvers per run, none of them a contributor | **Design** for read-only checks: put them in the diagnostics catalog. It is closed, portal-side and already used on the fleet, so no signer is involved. **Design** for the rest: ship them as reviewed global versions that still go through the allowlist. Under §58 direct mode that is one fresh sign-in, so it is already one click for a single operator. A lighter approval tier for "read-only scripts" would be **owner decision**, and it is hard to prove a script is read-only |
+| 1 | **One-click** built-in scripts | §39: library review, then two passkey approvals on the signer's allowlist, then two approvers per run, none of them a contributor | **Design** for read-only checks: put them in the diagnostics catalog. It is closed, portal-side and already used on the fleet, so no signer is involved. **Design** for the rest: ship them as reviewed global versions that still go through the allowlist. Under §58 direct mode that is one fresh sign-in, so it is already one click for a single operator. A lighter approval tier for "read-only scripts" would be **owner decision**, and it is hard to prove a script is read-only. **Decided (owner, 2026-11-21): (a)**, no lighter tier: read-only checks go in the diagnostics catalog, the rest through the allowlist (decision 1) |
 | 2 | Bulk scripts on groups, sites or businesses | §39: ≤ 25 named computers of one business per plan. §71: the signer cannot see a group and holds it only to a business and cap. §35: bulk ≤ 200 | **Design**: resolve the target when the request is made, fan out into ≤ 25-computer plans, and approve once with a one-off automation document (a new closed `once` recurrence). Signer change, agent unchanged |
-| 3 | Cancel a running script | Agents run only what the signer signs. The portal has no channel to a running job | **Design**: an agent-side stop for an `executing` job. **Owner decision** on who may stop one: portal-authenticated (a compromised portal can only stop things) or signed like the pause (§16) |
-| 4 | ClientSt0r requests predefined actions "under the same approvals" | §32, §39, §40, §59, §61: ten actions are `integration: false`. §58: `DIRECT_MODE_PORTAL_ONLY` | **Owner decision** per action, and an invariant change (§14's count of ten). Blocked anyway until ClientSt0r interoperates |
+| 3 | Cancel a running script | Agents run only what the signer signs. The portal has no channel to a running job | **Design**: an agent-side stop for an `executing` job. **Owner decision** on who may stop one: (a) portal-authenticated (a compromised portal can only stop things) or (b) signed like the pause (§16). **Decided (owner, 2026-11-21): (a)** (decision 2) |
+| 4 | ClientSt0r requests predefined actions "under the same approvals" | §32, §39, §40, §59, §61: ten actions are `integration: false`. §58: `DIRECT_MODE_PORTAL_ONLY` | **Owner decision** per action, and an invariant change (§14's count of ten). Blocked anyway until ClientSt0r interoperates. **Decided (owner, 2026-11-21): console only for now**: all ten stay `integration: false`, §14 unchanged (decision 3) |
 | 5 | Linux/macOS execution | §24 / §32: POSIX agents act on nothing | **Already decided** (Design A, 2026-11-16): a ported signed Go agent with its own section. The shell agents stay read-only |
-| 6 | Remote PowerShell terminal | §39: one constant command line, never built from a plan; everything signed | **Owner decision**, after the separate threat model the directive itself asks for. Not in any release below |
+| 6 | Remote PowerShell terminal | §39: one constant command line, never built from a plan; everything signed | **Owner decision**, after the separate threat model the directive itself asks for. **Decided (owner, 2026-11-21)**: it ships as a background terminal (cmd and PowerShell), 0.77.0 *Conduit* (decision 4; 0.76.1 audit decision 14) |
 | 7 | Alert-triggered actions run unattended | §17: monitoring never sets or lifts containment. §50: only snapshot keys may run with no requester. AI never authorizes (§41) | **Design**: a signer-approved remediation policy (a new document type, modelled on §71) under which the signer signs each plan. Automatic *investigation* through diagnostics needs a narrow §50 amendment: requester-less runs of named read-only keys, triggered by an alert |
-| 8 | Service recovery settings | §61: nothing carries a binary path, account, password, **recovery action** or dependency; the one config write is the start type | **Owner decision** (reverses part of §61). Reading recovery settings is fine |
-| 9 | MSI / EXE catalog, other sources | §40: no upload route, `--source winget` only, one exec site | **Owner decision** (reverses §40's no-upload rule). A pinned-URL-and-hash source with no upload is a smaller step that could be argued as design |
+| 8 | Service recovery settings | §61: nothing carries a binary path, account, password, **recovery action** or dependency; the one config write is the start type | **Owner decision** (reverses part of §61). Reading recovery settings is fine. **Decided (owner, 2026-11-21): (a) read-only**: recovery settings may be read and shown, never written; §61 unchanged (decision 5) |
+| 9 | MSI / EXE catalog, other sources | §40: no upload route, `--source winget` only, one exec site | **Owner decision** (reverses §40's no-upload rule). A pinned-URL-and-hash source with no upload is a smaller step that could be argued as design. **Decided (owner, 2026-11-21): (b)**, a pinned URL and SHA-256 with no upload route; §40's no-upload rule stands (decision 6) |
 | 10 | Run as an unprivileged account | §39: SYSTEM, constant command line | **Already decided** (2026-11-16): each version declares `root` or `unprivileged`, covered by the allowlist approvals. Needs `@2` and a review of how the account is made and its password kept |
 | 11 | "Policy-bounded" timeouts | §39: the timeout list is the same on portal, signer and agent | **Design**: a longer closed list in `@2`, bounded by the signer's policy |
 | 12 | Interpreter selection | §39: constant command line | **Design**: one constant command line per interpreter in `@2`, the interpreter named in the signed definition |
-| 13 | Battery and health on macOS | §32 bans `pmset` and `defaults write` | **Owner decision** to widen §32's read list, or wait for the ported agent (A4) |
+| 13 | Battery and health on macOS | §32 bans `pmset` and `defaults write` | **Owner decision**: (a) widen §32's read list, or (b) wait for the ported agent (A4). **Decided (owner, 2026-11-21): (b)**, wait for the signed macOS agent; §32 unchanged (decision 7) |
 
 ## Roadmap
 
@@ -436,7 +442,7 @@ look.
 | 9. Backup | *Backup monitoring* | Rows added above |
 | 3. Session elevation | — | New; decision 13 |
 | 1, 4, 5. Clipboard, session length, chat | *Related work* MSA rows | F1 affects the MSA rows: a control grant does not enforce clipboard, files, tunnel or restart |
-| 8. MDM | — | New; decision 18 |
+| 8. MDM | — | New; decision 18, **superseded** on 2026-11-21 by the owner's own MDM ([own-mdm.md](own-mdm.md)) |
 
 ## Stale statements found
 

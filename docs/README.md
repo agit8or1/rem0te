@@ -69,6 +69,9 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   Management API and native Apple MDM each need first, who can see phones and tablets (`mobile:view`), what is kept
   (never an IMEI, no serial for a personal device), and commands accepted by the provider versus completed on the
   device. Read-only, and **requires setup**: no real provider can be connected yet.
+- **[own-mdm.md](own-mdm.md)** — Rem0te as its own MDM (design, 0.81.1; the owner's decision of 2026-11-21): the
+  Apple MDM server and the Android EMM, what the owner must obtain from Apple and Google (with cost and lead time),
+  the Settings → Mobile devices wizard, the security model, and the order of work. Nothing is built yet.
 - **[backups.md](backups.md)** — backup status from a provider (0.81): completion, integrity and a verified
   restore kept apart, the St0r push and its token, Comet (planned), RPO/RTO against target, the four opt-in backup
   monitors and the UrBackup and Comet service templates. Read-only: nothing starts a backup, restore or failover.

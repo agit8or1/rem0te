@@ -9,9 +9,16 @@ page says **Requires setup** and lists what each kind of provider needs.
 What 0.80 builds is the part that does not need an account: the data model,
 a provider-neutral driver interface, a sync, the read-only routes and the
 console pages, all proven against a loopback stand-in that only the test
-suites can reach. Connecting the owner's existing provider, read-only, is the
-next step (roadmap 3.2). Sending lock, lost mode or wipe comes after that (3.3
-and 3.4).
+suites can reach.
+
+> **Changed on 2026-11-21: Rem0te becomes its own MDM.** The owner decided
+> against connecting a third-party provider: Rem0te will be the MDM server for
+> iPhones and iPads and the EMM for Android (through Google's Android
+> Management API), set up in **Settings → Mobile devices**. That supersedes
+> decision 18 and roadmap 3.2 below. The design, what has to be obtained from
+> Apple and Google, and the new order of work are in [own-mdm.md](own-mdm.md).
+> The data model and driver interface on this page stay: the own MDM is their
+> first real driver.
 
 Rem0te never installs anything on a phone or tablet. The Rem0te agent is for
 Windows, Linux and macOS computers only. A mobile device is enrolled in the
@@ -34,7 +41,10 @@ before a connector can read anything.
 | Planned | **3.2**, first | After 3.2; quota requested early | Last, if ever |
 
 The owner accepted this order on 2026-11-21 (decision 18): the interface and a
-stand-in first, then the existing provider read-only. Providers must be on
+stand-in first, then the existing provider read-only. **Superseded the same
+day** by the owner's own MDM ([own-mdm.md](own-mdm.md)), which builds the
+Native Apple and Android Management API columns itself and drops the
+third-party one. Providers must be on
 public DNS with verified TLS (decision 17): a connector goes through the same
 outbound HTTPS client as AI and PSA connectors, which refuses private
 addresses, redirects and unverified certificates.
@@ -159,8 +169,13 @@ the console or the API creates a connector.
 
 ## Planned
 
-- **3.2** — the first real connector, read-only: the owner's existing provider,
-  its credential sealed, through the public-HTTPS client only.
-- **3.3** — lock, lost mode and locate, with their own permission, audited,
-  accepted and completed shown separately.
-- **3.4** — wipe, retire and work-data removal, approved by a second person.
+The order is now [own-mdm.md](own-mdm.md#roadmap)'s (2026-11-21):
+
+- **M1** — Settings → Mobile devices: the setup wizard and Apple push
+  certificates (no account needed to build it).
+- **M2** — Apple enrollment, check-in and inventory, the first real driver.
+- **M3** — Android enterprise sign-up and read-only inventory.
+- **M4** (was 3.3) — lock, lost mode and locate, with their own permission,
+  audited, accepted and completed shown separately.
+- **M5** (was 3.4) — wipe, retire and work-data removal, approved by a second
+  person.
