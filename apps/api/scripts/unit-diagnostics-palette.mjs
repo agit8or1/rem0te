@@ -429,7 +429,11 @@ ${blk}
   const allText = JSON.stringify(desk) + JSON.stringify(serv);
   check('pwsh: no recovery password, protector id, product key, task argument, message text, TPM owner auth or SID in any post',
     !new RegExp(`${SECRET_RP.slice(0, 13)}|SECRET-ID|SECRETKEY5|SECRET-TASK-ARG|backup\\.exe|SECRET-MESSAGE-TEXT|SECRET-OWNER-AUTH|secret-exclusion|S-1-5-21`).test(allText), allText.match(/.{30}(SECRET|S-1-5-21|backup\.exe).{20}/)?.[0]);
-  const I = (R, k) => ip.interpret(k, c.sanitizeResult(k, res(R, k)), AT);
+  // The PowerShell stubs date their evidence from the real clock ((Get-Date).AddDays(-9)), so
+  // these are judged at the real time, not the fixed AT the pure checks above use. Judging them
+  // at AT made "9 days → Critical" read as 7 days and fail from 2026-11-21 on (0.76.1).
+  const RUN_AT = new Date().toISOString();
+  const I = (R, k) => ip.interpret(k, c.sanitizeResult(k, res(R, k)), RUN_AT);
   check('pwsh desktop: Defender healthy; BitLocker C: protected, D: not encrypted', I(desk, 'defender_status').overall === 'healthy' && stateOf(I(desk, 'bitlocker_status'), 'volume-c') === 'healthy' && stateOf(I(desk, 'bitlocker_status'), 'volume-d') === 'warning', states(I(desk, 'bitlocker_status')));
   check('pwsh desktop: protector kinds are Tpm and RecoveryPassword only', JSON.stringify(c.sanitizeResult('bitlocker_status', res(desk, 'bitlocker_status')).volumes[0].protectorTypes) === '["RecoveryPassword","Tpm"]');
   check('pwsh desktop: Secure Boot on, TPM 2.0 ready', I(desk, 'secure_boot_tpm').overall === 'healthy');

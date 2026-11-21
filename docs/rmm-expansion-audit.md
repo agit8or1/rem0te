@@ -21,6 +21,14 @@ Two pull requests are in flight as this is written. They are shown as **In progr
 session evidence, and cutover runs for a group or a business. All of it is behind `MSA_GRANTS`, which is off
 ([managed-secure-access.md](managed-secure-access.md)).
 
+> **Continued in 0.76.1:** [session-maintenance-mdm-backup-audit.md](session-maintenance-mdm-backup-audit.md)
+> audits the owner's four-phase directive of 2026-11-21: session controls, background terminal and maintenance,
+> MDM, and backup with verified recovery. It numbers owner decisions **8–20** after the seven here (see
+> [Directive of 2026-11-21](#directive-of-2026-11-21-cross-references)). It found that a Managed Secure Access
+> control grant does not enforce its permissions (finding F1, behind `MSA_GRANTS`, off). The owner has decided
+> that a background terminal and background file transfer ship (0.77.0 *Conduit*, 0.78.0 *Courier*, in
+> progress), which settles conflict 6 below.
+
 ## How to read the matrix
 
 **Status**
@@ -260,8 +268,10 @@ listed under *Related work*, with Managed Secure Access, which this audit does n
 
 | Item | Status | Evidence | Where | Gap |
 |---|---|---|---|---|
-| Provider integrations | Missing | — | `PsaDriver` connector pattern, `secret-box`, `safe-https` can be reused | — |
-| Backup job monitor kinds | Missing | — | — | — |
+| Provider integrations | Missing | — | `PsaDriver` connector pattern, `secret-box`, `safe-https` can be reused | St0r (no integration token yet) and Comet evaluated in [the 0.76.1 audit](session-maintenance-mdm-backup-audit.md#phase-4-backup-verified-recovery-and-standby) |
+| Backup job monitor kinds | Missing | — | — | Proposed: `BACKUP_STALE`, `BACKUP_FAILED`, `DRILL_FAILED`, `RPO_EXCEEDED` (0.76.1 audit, 4.1) |
+| Completion, integrity and test restore tracked separately | Missing | — | — | 0.76.1 audit, item 9 |
+| Restore drills, RPO/RTO, standby readiness | Missing | — | — | 0.76.1 audit, 4.5–4.6; failover is decision 20 |
 
 ### ClientSt0r contract
 
@@ -410,6 +420,23 @@ until it has Lab or Fleet evidence.
 | Managed Secure Access: enforcement, Connect through grants, revocation, session evidence | Lab (enforcement, Server, RustDesk 1.4.1–1.5.3); API | A desktop, a real technician connection, the fleet; `MSA_GRANTS` is off in production |
 | Everything Lab-proven | Lab (Server 2025) | **A Windows 10/11 desktop**. This host cannot run VMs; it needs an owner decision on a hypervisor or cloud VMs ([readiness.md](readiness.md) roadmap 1b) |
 | Linux and macOS agents | API (Linux userland); recorded output (macOS) | Installed as root under systemd / launchd |
+
+## Directive of 2026-11-21: cross-references
+
+The four-phase directive overlaps this matrix in these rows. The detail is in
+[session-maintenance-mdm-backup-audit.md](session-maintenance-mdm-backup-audit.md); this table keeps one place to
+look.
+
+| Directive item (2026-11-21) | Rows here | State there |
+|---|---|---|
+| 6. Background terminal and PowerShell | *Remote PowerShell → Interactive terminal*; conflict 6 | **Decided by the owner** (cmd and PowerShell, `terminal.open` default ask, SYSTEM first); 0.77.0 *Conduit* in progress |
+| 2. File transfer | P2 *Remote file manager* (Design B) | **Decided by the owner** (background transfer, separate upload and download); 0.78.0 *Courier* in progress |
+| 7. Scripts, fixes and patches | *Remote scripting UI*, *PowerShell*, *Built-in reviewed script library*, P0 roadmap #4–#6 | Unchanged here. New gaps there: rollback notes per action, retries for safe-to-repeat actions |
+| 7. Recurring execution | *Run now or scheduled* (§71) | No conflict: §71 already limits it to approved catalog actions and scope |
+| 9. Backup | *Backup monitoring* | Rows added above |
+| 3. Session elevation | — | New; decision 13 |
+| 1, 4, 5. Clipboard, session length, chat | *Related work* MSA rows | F1 affects the MSA rows: a control grant does not enforce clipboard, files, tunnel or restart |
+| 8. MDM | — | New; decision 18 |
 
 ## Stale statements found
 

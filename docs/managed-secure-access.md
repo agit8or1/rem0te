@@ -539,6 +539,22 @@ other hosts on the customer's network and a remote restart breaks the
 session's own enforcement window; neither has a control in Rem0te, so
 neither is offered. Widening the ceiling is a signed agent release.
 
+> **Correction (0.76.1): the grant says this, RustDesk does not enforce it yet.** For a control grant the agent
+> writes `access-mode=full`. In RustDesk's Flutter builds (every official Windows build), `full` turns **every**
+> permission on before any `enable-*` key is read (`Connection::is_permission_enabled_locally` in 1.5.3,
+> `Connection::permission` in 1.4.4). So in control mode:
+>
+> - clipboard off, file transfer off, no tunnel and no remote restart are written and read back, but not
+>   enforced;
+> - RustDesk's terminal (1.4.1+, SYSTEM with an administrator's credentials), camera, remote printer,
+>   block-input, privacy mode and recording are on, because the agent never writes their keys.
+>
+> View-only grants are unaffected. No production computer is exposed: `MSA_GRANTS` is off. The fix is
+> `access-mode=custom` and those six keys written as `N` on every grant: finding F1 in
+> [session-maintenance-mdm-backup-audit.md](session-maintenance-mdm-backup-audit.md#f1-a-control-grant-turns-every-permission-on),
+> and the first pull request of its Phase 1. The lab's `TestLabRustdeskEnforce` proves readback, not behaviour,
+> which is why it did not catch this.
+
 **Revocation.** A signed revocation, Ed25519 under the same grant key with
 its own prefix (`rem0te-msa-revoke-v1\n`), so a grant signature can never be
 replayed as one. It names one computer and either a list of grants or `all`
