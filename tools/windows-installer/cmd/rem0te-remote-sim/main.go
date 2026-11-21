@@ -1,3 +1,9 @@
+//go:build !windows
+
+// The simulator is for the Linux test stacks: its shell is /bin/sh in a
+// process group (remote.SystemSpawner's Unix side). On Windows the worker is
+// rem0te-agent.exe remote-worker, so there is nothing to build here.
+
 // rem0te-remote-sim runs the agent's real remote worker (internal/remote:
 // the poll loop, the deadlines, the frame caps, the HTTP client that carries
 // the device secret) against a portal, for the end-to-end suites
