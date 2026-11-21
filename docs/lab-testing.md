@@ -103,7 +103,7 @@ preflight it **changes RustDesk's settings** on the throwaway runner, and puts t
 enforcement exec site (`enforceRunner`, the only code that may pass a value to `--option` or name `--password`) and
 `enforce.Enforcer`, one cycle:
 
-1. save every one of the eleven settings;
+1. save every one of the eleven settings (seventeen from 0.78.1, below);
 2. apply a view-only grant: every setting written and read back, then the one-time password, which must print
    `Done`;
 3. read every setting back again;
@@ -122,6 +122,23 @@ enforcement exec site (`enforceRunner`, the only code that may pass a value to `
 7. through the agent's own `enforce.Poller` with a stand-in portal, apply a control grant, then hand the poller a
    signed **revocation** naming it: the poller must verify it under the same test key, end the session (a random
    password, `stop-service Y` then `N`) and report `ended` with outcome `revoked`.
+
+0.78.1 (finding F1) changes and adds, for both the view-only and the control grant:
+
+- the cycle saves and restores seventeen settings: the eleven, plus the six permissions no grant turns on
+  (`enable-terminal`, `-camera`, `-remote-printer`, `-block-input`, `-privacy-mode`, `-record-session`), which
+  every grant writes as `N` and reads back;
+- the control grant's `access-mode` must read back `custom`, never `full`;
+- **the effective state**: after apply, `access-mode` and all twelve RustDesk permission options are read from
+  the running RustDesk and evaluated with `enforce.Effective`, the port of RustDesk's own rule (`full` every
+  permission, `view` none, anything else each `enable-*` key, on unless `N`). The result must be exactly the
+  grant's: nothing for the view-only grant; keyboard, clipboard, file transfer and audio for the control grant.
+
+That effective state is **derived from what RustDesk reports, not observed in a connection.** RustDesk
+1.4.1–1.5.3 has no command line or documented interface that answers what a connection would be allowed
+(`--option KEY` answers from the service's option table, the one its connection code reads), and the lab has no
+second RustDesk that can log in without a person, so no connection is made. `enable-privacy-mode` reads back `N`
+on every release, but RustDesk honours it only from 1.4.7.
 
 Ids: `agent/msa-enforce/<version>/admin` and `…/system`, in `enforce-evidence-<version>.jsonl`; a release whose
 download verified but has no such file is a broken lab. It does not cover the portal, the real long-poll over the

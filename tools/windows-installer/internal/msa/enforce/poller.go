@@ -225,6 +225,10 @@ func (p *Poller) Run(ctx context.Context) error {
 	case st.Schema != StateSchema:
 		st = &State{Schema: StateSchema}
 	}
+	// 0.78.1 (F1): what an older agent applied (access-mode full, no Locked
+	// keys) becomes what this one would apply, so the hourly readback
+	// corrects it rather than restoring full.
+	st.Applied = Normalise(st.Applied)
 	p.state = st
 	if p.state.Revocations == nil {
 		p.state.Revocations = map[string]time.Time{}
@@ -421,6 +425,22 @@ func (p *Poller) handle(ctx context.Context, env json.RawMessage) {
 			refuse(SaveFailed, nil)
 			return
 		}
+	} else if missing := missingKeys(s); len(missing) > 0 {
+		// Saved by an older agent, which never touched the Locked keys: their
+		// values now are what the computer had before cutover. Add them
+		// before this grant changes them; refuse if one cannot be read.
+		for _, k := range missing {
+			v, ok := p.E.Read(ctx, k)
+			if !ok {
+				refuse(SaveFailed, nil)
+				return
+			}
+			s.Values[k] = v
+		}
+		if err := p.S.SaveSaved(s); err != nil {
+			refuse(SaveFailed, nil)
+			return
+		}
 	}
 	out := p.E.Apply(ctx, g)
 	if !out.OK {
@@ -432,6 +452,22 @@ func (p *Poller) handle(ctx context.Context, env json.RawMessage) {
 	p.state.Applied = Desired(g)
 	p.persistActive()
 	p.report(ctx, Report{Event: "applied", GrantID: g.GrantID})
+}
+
+// missingKeys: the Locked keys a saved file does not hold (a file saved by
+// an agent from before 0.78.1 holds none of them). Only Locked: any other
+// key may already carry a value this agent set, so it is never re-read.
+func missingKeys(s *Saved) []string {
+	if s.Values == nil {
+		s.Values = map[string]string{}
+	}
+	var out []string
+	for _, k := range Locked {
+		if _, ok := s.Values[k]; !ok {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 func (p *Poller) pruneSeen() {

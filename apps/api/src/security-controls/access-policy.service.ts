@@ -293,7 +293,7 @@ export class AccessPolicyService {
         const d = await this.evaluateLaunch(actor, ep, mode, { via: 'browser' });
         return d.ok ? r('allowed', `path: ${d.path}`, d.revealCredential ? 'permanent credential is revealed to the browser' : 'no credential revealed') : r(d.status, d.message);
       }
-      case 'clipboard': case 'file_transfer': return r('unavailable', 'enforced on the technician\'s RustDesk client, not the endpoint; no per-session control exists');
+      case 'clipboard': case 'file_transfer': return r('unavailable', 'enforced by RustDesk on the controlled computer, which rem0te sets per session only under Managed Secure Access (off); a Legacy computer keeps RustDesk\'s default');
       case 'scripts': case 'fleet_execution': return r('denied', 'locked off for every tier; no signed script catalog exists');
       case 'patches': return policyOf('patches').includes('request') ? r('unavailable', 'eligible to request, but patch installation is not implemented') : r('denied');
       case 'fix_request': {

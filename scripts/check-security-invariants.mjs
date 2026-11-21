@@ -6684,7 +6684,13 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //         (Compatible readiness, an enforcing agent, no `remote` pause, a
 //         published grant key), the audit row, then the row;
 //       - a report is parsed strictly, then the device secret, before any read;
-//       - the ceiling is view-only on both sides, compiled into the agent;
+//       - the ceiling is view-only on both sides, compiled into the agent
+//         (control with clipboard, files and audio from 0.73);
+//       - (0.78.1, F1) no argument list or desired map carries access-mode
+//         full (control is custom); every RustDesk permission option is
+//         governed, and the six no grant names are N on every grant and
+//         read back; RustDesk's own rule over the desired values grants
+//         nothing the grant and the ceiling do not;
 //       - the agent: one enforcement exec site that runs only what
 //         enforce.Valid accepts, the installed rustdesk.exe, no shell; grant
 //         keys only from the signed msa/grant-keys.json; the replay set
@@ -6838,6 +6844,55 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && !/Ceiling\s*=|Ceiling:\s*(ans|a|p\.state|g)\./.test(pol.replace('Ceiling: Ceiling,', '')),
     'enforce.Ceiling; managed.ts MANAGED_CEILING; MsaGrantService.issueTest');
 
+  // 0.78.1 (F1): RustDesk's Flutter builds read access-mode `full` as every
+  // permission on before they look at any enable-* key. So no argument list,
+  // desired map or allowed value carries full; control is `custom`; every
+  // RustDesk permission option is governed; the six a grant cannot name are
+  // N on every grant and read back; and RustDesk's own rule over the desired
+  // values (Effective) grants nothing the grant and the Ceiling do not.
+  {
+    const LOCKED = ['enable-terminal', 'enable-camera', 'enable-remote-printer', 'enable-block-input', 'enable-privacy-mode', 'enable-record-session'];
+    const PERMS = ['enable-keyboard', 'enable-clipboard', 'enable-file-transfer', 'enable-audio', 'enable-tunnel', 'enable-remote-restart', ...LOCKED];
+    const goList = (src, name) => [...(new RegExp(`var ${name} = (?:append\\()?\\[\\]string\\{([^}]*)\\}`).exec(src)?.[1] ?? '').matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
+    const goLocked = goList(args, 'Locked');
+    const goPerms = [...goList(args, 'Permissions'), ...(/var Permissions = append\(\[\]string\{[^}]*\}, Locked\.\.\.\)/.test(args) ? goLocked : [])];
+    const allowedBlock = args.slice(args.indexOf('var allowed = map[string]map[string]bool{'), args.indexOf('\n}\n', args.indexOf('var allowed = map[string]map[string]bool{')));
+    const desired = body(enf.replace(/\n}\n/g, '\n  }\n'), 'func Desired(');
+    const orderList = [...(/var order = \[\]string\{([^}]*)\}/.exec(enf)?.[1] ?? '').matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
+    check('F1: no argument list, desired map or allowed value carries access-mode full; control is custom',
+      /"access-mode":\s+\{"view": true, "custom": true\},/.test(allowedBlock) && !/"full"/.test(stripGo(allowedBlock))
+        && /func refused\(key, value string\) bool \{\n\s*return key == "access-mode" && value == "full"\n\s*\}/.test(args)
+        && /if !isKey\(key\) \|\| refused\(key, value\) \{/.test(args) && /if !isKey\(key\) \|\| refused\(key, saved\) \|\| !restoreRE\.MatchString\(saved\) \{/.test(args)
+        && /access := "view"\n\s*if g\.Mode == "control" \{\n\s*access = "custom"\n\s*\}/.test(desired) && !/"full"/.test(stripGo(desired))
+        && (stripGo(enf + args).match(/"full"/g) ?? []).length === 2
+        && J([...managedTs.matchAll(/export const MANAGED_ACCESS_MODES = \[([^\]]*)\]/g)].map((m) => m[1])) === J(["'view', 'custom'"]),
+      'enforce/args.go allowed, refused, SetArgs, RestoreArgs; enforce.go Desired; managed.ts MANAGED_ACCESS_MODES');
+    check('F1: every RustDesk permission option is governed, set and read back; the six a grant cannot name are N on every grant',
+      J(goLocked) === J(LOCKED) && J(goPerms) === J(PERMS)
+        && LOCKED.every((k) => new RegExp(`"${k}":\\s+\\{"N": true\\},`).test(allowedBlock))
+        && /for _, k := range Locked \{\n\s*d\[k\] = "N"\n\s*\}\n\s*return d/.test(desired)
+        && PERMS.every((k) => orderList.includes(k)) && /var Keys = append\(append\(\[\]string\(nil\), msa\.Keys\.\.\.\), Locked\.\.\.\)/.test(args)
+        && /export const MANAGED_KEYS = \[\.\.\.PREFLIGHT_KEYS, \.\.\.LOCKED_KEYS\] as const;/.test(managedTs)
+        && J([...(/export const LOCKED_KEYS = \[([^\]]*)\]/.exec(managedTs)?.[1] ?? '').matchAll(/'([a-z-]+)'/g)].map((m) => m[1])) === J(LOCKED),
+      `Locked ${J(goLocked)}; Permissions ${J(goPerms)}`);
+    check('F1: Apply refuses a grant RustDesk would widen (Beyond) before it writes, and Effective is RustDesk\'s rule (full every permission, view none, else each key unless N)',
+      /if over := Beyond\(g, Desired\(g\)\); len\(over\) > 0 \{\n\s*_ = e\.EndSession\(ctx\)\n\s*return Outcome\{Code: ReadbackMismatch, Keys: over\}/.test(enf)
+        && enf.indexOf('Beyond(g, Desired(g))') < enf.indexOf('e.Set(ctx, Desired(g))')
+        && /case "full":\n\s*out\[k\] = true\n\s*case "view":\n\s*out\[k\] = false\n\s*default:\n\s*out\[k\] = values\[k\] != "N"/.test(args)
+        && /out\["enable-clipboard"\] = control && g\.Permissions\.Clipboard && Ceiling\.Permissions\.Clipboard/.test(enf)
+        && /out\["enable-file-transfer"\] = control && g\.Permissions\.Files && Ceiling\.Permissions\.Files/.test(enf)
+        && /out\["enable-audio"\] = control && g\.Permissions\.Audio && Ceiling\.Permissions\.Audio/.test(enf)
+        && !/out\["enable-(tunnel|remote-restart|terminal|camera|remote-printer|block-input|privacy-mode|record-session)"\] =/.test(enf),
+      'enforce.go Apply, Allowed; args.go Effective');
+    check('F1: the Go tests and the Windows lab hold it',
+      ['TestNoDesiredMapHoldsFull', 'TestEveryPermissionIsNamed', 'TestEffectiveIsExactlyWhatTheGrantAndCeilingAllow', 'TestNoCallCarriesFull', 'TestLockedReadbackMismatchRefused']
+        .every((t) => new RegExp(`func ${t}\\(`).test(read(`${goDir}/internal/msa/enforce/f1_test.go`)))
+        && /func labEffective\(/.test(read(`${goDir}/lab_enforce_windows_test.go`))
+        && (read(`${goDir}/lab_enforce_windows_test.go`).match(/labEffective\(ctx, e, &(g|cg)\)/g) ?? []).length === 2
+        && /"access-mode": "custom"/.test(read(`${goDir}/lab_enforce_windows_test.go`)),
+      'internal/msa/enforce/f1_test.go; lab_enforce_windows_test.go');
+  }
+
   // The agent.
   const execs = [...stripGo(win).matchAll(/exec\.\w+\(/g)];
   const run = win.slice(win.indexOf('func (r enforceRunner) Run('), win.indexOf('// ── the portal'));
@@ -6853,7 +6908,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /"verification-method":\s+\{"use-permanent-password": true\},/.test(args) && /"allow-auto-disconnect": \{"Y": true\},/.test(args)
       && /restoreRE = regexp\.MustCompile\(`\^\[A-Za-z0-9_\.:-\]\{0,64\}\$`\)/.test(args)
       && (stripGo(args).match(/\[\]string\{"--option"/g) ?? []).length === 5 && (stripGo(args).match(/\[\]string\{"--password"/g) ?? []).length === 1
-      && /var Keys = msa\.Keys/.test(args),
+      && /var Keys = append\(append\(\[\]string\(nil\), msa\.Keys\.\.\.\), Locked\.\.\.\)/.test(args),
     'internal/msa/enforce/args.go');
   const handle = pol.slice(pol.indexOf('func (p *Poller) handle('), pol.indexOf('func (p *Poller) pruneSeen('));
   check('each grant: keys from the signed chain only, verified, the signed pause, the replay set written, the settings saved, before anything changes',

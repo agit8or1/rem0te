@@ -405,11 +405,16 @@ async function all() {
   r = await req('POST', `/msa/grants/test/${A1.id}`, { s: SAd, body: {} });
   const g2 = r.data;
   await poll(A1, { ack: [g2?.grantId] });
-  r = await report(A1, { event: 'failed', grantId: g2?.grantId, outcome: 'readback_mismatch', keys: ['approve-mode'] });
+  // 0.78.1 (F1): a locked permission (terminal) that did not read back N is
+  // a key the portal and 0098's CHECK accept.
+  r = await report(A1, { event: 'failed', grantId: g2?.grantId, outcome: 'readback_mismatch', keys: ['approve-mode', 'enable-terminal'] });
   g = await prisma.msaGrant.findUnique({ where: { id: g2.grantId } });
   row = await managedRow(A1);
-  check(ok(r) && g.state === 'failed' && g.outcome === 'readback_mismatch' && J(g.failedKeys) === J(['approve-mode']) && row.failReason === 'readback_mismatch',
-    'a test grant whose readback disagreed: failed, keys recorded, still an enforcement failure', msg(r));
+  check(ok(r) && g.state === 'failed' && g.outcome === 'readback_mismatch' && J(g.failedKeys) === J(['approve-mode', 'enable-terminal']) && row.failReason === 'readback_mismatch'
+    && J(row.failedKeys) === J(['approve-mode', 'enable-terminal']),
+    'a test grant whose readback disagreed (a locked permission included): failed, keys recorded, still an enforcement failure', msg(r));
+  r = await report(A1, { event: 'drift', keys: ['enable-file-copy-paste'] });
+  check(r.status === 400, 'a key outside the managed list (enable-file-copy-paste, a technician-side toggle) is refused', msg(r));
   r = await req('POST', `/msa/grants/test/${A1.id}`, { s: SAd, body: {} });
   const g3 = r.data;
   await poll(A1, { ack: [g3?.grantId] });
@@ -473,6 +478,8 @@ async function all() {
   check(await tryIns({ endpointId: A4.id, state: 'rollback_pending' }), 'rolling back without who asked is refused (CHECK)');
   check(await tryIns({ endpointId: A4.id, state: 'enforcement_failure', failedAt: new Date(), failReason: 'Free text!' }), 'a free-text failure reason is refused (CHECK)');
   check(await tryIns({ endpointId: A4.id, state: 'pending', failedKeys: ['custom-rendezvous-server'] }), 'an unknown key is refused (CHECK)');
+  check(!(await tryIns({ endpointId: A4.id, state: 'pending', failedKeys: ['enable-terminal', 'enable-camera', 'enable-remote-printer', 'enable-block-input', 'enable-privacy-mode', 'enable-record-session'] })),
+    'the six locked permissions are keys the CHECK accepts (0098)');
 
   section('Switch off with a verified row: nothing new happens, and nothing weaker either');
   await prisma.msaManagedComputer.create({ data: { endpointId: A4.id, state: 'verified', requestedById: admin.id, verifiedAt: new Date(), verifiedById: admin.id } });

@@ -73,10 +73,15 @@ side drops or refuses it, whatever the technician's client does.
 | Control | Enforced by the computer? | How | Notes |
 |---|---|---|---|
 | View-only | **Yes** | `access-mode=view` | Flutter builds (Windows since 1.2); Sciter builds ignore it |
+| `access-mode` itself | — | `view`, `full`, anything else | Flutter builds: `view` is every permission **off** and `full` every permission **on**, before any `enable-*` key is read; anything else (`custom`, or unset, which RustDesk's own settings page writes for *Custom*) reads each key (`Connection::permission` in 1.4.1–1.4.6, `is_permission_enabled_locally` from 1.4.7). The agent writes `view` or `custom`, never `full` (0.78.1, F1) |
 | Keyboard and mouse | **Yes** | `enable-keyboard=N` | events dropped |
 | Clipboard | **Yes** | `enable-clipboard=N` | |
 | File transfer | **Yes** | `enable-file-transfer=N` | login refused; files via clipboard on Windows **unverified** |
-| Audio, tunnels, remote restart, block input, privacy mode | **Yes** | `enable-*` keys | |
+| Audio, tunnels, remote restart, block input, recording | **Yes** | `enable-*` keys | an `enable-*` key that is unset, or anything but `N`, is **on** (hbb_common `option2bool`) |
+| Terminal, camera, remote printer | **Yes** | `enable-terminal`, `enable-camera`, `enable-remote-printer` | present in every supported release (1.4.1–1.5.3) |
+| Privacy mode | **From 1.4.7** | `enable-privacy-mode` | 1.4.1–1.4.6 have no such permission: there privacy mode is refused only when unsupported. The agent writes `N` on every release; before 1.4.7 RustDesk stores it and ignores it |
+| Permission changes in the accept window | **No** (not settable) | `enable-perm-change-in-accept-window` | a *built-in* option (custom clients only), so the person at the computer can widen keyboard, clipboard, audio, file, restart, recording, block-input and privacy mode for their own session |
+| Server-sent permissions | — | `ControlPermissions` (1.4.9+) | only RustDesk Server Pro sends them, and they override the local keys; Rem0te's open-source hbbs never does |
 | Consent (Accept / Dismiss) | **Yes**, and no password bypasses it | `approve-mode=click` | prompt waits for a signed-in user: not usable unattended at the logon screen |
 | Which password works | **Yes** | `verification-method=use-permanent-password` | |
 | Idle disconnect | **Yes** | `allow-auto-disconnect=Y`, `auto-disconnect-timeout` | idle, not a maximum |
@@ -152,9 +157,12 @@ portal issues a **session grant**: a small JSON document signed with Ed25519
 ### 3.3 What the agent does with a grant
 
 1. Sets, through RustDesk's CLI as SYSTEM: `verification-method=use-permanent-password`;
-   `access-mode` and `enable-keyboard / -clipboard / -file-transfer / -audio /
-   -tunnel / -remote-restart` from the grant; `approve-mode=click` when consent
-   is required, else `password`; `allow-auto-disconnect` with the idle limit.
+   `access-mode` (`view`, or `custom` for control — never `full`) and
+   `enable-keyboard / -clipboard / -file-transfer / -audio / -tunnel /
+   -remote-restart` from the grant; from 0.78.1 `enable-terminal / -camera /
+   -remote-printer / -block-input / -privacy-mode / -record-session` as `N` on
+   every grant; `approve-mode=click` when consent is required, else
+   `password`; `allow-auto-disconnect` with the idle limit.
 2. Sets the permanent password to the grant's one-time password.
 3. **Reads every value back** and reports *applied* or *enforcement failure*.
    On failure the grant is refused and the portal says so; nothing weaker is
@@ -539,21 +547,45 @@ other hosts on the customer's network and a remote restart breaks the
 session's own enforcement window; neither has a control in Rem0te, so
 neither is offered. Widening the ceiling is a signed agent release.
 
-> **Correction (0.76.1): the grant says this, RustDesk does not enforce it yet.** For a control grant the agent
-> writes `access-mode=full`. In RustDesk's Flutter builds (every official Windows build), `full` turns **every**
-> permission on before any `enable-*` key is read (`Connection::is_permission_enabled_locally` in 1.5.3,
-> `Connection::permission` in 1.4.4). So in control mode:
+> **Correction (0.76.1), fixed in 0.78.1: agents 0.73.0–0.78.0 did not enforce this.** For a control grant
+> those agents wrote `access-mode=full`. In RustDesk's Flutter builds (every official Windows build), `full`
+> turns **every** permission on before any `enable-*` key is read (`Connection::is_permission_enabled_locally`
+> in 1.4.7–1.5.3, `Connection::permission` in 1.4.1–1.4.6). So in control mode clipboard off, file transfer
+> off, no tunnel and no remote restart were written and read back but not enforced, and RustDesk's terminal
+> (1.4.1+, SYSTEM with an administrator's credentials), camera, remote printer, block-input, privacy mode and
+> recording were on, because the agent never wrote their keys. View-only grants were unaffected, and no
+> production computer was exposed: `MSA_GRANTS` is off. Finding F1 in
+> [session-maintenance-mdm-backup-audit.md](session-maintenance-mdm-backup-audit.md#f1-a-control-grant-turns-every-permission-on).
 >
-> - clipboard off, file transfer off, no tunnel and no remote restart are written and read back, but not
->   enforced;
-> - RustDesk's terminal (1.4.1+, SYSTEM with an administrator's credentials), camera, remote printer,
->   block-input, privacy mode and recording are on, because the agent never writes their keys.
+> **What 0.78.1's signed agent does** (roadmap 1.1):
 >
-> View-only grants are unaffected. No production computer is exposed: `MSA_GRANTS` is off. The fix is
-> `access-mode=custom` and those six keys written as `N` on every grant: finding F1 in
-> [session-maintenance-mdm-backup-audit.md](session-maintenance-mdm-backup-audit.md#f1-a-control-grant-turns-every-permission-on),
-> and the first pull request of its Phase 1. The lab's `TestLabRustdeskEnforce` proves readback, not behaviour,
-> which is why it did not catch this.
+> - **Control is `access-mode=custom`**, which makes RustDesk read each `enable-*` key. `full` is refused by
+>   every argument builder (`args.go`), including a rollback: a computer that had `full` before cutover gets
+>   RustDesk's default (*Custom*, unset) back, with each `enable-*` key restored as it was.
+> - **Every grant, view and control alike, sets `enable-terminal`, `enable-camera`, `enable-remote-printer`,
+>   `enable-block-input`, `enable-privacy-mode` and `enable-record-session` to `N`** and reads each back. A
+>   readback that disagrees refuses the grant (`readback_mismatch`, naming the key) and ends the session with
+>   a password nobody is told. Those are all of RustDesk's permission options in 1.4.1–1.5.3, with the six a
+>   grant governs. The names are the same in every supported release; `enable-privacy-mode` is honoured only
+>   from **1.4.7**, so on 1.4.1–1.4.6 a control session can still turn privacy mode on where Windows supports it.
+> - **Before it writes anything**, the agent evaluates RustDesk's own rule (`enforce.Effective`, a port of
+>   `is_permission_enabled_locally` and `option2bool`) over the values it is about to set, and refuses the grant
+>   if RustDesk would allow anything the grant and the ceiling do not.
+> - A computer cut over by an older agent is brought forward: the agent adds the six keys' current values to
+>   the settings it saved before cutover (it never changed them), and treats a remembered `full` as `custom`, so
+>   the hourly readback corrects it.
+>
+> **What is still not enforced by RustDesk:** the person at the computer can change permissions in RustDesk's
+> accept window (`enable-perm-change-in-accept-window` is a built-in option only a custom client can set), and
+> RustDesk Server Pro could override the local keys (`ControlPermissions`), which Rem0te's hbbs never sends.
+>
+> **Evidence.** Go unit tests (every mode × every permission combination: no `full`, effective permissions
+> exactly the grant's), and the Windows lab: after apply, `access-mode` reads `view` or `custom`, every one of
+> the twelve permission options reads back as set, and RustDesk's rule over what RustDesk reports grants
+> exactly the grant's permissions, as the administrator and as SYSTEM on RustDesk 1.4.1, 1.4.6, 1.4.7, 1.4.9
+> and 1.5.3. **That effective state is derived, not observed:** RustDesk 1.4.1–1.5.3 has no command line or
+> documented interface that answers what a connection would be allowed, and the lab has no second RustDesk
+> that can log in headless, so no connection was made. It has not run on a desktop or the fleet.
 
 **Revocation.** A signed revocation, Ed25519 under the same grant key with
 its own prefix (`rem0te-msa-revoke-v1\n`), so a grant signature can never be

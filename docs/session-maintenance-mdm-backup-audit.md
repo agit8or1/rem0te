@@ -26,8 +26,8 @@ it. Owner decisions continue that page's numbering: its seven are **decisions 1�
 > off, file transfer off, **no TCP tunnel and no remote restart are not enforced**, and RustDesk's terminal,
 > camera, remote printer, block-input, privacy-mode and recording permissions are on. View-only grants are not
 > affected. All of it is behind `MSA_GRANTS`, which is off on every production server, so no live computer is
-> exposed. Details and the fix are under [F1](#f1-a-control-grant-turns-every-permission-on); it is the first
-> pull request of Phase 1.
+> exposed. Details and the fix are under [F1](#f1-a-control-grant-turns-every-permission-on). **Fixed in 0.78.1**
+> (roadmap 1.1), which needs the 0.78.1 signed agent published.
 
 ## How to read this page
 
@@ -90,10 +90,10 @@ What Rem0te controls today, per mode:
 
 | Control | Legacy | Managed view | Managed control | Quick Connect |
 |---|---|---|---|---|
-| Clipboard | Nothing sets it: RustDesk default (on). Business and preset policy `clipboard: off \| request` is saved and enforced by **nothing** (`security-features.ts`, `clipboard`: *unavailable*) | Off (`access-mode=view`) | **Intended** per policy (`connect-terms.ts`); **not enforced** (F1) | RustDesk default |
-| File transfer | As clipboard | Off | **Intended** per policy; **not enforced** (F1) | RustDesk default |
-| Terminal, camera, remote printer | On (RustDesk default) | Off | **On** (F1) | RustDesk default |
-| TCP tunnel, remote restart | On (RustDesk default) | Off | **On**, despite `enable-tunnel=N` and `enable-remote-restart=N` being written and read back (F1) | RustDesk default |
+| Clipboard | Nothing sets it: RustDesk default (on). Business and preset policy `clipboard: off \| request` is saved and enforced by **nothing** (`security-features.ts`, `clipboard`: *unavailable*) | Off (`access-mode=view`) | Per policy (`connect-terms.ts`); enforced from the 0.78.1 agent (`access-mode=custom`); **not enforced** by agents 0.73.0–0.78.0 (F1) | RustDesk default |
+| File transfer | As clipboard | Off | As clipboard: enforced from 0.78.1, not before (F1) | RustDesk default |
+| Terminal, camera, remote printer | On (RustDesk default) | Off | Off from 0.78.1 (`N` on every grant); **on** under agents 0.73.0–0.78.0 (F1) | RustDesk default |
+| TCP tunnel, remote restart | On (RustDesk default) | Off | Off from 0.78.1; **on** under agents 0.73.0–0.78.0, despite `enable-tunnel=N` and `enable-remote-restart=N` being written and read back (F1) | RustDesk default |
 | Consent | Refused for preset technicians (`endpoint_cannot_enforce_consent`) | `approve-mode=click` when required | Same | Person at the computer accepts |
 | Session length | Advisory (`security-features.ts`, `session-length`) | Agent ends it at `maxMinutes` (`stop-service`) | Same | Nothing |
 | Ending a session from the console | Not possible | Signed revocation → agent `stop-service` (§83) | Same | Not possible |
@@ -116,14 +116,18 @@ What Rem0te controls today, per mode:
   are written and read back. It never connects, so it cannot see what RustDesk does with them.
 - **Who is exposed.** Nobody in production: `MSA_GRANTS` is off, and no computer is Managed. View-only grants are
   correct (`view` turns everything off).
-- **The fix**, Phase 1's first pull request:
+- **Fixed in 0.78.1** (roadmap 1.1; [managed-secure-access.md](managed-secure-access.md) §3.12 has the
+  detail). The fix, as planned:
   1. Write `access-mode=custom` for control (documented value; anything but `full`/`view` reads the keys).
   2. Write `enable-terminal`, `enable-camera`, `enable-remote-printer`, `enable-block-input`,
      `enable-privacy-mode` and `enable-record-session` as `N` on every grant, and read them back.
   3. Add a Go test that no desired map ever holds `access-mode=full`.
   4. Give the lab a behavioural check, not only a readback.
 
-  It is a new signed agent build, inside the existing ceiling, so it reverses nothing.
+  It is a new signed agent build, inside the existing ceiling, so it reverses nothing. The lab check is
+  RustDesk's own rule evaluated over what RustDesk reports after apply; RustDesk has no interface that answers
+  what a connection would be allowed, and the lab cannot connect a second RustDesk, so it is not a connection.
+  `enable-privacy-mode` is honoured only from RustDesk 1.4.7, so on 1.4.1–1.4.6 privacy mode stays reachable.
 - **Docs that overstate it until then.** [managed-secure-access.md](managed-secure-access.md) §3.12 ("never a
   TCP tunnel or a remote restart") now carries a note pointing here.
 
@@ -133,7 +137,7 @@ When a business's policy asks for something the session mode cannot enforce, the
 opened weaker. Rem0te already does this for view-only and consent (`endpoint_cannot_enforce_view_only`,
 `endpoint_cannot_enforce_consent`). Applied to the directive:
 
-| Tenant requires | Legacy | Managed view | Managed control (after F1) | Quick Connect |
+| Tenant requires | Legacy | Managed view | Managed control (0.78.1 agent) | Quick Connect |
 |---|---|---|---|---|
 | Clipboard disabled | **Block** | Allowed | Allowed | **Block** |
 | Clipboard technician → endpoint only | **Block** | Allowed (stricter: none) | **Block**, or clipboard off (decision 9) | **Block** |
@@ -158,12 +162,12 @@ for members and Platform Admins apply none of it ([security-model.md](security-m
 | Per-tenant policy | `AccessPolicy.controls.clipboard` (`off` \| `request`), platform and business, merged most-restrictive (`presets.ts` `mergeControls`) | Portal saves it; **nothing** applies it on Legacy | **available** as a setting; enforced only in Managed | — | API (`e2e-presets.mjs`) |
 | Per-role policy | Preset `clipboard: off \| allowed` (L1–L3, `presets.ts`) | As above | **available** as a setting | — | API |
 | Per-session-mode policy | None. One value covers every mode | — | **planned** | — | None |
-| Disabled | Managed view: off. Managed control: intended, not enforced (F1) | RustDesk (controlled side), set by the signed agent | **requires setup** (Managed view); **planned** (Managed control, F1); **unsupported** on Legacy and Quick Connect | Windows, signed agent ≥ 0.73.0, RustDesk 1.4.1–1.5.3 Flutter | Lab (readback only, Server) |
+| Disabled | Managed view: off. Managed control: off when the policy says so, from 0.78.1 (F1) | RustDesk (controlled side), set by the signed agent | **requires setup** (Managed view; Managed control with the 0.78.1 agent); **unsupported** on Legacy and Quick Connect | Windows, signed agent ≥ 0.78.1 for control, RustDesk 1.4.1–1.5.3 Flutter | Lab (readback and effective state by RustDesk's rule, Server) |
 | Technician → endpoint only | — | Nothing | **unsupported** (stock RustDesk). A custom client cannot do it either | — | Source |
 | Endpoint → technician only | — | Custom client only (`one-way-clipboard-redirection`, ≥ 1.3.1) | **unsupported** with the RustDesk Rem0te installs (decision 10) | — | Source; RustDesk docs |
-| Bidirectional | Managed control with `clipboard: request` (after F1); Legacy by default | RustDesk | **requires setup** (Managed); Legacy: on, uncontrolled | As above | Lab (readback) |
+| Bidirectional | Managed control with `clipboard: request` (0.78.1 agent); Legacy by default | RustDesk | **requires setup** (Managed); Legacy: on, uncontrolled | As above | Lab (readback) |
 | Effective policy visible to technicians | Settings → Security features lists clipboard as *unavailable*; the Connect dialog does not show what a session will allow | Portal | **planned** | — | None |
-| Enforced by transport or endpoint | Endpoint (RustDesk settings applied by the agent), Managed only | Signed agent + RustDesk | **requires setup** (after F1) | As above | Lab (readback) |
+| Enforced by transport or endpoint | Endpoint (RustDesk settings applied by the agent), Managed only | Signed agent + RustDesk | **requires setup** (0.78.1 agent) | As above | Lab (readback) |
 | Text vs file clipboard | File clipboard needs file transfer on; no separate switch on the controlled side | RustDesk | **unsupported** as a separate control; "text only" = file transfer off | — | Source |
 | Audit policy changes | `POLICY_*` audit on access-policy and preset changes (`policy-admin.service.ts`) | Portal | **available** | — | API |
 | Audit blocked attempts where observable | RustDesk does not tell the controlled side's agent about a refused clipboard event | Nothing | **unsupported** | — | Source |
@@ -174,14 +178,14 @@ for members and Platform Admins apply none of it ([security-model.md](security-m
 | Sub-item | Today | Enforcing component | State | Platforms, versions | Evidence |
 |---|---|---|---|---|---|
 | Upload and download permissions, separate | One `fileTransfer: off \| request` | RustDesk: one switch; signed agent for background transfer | **unsupported** in RustDesk sessions. **In progress** as background transfer (0.78.0 *Courier*, decided: decision 11) | — | Source |
-| Default disabled | Platform default `fileTransfer: 'off'` (`presets.ts`) | Portal, as a setting | **available** as a setting; enforced only on Managed after F1 | — | API |
+| Default disabled | Platform default `fileTransfer: 'off'` (`presets.ts`) | Portal, as a setting | **available** as a setting; enforced only on Managed, from the 0.78.1 agent | — | API |
 | Per-direction approval | — | Nothing in RustDesk | **unsupported** in sessions; separate upload and download permissions in *Courier* (in progress); per-transfer approval **planned** | — | Source |
 | Size limits | — | Nothing in RustDesk (only a built-in file count) | **unsupported** in sessions; **in progress** for background transfer (*Courier*) | — | Source |
 | Tenant file restrictions (types, paths) | — | Nothing in RustDesk | **unsupported** in sessions; **planned** in Design B (quarantine, B3) | — | Source |
 | Show direction, progress, cancel, failure | RustDesk's own windows show them on both sides; Rem0te shows nothing | RustDesk | **available** in RustDesk; **unsupported** in the console | Any | None |
 | Audit actor, endpoint, direction, filename, size, outcome | Not observable by the agent. RustDesk's API-server hook would give direction, names and sizes at start, never the outcome | Nothing today; portal for background transfer | **unsupported** in RustDesk sessions (outcome); **in progress** for background transfer (*Courier*) | — | Source |
 | Tenant-scoped access to that audit | Audit chain reads are scoped today (`audit-log`) | Portal | **available** for what is recorded | — | API |
-| Every transfer path honours policy | Paths into a computer during a session: file-transfer window, file clipboard, terminal (`type`/`copy con`), tunnel, remote printer. Under F1 none is closed in Managed control | RustDesk | **planned** (F1 closes file transfer, file clipboard, terminal, tunnel and printer together) | — | Source |
+| Every transfer path honours policy | Paths into a computer during a session: file-transfer window, file clipboard, terminal (`type`/`copy con`), tunnel, remote printer. Under agents 0.73.0–0.78.0 none was closed in Managed control (F1) | RustDesk | **requires setup** (Managed, 0.78.1 agent: file transfer and file clipboard per policy; terminal, tunnel and printer always off); **unsupported** on Legacy | — | Source |
 | Mark unsupported combinations and block the mode | Not done | Portal | **planned** (Phase 1, PR 1.3) | — | None |
 
 ### 3. Session elevation
@@ -197,7 +201,7 @@ for members and Platform Admins apply none of it ([security-model.md](security-m
 | Credentials never in chat, output, logs, recordings | No elevation credential exists. MSA passwords are sealed, never logged (§81–§83) | Portal, agent | **planned** for elevation; the MSA rule is the model | — | API (MSA) |
 | Support per platform and connection mode | Windows only; Linux and macOS agents act on nothing (§24, §32) | — | **unsupported** on Linux, macOS, Legacy and Quick Connect | — | — |
 | Show when an OS prompt needs local interaction | Not shown. A UAC prompt needs either the signed-in user's consent (if an admin) or typed admin credentials; RustDesk's terminal refuses at the logon screen | Portal (display) | **planned** | — | None |
-| **The ungoverned path that exists now** | RustDesk's terminal runs as SYSTEM when given an administrator's credentials, on Legacy computers and in Managed control (F1) | Nothing | **unsupported** to govern; F1 closes it on Managed; decision 8 for Legacy | RustDesk ≥ 1.4.1 | Source |
+| **The ungoverned path that exists now** | RustDesk's terminal runs as SYSTEM when given an administrator's credentials, on Legacy computers, and in Managed control under agents 0.73.0–0.78.0 (F1) | Nothing on Legacy; the signed agent on Managed | **unsupported** to govern on Legacy (decision 8: refuse where policy asks, roadmap 1.3); closed on Managed from 0.78.1 | RustDesk ≥ 1.4.1 | Source |
 
 ### 4. Maximum session length
 
@@ -552,24 +556,25 @@ Decisions **1–7** are the seven in [rmm-expansion-audit.md](rmm-expansion-audi
 6. an MSI/EXE catalog (conflict 9);
 7. widening §32 for macOS health reads (conflict 13).
 
-New:
+New. **On 2026-11-21 the owner accepted every recommendation for decisions 8–20** ("accept all recs"); each row
+says what was decided. 11, 14 and 14a had been decided earlier the same day.
 
-| # | Decision | Options | Recommendation |
+| # | Decision | Options | Decision (recommendation accepted) |
 |---|---|---|---|
-| 8 | **Legacy computers.** RustDesk's terminal (SYSTEM with admin credentials), tunnel, file transfer and clipboard are open to anyone with the permanent password, and the console's policy settings for them are enforced by nothing | (a) leave Legacy unchanged and say so on the Connect dialog; (b) the signed agent applies a hardening baseline on Legacy computers (`enable-terminal=N`, `enable-tunnel=N`), which breaks MSA's promise that a Legacy computer is untouched; (c) refuse a Legacy launch when the business's policy asks for a control Legacy cannot enforce | (c) now, the existing fail-closed pattern; (b) later as an opt-in per business |
-| 9 | **Combinations RustDesk cannot enforce** (one-way clipboard or files, size limits) in Managed control | (a) refuse the control session and offer view-only; (b) open it with the control turned fully off and tell the technician | (a) by default; (b) only where the business says "stricter is acceptable" |
-| 10 | **A custom RustDesk client** for one-way clipboard and upload-only files | (a) none; (b) RustDesk Server Pro's custom-client generator; (c) an own AGPL-3.0 build | (a). It still cannot do technician → endpoint only, download only or a byte limit |
-| 11 | **File transfer**: RustDesk's in-session transfer or a background transfer by the agent | (a) RustDesk on/off only; (b) background transfer with per-direction permissions, size limits and per-file audit (Design B's model), RustDesk's in-session transfer governed by the session policy | **Decided (owner, 2026-11-21): background transfer ships.** 0.78.0 *Courier*, in progress: separate upload and download permissions, `files.transfer` defaulting to `off` |
-| 12 | **RustDesk's API-server audit hook** (connection and file audit posted to `api-server`) | (a) no; (b) the portal as `api-server`, behind its own flag. The same channel carries RustDesk's sync, which applies pushed settings ([managed-secure-access.md](managed-secure-access.md) §3.5) | (a). Background transfer (decision 11) gives per-file audit without it |
-| 13 | **Elevation mechanism** (C2) | (a) none; (b) a temporary local administrator from a signed action; (c) an external privilege manager | (a) now. (b) after F1 and a threat model, Windows only, Managed only, with its own invariant section |
-| 14 | **Terminal** (C1, settling decision 4) | (a) none; (b) RustDesk's terminal as a grant permission (it cannot give least privilege: console user or SYSTEM); (c) a native agent terminal | **Decided (owner, 2026-11-21): (c)**, cmd and PowerShell, background, on enrolled Windows computers with the signed agent. 0.77.0 *Conduit*, in progress, runs the shell **as SYSTEM**, shown as such; run-as-user and least privilege planned. RustDesk's terminal is closed wherever Rem0te sets RustDesk (F1) |
+| 8 | **Legacy computers.** RustDesk's terminal (SYSTEM with admin credentials), tunnel, file transfer and clipboard are open to anyone with the permanent password, and the console's policy settings for them are enforced by nothing | (a) leave Legacy unchanged and say so on the Connect dialog; (b) the signed agent applies a hardening baseline on Legacy computers (`enable-terminal=N`, `enable-tunnel=N`), which breaks MSA's promise that a Legacy computer is untouched; (c) refuse a Legacy launch when the business's policy asks for a control Legacy cannot enforce | **Decided (owner, 2026-11-21): (c) now**, the existing fail-closed pattern; (b) later as an opt-in per business |
+| 9 | **Combinations RustDesk cannot enforce** (one-way clipboard or files, size limits) in Managed control | (a) refuse the control session and offer view-only; (b) open it with the control turned fully off and tell the technician | **Decided (owner, 2026-11-21): (a) by default**; (b) only where the business says "stricter is acceptable" |
+| 10 | **A custom RustDesk client** for one-way clipboard and upload-only files | (a) none; (b) RustDesk Server Pro's custom-client generator; (c) an own AGPL-3.0 build | **Decided (owner, 2026-11-21): (a)**, no custom client. It still could not do technician → endpoint only, download only or a byte limit |
+| 11 | **File transfer**: RustDesk's in-session transfer or a background transfer by the agent | (a) RustDesk on/off only; (b) background transfer with per-direction permissions, size limits and per-file audit (Design B's model), RustDesk's in-session transfer governed by the session policy | **Decided (owner, 2026-11-21): (b), background transfer ships.** Shipped in 0.78.0 *Courier*: separate upload and download permissions, `files.transfer` defaulting to `off` |
+| 12 | **RustDesk's API-server audit hook** (connection and file audit posted to `api-server`) | (a) no; (b) the portal as `api-server`, behind its own flag. The same channel carries RustDesk's sync, which applies pushed settings ([managed-secure-access.md](managed-secure-access.md) §3.5) | **Decided (owner, 2026-11-21): (a)**. Background transfer (decision 11) gives per-file audit without it |
+| 13 | **Elevation mechanism** (C2) | (a) none; (b) a temporary local administrator from a signed action; (c) an external privilege manager | **Decided (owner, 2026-11-21): (a) now**. (b) after F1 (fixed in 0.78.1) and a threat model (roadmap 1.8), Windows only, Managed only, with its own invariant section |
+| 14 | **Terminal** (C1, settling decision 4) | (a) none; (b) RustDesk's terminal as a grant permission (it cannot give least privilege: console user or SYSTEM); (c) a native agent terminal | **Decided (owner, 2026-11-21): (c)**, cmd and PowerShell, background, on enrolled Windows computers with the signed agent. Shipped in 0.77.0 *Conduit*, which runs the shell **as SYSTEM**, shown as such; run-as-user and least privilege planned. RustDesk's terminal is closed wherever Rem0te sets RustDesk (F1, 0.78.1) |
 | 14a | **How `terminal.open` asks** | (a) catalog default `off`; (b) default `ask`; (c) always ask | **Decided (owner, 2026-11-21): (b), default `ask`** ([reasoning](#decision-14a-how-terminalopen-asks)) |
-| 15 | **Chat without an agent**, for support-link customers | (a) none; (b) a browser chat bound to the support request's one-time link | (a). Quick Connect and the tray cover it |
-| 16 | **Approval for destructive MDM and backup actions** (C6) | (a) a confirm key, default off; (b) always-ask; (c) a second person approves, as temporary access does | (c) plus (b) |
-| 17 | **Providers on private networks** (C5) | (a) public DNS and TLS only; (b) an allow-listed private address; (c) push from the provider | (a), and (c) for St0r |
-| 18 | **First MDM implementation** | Native Apple, Android Management API, or a third-party provider's API | The interface and a stand-in first, then the owner's existing provider, read-only. Request Android quota early |
-| 19 | **First backup provider** | St0r (needs a read-only token added to St0r) or Comet (read-only token methods exist) | St0r, if the token is added; else Comet |
-| 20 | **Failover and failback** | (a) readiness only; (b) Rem0te orchestrates through Depl0y/Proxmox | (a) |
+| 15 | **Chat without an agent**, for support-link customers | (a) none; (b) a browser chat bound to the support request's one-time link | **Decided (owner, 2026-11-21): (a)**. Quick Connect and the tray cover it |
+| 16 | **Approval for destructive MDM and backup actions** (C6) | (a) a confirm key, default off; (b) always-ask; (c) a second person approves, as temporary access does | **Decided (owner, 2026-11-21): (c) plus (b)** |
+| 17 | **Providers on private networks** (C5) | (a) public DNS and TLS only; (b) an allow-listed private address; (c) push from the provider | **Decided (owner, 2026-11-21): (a)**, and (c) for St0r |
+| 18 | **First MDM implementation** | Native Apple, Android Management API, or a third-party provider's API | **Decided (owner, 2026-11-21): the interface and a stand-in first**, then the owner's existing provider, read-only. Request Android quota early |
+| 19 | **First backup provider** | St0r (needs a read-only token added to St0r) or Comet (read-only token methods exist) | **Decided (owner, 2026-11-21): St0r**, if the token is added; else Comet |
+| 20 | **Failover and failback** | (a) readiness only; (b) Rem0te orchestrates through Depl0y/Proxmox | **Decided (owner, 2026-11-21): (a)** |
 
 ## Roadmap
 
@@ -582,14 +587,14 @@ never ports 3000/3001. *Lab* is a `windows-latest` job, which is Windows Server 
 
 ### The owner's priority: background terminal and file transfer
 
-The owner's priority (2026-11-21), first in the sequence, ahead of every phase below. Both are in progress on
-separate branches. This page records them, and does not design them further than
+The owner's priority (2026-11-21), first in the sequence, ahead of every phase below. Both have shipped:
+0.77.0 *Conduit* and 0.78.0 *Courier*. This page records them, and does not design them further than
 [the design sketch](#the-terminal-and-file-transfer-design).
 
 | # | Pull request | Scope | Enforcing component | Tests | Evidence it can claim | State |
 |---|---|---|---|---|---|---|
-| T1 | **0.77.0 *Conduit*: background cmd/PowerShell terminal** | Windows, signed agent only. System32 `cmd.exe` and Windows PowerShell 5.1, **as SYSTEM, shown as such**; a fresh confirmation through `terminal.open` (default `ask`); the invariant reversals named above, under their own section | Signed agent + portal | Go unit; e2e on a scratch API; a Lab job (the shell starts, the process tree dies on expiry and disconnect) | Lab (Windows Server) at best; never a desktop or the fleet until run there | **In progress** |
-| T2 | **0.78.0 *Courier*: background file transfer** | To and from a computer, no screen session; separate upload and download permissions; `files.transfer` defaulting to `off` | Signed agent + portal | Go unit; e2e; Lab | Lab (Windows Server) at best | **In progress** |
+| T1 | **0.77.0 *Conduit*: background cmd/PowerShell terminal** | Windows, signed agent only. System32 `cmd.exe` and Windows PowerShell 5.1, **as SYSTEM, shown as such**; a fresh confirmation through `terminal.open` (default `ask`); the invariant reversals named above, under their own section | Signed agent + portal | Go unit; e2e on a scratch API; a Lab job (the shell starts, the process tree dies on expiry and disconnect) | Lab (Windows Server) at best; never a desktop or the fleet until run there | **Shipped (0.77.0)** |
+| T2 | **0.78.0 *Courier*: background file transfer** | To and from a computer, no screen session; separate upload and download permissions; `files.transfer` defaulting to `off` | Signed agent + portal | Go unit; e2e; Lab | Lab (Windows Server) at best | **Shipped (0.78.0)** |
 
 **Then**, as owner-directed follow-ups:
 - run-as the signed-in user and a least-privilege identity;
@@ -601,13 +606,13 @@ separate branches. This page records them, and does not design them further than
 
 | # | Pull request | Scope | Enforcing component | Tests | Evidence it can claim | Blocked |
 |---|---|---|---|---|---|---|
-| 1.1 | **F1: control grants enforce their permissions** (patch, signed agent build) | `access-mode=custom` for control; terminal, camera, remote printer, block-input, privacy-mode and recording `N` on every grant, read back; `args.go` refuses `full`; §82 extended; `security-features.ts` and managed-secure-access.md corrected | Signed agent + RustDesk | Go unit (no desired map holds `full`; every `enable-*` key named); `unit-msa-managed.mjs`; lab `TestLabRustdeskEnforce` readback, plus a loopback connection to a second RustDesk process if the lab can make one | Lab (readback, Server); behavioural only if the loopback works | — |
+| 1.1 | **F1: control grants enforce their permissions** (patch, signed agent build) | `access-mode=custom` for control; terminal, camera, remote printer, block-input, privacy-mode and recording `N` on every grant, read back; `args.go` refuses `full`; §82 extended; `security-features.ts` and managed-secure-access.md corrected | Signed agent + RustDesk | Go unit (no desired map holds `full`; every `enable-*` key named); `unit-msa-managed.mjs`; lab `TestLabRustdeskEnforce` readback, plus a loopback connection to a second RustDesk process if the lab can make one | Lab (readback and effective state by RustDesk's rule, Server); no connection: the lab cannot make one | **This release (0.78.1)** |
 | 1.2 | **Effective session policy, shown** | One pure module derives, per computer and mode, each control's state (available, requires setup, unsupported) and its enforcing component; shown on the Connect dialog and the device page; replaces the hand-written session entries in `security-features.ts` | Portal (display only) | Unit (every mode × control), e2e, `e2e-ui.mjs` | Unit, API | 1.1 |
-| 1.3 | **Fail closed on Legacy and Quick Connect** | Refuse a launch whose business asks for a control the mode cannot enforce, for every launch path, not only preset technicians | Portal | e2e (`e2e-presets.mjs` extended), unit | API | Decision 8 |
+| 1.3 | **Fail closed on Legacy and Quick Connect** | Refuse a launch whose business asks for a control the mode cannot enforce, for every launch path, not only preset technicians | Portal | e2e (`e2e-presets.mjs` extended), unit | API | — (decision 8 decided: (c)) |
 | 1.4 | **Session length: countdown and warning** | Console countdown from the grant's `maxMinutes`; a warning at 5 minutes; *hard termination: yes / no* per mode; optional tray notice | Portal; tray (agent build, if the notice) | e2e (`e2e-msa-sessions.mjs`), Go tray tests | API; Sim (tray) | `MSA_GRANTS` to use |
 | 1.5 | **Chat: retention per business, transcript permission, session link** | `retentionDays` per business (within today's bounds), shown to both sides; a `chat:transcripts` capability; `msaGrantId` on a chat | Portal + `/assist` page | `unit-chat.mjs`, `e2e-chat.mjs`, `e2e-tray.mjs`, `e2e-ui.mjs` | API | — |
-| 1.6 | **Direction-aware policy model** | `clipboard` and `fileTransfer` widen to `off`, `to_endpoint`, `from_endpoint`, `both`, plus file clipboard; unenforceable combinations refused or degraded; audit unchanged | Portal | Unit, e2e | API | Decision 9 |
-| 1.8 | **Elevation threat model** (docs) | The (b) design for decision 13: account creation, password handover, expiry and revocation on the agent offline, UAC on the secure desktop, what the person at the computer sees | — | — | — | Decision 13 |
+| 1.6 | **Direction-aware policy model** | `clipboard` and `fileTransfer` widen to `off`, `to_endpoint`, `from_endpoint`, `both`, plus file clipboard; unenforceable combinations refused or degraded; audit unchanged | Portal | Unit, e2e | API | — (decision 9 decided: (a)) |
+| 1.8 | **Elevation threat model** (docs) | The (b) design for decision 13: account creation, password handover, expiry and revocation on the agent offline, UAC on the secure desktop, what the person at the computer sees | — | — | — | — (decision 13 decided: (a) now; this is the docs for (b), and may proceed) |
 
 ### Phase 2: endpoint maintenance
 
@@ -623,9 +628,9 @@ separate branches. This page records them, and does not design them further than
 | # | Pull request | Scope | Enforcing component | Tests | Evidence | Blocked |
 |---|---|---|---|---|---|---|
 | 3.1 | **MDM data model and driver interface** | `MobileDevice` (ownership, compliance, provider ids), `MdmCommand` with separate `providerAcceptedAt` and `deviceCompletedAt` and the directive's states; an `MdmDriver` interface on the `PsaDriver` pattern; a loopback stand-in; read-only routes through `endpointVisibilityWhere`'s business scope | Portal | Unit, e2e against the stand-in | API (stand-in only) | — |
-| 3.2 | **First provider connector, read-only** | Enrollment state, inventory, ownership, compliance; credential sealed under its own secret-box purpose; `safe-https` only | External provider | Unit, e2e against a stand-in in the provider's shape | API (stand-in). Real only once the owner connects a tenant | Decisions 17 and 18; provider account |
+| 3.2 | **First provider connector, read-only** | Enrollment state, inventory, ownership, compliance; credential sealed under its own secret-box purpose; `safe-https` only | External provider | Unit, e2e against a stand-in in the provider's shape | API (stand-in). Real only once the owner connects a tenant | A provider account (decisions 17 and 18 decided) |
 | 3.3 | **Lost-device actions** | Lock, lost mode, locate; a separate capability; audited; accepted vs completed shown | Provider | e2e | API | 3.2 |
-| 3.4 | **Destructive actions** | Wipe, retire, work-profile removal; second-person approval | Provider | e2e | API | Decision 16 |
+| 3.4 | **Destructive actions** | Wipe, retire, work-profile removal; second-person approval | Provider | e2e | API | 3.2 (decision 16 decided) |
 
 ### Phase 4: backup, verified recovery, standby
 
@@ -633,16 +638,17 @@ separate branches. This page records them, and does not design them further than
 |---|---|---|---|---|---|---|
 | 4.1 | **Backup data model, driver interface, monitor kinds** | Protected assets, jobs, recovery points; completion, integrity and verified restore as three fields; `BACKUP_STALE`, `BACKUP_FAILED`, `DRILL_FAILED`, `RPO_EXCEEDED` as opt-in kinds; a loopback stand-in | Portal | Unit, e2e (`MONITOR_SWEEP` on, scratch only) | API (stand-in) | — |
 | 4.2 | **Service and event templates for backup agents** (the previous audit's P1 #7 first step) | `SERVICE_STOPPED` / `EVENT_MATCH` templates for the UrBackup client and the Comet agent on Windows | Signed or standard agent (existing monitors) | `unit-monitoring.mjs` | Unit; Fleet once applied | — |
-| 4.3 | **St0r connector, read-only** | Status, drills, runs, recovery-point age per customer, mapped to businesses and computers | External provider (St0r) | e2e against a stand-in from St0r's fixtures | API | A St0r-side token PR; decisions 17 and 19 |
-| 4.4 | **Comet connector, read-only** | Users, devices, protected items, jobs, job logs | External provider | e2e against a stand-in | API | Decision 19; a Comet server to go further |
-| 4.5 | **Restore drills from the console** | Trigger a St0r drill; audited; separate permission; simulated runs never verified | Provider | e2e | API | 4.3, decision 16 |
-| 4.6 | **Standby readiness** | Replication lag and last verified drill as readiness; no failover | Portal | e2e | API | Decision 20 |
+| 4.3 | **St0r connector, read-only** | Status, drills, runs, recovery-point age per customer, mapped to businesses and computers | External provider (St0r) | e2e against a stand-in from St0r's fixtures | API | The St0r-side read-only token (decisions 17 and 19 decided) |
+| 4.4 | **Comet connector, read-only** | Users, devices, protected items, jobs, job logs | External provider | e2e against a stand-in | API | A Comet server to go further (decision 19 decided: St0r first) |
+| 4.5 | **Restore drills from the console** | Trigger a St0r drill; audited; separate permission; simulated runs never verified | Provider | e2e | API | 4.3 (decision 16 decided) |
+| 4.6 | **Standby readiness** | Replication lag and last verified drill as readiness; no failover | Portal | e2e | API | — (decision 20 decided: (a)) |
 
 ### The first pull request of each phase
 
-- **First of all: T1 and T2**, the owner's priority, both in progress (0.77.0 *Conduit*, 0.78.0 *Courier*).
-- **Phase 1: 1.1**, the F1 fix. Small, inside the existing ceiling, and it closes RustDesk's terminal, tunnel and
-  restart on Managed computers before anyone turns `MSA_GRANTS` on.
+- **First of all: T1 and T2**, the owner's priority: shipped (0.77.0 *Conduit*, 0.78.0 *Courier*).
+- **Phase 1: 1.1**, the F1 fix: **0.78.1**. Small, inside the existing ceiling, and it closes RustDesk's terminal,
+  tunnel and restart on Managed computers before anyone turns `MSA_GRANTS` on. Next: 1.3 and 1.6 (unblocked by
+  decisions 8 and 9), and 1.8 as docs.
 - **Phase 2: 2.1**, rollback and repeatability per catalog action (the terminal itself is T1). Data and docs, no new surface. The library,
   bulk and `@2` items already have a place in the previous audit's sequence.
 - **Phase 3: 3.1**, the MDM model and driver interface against a stand-in. It needs no account.
@@ -651,13 +657,16 @@ separate branches. This page records them, and does not design them further than
 ## Corrections made in this release
 
 - **[managed-secure-access.md](managed-secure-access.md)** §3.12 says a control grant is "never a TCP tunnel or a
-  remote restart". True of the grant, not of RustDesk's behaviour (F1). A note now says so.
+  remote restart". True of the grant, not of RustDesk's behaviour (F1). A note now says so. In 0.78.1 the note
+  says what was fixed and how.
 
 Left for the implementing pull requests (they are console text in code, not docs):
 
 - **`security-features.ts`** (`clipboard`, `file-transfer`) says RustDesk applies clipboard and file transfer
   "on the technician's own client". It is the controlled side (`enable-clipboard`, `enable-file-transfer`) that
-  enforces them. The technician's client has its own toggles too, which only narrow. Fixed in 1.1 or 1.2.
+  enforces them. The technician's client has its own toggles too, which only narrow. **Fixed in 0.78.1 (1.1)**,
+  together with the same wording in `presets.ts`, `access-policy.service.ts` and the Technician Access policy
+  panel.
 
 ## GitHub
 

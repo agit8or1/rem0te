@@ -84,25 +84,26 @@ refuses too, so the two never fight over a computer.
 confirmation. It never carries update titles, error text, computer identifiers, user names, addresses or registry
 values.
 
-## Session controls, terminal, MDM and backup (0.76.1)
+## Session controls, terminal, MDM and backup (0.76.1, updated 0.78.1)
 
 These rows use four states: **available**, **requires setup**, **unsupported** and **planned**. Each one names
 the component that enforces it. The full audit, with sources and evidence, is
 [session-maintenance-mdm-backup-audit.md](session-maintenance-mdm-backup-audit.md). *Legacy* is today's Connect
 on every production computer. *Managed* is a computer moved into Managed Secure Access, which needs
-`MSA_GRANTS=on` (off everywhere in production) and the signed Windows agent.
+`MSA_GRANTS=on` (off everywhere in production) and the signed Windows agent. The owner accepted every
+recommendation for the audit's decisions 8–20 on 2026-11-21.
 
 | Capability | Legacy | Managed | Enforced by | Evidence |
 |---|---|---|---|---|
-| Clipboard off | **unsupported** (RustDesk default, on) | **requires setup** in view; **planned** in control (finding F1: `access-mode=full` overrides it) | RustDesk on the computer, set by the agent | Lab (readback only, Windows Server) |
+| Clipboard off | **unsupported** (RustDesk default, on) | **requires setup**: in view always off; in control off per policy with the **0.78.1** agent (`access-mode=custom`; agents 0.73.0–0.78.0 set `full`, which overrode it: finding F1) | RustDesk on the computer, set by the agent | Lab (readback, and the effective state by RustDesk's own rule; Windows Server; no connection made) |
 | Clipboard one way (either direction) | **unsupported** | **unsupported**. Stock RustDesk has no setting; a custom client can block only "computer → technician" | — | RustDesk source |
 | Text clipboard without file clipboard | **unsupported** | Only by turning file transfer off | RustDesk | RustDesk source |
-| In-session file transfer off | **unsupported** | **requires setup** in view; **planned** in control (F1) | RustDesk | Lab (readback) |
+| In-session file transfer off | **unsupported** | **requires setup**: in view always; in control per policy with the 0.78.1 agent (F1) | RustDesk | Lab (readback and effective state by RustDesk's rule) |
 | In-session upload / download separately, size limits | **unsupported** | **unsupported** | — | RustDesk source |
-| Background file transfer, separate upload and download, size limits, per-file audit | **planned**: 0.78.0 *Courier*, in progress (owner decision 2026-11-21) | Same | Signed agent + portal | None yet |
-| Background terminal (cmd, Windows PowerShell) | **planned**: 0.77.0 *Conduit*, in progress, as SYSTEM, with a fresh confirmation (`terminal.open`, default ask) | Same | Signed agent + portal | None yet |
-| RustDesk's own terminal (1.4.1+) | **On by default and ungoverned**: anyone with the permanent password; SYSTEM with an administrator's credentials | **planned** to be closed (F1) | — | RustDesk source |
-| Session elevation | **unsupported** (refused: `elevation_unavailable`) | **unsupported**; **planned** only after decision 13 | Portal (refuses) | API |
+| Background file transfer, separate upload and download, size limits, per-file audit | **requires setup**: shipped in 0.78.0 *Courier* (owner decision 2026-11-21); the 0.78 signed agent and `files.transfer` | Same | Signed agent + portal | See [file-transfer.md](file-transfer.md) |
+| Background terminal (cmd, Windows PowerShell) | **requires setup**: shipped in 0.77.0 *Conduit*, as SYSTEM, with a fresh confirmation (`terminal.open`, default ask) | Same | Signed agent + portal | See [remote-terminal.md](remote-terminal.md) |
+| RustDesk's own terminal (1.4.1+) | **On by default and ungoverned**: anyone with the permanent password; SYSTEM with an administrator's credentials | **Closed** (`enable-terminal=N` on every grant) with the **0.78.1** agent; open under 0.73.0–0.78.0 (F1). Camera, remote printer, block-input, privacy mode (RustDesk ≥ 1.4.7) and recording likewise | Signed agent + RustDesk | Unit; Lab (readback and effective state by RustDesk's rule) |
+| Session elevation | **unsupported** (refused: `elevation_unavailable`) | **unsupported**; decision 13 (owner, 2026-11-21): none now, a temporary local administrator only after a threat model (roadmap 1.8) | Portal (refuses) | API |
 | Maximum session length | **unsupported** (advisory) | **requires setup**: the agent ends it at `maxMinutes` | Signed agent + RustDesk (`stop-service`) | Lab (termination, Windows Server); Unit |
 | Ending a session from the console | **unsupported** | **requires setup** (signed revocation) | Signed agent | API; Unit |
 | Customer chat (Windows tray) | **available** | **available** | Portal + tray | Fleet (observed); API |
