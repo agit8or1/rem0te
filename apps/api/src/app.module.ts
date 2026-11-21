@@ -68,6 +68,8 @@ import { AgentAutoMigrationModule } from './agent-auto-migration/agent-auto-migr
 import { MsaModule } from './msa/msa.module';
 import { MsaGrantsModule } from './msa/msa-grants.module';
 import { RemoteOpsModule } from './remote-ops/remote-ops.module';
+// 0.80 Tablet: mobile devices through an MDM provider (read-only, §90).
+import { MdmModule } from './mdm/mdm.module';
 import { SupportRequestsModule } from './support-requests/support-requests.module';
 import { OffboardingModule } from './offboarding/offboarding.module';
 import { SsoModule } from './sso/sso.module';
@@ -163,6 +165,7 @@ import { TrayModule } from './tray/tray.module';
     MsaModule,
     MsaGrantsModule,
     RemoteOpsModule,
+    MdmModule,
     DeviceViewsModule,
     AdoptionModule,
     SupportRequestsModule,

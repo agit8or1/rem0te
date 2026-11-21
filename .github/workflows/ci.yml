@@ -425,6 +425,14 @@ jobs:
       - name: File transfer tests
         run: node apps/api/scripts/unit-files.mjs
 
+      # Mobile devices (0.80): the MDM command state machine (provider
+      # acceptance is not device completion), the provider record schemas
+      # (closed lists, no IMEI, no BYOD serial), the closed lists against
+      # 0096's CHECKs, the stand-in test-only and loopback-only, and
+      # mobile:view off by default.
+      - name: Mobile device (MDM) tests
+        run: node apps/api/scripts/unit-mdm.mjs
+
       # Agit8or Identity P0 (0.59): the decisions made from an identity
       # provider's claims (levels from acr corroborated by amr, the
       # organization gate, Platform Admin, step-up freshness, back-channel

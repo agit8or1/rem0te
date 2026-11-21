@@ -784,6 +784,8 @@ model Customer {
 
   /// 0.77: terminal (and, from 0.78, file transfer) settings; no row = the defaults.
   remoteOpsSetting RemoteOpsSetting?
+  /// 0.80: mobile-device providers connected for this business (read-only, §90).
+  mdmConnectors    MdmConnector[]
 }
 
 model Site {
@@ -5221,4 +5223,106 @@ model RemoteOpsSetting {
   fileMaxMb           Int      @default(100)
   updatedAt           DateTime @updatedAt
   updatedById         String?
+}
+
+// ── Mobile devices (0.80 Tablet, roadmap 3.1; docs/mobile-devices.md, §90) ──
+// iOS, iPadOS and Android, read from an external MDM provider. Read-only:
+// nothing here can be sent to a device in 0.80. Only MdmSyncService writes
+// these tables, and nothing in the API creates an MdmConnector yet.
+
+/// A business's connection to one MDM provider. 0.80 has only the loopback stand-in.
+model MdmConnector {
+  id               String         @id @default(cuid())
+  tenantId         String
+  customerId       String
+  customer         Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// standin (0096 CHECK; model.ts PROVIDERS).
+  provider         String
+  /// The provider's own tenant / enterprise id ([A-Za-z0-9._-]{1,64}).
+  externalTenantId String
+  enabled          Boolean        @default(false)
+  /// A sync holds the connector while it runs (claimed conditionally).
+  syncStartedAt    DateTime?
+  lastSyncAt       DateTime?
+  /// ok | partial | not_ready | paused | unreachable | bad_response | refused (0096 CHECK).
+  lastSyncResult   String?
+  lastSyncDevices  Int?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  devices          MobileDevice[]
+
+  @@unique([customerId, provider])
+}
+
+/// A phone or tablet as its provider reports it.
+model MobileDevice {
+  id                String       @id @default(cuid())
+  tenantId          String
+  customerId        String
+  connectorId       String
+  connector         MdmConnector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+  provider          String
+  providerDeviceId  String
+  name              String?
+  /// ios | ipados | android
+  platform          String
+  /// corporate | byod
+  ownership         String
+  /// device | work_profile (Android) | user_enrollment (Apple)
+  managementScope   String
+  /// pending | enrolled | unenrolled | not_reported
+  enrollmentState   String
+  enrolledAt        DateTime?
+  /// compliant | noncompliant | in_grace_period | not_evaluated | unknown
+  complianceState   String
+  complianceReason  String?
+  model             String?
+  manufacturer      String?
+  osVersion         String?
+  /// Corporate devices only (0096 CHECK). Never an IMEI: see mdm/schemas.ts.
+  serialNumber      String?
+  storageTotalBytes BigInt?
+  storageFreeBytes  BigInt?
+  lastCheckInAt     DateTime?
+  firstSeenAt       DateTime     @default(now())
+  lastSyncedAt      DateTime     @default(now())
+  /// Set when a complete sync stopped returning the device.
+  notReportedSince  DateTime?
+  commands          MdmCommand[]
+
+  @@unique([connectorId, providerDeviceId])
+  @@index([customerId, platform])
+}
+
+/// A command for a mobile device. Provider acceptance and device completion are separate facts.
+model MdmCommand {
+  id                 String       @id @default(cuid())
+  tenantId           String
+  customerId         String
+  mobileDeviceId     String
+  mobileDevice       MobileDevice @relation(fields: [mobileDeviceId], references: [id], onDelete: Cascade)
+  connectorId        String
+  providerCommandId  String?
+  /// sync | lock | locate | lost_mode_start | lost_mode_stop | retire | remove_managed_data | wipe
+  kind               String
+  /// portal | provider
+  origin             String
+  /// queued | sent | acknowledged | completed | failed | expired (command-state.ts)
+  state              String
+  requestedById      String?
+  requestedAt        DateTime
+  sentAt             DateTime?
+  /// The provider took the command. NOT the device doing it.
+  providerAcceptedAt DateTime?
+  /// The device reported it done. Only after providerAcceptedAt.
+  deviceCompletedAt  DateTime?
+  failedAt           DateTime?
+  failureCode        String?
+  expiresAt          DateTime?
+  expiredAt          DateTime?
+  updatedAt          DateTime     @updatedAt
+
+  @@unique([connectorId, providerCommandId])
+  @@index([mobileDeviceId, requestedAt])
+  @@index([state, expiresAt])
 }

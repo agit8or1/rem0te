@@ -337,8 +337,8 @@ vendor certificate and a yearly renewal per customer, and the host cannot prove 
 | Enrollment and inventory first, then compliance and lost-device actions | — | Roadmap order below | — |
 | Work-profile or managed-data removal (BYOD) | Provider | **planned** | Decision 16 |
 | Separate permissions and approval for destructive actions | Portal | **planned** | Decision 16 |
-| States queued, sent, acknowledged, completed, failed, expired | Portal, from provider states | **planned** | — |
-| Provider acceptance ≠ device completion | Portal | **planned** (a separate `providerAcceptedAt` and `deviceCompletedAt`) | — |
+| States queued, sent, acknowledged, completed, failed, expired | Portal, from provider states | **requires setup** (0.80: a pure state machine and 0096 CHECKs; a stand-in only) | A provider (3.2) |
+| Provider acceptance ≠ device completion | Portal | **requires setup** (0.80: separate `providerAcceptedAt` and `deviceCompletedAt`, shown side by side) | A provider (3.2) |
 | Platforms | iOS/iPadOS and Android only through a provider; never through the Rem0te agent | — | — |
 
 ## Phase 4: backup, verified recovery and standby
@@ -622,7 +622,7 @@ separate branches. This page records them, and does not design them further than
 
 | # | Pull request | Scope | Enforcing component | Tests | Evidence | Blocked |
 |---|---|---|---|---|---|---|
-| 3.1 | **MDM data model and driver interface** | `MobileDevice` (ownership, compliance, provider ids), `MdmCommand` with separate `providerAcceptedAt` and `deviceCompletedAt` and the directive's states; an `MdmDriver` interface on the `PsaDriver` pattern; a loopback stand-in; read-only routes through `endpointVisibilityWhere`'s business scope | Portal | Unit, e2e against the stand-in | API (stand-in only) | — |
+| 3.1 | **MDM data model and driver interface** (**built: 0.80.0 *Tablet***, [mobile-devices.md](mobile-devices.md)) | `MobileDevice` (ownership, compliance, provider ids), `MdmCommand` with separate `providerAcceptedAt` and `deviceCompletedAt` and the directive's states; an `MdmDriver` interface on the `PsaDriver` pattern; a loopback stand-in; read-only routes through `endpointVisibilityWhere`'s business scope | Portal | Unit, e2e against the stand-in | API (stand-in only) | — |
 | 3.2 | **First provider connector, read-only** | Enrollment state, inventory, ownership, compliance; credential sealed under its own secret-box purpose; `safe-https` only | External provider | Unit, e2e against a stand-in in the provider's shape | API (stand-in). Real only once the owner connects a tenant | Decisions 17 and 18; provider account |
 | 3.3 | **Lost-device actions** | Lock, lost mode, locate; a separate capability; audited; accepted vs completed shown | Provider | e2e | API | 3.2 |
 | 3.4 | **Destructive actions** | Wipe, retire, work-profile removal; second-person approval | Provider | e2e | API | Decision 16 |

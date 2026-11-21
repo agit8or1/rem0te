@@ -1045,6 +1045,40 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'mobile-devices',
+    title: 'Mobile Devices (MDM)',
+    content: (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          From 0.80, <Link href="/mobile-devices" className="underline text-foreground">Devices → Mobile devices</Link> shows
+          iPhones, iPads and Android devices as a mobile-device-management (MDM) provider reports them: model, OS, whether the
+          device is the company&apos;s or the person&apos;s own, what is managed (the whole device, an Android work profile, or
+          Apple&apos;s managed apps and data), whether the provider finds it compliant and why not, and the commands the provider
+          has run. Rem0te installs nothing on a phone or tablet, and it is <strong className="text-foreground">read-only</strong>:
+          nothing can be sent to a device from here yet.
+        </p>
+        <p>
+          <strong className="text-foreground">Requires setup.</strong> No real provider can be connected in this release, so the
+          page says so and lists what each kind needs first: an existing MDM such as Microsoft Intune (its tenant and a read-only
+          API account), the Android Management API (a Google Cloud project and device quota from Google, which takes weeks), or
+          native Apple MDM (Apple&apos;s vendor certificate and a push certificate renewed every year). Connecting the existing
+          provider, read-only, is the next step.
+        </p>
+        <p>
+          <strong className="text-foreground">Accepted is not completed.</strong> On a device&apos;s page each command shows two
+          separate facts: when the provider <em>accepted</em> it, and when the device reported it <em>completed</em>. A lock the
+          provider accepted has not locked anything until the phone says so.
+        </p>
+        <p>
+          Seeing mobile devices needs the <strong className="text-foreground">View mobile devices</strong> permission. A Business
+          Owner has it; a Business User does not unless the owner grants it; a technician needs it on an assignment covering the
+          whole business. A personal device&apos;s serial number is never kept, and no IMEI or phone number is kept for any device.{' '}
+          <Link href="/docs/mobile-devices" className="underline text-foreground">Mobile devices (MDM)</Link>.
+        </p>
+      </div>
+    ),
+  },
+  {
     id: 'monitoring-and-alerts',
     title: 'Monitoring and Alerts',
     content: (

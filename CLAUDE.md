@@ -1993,6 +1993,57 @@ SYSTEM run inside `TestLabTerminalAsSystem` (send, exists then overwrite,
 fetch with hashes, a junction and a UNC path refused). **It has run only on
 Windows Server in the lab**, never on a desktop or the fleet.
 
+§90 (0.80) is mobile devices through an MDM provider
+(`docs/mobile-devices.md`, roadmap 3.1). **Read-only, and no real provider
+exists.** (§89 is 0.79's.)
+
+- **The module.** `apps/api/src/mdm/` is the only place a provider is read.
+  `model.ts` (no imports), `command-state.ts` (only `./model`) and
+  `schemas.ts` (zod, `./model`, `common/text`) are pure. No MDM provider host
+  (Microsoft Graph or Intune, the Android Management API, Apple's push or
+  enrollment services) appears anywhere in `apps/api/src`, and the module
+  holds no `https://` URL.
+- **The driver** (`MdmDriver`, on the `PsaDriver` pattern) has `ready`,
+  `listDevices` and `listCommands` only: no send, cancel or wipe. A new
+  provider is one file in `mdm/drivers/`, its key in `PROVIDERS` and in
+  0096's CHECK. Its HTTP goes through `common/safe-https.ts` only.
+- **The stand-in is test-only and loopback-only.** `MDM_TEST_BASE_URL` is read
+  once, in `standinBase()`, and only through `testLoopbackAllowed`
+  (`NODE_ENV=test`, `http://127.0.0.1:<port>`). Otherwise `ready()` is false
+  and a listing throws `not_ready` before any request.
+- **The sweep.** `MDM_SWEEP=off` is exact. `run-e2e.sh` exports it (and passes
+  it to the scratch-API suites), `e2e-ui.mjs` sets it, and §84's
+  `OFF_SWITCHES` names it. It is bounded (20 connectors a pass, 20 device
+  pages and 10 command pages of 100), skips an `integration` pause, claims a
+  connector conditionally, and marks a device `not_reported` only after a
+  complete listing.
+- **Closed lists agree.** Providers, platforms, ownership, management scope,
+  enrollment, compliance, command kinds, command states, origins and sync
+  results are the same in `model.ts` and 0096's CHECKs, in order.
+- **Accepted is not completed.** `providerAcceptedAt` and `deviceCompletedAt`
+  are separate. The state machine refuses a completion without an acceptance
+  (`not_accepted`), never back-fills one, and keeps final states final. 0096's
+  CHECKs and the `MdmCommand_final_trg` trigger hold the same shape.
+- **Scoped reads.** Four GETs under `mobile-devices`, each
+  `@RequireCapability(CAP.MOBILE_VIEW)`. The service's `scope()` runs first in
+  every read: a Platform Admin may name a business; a technician needs
+  `mobile:view` on a whole-business grant; everyone else is pinned by
+  `requireScope`. Another business's or tenant's device is a 404. There is no
+  write route.
+- **Who.** `mobile:view` is a business capability, not in
+  `DEFAULT_BUSINESS_USER_CAPABILITIES` or any legacy role, and no preset
+  produces it.
+- **Writers.** Only `MdmSyncService` writes `MdmConnector` (its sync fields),
+  `MobileDevice` and `MdmCommand`. Nothing in `apps/api/src` creates a
+  connector. 0096's three triggers keep connector, device and command in one
+  business and tenant.
+- **What is kept.** No IMEI, phone number, MAC or user is in the schema. A
+  BYOD device's serial is dropped in `parseDevice`, and 0096 refuses one.
+
+Behavioural proof: `e2e-mdm.mjs` (ports 4021–4022, a loopback stand-in, in
+`run-e2e.sh`). Unit: `unit-mdm.mjs` (in CI). Browser: `e2e-ui.mjs`
+(`mobileDevicesUi`). **No real provider or device has been used.**
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs
