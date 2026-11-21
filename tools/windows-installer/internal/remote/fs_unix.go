@@ -35,12 +35,30 @@ func (r RootFS) Resolve(p string) (string, []string, error) {
 
 func isReparse(_ string, fi os.FileInfo) bool { return fi.Mode()&os.ModeSymlink != 0 }
 
-// finalPath: where an open handle really is (Linux /proc; elsewhere its name).
+// finalPath: where an open handle really is. Linux reads /proc. Elsewhere
+// (macOS has no /proc) the handle must be the same file, by device and inode,
+// as its name with every link resolved, or the answer is an error.
 func finalPath(f *os.File) (string, error) {
 	if p, err := os.Readlink("/proc/self/fd/" + strconv.Itoa(int(f.Fd()))); err == nil {
 		return p, nil
 	}
-	return f.Name(), nil
+	dir, err := filepath.EvalSymlinks(filepath.Dir(f.Name()))
+	if err != nil {
+		return "", err
+	}
+	p := filepath.Join(dir, filepath.Base(f.Name()))
+	hi, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	ni, err := os.Lstat(p)
+	if err != nil {
+		return "", err
+	}
+	if !os.SameFile(hi, ni) {
+		return "", errors.New("the handle is not the named file")
+	}
+	return p, nil
 }
 
 func samePath(a, b string) bool {
