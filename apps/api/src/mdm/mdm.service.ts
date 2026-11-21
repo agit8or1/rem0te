@@ -203,16 +203,16 @@ export const PREREQUISITES = [
   {
     key: 'third_party', title: 'An existing MDM (for example Microsoft Intune)',
     needs: 'The provider tenant, an app registration or API account with read-only scopes, and a provider licence per device.',
-    plannedIn: '3.2: the first read-only connector',
+    plannedIn: 'Superseded on 2026-11-21: Rem0te becomes its own MDM (docs/own-mdm.md)',
   },
   {
     key: 'android', title: 'Android Management API',
-    needs: 'A Google Cloud project with the API on, a service account, Pub/Sub, an enterprise per customer, and device quota: a new project starts with none, and up to 500 devices needs a business justification that takes weeks.',
-    plannedIn: 'After 3.2; ask Google for quota early',
+    needs: 'A Google Cloud project with the API on, a service account and its key, an enterprise per customer business, and device quota: up to 500 devices needs a business justification that takes weeks. Rem0te is the EMM; Google\'s Android Device Policy is the app on the phone.',
+    plannedIn: 'Settings → Mobile devices takes the service-account key now (0.83); enterprise sign-up and enrollment in M3. Ask Google for quota early',
   },
   {
     key: 'apple', title: 'Native Apple MDM',
-    needs: 'An MDM Vendor CSR Signing Certificate from Apple, an APNs MDM push certificate per customer renewed every year with the same Apple Account, and Apple Business Manager for automated enrollment.',
-    plannedIn: 'Last, if ever',
+    needs: 'Rem0te is the MDM server. It needs an APNs MDM push certificate (one for this install), signed with your organization\'s MDM Vendor CSR Signing Certificate from Apple, renewed every year with the same Apple Account; Apple Business Manager later, for automated enrollment. iOS and iPadOS 16 or later.',
+    plannedIn: 'Settings → Mobile devices sets up the push certificate now (0.83); enrollment and inventory in M2',
   },
 ] as const;

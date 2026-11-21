@@ -1767,6 +1767,7 @@ async function combo(browser, f, vp, theme) {
     await mobileDevicesUi(page, f, vp, theme, label);
     await backupsUi(page, f, vp, theme, label);
     await backupSettingsUi(page, f, vp, theme, label);
+    await mdmSettingsUi(page, f, vp, theme, label);
     if (theme === 'light') await mainPagesSweep(page, f, vp, label);
   } finally { await ctx.close(); }
   await mobileRequiresSetup(browser, f, vp, theme, label);
@@ -3529,6 +3530,85 @@ let copyDir = null;
 // two devices and two commands: a lock the provider ACCEPTED that the device
 // has not finished, and a sync it completed. A business of its own, with its
 // own owner and no connector, shows "Requires setup" and the empty state.
+/**
+ * Settings → Mobile devices (0.83 Beacon) fixtures: the one platform row,
+ * written directly (the browser suite only reads it). A real CSR and a
+ * TEST ONLY stand-in push certificate for it, made at run time by the API's
+ * test-pki helper; the sealed columns hold sealed-shaped placeholders, which
+ * the page never opens. Nothing here is a real Apple or Google credential.
+ */
+async function seedMdmSetup() {
+  const T = await import(path.join(API_DIR, 'scripts/lib/test-pki.mjs'));
+  const g = T.P.generatePushKey();
+  const topic = T.testTopic();
+  const now = new Date();
+  const cert = T.pushCertFor({ csrPem: g.csrPem, topic, now, notAfter: new Date(now.getTime() + 200 * 86_400_000) });
+  const facts = T.P.certFacts(cert.cert);
+  const sealedLike = () => `${randomBytes(12).toString('hex')}:${randomBytes(16).toString('hex')}:${randomBytes(48).toString('hex')}`;
+  await prisma.mdmPlatformSetup.update({
+    where: { id: 'platform' },
+    data: {
+      revision: { increment: 1 }, appleChecklist: ['duns'], androidChecklist: [], signingRoute: 'own_vendor',
+      pushKeyEnc: sealedLike(), pushCsrPem: g.csrPem, pushKeySpkiSha256: g.spkiSha256, pushKeyCreatedAt: now,
+      vendorKeyEnc: null, vendorCertPem: null, vendorChainPem: null, vendorNotAfter: null, vendorSetAt: null,
+      pushCertEnc: sealedLike(), pushCertSerial: facts.serial, pushCertSha256: facts.sha256, pushCertIssuer: T.P.nameText(facts.issuer).slice(0, 300),
+      pushCertNotBefore: facts.notBefore, pushCertNotAfter: facts.notAfter, pushCertInstalledAt: now, pushCertRenewedAt: null,
+      apnsTopic: topic, appleAccount: 'mdm-push@example.test', pushRemindedDays: null,
+      androidKeyEnc: null, androidProjectId: null, androidClientEmail: null, androidKeyIdLast4: null, androidKeySetAt: null,
+    },
+  });
+  return { topic };
+}
+
+/**
+ * Settings → Mobile devices (0.83), as the Platform Admin, at both widths and
+ * in both themes. Read-only except a delete dialog that is cancelled: the
+ * Apple card with the push certificate's topic, expiry and account, the
+ * loud same-account renewal warning, the mdmcert.download caveats, ABM
+ * planned; the Android card with Google's permitted-use note and enterprise
+ * sign-up planned; every capability in one of the four states; deleting the
+ * push certificate warns that devices are orphaned. No sideways scroll at
+ * 375 px.
+ */
+async function mdmSettingsUi(page, f, vp, theme, label) {
+  await go(page, '/settings/mobile-devices');
+  await page.getByTestId('mdm-apple').waitFor({ timeout: 15_000 }).catch(() => {});
+  await page.getByTestId('mdm-pushcert').waitFor({ timeout: 15_000 }).catch(() => {});
+  const pc = await page.getByTestId('mdm-pushcert').innerText().catch(() => '');
+  check(pc.includes(f.mdmSetup.topic) && /mdm-push@example\.test/.test(pc) && /Not yet \(M2\)/.test(pc) && /days\)/.test(pc),
+    `${label}: Settings → Mobile devices shows the push certificate's topic, expiry, account, and "not yet proven"`, pc.slice(0, 300));
+  const warn = await page.getByTestId('mdm-renewal-warning').innerText().catch(() => '');
+  check(/same Apple Account/.test(warn) && /every enrolled iPhone and iPad/.test(warn), `${label}: renewal warns loudly to use the same Apple Account`, warn.slice(0, 200));
+  const prereq = await page.getByTestId('mdm-apple-prereqs').innerText().catch(() => '');
+  check(/D-U-N-S/.test(prereq) && /99 USD a year/.test(prereq) && /MDM CSR/.test(prereq) && await page.getByTestId('mdm-apple-tick-duns').isChecked().catch(() => false),
+    `${label}: the Apple prerequisites with cost and lead time, and the owner's tick`, prereq.slice(0, 200));
+  const links = await page.locator('[data-testid="mdm-settings"] a[target="_blank"]').evaluateAll((els) => els.map((e) => [e.getAttribute('href'), e.getAttribute('rel')]));
+  check(links.length >= 8 && links.every(([h, r]) => /^https:\/\//.test(h) && r === 'noopener noreferrer'), `${label}: Apple's and Google's pages open in a new tab, noopener`, JSON.stringify(links.slice(0, 3)));
+  await page.getByTestId('mdm-route-mdmcert').check().catch(() => {});
+  await page.getByTestId('mdm-mdmcert').waitFor({ timeout: 10_000 }).catch(() => {});
+  const mc = await page.getByTestId('mdm-mdmcert').innerText().catch(() => '');
+  check(/one test device only/i.test(mc) && /revoke/.test(mc), `${label}: mdmcert.download is shown as test-only, with its trust caveats`, mc.slice(0, 200));
+  await page.getByTestId('mdm-route-own_vendor').check().catch(() => {});
+  await page.getByTestId('mdm-vendor-form').waitFor({ timeout: 10_000 }).catch(() => {});
+  const perm = await page.getByTestId('mdm-android-permitted-use').innerText().catch(() => '');
+  check(/commercial EMM/.test(perm) && /customers/.test(perm), `${label}: the Android card carries Google's permitted-use note (decision 21)`, perm.slice(0, 200));
+  const states = await page.locator('[data-testid="mdm-capabilities"] [data-capability]').evaluateAll((els) => els.map((e) => [e.getAttribute('data-capability'), e.getAttribute('data-state')]));
+  const st = Object.fromEntries(states);
+  check(st['apple.push_certificate'] === 'available' && st['apple.enrollment'] === 'planned' && st['apple.abm'] === 'planned' && st['android.service_account'] === 'requires_setup'
+    && st['android.enterprise'] === 'planned' && st['apple.ios15'] === 'unsupported' && states.every(([, v]) => ['available', 'requires_setup', 'unsupported', 'planned'].includes(v)),
+  `${label}: every capability in one of the four states`, JSON.stringify(st));
+  await page.getByTestId('mdm-pushcert-delete').click().catch(() => {});
+  const dlg = page.getByRole('alertdialog').or(page.getByRole('dialog')).first();
+  await dlg.waitFor({ timeout: 10_000 }).catch(() => {});
+  const dt = await dlg.innerText().catch(() => '');
+  check(/orphaned/.test(dt) && /does not ask you to confirm it is you/.test(dt), `${label}: deleting the push certificate warns that devices are orphaned, and asks no confirmation of identity`, dt.slice(0, 200));
+  await dlg.getByRole('button', { name: 'Cancel' }).click().catch(() => {});
+  await themeCheck(page, theme, `${label} Settings → Mobile devices`);
+  if (vp === 'phone') await noSideScroll(page, `${label} Settings → Mobile devices`);
+  await shot(page, `${label}-settings-mobile-devices`);
+  await cleanCheck(page, `${label} Settings → Mobile devices`);
+}
+
 async function seedMobile(f) {
   const E = await prisma.customer.create({ data: { tenantId: f.tenant.id, name: `MDM ${sfx} Empty` } });
   created.businesses.push(E.id);
@@ -3624,8 +3704,11 @@ async function mobileRequiresSetup(browser, f, vp, theme, label) {
     const prereq = await page.locator('[data-testid="mdm-prerequisites"] li').allInnerTexts().catch(() => []);
     const empty = await page.getByTestId('mdm-empty').innerText().catch(() => '');
     check(state === 'requires_setup' && await page.getByTestId('mdm-requires-setup').isVisible() && prereq.length === 3
-      && /Intune/.test(prereq[0]) && /quota/.test(prereq[1]) && /APNs/.test(prereq[2]) && /once an MDM provider is connected/.test(empty),
+      && /Intune/.test(prereq[0]) && /quota/.test(prereq[1]) && /APNs/.test(prereq[2]) && /setup starts under Settings → Mobile devices/.test(empty),
     `${label}: with no provider the page says Requires setup, lists the three providers' prerequisites and an empty state`, JSON.stringify({ state, prereq: prereq.length, empty }));
+    // 0.83: a Business Owner is told a Platform Admin sets it up, and gets no link to a page they cannot open.
+    check(await page.getByTestId('mdm-settings-hint').isVisible().catch(() => false) && await page.getByTestId('mdm-settings-link').count() === 0,
+      `${label}: the empty state says a Platform Admin sets it up under Settings → Mobile devices (no link for an owner)`);
     await themeCheck(page, theme, `${label} Mobile devices (requires setup)`);
     if (vp === 'phone') await noSideScroll(page, `${label} Mobile devices (requires setup)`);
     await shot(page, `${label}-mobile-requires-setup`);
@@ -3656,6 +3739,7 @@ async function main() {
   f.rollbackJob = await seedRollbackJob(f);
   f.mobile = await seedMobile(f);
   f.backups = await seedBackups(f);
+  f.mdmSetup = await seedMdmSetup();
   if (process.env.UI_HOLD === '1') {
     // Debugging only: leave the stack and fixtures up until interrupted.
     console.log(`  holding: ${WEB}  admin ${f.admin.email} / owner ${f.owner.email}  password in UI_HOLD_PW_FILE`);

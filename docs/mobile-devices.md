@@ -20,6 +20,57 @@ suites can reach.
 > The data model and driver interface on this page stay: the own MDM is their
 > first real driver.
 
+## Settings → Mobile devices (0.83)
+
+A Platform Admin sets the own MDM up in **Settings → Mobile devices**. It is
+platform-wide: one Apple push certificate for the whole install (decision 23).
+Nothing on the page calls Apple or Google; their pages open in a new tab and
+you upload what they give you. Each step says what Rem0te checks and what it
+cannot, and shows one of the four capability states.
+
+**Apple** (iPhone and iPad, iOS/iPadOS 16 or later, decision 24):
+
+1. **Before you start.** A D-U-N-S number, an Apple Developer Program
+   membership as an organization (99 USD a year), Apple's "MDM CSR"
+   permission (asked for by the Account Holder; no published lead time), and a
+   company Apple Account to own the push certificate. Tick them as you go: the
+   ticks are your notes, never checks.
+2. **Generate the push request.** Rem0te makes the key and the CSR. The key is
+   sealed in Rem0te and never leaves it. Download the CSR if another party
+   signs it.
+3. **Sign the request** — with your own MDM vendor certificate (decision 22):
+   upload the certificate from your developer account, its private key, and
+   Apple's WWDR intermediate and root (from Apple PKI). Rem0te checks they
+   belong together and are unexpired, seals the key, and gives you the signed
+   request. It shows the root's SHA-256 for you to compare with Apple's; it
+   cannot tell from here that the root is Apple's. *mdmcert.download* is shown
+   only as a way to try one test device while Apple's permission is pending,
+   with why it must not be used for the fleet.
+4. **Upload the request to Apple** at identity.apple.com with the company
+   account, and download the push certificate.
+5. **Upload the push certificate**, and type which Apple Account made it.
+   Rem0te refuses a certificate that is not for its key, has no push topic,
+   has expired or is not yet valid. It shows the topic
+   (`com.apple.mgmt.External.<uuid>`) and the expiry, and says "not yet
+   proven" until a real device has been pushed to (M2).
+6. **Renew every year with the same Apple Account.** A certificate with a
+   different topic is refused on renewal, because every enrolled device would
+   have to enroll again; replacing the topic is a separate action that says
+   so. Reminders are raised as security alerts 30, 14 and 3 days before
+   expiry, and once on expiry (held by a global `notifications` pause).
+7. **Apple Business Manager** — planned (M6).
+
+**Android:** the prerequisites, with Google's permitted-use rule (decision
+21: Rem0te is an MSP platform for customers' devices), then the
+service-account key file. Rem0te checks its shape offline, seals it, and shows
+only the project, the service-account e-mail and the key id's last four.
+Testing it against Google, enterprise sign-up and quota are planned (M3).
+
+Every change asks you to confirm it is you when **Mobile device management
+setup** (`mdm.setup`) asks in Settings → Confirm it is you (off by default).
+Deleting a credential never asks, and is audited; deleting the push
+certificate orphans every enrolled device, and the page says so.
+
 Rem0te never installs anything on a phone or tablet. The Rem0te agent is for
 Windows, Linux and macOS computers only. A mobile device is enrolled in the
 provider, and the provider manages it.
@@ -166,13 +217,14 @@ the console or the API creates a connector.
 | Sync, scope, default deny, cross-tenant refusal, accepted vs completed, bounds, pause, the database's refusals | API, against the stand-in only (`apps/api/scripts/e2e-mdm.mjs`) |
 | The pages at desktop and phone width, light and dark | Browser (`apps/web/scripts/e2e-ui.mjs`) |
 | A real provider, a real phone or tablet | **None.** No provider has been called from this server |
+| Settings → Mobile devices (0.83): the CSR, vendor signing, certificate checks, the topic rule, the Google key, reminders | Unit (`unit-mdm-setup.mjs`, in CI) and API (`e2e-mdm-setup.mjs`), with stand-in keys and certificates made at run time; Browser (`e2e-ui.mjs`). **No real Apple or Google credential, and no call to either** |
 
 ## Planned
 
 The order is now [own-mdm.md](own-mdm.md#roadmap)'s (2026-11-21):
 
 - **M1** — Settings → Mobile devices: the setup wizard and Apple push
-  certificates (no account needed to build it).
+  certificates. **Built in 0.83.0**, above.
 - **M2** — Apple enrollment, check-in and inventory, the first real driver.
 - **M3** — Android enterprise sign-up and read-only inventory.
 - **M4** (was 3.3) — lock, lost mode and locate, with their own permission,

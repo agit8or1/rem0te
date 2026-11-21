@@ -4574,6 +4574,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'users/users.controller.ts': ['permissions.change'],
     'warranty/warranty.controller.ts': ['warranty.settings'],
     'backups/backups.controller.ts': ['backup.connection'],
+    'mdm/setup/mdm-setup.controller.ts': ['mdm.setup'],
     'msa/msa-grant.controller.ts': ['msa.grant'],
     'msa/msa-managed.controller.ts': ['msa.cutover', 'msa.reveal'],
     'msa/msa-cutover-runs.controller.ts': ['msa.cutover'],
@@ -7844,7 +7845,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const HOSTS = /graph\.microsoft\.com|manage\.microsoft\.com|intune\.microsoft|androidmanagement\.googleapis|play\.google\.com\/work|mdmenrollment\.apple\.com|push\.apple\.com|deviceenrollment\.apple|identity\.apple\.com|business\.apple\.com\/.*mdm|workspaceone|jamfcloud|kandji\.io|meraki\.com\/.*sm/i;
   const hostHits = walk(SRC).filter((f) => HOSTS.test(read(f)));
   check('mdm: no MDM provider host appears anywhere in apps/api/src', hostHits.length === 0, hostHits.join(', '));
-  const urlHits = mdmFiles.filter((f) => /https?:\/\/(?!127\.0\.0\.1)/.test(read(f)));
+  // 0.83: the plist DTD identifier a PushCertRequest names (never fetched), in setup/pki.ts only (§92).
+  const DTD = 'http://www.apple.com/DTDs/PropertyList-1.0.dtd';
+  const urlHits = mdmFiles.filter((f) => /https?:\/\/(?!127\.0\.0\.1)/.test(f === `${DIR}/setup/pki.ts` ? read(f).split(DTD).join('') : read(f)));
   check('mdm: the module holds no URL (the stand-in\'s base comes from MDM_TEST_BASE_URL only)', urlHits.length === 0, urlHits.join(', '));
   const imports = (f) => [...read(f).matchAll(/^import [^;]*? from '([^']+)';/gm)].map((m) => m[1]);
   check('mdm: model.ts imports nothing; command-state.ts only ./model; schemas.ts only zod, ./model and common/text',
@@ -7948,7 +7951,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /"serialNumber" IS NULL OR \("ownership" = 'corporate'/.test(sql),
     'schemas.ts / 0096');
   check('mdm: the suites prove it (unit in CI, e2e against the stand-in, the browser)',
-    /unit-mdm\.mjs/.test(read('.github/workflows/ci.yml')) && /host-security mdm; do run/.test(read('scripts/run-e2e.sh'))
+    /unit-mdm\.mjs/.test(read('.github/workflows/ci.yml')) && /host-security mdm\b/.test(read('scripts/run-e2e.sh'))
       && /async function mobileDevicesUi\(/.test(read('apps/web/scripts/e2e-ui.mjs')),
     'ci.yml / run-e2e.sh / e2e-ui.mjs');
 }
@@ -8171,6 +8174,102 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const sync = src(`${B}/backup-sync.service.ts`);
   check('BACKUP_SYNC_SWEEP=off is exact, and the pull skips a business under an integration pause',
     /if \(process\.env\.BACKUP_SYNC_SWEEP === 'off'\) return;/.test(sync) && /activePause\(this\.prisma, 'integration', c\.customerId\)/.test(sync) && /^export BACKUP_SYNC_SWEEP=off$/m.test(read('scripts/run-e2e.sh')), 'backup-sync.service.ts / run-e2e.sh');
+}
+
+// ── §92 (0.83 Beacon): Settings → Mobile devices — the own MDM's setup ──────
+//     docs/own-mdm.md M1. The wizard prepares Apple's and Google's credentials
+//     and calls neither. What must stay true:
+//       - the four secrets are sealed under their own purposes, each used only
+//         in mdm-setup.service.ts, and none reaches a view, audit meta or log;
+//       - the private keys are never returned; the CSR only by its download;
+//       - no Apple or Google host, and no HTTP client, in mdm/setup/;
+//       - the certificate work (pki.ts) and the decisions (setup-model.ts)
+//         are pure, tested in CI, and 0100's CHECKs are their lists;
+//       - Platform Admin (class guard); every write but a delete asserts
+//         fresh authentication naming mdm.setup first; deletes never ask;
+//       - credentials are audited with logOrFail before a write that is
+//         conditional on the revision read; one row, never deleted;
+//       - the topic is permanent except through the replace action;
+//       - reminders run inside the MDM sweep, held by a notifications pause.
+{
+  console.log('\n§92 Mobile device setup (Apple push certificate, Google key; sealed, offline, Platform Admin)');
+  const SRC = 'apps/api/src';
+  const D = `${SRC}/mdm/setup`;
+  const code = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const svc = read(`${D}/mdm-setup.service.ts`);
+  const ctl = read(`${D}/mdm-setup.controller.ts`);
+  const pki = read(`${D}/pki.ts`);
+  const model = read(`${D}/setup-model.ts`);
+  const PURPOSES = ['rem0te-apns-push-key-v1', 'rem0te-mdm-vendor-key-v1', 'rem0te-apns-push-cert-v1', 'rem0te-amapi-sa-key-v1'];
+  const box = read(`${SRC}/common/secret-box.ts`);
+  const users = walk(SRC).filter((f) => f !== `${SRC}/common/secret-box.ts` && PURPOSES.some((pp) => read(f).includes(`'${pp}'`)));
+  check('sealed: four purposes in SecretPurpose, each used only in mdm/setup/mdm-setup.service.ts',
+    PURPOSES.every((pp) => box.includes(`'${pp}'`) && svc.includes(`'${pp}'`)) && JSON.stringify(users) === JSON.stringify([`${D}/mdm-setup.service.ts`]), users.join(', '));
+  const viewFn = code((svc.match(/async view\([\s\S]*?\n  \}\n/) ?? [''])[0]);
+  // A sealed column may be named only as a presence test: !!r.xEnc, r.xEnc ? …, r.xEnc && ….
+  const presence = (t) => t.replace(/!!r\.\w+Enc\b/g, '').replace(/\br\.\w+Enc (\?|&&) /g, '');
+  check('sealed: the view reads a sealed column only to say whether it is there, and names no PEM, CSR or private key',
+    !!viewFn && !/\w+Enc\b/.test(presence(viewFn)) && !/pushCsrPem|keyPem|privateKey|openSecret/.test(viewFn), 'view()');
+  const metas = [...code(svc).matchAll(/(?:\.log|\.logOrFail)\(\{[\s\S]*?\}\);/g)].map((m) => m[0]);
+  check('sealed: no audit row carries a key, a certificate body, a sealed value or a CSR',
+    metas.length >= 11 && metas.every((m) => !/sealed\b|keyPem|\.pem\b|csrPem|pushCsrPem|privateKey|certificate:|sealedJson|\w+Enc\b|req\.file|\.request\b/.test(presence(m))), `${metas.length} audit calls`);
+  check('sealed: mdm/setup logs nothing but one fixed warning (the reminder pass\'s error name)',
+    (code(svc).match(/this\.logger\.\w+\(/g) ?? []).length === 1 && /this\.logger\.warn\(`push certificate reminder: \$\{\(e as Error\)\.name\}`\)/.test(svc)
+      && !/logger|console\./.test(code(pki) + code(model) + code(ctl)), 'mdm-setup.service.ts');
+  const returns = [...code(svc).matchAll(/return \{[^;]*\};/g)].map((m) => m[0]);
+  check('keys never returned: no return names a private key or a sealed value; the CSR only from pushCsr(), the signed request only from signPushRequest()',
+    returns.every((x) => !/keyPem|privateKey|\w+Enc\b|sealed\b/.test(presence(x))) && /return \{ filename: 'rem0te-push\.csr', csr: r\.pushCsrPem/.test(svc)
+      && (code(svc).match(/csr: r\.pushCsrPem/g) ?? []).length === 1 && (code(svc).match(/request: req\.file/g) ?? []).length === 1, 'returns');
+  const files = walk(D);
+  const DTD_LINE = `'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'`;
+  const HOSTS = /apple\.com|icloud\.com|googleapis\.com|google\.com|gstatic\.com|mdmcert\.download/i;
+  const net = files.filter((f) => HOSTS.test(code(read(f)).split(DTD_LINE).join(''))
+    || /from '(node:)?(https?|http2|net|tls|dgram)'|\bfetch\(|axios|undici|safe-https|safeGet|safePost/.test(read(f)));
+  check('offline: no Apple or Google host and no HTTP client anywhere in mdm/setup/ (the plist DTD identifier excepted)', net.length === 0 && files.length === 4, net.join(', ') || files.join(', '));
+  const imp = (t) => [...t.matchAll(/^import [^;]*? from '([^']+)';/gm)].map((m) => m[1]);
+  check('pure: pki.ts imports only node:crypto; setup-model.ts imports nothing; neither reads a clock',
+    JSON.stringify(imp(pki)) === JSON.stringify(['node:crypto']) && imp(model).length === 0 && !/Date\.now\(\)|new Date\(\)/.test(code(pki) + code(model)), JSON.stringify(imp(pki)));
+  check('pure: tested in CI (unit-mdm-setup.mjs), with stand-in certificates made at run time; no key or certificate file committed under apps/api/scripts',
+    /unit-mdm-setup\.mjs/.test(read('.github/workflows/ci.yml')) && /TEST ONLY/.test(read('apps/api/scripts/lib/test-pki.mjs'))
+      && !readdirSync(join(ROOT, 'apps/api/scripts')).some((f) => /\.(pem|cer|crt|p12|key|der)$/.test(f)), 'ci.yml / scripts');
+  const writeRoutes = [...ctl.matchAll(/@(Put|Post)\([^)]*\)[^{]*?\{\n\s*(.*)\n/g)].map((m) => m[2].trim());
+  const deleteBodies = [...ctl.matchAll(/@Delete\([^)]*\)[\s\S]*?\{([^}]*)\}/g)].map((m) => m[1]);
+  check('controller: Platform Admin by class guard; no @Public; all eight writes call this.fresh() first; the four deletes never ask',
+    /@Controller\('mdm\/setup'\)\s*\n@UseGuards\(PlatformAdminGuard\)/.test(ctl) && !/@Public\(\)/.test(ctl)
+      && writeRoutes.length === 8 && writeRoutes.every((l) => /^this\.fresh\(req, /.test(l))
+      && deleteBodies.length === 4 && deleteBodies.every((b) => !/fresh/.test(b)) && /action: 'mdm\.setup'/.test(ctl), JSON.stringify(writeRoutes));
+  const cat = read(`${SRC}/security-controls/confirm-catalog.ts`);
+  check('confirm: mdm.setup is a catalog key, default off like the others', /\{ key: 'mdm\.setup', group: 'Integrations', label: '[^']+', default: 'off',/.test(cat), 'confirm-catalog.ts');
+  const writers = walk(SRC).filter((f) => /mdmPlatformSetup\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/.test(read(f)));
+  check('writes: only MdmSetupService writes MdmPlatformSetup, never creates or deletes it; a person\'s write is conditional on the revision read',
+    JSON.stringify(writers) === JSON.stringify([`${D}/mdm-setup.service.ts`]) && !/mdmPlatformSetup\.(create|upsert|delete)/.test(svc)
+      && /where: \{ id: ID, revision: r\.revision \}/.test(svc) && (svc.match(/mdmPlatformSetup\.updateMany\(/g) ?? []).length === 2, writers.join(', '));
+  const credFns = ['generatePushKey', 'setVendor', 'installPushCert', 'setAndroidKey', 'deletePushKey', 'deleteVendor', 'deletePushCert', 'deleteAndroidKey', 'signPushRequest'];
+  const bad = credFns.filter((fn) => { const b = (svc.match(new RegExp(`async ${fn}\\([\\s\\S]*?\\n  \\}\\n`)) ?? [''])[0]; return !b || !/this\.audit\.logOrFail\(/.test(b) || (b.includes('this.write(') && b.indexOf('logOrFail') > b.indexOf('this.write(')); });
+  check('audit: every credential change (and the signing) is logOrFail before its write', bad.length === 0, bad.join(', '));
+  const inst = (svc.match(/async installPushCert[\s\S]*?\n  \}\n/) ?? [''])[0];
+  check('topic: checked against the sealed key, then the topic rule (a different topic only through replace), before the audit and the write; no new key under a certificate',
+    /checkPushCertificate\(d\.certificate, key\.key, now\)/.test(inst) && /topicDecision\(r\.apnsTopic, c\.topic, replace \?/.test(inst)
+      && inst.indexOf('topicDecision(') < inst.indexOf('logOrFail') && /currentTopic: z\.string\(\)\.max\(80\), acknowledgeReenroll: z\.literal\(true\)/.test(inst)
+      && /if \(r\.pushCertEnc\) throw new ConflictException\(\{ code: 'APNS_CERT_INSTALLED'/.test(svc), 'installPushCert');
+  const rem = (svc.match(/async reminderPass[\s\S]*?\n  \}\n/) ?? [''])[0];
+  check('reminders: only from the MDM sweep, held by a global notifications pause, claimed by a conditional write before the alert; 30, 14 and 3 days',
+    /await this\.setup\.reminderPass\(now\);/.test(read(`${SRC}/mdm/mdm-sync.service.ts`)) && walk(SRC).filter((f) => /\.reminderPass\(/.test(read(f))).length === 1
+      && /activePause\(this\.prisma, 'notifications', null\)/.test(rem) && rem.indexOf("'notifications'") < rem.indexOf('updateMany') && rem.indexOf('updateMany') < rem.indexOf('alerts.raise')
+      && /export const REMINDER_DAYS = \[30, 14, 3\] as const;/.test(model), 'reminderPass');
+  const sql = read('apps/api/prisma/migrations/0100_mdm_setup/migration.sql');
+  const list = (name) => { const mm = model.match(new RegExp(`export const ${name} = \\[([^\\]]*)\\] as const;`)); return mm ? [...mm[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null; };
+  const arr = (col) => [...((sql.match(new RegExp(`"${col}" <@ ARRAY\\[([^\\]]*)\\]`)) ?? [])[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  const sealedCols = ['pushKeyEnc', 'vendorKeyEnc', 'pushCertEnc', 'androidKeyEnc'];
+  check('0100: one row, never deleted; the checklists, routes and reminders are the model\'s; sealed columns are sealed-shaped; a certificate needs its key and topic',
+    /CHECK \("id" = 'platform'\)/.test(sql) && /BEFORE DELETE ON "MdmPlatformSetup"/.test(sql)
+      && JSON.stringify(arr('appleChecklist')) === JSON.stringify(list('APPLE_CHECKLIST')) && JSON.stringify(arr('androidChecklist')) === JSON.stringify(list('ANDROID_CHECKLIST'))
+      && /"signingRoute" IN \('own_vendor', 'mdmcert', 'other_vendor'\)/.test(sql) && JSON.stringify(list('SIGNING_ROUTES')) === '["own_vendor","mdmcert","other_vendor"]'
+      && /"pushRemindedDays" IN \(30, 14, 3, 0\)/.test(sql) && sealedCols.every((c) => sql.includes(`"${c}" IS NULL OR "${c}" ~ '^[0-9a-f]{24}:[0-9a-f]{32}:[0-9a-f]+$'`))
+      && /"pushCertEnc" IS NULL OR \("pushKeyEnc" IS NOT NULL AND "apnsTopic" IS NOT NULL\)/.test(sql), '0100');
+  check('suites: e2e-mdm-setup in run-e2e.sh; the wizard in e2e-ui.mjs; the Mobile devices page links to it',
+    /\bmdm-setup\b/.test((read('scripts/run-e2e.sh').match(/for t in credentials[^\n]*/) ?? [''])[0]) && /async function mdmSettingsUi\(/.test(read('apps/web/scripts/e2e-ui.mjs'))
+      && /href="\/settings\/mobile-devices"/.test(read('apps/web/app/(app)/mobile-devices/page.tsx')), 'run-e2e.sh / e2e-ui.mjs');
 }
 
 if (failures.length > 0) {

@@ -5,6 +5,176 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.83.0] — 2026-11-21 · *Beacon*
+
+**Settings → Mobile devices: step M1 of Rem0te as its own MDM ([own-mdm.md](docs/own-mdm.md)).** A Platform Admin
+can now prepare everything Apple and Google ask for before the first phone enrolls: the Apple push key and CSR,
+the vendor-signed push request, the APNs push certificate with its topic and expiry, renewal reminders, and the
+Google service-account key. It needs no Apple or Google account to build or test, and **Rem0te makes no outbound
+call to Apple, Google or mdmcert.download**. Everything is checked offline, against the keys Rem0te holds.
+
+Nothing enrolls yet. Enrollment is M2 (Apple) and M3 (Android). The push certificate always says "not yet proven"
+until M2 sends a first push to a real device.
+
+Migration 0100 and one new confirm key, `mdm.setup` (default `off`). There is no agent, signer or sudoers change,
+and the API's dependencies do not change.
+
+### Decided
+
+The owner accepted the recommendations ("accept recs", 2026-11-21) for decisions 21–24, recorded in
+`docs/own-mdm.md` and `docs/session-maintenance-mdm-backup-audit.md`:
+
+- **21:** Android is for customers' devices (the MSP model), described to Google exactly as that.
+- **22:** the push request is signed with the owner's own Apple Developer organization's MDM vendor certificate
+  (the "MDM CSR" permission). mdmcert.download is only for a first test device while that permission is pending.
+- **23:** one APNs certificate per install. Migration 0100 holds exactly one row.
+- **24:** iOS/iPadOS 16 is the minimum. Older is shown as **unsupported**.
+
+### Added
+
+- **Settings → Mobile devices** (`/settings/mobile-devices`), Platform Admin only, with one card for Apple and one
+  for Android. Every step has plain instructions, what Rem0te checks automatically, and what it cannot check. Every
+  capability is in one of the four states (`available`, `requires setup`, `unsupported`, `planned`). Apple's and
+  Google's pages are links that open in a new tab; nothing is fetched from them.
+
+  **Apple:**
+  1. **Before you start.** D-U-N-S, the Developer Program as an organization (99 USD a year), Apple's MDM CSR
+     permission and a company Apple Account, with cost and lead time. The ticks are stored so the page is
+     resumable. **They are never treated as verification.**
+  2. **Generate the push request.** An RSA 2048 key is made in the API and sealed (`rem0te-apns-push-key-v1`)
+     before anything is answered. The PKCS#10 CSR is checked against its own signature and offered as a download
+     (`GET …/apple/push-csr`). The key is never returned. A new key is refused while a push certificate is
+     installed (`APNS_CERT_INSTALLED`), because renewal must keep the key's topic.
+  3. **Sign the request.** The owner uploads three things: the MDM vendor certificate (Apple's DER `.cer` or PEM),
+     its private key (sealed, `rem0te-mdm-vendor-key-v1`, and an encrypted key's passphrase is used once and
+     dropped), and the chain (WWDR intermediate and root).
+     - Rem0te checks that the key matches, nothing has expired, and the chain connects.
+     - It shows the root's SHA-256 for the owner to compare with Apple's. **It does not pin it**, and the page
+       says it cannot tell from here that the root is Apple's.
+     - It builds the Base64 `PushCertRequest` plist that Apple's portal takes (`POST …/apple/push-request`).
+
+     mdmcert.download is shown only as a test-device path, with its trust caveats. Rem0te does not decrypt its
+     reply.
+  4. **Upload the push certificate.** It is refused if:
+     - it is not exactly one certificate;
+     - it has no `com.apple.mgmt.External.<uuid>` topic in its subject UID (`CERT_NOT_PUSH`);
+     - its key is not the sealed key's (`CERT_KEY_MISMATCH`);
+     - it has expired (`CERT_EXPIRED`) or is not yet valid (`CERT_NOT_YET_VALID`).
+
+     It is sealed (`rem0te-apns-push-cert-v1`). The topic, serial, issuer and dates are kept in the clear.
+     "Issued by Apple" is shown, never decided on. The Apple Account that made it is typed in and recorded, never
+     verified.
+  5. **Renewal.** It shows the expiry and days left, and a loud warning to renew with **the same Apple Account**.
+     - A renewal with a different topic is refused (`APNS_TOPIC_CHANGED`), naming how many devices would have to
+       enroll again.
+     - Changing the topic is only `POST …/apple/push-certificate/replace`. That call names the current topic, so
+       a stale page cannot replace a newer one (`APNS_REPLACE_STALE`).
+     - Deleting the certificate keeps the topic, so the next certificate must still match it.
+  6. **Apple Business Manager:** planned (M6).
+
+  **Android:**
+  1. **Before you start.** The prerequisites, and Google's permitted-use note (decision 21) with Google's link.
+  2. **The service-account key file.** Rem0te checks it offline:
+     - `type`, `project_id`, a `client_email` of that project, the key id, and an RSA private key;
+     - at most 16 KB.
+
+     It is rebuilt from those fields only and sealed (`rem0te-amapi-sa-key-v1`). Only the project, the e-mail and
+     the key id's last four are shown.
+  3. **Testing it against Google, quota and enterprise sign-up:** planned (M3). The design put recording the quota
+     in M1, but without the M3 connection the number would mean nothing.
+- **Renewal reminders 30, 14 and 3 days before expiry, and once on expiry.** These come from the MDM sweep
+  (`MdmSyncService` → `MdmSetupService.reminderPass`), so `MDM_SWEEP=off` stops them.
+  - Only the smallest crossed threshold is raised, and never twice for the same certificate. The claim is a
+    conditional write on the certificate's serial, made before the alert.
+  - A global `notifications` pause holds them.
+  - **Why security alerts.** They are raised as security alerts (`mdm_push_cert_expiring`, `mdm_push_cert_expired`)
+    to the platform's alert destinations. Monitoring alerts are per computer and per business, and this
+    certificate belongs to the whole install.
+  - The design said 30, 14, 7 and 1 days. The M1 brief set 30, 14 and 3.
+- **Fourteen routes under `mdm/setup`**, behind `PlatformAdminGuard`.
+  - **The eight writes** call `assertFresh` naming the new §62 key **`mdm.setup`** (*Mobile device management
+    setup*, default `off`).
+  - **The four deletes** (push key, vendor, push certificate, Google key) never ask. The page warns that deleting
+    the push certificate orphans every enrolled device.
+  - **Every write is conditional** on the row's `revision`. Losing the race is `409 MDM_SETUP_CHANGED`.
+  - **Every credential change is audited with `logOrFail` before the write.** There are six new actions:
+    `MDM_SETUP_CHANGED`, `MDM_SETUP_CREDENTIAL_SET`, `MDM_SETUP_CREDENTIAL_DELETED`, `MDM_PUSH_REQUEST_SIGNED`,
+    `MDM_PUSH_CERT_INSTALLED` and `MDM_PUSH_CERT_DELETED`. Their meta holds fingerprints, subjects, dates and
+    topics, never a key, a certificate body, a CSR or a sealed value.
+- **Migration 0100**, `MdmPlatformSetup`:
+  - one row (`id = 'platform'`), inserted by the migration; a trigger refuses its deletion;
+  - CHECKs on the checklists and the signing route, the same lists as `setup-model.ts`;
+  - every sealed column in the sealed shape;
+  - a push key, vendor, certificate and Google key each all-or-nothing;
+  - the topic's form;
+  - reminders only 30, 14, 3 or 0.
+
+### Changed
+
+- **The Mobile devices page's empty state** now points a Platform Admin to Settings → Mobile devices with a button.
+  Anyone else is told that a Platform Admin sets it up there.
+- **The page's prerequisite texts.** The keys and their order are unchanged: the Apple and Android texts point to
+  Settings, and the third-party text says it was superseded on 2026-11-21.
+- **`docs/capabilities.md`:** own MDM setup moves from **planned** to **requires setup**. The Google calls and
+  quota stay **planned** (M3), ABM stays **planned** (M6), and below iOS 16 is **unsupported**.
+- **`docs/own-mdm.md`** marks M1 built and lists, step by step, where the build differs from the plan.
+  **`docs/mobile-devices.md`** and `/help` describe the page.
+
+### Tests
+
+- **`apps/api/scripts/unit-mdm-setup.mjs`** (68 checks, in CI). All keys and certificates are stand-ins made at
+  run time by `apps/api/scripts/lib/test-pki.mjs` (TEST ONLY). Nothing is committed. It covers:
+  - the CSR's DER, which OpenSSL's `req -verify` also accepts;
+  - matching, mismatched, expired, not-yet-valid and topic-less certificates;
+  - DER and PEM input;
+  - vendor checks and the chain;
+  - the signed `PushCertRequest`, whose signature verifies under the vendor key;
+  - the Google key's validation;
+  - `dueReminder`, `topicDecision` and the capability states.
+- **`apps/api/scripts/e2e-mdm-setup.mjs`** (52 checks, ports 4071 and 4072, in `run-e2e.sh`), on a scratch API and
+  database only. It proves:
+  - a Business Owner gets 403 on every route;
+  - `STEP_UP_REQUIRED` on `ask`;
+  - the CSR, the vendor upload and the signed request;
+  - a matching certificate installs, and mismatched and expired ones are refused;
+  - renewal keeps the topic, a changed topic is refused, and `replace` is required for a new one, with a stale
+    current topic refused;
+  - conditional writes, and 0100's refusals in the database;
+  - the Google key, and every delete;
+  - reminders with the MDM sweep on: held by a pause, then exactly one alert at 14 days;
+  - no key or certificate in any audit row or in the API's output, and no Apple, Google or mdmcert host in its
+    logs.
+- **`apps/web/scripts/e2e-ui.mjs`** (`mdmSettingsUi`) opens the wizard at desktop and phone width, in light and
+  dark. It checks:
+  - the topic, expiry and Apple Account, and "not yet proven";
+  - the same-account warning;
+  - the prerequisites, and new-tab `noopener` links;
+  - the mdmcert caveats and the permitted-use note;
+  - the four states;
+  - the orphaned-devices warning on delete;
+  - no sideways scroll at 375 px.
+
+  The Mobile devices empty state's pointer is checked too.
+- `unit-mdm.mjs` (82) and `e2e-mdm.mjs` (67) pass unchanged.
+- **§92** (new). It checks:
+  - four sealed purposes, each used only in the setup service;
+  - the view and the returns never name a key or a sealed value;
+  - audit meta without secrets, and one fixed log line;
+  - no Apple or Google host and no HTTP client in `mdm/setup/`;
+  - `pki.ts` imports only `node:crypto`, and neither pure module reads a clock;
+  - the guard, the eight `fresh()` writes and the four deletes that never ask;
+  - the single writer, conditional on the revision;
+  - `logOrFail` before every credential write, and the topic rule;
+  - the reminders' order;
+  - 0100's CHECKs, and the suites.
+
+### Deploying
+
+This release has a schema change, so take the two extra steps in CLAUDE.md: `prisma migrate deploy`, then
+`prisma generate` at the target. Nothing changes until a Platform Admin opens Settings → Mobile devices. The
+`ENCRYPTION_KEY` that seals everything else seals these too. Losing it loses the sealed push key, push certificate
+and Google key; they would have to be made and uploaded again (with the same Apple Account, to keep the topic).
+
 ## [0.82.0] — 2026-11-21 · *Wharf*
 
 **Settings → Backups: a Platform Admin sets St0r's push up per business, step by step, and St0r's developers get a

@@ -1409,3 +1409,25 @@ export const mobileApi = {
   get: (id: string) => api.get(`/mobile-devices/${encodeURIComponent(id)}`),
   commands: (id: string) => api.get(`/mobile-devices/${encodeURIComponent(id)}/commands`),
 };
+
+/**
+ * Settings → Mobile devices (0.83 Beacon): the own MDM's setup wizard,
+ * Platform Admin only. Every write but a delete asks for fresh
+ * authentication when mdm.setup asks. Nothing here reaches Apple or Google.
+ */
+export const mdmSetupApi = {
+  view: () => api.get('/mdm/setup'),
+  csr: () => api.get('/mdm/setup/apple/push-csr'),
+  checklist: (platform: 'apple' | 'android', items: string[]) => api.put('/mdm/setup/checklist', { platform, items }),
+  signingRoute: (route: string) => api.put('/mdm/setup/apple/signing-route', { route }),
+  generateKey: (replace = false) => api.post('/mdm/setup/apple/push-key', replace ? { replace: true } : {}),
+  deleteKey: () => api.delete('/mdm/setup/apple/push-key'),
+  vendor: (body: { certificate: string; privateKey: string; chain: string; passphrase?: string }) => api.put('/mdm/setup/apple/vendor', body),
+  deleteVendor: () => api.delete('/mdm/setup/apple/vendor'),
+  signRequest: () => api.post('/mdm/setup/apple/push-request'),
+  pushCert: (body: { certificate: string; appleAccount: string }) => api.put('/mdm/setup/apple/push-certificate', body),
+  replacePushCert: (body: { certificate: string; appleAccount: string; currentTopic: string; acknowledgeReenroll: true }) => api.post('/mdm/setup/apple/push-certificate/replace', body),
+  deletePushCert: () => api.delete('/mdm/setup/apple/push-certificate'),
+  androidKey: (keyFile: string) => api.put('/mdm/setup/android/service-account', { keyFile }),
+  deleteAndroidKey: () => api.delete('/mdm/setup/android/service-account'),
+};

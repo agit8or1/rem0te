@@ -452,6 +452,12 @@ enum ActivityAction {
   BACKUP_CONNECTION_ROTATED
   BACKUP_PUSH_DRY_RUN
   BACKUP_ASSET_LINKED
+  MDM_SETUP_CHANGED
+  MDM_SETUP_CREDENTIAL_SET
+  MDM_SETUP_CREDENTIAL_DELETED
+  MDM_PUSH_REQUEST_SIGNED
+  MDM_PUSH_CERT_INSTALLED
+  MDM_PUSH_CERT_DELETED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -5345,6 +5351,56 @@ model MdmCommand {
   @@unique([connectorId, providerCommandId])
   @@index([mobileDeviceId, requestedAt])
   @@index([state, expiresAt])
+}
+
+/// 0.83 Beacon: Settings → Mobile devices, the own MDM's platform-wide setup
+/// (docs/own-mdm.md M1, invariant §92). One row, id 'platform' (decision 23:
+/// one APNs push certificate per install). Every secret is sealed under its
+/// own secret-box purpose and written only by MdmSetupService; the topic and
+/// the certificates' public facts are plain. Migration 0100 CHECKs it.
+model MdmPlatformSetup {
+  id                  String    @id @default("platform")
+  /// Bumped by every person's write; each write is conditional on the one read.
+  revision            Int       @default(0)
+  /// The owner's own ticks on the prerequisites: informational, never verification.
+  appleChecklist      String[]  @default([])
+  androidChecklist    String[]  @default([])
+  /// own_vendor | mdmcert | other_vendor (decision 22).
+  signingRoute        String?
+  /// The APNs push key, sealed (rem0te-apns-push-key-v1), and its CSR (public).
+  pushKeyEnc          String?
+  pushCsrPem          String?
+  pushKeySpkiSha256   String?
+  pushKeyCreatedAt    DateTime?
+  /// The MDM vendor signing key, sealed (rem0te-mdm-vendor-key-v1); its certificate and chain are public.
+  vendorKeyEnc        String?
+  vendorCertPem       String?
+  vendorChainPem      String?
+  vendorNotAfter      DateTime?
+  vendorSetAt         DateTime?
+  /// The APNs push certificate, sealed (rem0te-apns-push-cert-v1), and its public facts.
+  pushCertEnc         String?
+  pushCertSerial      String?
+  pushCertSha256      String?
+  pushCertIssuer      String?
+  pushCertNotBefore   DateTime?
+  pushCertNotAfter    DateTime?
+  pushCertInstalledAt DateTime?
+  pushCertRenewedAt   DateTime?
+  /// com.apple.mgmt.External.<uuid>. Kept when the certificate is deleted, so a new one must match it.
+  apnsTopic           String?
+  /// The Apple Account the person says owns the certificate. Recorded, never verified.
+  appleAccount        String?
+  /// The smallest renewal reminder already raised for this certificate (30, 14, 3, or 0 for expired).
+  pushRemindedDays    Int?
+  /// The Google service-account key, sealed (rem0te-amapi-sa-key-v1); only the project and e-mail are plain.
+  androidKeyEnc       String?
+  androidProjectId    String?
+  androidClientEmail  String?
+  androidKeyIdLast4   String?
+  androidKeySetAt     DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 }
 
 // ─── Backups (0.81 Vault, roadmap 4.1; backups/, docs/backups.md, §91) ────────

@@ -1097,11 +1097,20 @@ const SECTIONS: Section[] = [
           nothing can be sent to a device from here yet.
         </p>
         <p>
-          <strong className="text-foreground">Requires setup.</strong> No real provider can be connected in this release, so the
-          page says so and lists what each kind needs first: an existing MDM such as Microsoft Intune (its tenant and a read-only
-          API account), the Android Management API (a Google Cloud project and device quota from Google, which takes weeks), or
-          native Apple MDM (Apple&apos;s vendor certificate and a push certificate renewed every year). Connecting the existing
-          provider, read-only, is the next step.
+          <strong className="text-foreground">Requires setup.</strong> Rem0te is becoming its own MDM: the MDM server for iPhones and
+          iPads (iOS/iPadOS 16 or later) and the EMM for Android. Until devices can be enrolled, the page says so and points to
+          setup.
+        </p>
+        <p>
+          From 0.83, a Platform Admin prepares it in{' '}
+          <Link href="/settings/mobile-devices" className="underline text-foreground">Settings → Mobile devices</Link>, step by step.
+          For Apple: what to obtain first (a D-U-N-S number, an Apple Developer organization, Apple&apos;s MDM CSR permission, a
+          company Apple Account); generating the push request, whose key never leaves Rem0te; signing it with your MDM vendor
+          certificate; uploading the push certificate Apple gives you, which Rem0te checks against its key and shows with its topic
+          and expiry; and renewing it every year <strong className="text-foreground">with the same Apple Account</strong>, with
+          reminders 30, 14 and 3 days before. For Android: Google&apos;s rules for who may use it, and the service-account key, whose
+          project and e-mail are shown. Nothing on that page contacts Apple or Google. Each change asks you to confirm it is you
+          when <em>Mobile device management setup</em> asks; deleting never does.
         </p>
         <p>
           <strong className="text-foreground">Accepted is not completed.</strong> On a device&apos;s page each command shows two

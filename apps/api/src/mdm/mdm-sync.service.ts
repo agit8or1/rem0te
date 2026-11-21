@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import type { MdmConnector } from '@prisma/client';
 import { activePause } from '../containment/pause';
 import { PrismaService } from '../prisma/prisma.service';
+import { MdmSetupService } from './setup/mdm-setup.service';
 import { expireIfDue, observedCommand, reconcile, type CommandFacts } from './command-state';
 import { MdmDriverError } from './driver';
 import { DRIVERS } from './drivers';
@@ -68,7 +69,7 @@ export class MdmSyncService implements OnModuleInit, OnModuleDestroy {
   private first: ReturnType<typeof setTimeout> | null = null;
   private busy = false;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly setup: MdmSetupService) {}
 
   onModuleInit() {
     if (process.env.MDM_SWEEP === 'off') return;
@@ -94,6 +95,8 @@ export class MdmSyncService implements OnModuleInit, OnModuleDestroy {
         catch (e) { this.logger.warn(`connector ${row.id}: ${(e as Error).name}`); }
       }
       await this.expirePass(now);
+      // 0.83: the push certificate's renewal reminders (MdmSetupService; never throws).
+      await this.setup.reminderPass(now);
     } catch (e) {
       this.logger.warn(`sweep: ${(e as Error).name}`);
     } finally {

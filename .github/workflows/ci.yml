@@ -489,6 +489,13 @@ jobs:
       - name: Backup setup and St0r contract tests
         run: node apps/api/scripts/unit-backup-setup.mjs
 
+      # Settings → Mobile devices (0.83): the push CSR, matching a certificate
+      # to its key, the topic, expiry, the vendor-signed PushCertRequest, the
+      # Google service-account key's shape, reminders and the topic rule —
+      # all against stand-in keys and certificates made at run time.
+      - name: MDM setup tests
+        run: node apps/api/scripts/unit-mdm-setup.mjs
+
       # Outbound email (0.34): the SMTP host rule (every address class, IPv4-
       # mapped IPv6, what SMTP_ALLOW_LOCAL_RELAY admits, every resolved address
       # checked), the report schedule maths across zones and both DST

@@ -39,7 +39,7 @@ const COMPLIANCE_ORDER: { state: ComplianceState; label: string }[] = [
 const selectClass = 'h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 export default function MobileDevicesPage() {
-  const { can } = usePermissions();
+  const { can, isPlatformAdmin } = usePermissions();
   const allowed = can(CAP.MOBILE_VIEW);
   const [compliance, setCompliance] = React.useState<ComplianceState | ''>('');
   const [platform, setPlatform] = React.useState('');
@@ -79,9 +79,15 @@ export default function MobileDevicesPage() {
                   <span className="font-medium">No MDM provider is connected{s.connectors.length ? ' and readable' : ''}.</span>
                 </div>
                 <p className="text-muted-foreground">
-                  Rem0te does not install anything on phones or tablets. They are enrolled in an MDM provider, and Rem0te reads what it
-                  reports. Connecting a provider comes in a later release; this is what each kind needs first:
+                  Rem0te is becoming its own MDM: the MDM server for iPhones and iPads, and the EMM for Android. Nothing is enrolled
+                  yet. Setting it up starts with the credentials Apple and Google require, which a Platform Admin prepares under
+                  Settings → Mobile devices. This is what each needs:
                 </p>
+                {isPlatformAdmin ? (
+                  <p data-testid="mdm-settings-link"><Button asChild size="sm" variant="outline"><Link href="/settings/mobile-devices">Open Settings → Mobile devices</Link></Button></p>
+                ) : (
+                  <p className="text-xs text-muted-foreground" data-testid="mdm-settings-hint">A Platform Admin sets this up under Settings → Mobile devices.</p>
+                )}
                 <ul className="space-y-2" data-testid="mdm-prerequisites">
                   {s.prerequisites.map((p) => (
                     <li key={p.key} className="rounded-md border p-3">
@@ -163,7 +169,7 @@ export default function MobileDevicesPage() {
                   <div className="flex flex-col items-center gap-2 p-8 text-center text-sm text-muted-foreground" data-testid="mdm-empty">
                     <Smartphone className="h-8 w-8" aria-hidden />
                     {filtered ? <p>No mobile devices match these filters.</p>
-                      : s?.state === 'requires_setup' ? <p>No mobile devices yet. They appear here once an MDM provider is connected and has been read.</p>
+                      : s?.state === 'requires_setup' ? <p>No mobile devices yet. They appear here once devices are enrolled; setup starts under Settings → Mobile devices.</p>
                         : <p>The provider reported no devices.</p>}
                   </div>
                 ) : (
