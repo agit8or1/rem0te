@@ -47,7 +47,8 @@ func TestControlGrantAppliesWithinCeiling(t *testing.T) {
 		t.Fatalf("apply: %+v", out)
 	}
 	d := Desired(&g)
-	for k, v := range map[string]string{"access-mode": "full", "enable-keyboard": "Y", "enable-clipboard": "Y", "enable-file-transfer": "Y",
+	for k, v := range map[string]string{"access-mode": "custom", "enable-keyboard": "Y", "enable-terminal": "N", "enable-camera": "N",
+		"enable-remote-printer": "N", "enable-block-input": "N", "enable-privacy-mode": "N", "enable-record-session": "N", "enable-clipboard": "Y", "enable-file-transfer": "Y",
 		"enable-audio": "Y", "enable-tunnel": "N", "enable-remote-restart": "N", "approve-mode": "password"} {
 		if d[k] != v {
 			t.Fatalf("%s = %q, want %q", k, d[k], v)

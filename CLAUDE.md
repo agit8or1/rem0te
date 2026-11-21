@@ -1667,6 +1667,28 @@ moves that **one** computer; a Legacy computer behaves exactly as 0.71.
   the same on both sides (`enforce.Ceiling` compiled into the agent, the
   portal's `MANAGED_CEILING`), never taken from the portal, so widening it
   is a signed agent release.
+- **What RustDesk enforces is the ceiling, not more (0.78.1, F1).**
+  RustDesk's Flutter builds read `access-mode=full` as every permission on
+  before any `enable-*` key, so agents 0.73.0–0.78.0, which set `full` for
+  control, enforced none of it. Now:
+  - no argument list, desired map or allowed value carries `full`
+    (`args.go` `refused`, in `SetArgs` and `RestoreArgs`); control is
+    `custom`, view is `view`, and a rollback puts a saved `full` back as
+    RustDesk's default;
+  - every RustDesk permission option is governed (`enforce.Permissions`,
+    twelve). The six no grant names (`enforce.Locked` / `LOCKED_KEYS`:
+    terminal, camera, remote printer, block-input, privacy mode,
+    recording) are `N` on every grant, view and control alike, and read
+    back. A disagreeing readback refuses the grant (`readback_mismatch`);
+  - `Apply` refuses, before it writes, a grant whose desired values
+    RustDesk's own rule (`enforce.Effective`) would widen beyond what the
+    grant and the ceiling allow (`Beyond`);
+  - `MANAGED_KEYS` is the preflight's eleven then the six. The preflight
+    itself still reads eleven. 0098 widens the `failedKeys` CHECKs.
+
+  `enable-privacy-mode` is honoured only from RustDesk 1.4.7. The person at
+  the computer can still widen permissions in the accept window, a
+  built-in option no `--option` sets.
 - **The agent.** One enforcement exec site (`enforceRunner.Run`) runs only
   what `enforce.Valid` accepts, the installed `rustdesk.exe` by absolute
   path, an argument array, no shell, and only when the RustDesk service runs
@@ -1692,8 +1714,12 @@ Behavioural proof: `e2e-msa-managed.mjs` (port 3961, in `run-e2e.sh`). Unit:
 `unit-msa-managed.mjs` (in CI) and the Go `internal/msa/enforce` tests (a
 fake RustDesk runner). Lab: `TestLabRustdeskEnforce` in the Windows lab's
 RustDesk jobs (save, apply, read back, password, end session, restore, as the
-administrator and as SYSTEM). **It has run only on Windows Server in the
-lab**, never on a desktop, with a real remote connection, or on the fleet.
+administrator and as SYSTEM; from 0.78.1 also `access-mode` reading
+`custom` and the effective permissions by RustDesk's rule, `labEffective`,
+which is derived from what RustDesk reports, never a connection). The F1
+Go tests are `internal/msa/enforce/f1_test.go`. **It has run only on
+Windows Server in the lab**, never on a desktop, with a real remote
+connection, or on the fleet.
 
 §83 (0.73) is Managed Secure Access sessions: build step 5, **behind
 `MSA_GRANTS`, off**. Connect through grants, revocation, session evidence

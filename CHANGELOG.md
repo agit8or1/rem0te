@@ -5,6 +5,94 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.78.1] — 2026-11-21 · *Courier*
+
+**Fix: a Managed Secure Access control grant now enforces its permissions (finding F1, roadmap 1.1).** Agents
+0.73.0–0.78.0 set RustDesk's `access-mode` to `full` for every control grant. RustDesk's Flutter builds (every
+official Windows build) read `full` as *every permission on* before they look at a single `enable-*` key. So the
+grant's clipboard, file-transfer, tunnel and restart settings were written, read back correctly, and ignored, and
+every permission the agent never wrote was on: RustDesk's terminal (SYSTEM with an administrator's credentials),
+camera, remote printer, block-input, privacy mode and recording. The symptom would have been a control session
+with clipboard "off" that still copied, and a terminal button that worked. View-only grants were never affected,
+and **no production computer was exposed**: `MSA_GRANTS` is off everywhere and no computer is Managed. **A new
+signed agent build (0.78.1): publish it (the deploy's `rem0te-signed-publish` does) before anyone turns
+`MSA_GRANTS` on. `MSA_GRANTS` stays off.** Migration 0098. No signer or sudoers change.
+
+### RustDesk facts this rests on (read in RustDesk's source; nothing was connected)
+
+- `access-mode`: `full` returns true and `view` false for every permission, before the key is read; anything
+  else reads the key. `Connection::permission` in 1.4.1 and 1.4.4, `is_permission_enabled_locally` in 1.4.7,
+  1.4.9, 1.5.0 and 1.5.3 (`src/server/connection.rs`), under `feature = "flutter"`. RustDesk's own settings page
+  writes `""` for *Custom* (`defaultOptionAccessMode`); the docs name `custom`. Either reads the keys.
+- An `enable-*` key is on unless it is exactly `N` (hbb_common `option2bool`), so an option never written is on.
+- RustDesk's permission options, 1.4.1–1.5.3: keyboard, clipboard, file-transfer, audio, tunnel, remote-restart,
+  camera, terminal, remote-printer, record-session, block-input and privacy-mode. Same names in every release;
+  **`enable-privacy-mode` is honoured only from 1.4.7** (1.4.1–1.4.6 gate privacy mode only on support).
+- `rustdesk.exe --option KEY VALUE` stores any key (`ipc::set_option`), so writing `enable-privacy-mode=N` on
+  1.4.1–1.4.6 is harmless and reads back.
+- Not settable, and so not closed: `enable-perm-change-in-accept-window` is a *built-in* option (custom clients
+  only), so the person at the computer can widen keyboard, clipboard, audio, file, restart, recording,
+  block-input and privacy mode for their own session in the accept window. From 1.4.9 a rendezvous server may
+  send `ControlPermissions` that override the keys; only RustDesk Server Pro does, never Rem0te's hbbs.
+
+### Fixed (the signed agent, `internal/msa/enforce`)
+
+- **Control is `access-mode=custom`**, view stays `view`. `args.go` refuses `full` outright: `SetArgs`,
+  `RestoreArgs` and so `Valid` never build or accept it. A rollback that finds `full` in the settings saved
+  before cutover puts back RustDesk's default (unset, *Custom*) with every `enable-*` key restored as it was,
+  rather than write `full`.
+- **Six permissions are `N` on every grant**, view and control alike, and read back:
+  `enable-terminal`, `enable-camera`, `enable-remote-printer`, `enable-block-input`, `enable-privacy-mode`,
+  `enable-record-session` (`enforce.Locked`). A readback that disagrees refuses the grant (`readback_mismatch`,
+  naming the key) and ends the session with a password nobody is told, as for any other key.
+- **Before writing anything**, `Apply` evaluates RustDesk's own rule (`enforce.Effective`, a port of the
+  functions above) over the values it is about to set and refuses if RustDesk would allow anything the grant
+  and the compiled ceiling do not (`Beyond`).
+- **Computers cut over by an older agent.** The settings it saved before cutover lack the six keys; the next
+  grant reads their current values (which that agent never changed) into the saved file before changing them,
+  and refuses (`save_failed`) if one cannot be read. A remembered `full` from an older agent is treated as
+  `custom`, so the hourly readback corrects it instead of restoring `full` (`Normalise`).
+
+### Changed (portal)
+
+- `msa/managed.ts`: `LOCKED_KEYS` (the same six, in the agent's order), `MANAGED_KEYS` is the preflight's eleven
+  then the six, `REPORT_KEYS` adds them, and `MANAGED_ACCESS_MODES` is `view` and `custom`. The preflight still
+  reads only its eleven. `MANAGED_CEILING` and `enforce.Ceiling` are unchanged and still agree.
+- **Migration 0098** widens the two `failedKeys` CHECKs (`MsaGrant`, `MsaManagedComputer`) to the eighteen
+  report keys. It is numbered 0098 because 0096 and 0097 belong to releases built alongside this one.
+- **Wording.** Clipboard and file transfer are enforced by RustDesk on the **controlled** computer, not on the
+  technician's client (whose toggles can only narrow). Corrected in Settings → Security features
+  (`security-features.ts`, now *Enforced at: RustDesk on the computer*), the preset capability notes
+  (`presets.ts`), the access-policy explanation and the Technician Access policy panel.
+
+### Docs
+
+- `docs/managed-secure-access.md` §2 (`access-mode`, the permission options, privacy mode from 1.4.7, what is
+  not settable), §3.3, and the §3.12 correction note, now *fixed in 0.78.1* with what changed and the evidence.
+- `docs/session-maintenance-mdm-backup-audit.md`: **the owner accepted every recommendation for decisions 8–20
+  on 2026-11-21** ("accept all recs"), each now *Decided (owner, 2026-11-21)*. Roadmap: T1 and T2 *Shipped
+  (0.77.0, 0.78.0)*; 1.1 is this release; 1.3 and 1.6 unblocked; 1.8 may proceed as docs; 3.2 still waits for a
+  provider account and 4.3 for the St0r token. The F1 section and the per-mode tables say what 0.78.1 changes.
+- `docs/capabilities.md`, `docs/lab-testing.md` and CLAUDE.md §82 to match.
+
+### Tests and evidence
+
+- Go, `internal/msa/enforce/f1_test.go`: no desired map holds `full` (both modes and an unknown one × both
+  consents × all 32 permission combinations, tunnel and restart included); every RustDesk permission named and
+  read back; the effective permissions exactly the grant's and the ceiling's; `full` modelled as the bug it was;
+  a locked key that does not read back refuses the grant; a full cycle from a `full` computer never writes
+  `full`; older saved files and state brought forward. Existing tests updated for `custom` and the six keys.
+- `unit-msa-managed.mjs`: the key lists on both sides, the agent's `Locked` order, 0098's two lists, and the
+  access modes. `e2e-msa-managed.mjs`: a readback naming `enable-terminal` is stored, a key outside the list
+  (`enable-file-copy-paste`) is refused, and the CHECK accepts the six. check-security-invariants §82: four new
+  F1 checks.
+- **Windows lab** (`TestLabRustdeskEnforce`, RustDesk 1.4.1, 1.4.6, 1.4.7, 1.4.9 and 1.5.3, as the administrator
+  and as SYSTEM): after apply, `access-mode` reads `custom` for control, the six read `N`, and RustDesk's rule
+  over all twelve permission options *as RustDesk reports them* grants exactly the grant's. **This is derived, not
+  a connection:** RustDesk has no command line or documented interface that answers what a connection would be
+  allowed, and the lab has no second RustDesk that can log in unattended. Simulation and the lab are Windows
+  Server only; nothing here ran on a desktop or the fleet.
+
 ## [0.78.0] — 2026-11-21 · *Courier*
 
 **Background file transfer: a Platform Admin can send a file to a Windows computer running the signed agent, or

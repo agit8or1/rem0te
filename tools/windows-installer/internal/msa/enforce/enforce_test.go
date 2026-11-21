@@ -33,6 +33,8 @@ var defaults = map[string]string{
 	"enable-keyboard": "Y", "enable-clipboard": "Y", "enable-file-transfer": "Y", "enable-audio": "Y",
 	"enable-tunnel": "Y", "enable-remote-restart": "Y", "allow-auto-disconnect": "N",
 	"verification-method": "use-both-passwords", "stop-service": "N",
+	"enable-terminal": "Y", "enable-camera": "Y", "enable-remote-printer": "Y",
+	"enable-block-input": "Y", "enable-privacy-mode": "Y", "enable-record-session": "Y",
 }
 
 func newFake() *fakeRustdesk {
@@ -89,9 +91,12 @@ func newEnforcer(f *fakeRustdesk) *Enforcer {
 
 // ── args ────────────────────────────────────────────────────────────────────
 
-func TestKeysAreThePreflights(t *testing.T) {
-	if !reflect.DeepEqual(Keys, msa.Keys) || len(Keys) != 11 {
+func TestKeysAreThePreflightsThenLocked(t *testing.T) {
+	if !reflect.DeepEqual(Keys[:len(msa.Keys)], msa.Keys) || len(msa.Keys) != 11 || !reflect.DeepEqual(Keys[11:], Locked) || len(Keys) != 17 {
 		t.Fatalf("keys %v", Keys)
+	}
+	if !reflect.DeepEqual(Locked, []string{"enable-terminal", "enable-camera", "enable-remote-printer", "enable-block-input", "enable-privacy-mode", "enable-record-session"}) {
+		t.Fatalf("locked %v", Locked)
 	}
 	for _, k := range order {
 		if !isKey(k) {
@@ -105,7 +110,8 @@ func TestKeysAreThePreflights(t *testing.T) {
 
 func TestArgsAreClosed(t *testing.T) {
 	refused := [][]string{
-		SetArgs("custom-rendezvous-server", "evil"), SetArgs("access-mode", "custom"), SetArgs("verification-method", "use-temporary-password"),
+		SetArgs("custom-rendezvous-server", "evil"), SetArgs("access-mode", "full"), RestoreArgs("access-mode", "full"),
+		SetArgs("enable-terminal", "Y"), SetArgs("enable-privacy-mode", ""), SetArgs("access-mode", ""), SetArgs("verification-method", "use-temporary-password"),
 		SetArgs("allow-auto-disconnect", "N"), SetArgs("auto-disconnect-timeout", "0"), SetArgs("auto-disconnect-timeout", "121"),
 		SetArgs("enable-keyboard", "Y N"), RestoreArgs("access-mode", "a b"), RestoreArgs("password", "x"),
 		PasswordArgs("short"), PasswordArgs("ZZZZyyyyXXXXwwww0000111!"), PasswordArgs("ZZZZyyyyXXXXwwww00001111 --x"),
@@ -119,7 +125,8 @@ func TestArgsAreClosed(t *testing.T) {
 	for _, a := range [][]string{
 		{"--option", "access-mode", "view"}, {"--option", "auto-disconnect-timeout", "10"}, {"--password", "ZZZZyyyyXXXXwwww00001111"},
 		{"--option", "stop-service", "Y"}, {"--option", "stop-service", "N"}, {"--option", "stop-service"}, {"--option", "enable-audio"},
-		{"--option", "approve-mode", "password-click"},
+		{"--option", "approve-mode", "password-click"}, {"--option", "access-mode", "custom"}, {"--option", "enable-terminal", "N"},
+		{"--option", "enable-record-session"}, {"--option", "access-mode", ""}, {"--option", "enable-camera", "Y"},
 	} {
 		if !Valid(a) {
 			t.Fatalf("%v should be valid", a)
@@ -128,6 +135,7 @@ func TestArgsAreClosed(t *testing.T) {
 	for _, a := range [][]string{
 		{"--get-id"}, {"--option", "stop-service", "X"}, {"--password", "x"}, {"--config", "x"}, {"--option", "custom-rendezvous-server", "x"},
 		{"--option", "access-mode", "view", "extra"}, {"--cm"}, {"--option"}, {},
+		{"--option", "access-mode", "full"}, {"--option", "enable-file-copy-paste", "N"}, {"--option", "enable-perm-change-in-accept-window"},
 	} {
 		if Valid(a) {
 			t.Fatalf("%v should be refused", a)
@@ -183,7 +191,8 @@ func TestApplySetsReadsBackThenPassword(t *testing.T) {
 	}
 	want := map[string]string{"verification-method": "use-permanent-password", "access-mode": "view", "enable-keyboard": "N",
 		"enable-clipboard": "N", "enable-file-transfer": "N", "enable-audio": "N", "enable-tunnel": "N", "enable-remote-restart": "N",
-		"approve-mode": "click", "allow-auto-disconnect": "Y", "auto-disconnect-timeout": "10"}
+		"enable-terminal": "N", "enable-camera": "N", "enable-remote-printer": "N", "enable-block-input": "N", "enable-privacy-mode": "N",
+		"enable-record-session": "N", "approve-mode": "click", "allow-auto-disconnect": "Y", "auto-disconnect-timeout": "10"}
 	if !reflect.DeepEqual(f.opts, want) {
 		t.Fatalf("options %v", f.opts)
 	}
@@ -227,7 +236,8 @@ func TestPasswordWithoutDoneFails(t *testing.T) {
 
 func TestEmptyReadbackMeansDefault(t *testing.T) {
 	if !Matches("enable-keyboard", "", "Y") || Matches("enable-keyboard", "", "N") || Matches("access-mode", "", "view") ||
-		!Matches("allow-auto-disconnect", "", "N") || Matches("allow-auto-disconnect", "", "Y") {
+		!Matches("allow-auto-disconnect", "", "N") || Matches("allow-auto-disconnect", "", "Y") ||
+		!Matches("access-mode", "", "custom") || !Matches("enable-terminal", "", "Y") || Matches("enable-terminal", "", "N") {
 		t.Fatal("empty readback table")
 	}
 }
@@ -385,7 +395,9 @@ func TestTestSessionPendingFullCycle(t *testing.T) {
 	if r.store.saved == nil || r.store.saves != 1 || r.store.saved.Values["access-mode"] != "full" {
 		t.Fatalf("saved %+v", r.store.saved)
 	}
-	// Pending: the saved settings went back after the session.
+	// Pending: the saved settings went back after the session — all but
+	// access-mode full, which goes back as RustDesk's default (F1).
+	delete(before, "access-mode")
 	if !reflect.DeepEqual(r.f.opts, before) {
 		t.Fatalf("pending computer not restored between test sessions: %v", r.f.opts)
 	}
@@ -552,6 +564,7 @@ func TestRollbackRestores(t *testing.T) {
 	if got := r.portal.events(); !reflect.DeepEqual(got, []string{"secured", "received", "applied", "connected", "ended:rollback", "restored"}) {
 		t.Fatalf("events %v", got)
 	}
+	delete(before, "access-mode") // full goes back as RustDesk's default (F1)
 	if !reflect.DeepEqual(r.f.opts, before) || r.store.saved != nil {
 		t.Fatalf("not restored: %v saved=%v", r.f.opts, r.store.saved)
 	}
@@ -564,7 +577,7 @@ func TestRollbackRestoreFailed(t *testing.T) {
 	for _, k := range Keys {
 		r.store.saved.Values[k] = ""
 	}
-	r.store.saved.Values["access-mode"] = "full"
+	r.store.saved.Values["access-mode"] = "custom"
 	r.f.ignore["access-mode"] = true
 	r.f.opts["access-mode"] = "view"
 	r.portal.answers = []PollAnswer{managed("rollback_pending"), {EndpointID: epID}}
