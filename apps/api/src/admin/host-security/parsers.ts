@@ -33,6 +33,8 @@ export interface SshdValue {
    * and sshd keeps the first value it sees.
    */
   uncertain: boolean;
+  /** The unreadable files sshd reads before this value was decided (empty when it is certain). */
+  unreadableBefore: string[];
 }
 export interface SshdConfig { values: Record<SshdKey, SshdValue>; unreadable: string[]; files: string[] }
 
@@ -47,6 +49,14 @@ export interface ConfigFile { path: string; text: string | null }
  *
  * `sshd -T` would be exact but needs root (it reads the host keys), which the
  * service user is not; this is the fallback, and it says when it is unsure.
+ *
+ * Unsure means exactly one thing (0.75.1, re-checked against a host whose
+ * root-only 50-cloud-init.conf sets PasswordAuthentication): an unreadable
+ * file came, in sshd's reading order, *before* the first readable value. A
+ * readable drop-in that sorts earlier (40-rem0te.conf setting
+ * PermitRootLogin no) decides the directive for certain, whatever the
+ * unreadable files after it say, because sshd never looks past a value it
+ * already has. `unreadableBefore` names the files that made a value unsure.
  */
 export function parseSshdConfig(main: ConfigFile, include: (pattern: string) => ConfigFile[]): SshdConfig | null {
   if (main.text === null) return null;
@@ -73,12 +83,12 @@ export function parseSshdConfig(main: ConfigFile, include: (pattern: string) => 
         continue;
       }
       if (!keys.has(key) || values[key as SshdKey]) continue;
-      values[key as SshdKey] = { value: value.toLowerCase(), source: f.path, uncertain: unreadable.length > 0 };
+      values[key as SshdKey] = { value: value.toLowerCase(), source: f.path, uncertain: unreadable.length > 0, unreadableBefore: [...unreadable] };
     }
   };
   walk(main, 0);
   const out = {} as Record<SshdKey, SshdValue>;
-  for (const k of SSHD_KEYS) out[k] = values[k] ?? { value: SSHD_DEFAULTS[k], source: 'default', uncertain: unreadable.length > 0 };
+  for (const k of SSHD_KEYS) out[k] = values[k] ?? { value: SSHD_DEFAULTS[k], source: 'default', uncertain: unreadable.length > 0, unreadableBefore: [...unreadable] };
   return { values: out, unreadable, files };
 }
 
@@ -91,11 +101,21 @@ export function parseUfwConf(text: string | null): boolean | null {
   return m ? m[1].toLowerCase() === 'yes' : null;
 }
 
-// ── Listening sockets (`ss -Htlnu`) ─────────────────────────────────────────
+// ── Listening sockets (`ss -Htlnup`) ────────────────────────────────────────
 
-export interface Listener { proto: 'tcp' | 'udp'; address: string; port: number; loopback: boolean }
+export interface Listener {
+  proto: 'tcp' | 'udp'; address: string; port: number; loopback: boolean;
+  /** ss's state column: LISTEN for TCP, UNCONN for an unconnected UDP socket. */
+  state: string;
+  /**
+   * The owning process's name, when this user may see it. `ss -p` shows the
+   * owner only of this user's own sockets; for root's it prints nothing, and
+   * nothing here asks for root to find out.
+   */
+  process: string | null;
+}
 
-/** `ss -Htlnu`: one socket per line, `tcp LISTEN 0 511 127.0.0.1:3000 0.0.0.0:*`. */
+/** `ss -Htlnup`: one socket per line, `tcp LISTEN 0 511 127.0.0.1:3000 0.0.0.0:* users:(("node",pid=1,fd=20))`. */
 export function parseSsListeners(stdout: string): Listener[] | null {
   const out: Listener[] = [];
   for (const raw of stdout.split('\n')) {
@@ -112,10 +132,38 @@ export function parseSsListeners(stdout: string): Listener[] | null {
     address = address.replace(/^\[/, '').replace(/\]$/, '');
     const host = address.split('%')[0];
     const loopback = /^127\./.test(host) || host === '::1';
-    out.push({ proto, address, port, loopback });
+    const owner = /users:\(\("([A-Za-z0-9._:-]{1,32})"/.exec(cols.slice(6).join(' '));
+    out.push({ proto, address, port, loopback, state: /^[A-Z-]{1,12}$/.test(cols[1]) ? cols[1] : '', process: owner ? owner[1] : null });
   }
   if (!out.length && stdout.trim()) return null;
   return out;
+}
+
+export interface PortRange { low: number; high: number }
+
+/**
+ * /proc/sys/net/ipv4/ip_local_port_range ("32768\t60999"): the ports the
+ * kernel hands a socket that binds without naming one. It governs IPv6 too.
+ * Null when it is unreadable or not two ordered ports.
+ */
+export function parsePortRange(text: string | null): PortRange | null {
+  if (text === null) return null;
+  const m = /^\s*(\d{1,5})\s+(\d{1,5})\s*$/.exec(text);
+  if (!m) return null;
+  const low = Number(m[1]), high = Number(m[2]);
+  return low >= 1 && high <= 65535 && low <= high ? { low, high } : null;
+}
+
+/**
+ * An unconnected UDP socket on a port inside the kernel's ephemeral range is
+ * a client that let the kernel pick its source port (hbbs's own outbound
+ * socket on udp/33344, on the host that prompted 0.75.1), not a service
+ * someone configured: a service names its port, and the kernel never hands
+ * out a port below the range. Only UDP: a TCP socket in LISTEN was asked to
+ * listen, whatever its number. Without a readable range nothing is excused.
+ */
+export function isEphemeralClientSocket(l: Listener, range: PortRange | null): boolean {
+  return !!range && l.proto === 'udp' && l.state === 'UNCONN' && !l.loopback && l.port >= range.low && l.port <= range.high;
 }
 
 /**
@@ -129,12 +177,18 @@ export const EXPECTED_PUBLIC = {
   udp: [443, 21116],
 } as const;
 
-export function unexpectedListeners(ls: Listener[]): Listener[] {
+export function unexpectedListeners(ls: Listener[], range: PortRange | null = null): Listener[] {
   return ls.filter((l) => {
     if (l.loopback) return false;
     if (l.proto === 'udp' && l.port === 68 && l.address.includes('%')) return false;
+    if (isEphemeralClientSocket(l, range)) return false;
     return !(EXPECTED_PUBLIC[l.proto] as readonly number[]).includes(l.port);
   });
+}
+
+/** The public sockets `unexpectedListeners` excused as ephemeral client sockets (shown, never hidden). */
+export function ephemeralClientSockets(ls: Listener[], range: PortRange | null): Listener[] {
+  return ls.filter((l) => isEphemeralClientSocket(l, range) && !(EXPECTED_PUBLIC.udp as readonly number[]).includes(l.port));
 }
 
 // ── apt ─────────────────────────────────────────────────────────────────────

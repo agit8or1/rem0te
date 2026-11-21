@@ -18,6 +18,7 @@ const require = createRequire(import.meta.url);
 const P = require(join(here, '..', 'dist', 'admin', 'host-security', 'parsers.js'));
 const S = require(join(here, '..', 'dist', 'admin', 'host-security', 'posture.js'));
 const R = require(join(here, '..', 'dist', 'admin', 'host-security', 'host-runner.js'));
+const A = require(join(here, '..', 'dist', 'admin', 'host-security', 'acceptance.js'));
 const FX = JSON.parse(readFileSync(join(here, 'fixtures', 'host-security.json'), 'utf8'));
 
 let passed = 0;
@@ -54,16 +55,57 @@ const J = JSON.stringify;
   check('sshd: an include loop stops', loops <= 2, String(loops));
 }
 
+// ── sshd ordering (0.75.1): first match wins across Include'd drop-ins ──────
+{
+  const D = '/etc/ssh/sshd_config.d';
+  const host = (main, drops) => P.parseSshdConfig({ path: '/etc/ssh/sshd_config', text: main },
+    () => Object.keys(drops).sort().map((n) => ({ path: `${D}/${n}`, text: drops[n] })));
+  const mainTop = 'Include /etc/ssh/sshd_config.d/*.conf\nPermitRootLogin yes\nPasswordAuthentication yes\nX11Forwarding yes\n';
+  // The host that prompted 0.75.1: 40-rem0te.conf (readable) sorts before 50-cloud-init.conf (root 0600).
+  const prod = host(mainTop, { '40-rem0te.conf': 'PermitRootLogin no\n', '50-cloud-init.conf': null, '60-cloudimg-settings.conf': 'PasswordAuthentication no\n' });
+  check('sshd order: a readable earlier drop-in decides the value for certain (PermitRootLogin no from 40-rem0te.conf)',
+    prod.values.permitrootlogin.value === 'no' && /40-rem0te/.test(prod.values.permitrootlogin.source) && !prod.values.permitrootlogin.uncertain && J(prod.values.permitrootlogin.unreadableBefore) === '[]', J(prod.values.permitrootlogin));
+  check('sshd order: a value first readable after the unreadable file stays unsure, and names the file',
+    prod.values.passwordauthentication.uncertain && J(prod.values.passwordauthentication.unreadableBefore) === J([`${D}/50-cloud-init.conf`]), J(prod.values.passwordauthentication));
+  const late = host(mainTop, { '50-cloud-init.conf': null, '60-x.conf': 'PermitRootLogin no\n' });
+  check('sshd order: the same setting in a drop-in that sorts after the unreadable one is unsure', late.values.permitrootlogin.value === 'no' && late.values.permitrootlogin.uncertain);
+  const early = host(mainTop, { '01-first.conf': 'PermitRootLogin prohibit-password\nPasswordAuthentication no\n', '50-cloud-init.conf': null });
+  check('sshd order: a drop-in sorting first decides both directives, whatever the unreadable file says', !early.values.permitrootlogin.uncertain && !early.values.passwordauthentication.uncertain && early.values.passwordauthentication.value === 'no');
+  const mainFirst = host('PermitRootLogin no\nInclude /etc/ssh/sshd_config.d/*.conf\n', { '50-cloud-init.conf': null });
+  check('sshd order: a value set in sshd_config above the Include is certain', mainFirst.values.permitrootlogin.value === 'no' && !mainFirst.values.permitrootlogin.uncertain);
+  const allReadable = host(mainTop, { '50-cloud-init.conf': 'PasswordAuthentication yes\n', '60-cloudimg-settings.conf': 'PasswordAuthentication no\n' });
+  check('sshd order: with every file readable, the lexically first drop-in wins (50 before 60) and nothing is unsure',
+    allReadable.values.passwordauthentication.value === 'yes' && /50-cloud-init/.test(allReadable.values.passwordauthentication.source) && allReadable.unreadable.length === 0);
+  const dflt = host(mainTop, { '50-cloud-init.conf': null });
+  check('sshd order: a default after an unreadable file is unsure', dflt.values.maxauthtries.source === 'default' && dflt.values.maxauthtries.uncertain);
+  const lex = host(mainTop, { '9-a.conf': 'PermitRootLogin no\n', '10-b.conf': null });
+  check("sshd order: lexical, not numeric ('10-b' sorts before '9-a', so 9-a's value is unsure)", lex.values.permitrootlogin.uncertain && J(lex.values.permitrootlogin.unreadableBefore) === J([`${D}/10-b.conf`]));
+}
+
 // ── Firewall and listeners ──────────────────────────────────────────────────
 {
   check('ufw.conf ENABLED=yes', P.parseUfwConf(FX.files['/etc/ufw/ufw.conf']) === true);
   check('ufw.conf ENABLED=no', P.parseUfwConf('ENABLED=no\n') === false);
   check('ufw.conf missing is unknown', P.parseUfwConf(null) === null && P.parseUfwConf('# nothing\n') === null);
-  const ls = P.parseSsListeners(FX.commands['/usr/bin/ss -Htlnu']?.stdout ?? FX.commands['ss -Htlnu'].stdout);
-  check('ss: every socket parsed', ls && ls.length === 25, String(ls?.length));
+  const ls = P.parseSsListeners(FX.commands['ss -Htlnup'].stdout);
+  check('ss: every socket parsed', ls && ls.length === 27, String(ls?.length));
   check('ss: loopback, interface-scoped and wildcard addresses', ls.find((l) => l.port === 3001).loopback && ls.find((l) => l.address === '127.0.0.53%lo').loopback && !ls.find((l) => l.proto === 'tcp' && l.port === 443).loopback);
-  const u = P.unexpectedListeners(ls);
-  check('ss: only udp/33344 is unexpected (dhclient on %eth0:68 and the RustDesk ports are expected)', J(u.map((l) => `${l.proto}/${l.port}`)) === J(['udp/33344']), J(u));
+  check('ss: the state column is kept (LISTEN, UNCONN)', ls.find((l) => l.proto === 'tcp' && l.port === 22).state === 'LISTEN' && ls.find((l) => l.port === 33344).state === 'UNCONN');
+  check("ss -p: an owner this user may see is kept; root's (hbbs) prints none", ls.find((l) => l.port === 8080).process === 'node' && ls.find((l) => l.port === 3001).process === 'node' && ls.find((l) => l.port === 33344).process === null);
+  check('ss -p: an owner outside the charset is dropped', P.parseSsListeners('tcp LISTEN 0 1 0.0.0.0:9 0.0.0.0:* users:(("a b;rm",pid=1,fd=2))\n')[0].process === null);
+  const range = P.parsePortRange(FX.files['/proc/sys/net/ipv4/ip_local_port_range']);
+  check('port range: 32768–60999 from the tab-separated sysctl', range && range.low === 32768 && range.high === 60999, J(range));
+  check('port range: unreadable, garbage or reversed is null', P.parsePortRange(null) === null && P.parsePortRange('abc') === null && P.parsePortRange('60999 32768') === null && P.parsePortRange('0 70000') === null);
+  const before = P.unexpectedListeners(ls);
+  check('ss: without the range nothing is excused (udp/33344 is unexpected, as in 0.74)', J(before.map((l) => `${l.proto}/${l.port}`)) === J(['udp/33344', 'udp/5353', 'tcp/8080']), J(before));
+  const u = P.unexpectedListeners(ls, range);
+  check('ss: with the range, an unconnected UDP socket on an ephemeral port is not a public service; udp/5353 and tcp/8080 still are', J(u.map((l) => `${l.proto}/${l.port}`)) === J(['udp/5353', 'tcp/8080']), J(u));
+  check('ss: the excused socket is listed as an ephemeral client socket', J(P.ephemeralClientSockets(ls, range).map((l) => `${l.proto}/${l.port}`)) === J(['udp/33344']));
+  const tcpEph = P.parseSsListeners('tcp LISTEN 0 128 0.0.0.0:40000 0.0.0.0:*\n');
+  check('ss: a TCP listener inside the ephemeral range is still unexpected', P.unexpectedListeners(tcpEph, range).length === 1 && P.ephemeralClientSockets(tcpEph, range).length === 0);
+  const edges = P.parseSsListeners('udp UNCONN 0 0 *:32767 *:*\nudp UNCONN 0 0 *:32768 *:*\nudp UNCONN 0 0 *:60999 *:*\nudp UNCONN 0 0 *:61000 *:*\nudp ESTAB 0 0 10.0.0.1:40000 10.0.0.2:53\nudp UNCONN 0 0 127.0.0.1:40001 0.0.0.0:*\n');
+  check('ss: the range is inclusive at both ends; outside it, or connected, is judged as before; loopback is never public',
+    J(P.unexpectedListeners(edges, range).map((l) => l.port)) === J([32767, 61000, 40000]) && J(P.ephemeralClientSockets(edges, range).map((l) => l.port)) === J([32768, 60999]), J(P.unexpectedListeners(edges, range)));
   check('ss: garbage is unknown', P.parseSsListeners('this is not ss output at all\n') === null);
   check('ss: no listeners is an empty list', J(P.parseSsListeners('')) === '[]');
 }
@@ -175,6 +217,55 @@ const J = JSON.stringify;
   check('switches: exactly "off" counts', J(sw) === J(['STALE_SWEEP', 'AUDIT_SEALER']), J(sw));
   check('switches: STALE_SWEEP and SSO_SESSION_SWEEP are critical (CLAUDE.md: never in production)', S.OFF_SWITCHES.find((s) => s.name === 'STALE_SWEEP').severity === 'critical' && S.OFF_SWITCHES.find((s) => s.name === 'SSO_SESSION_SWEEP').severity === 'critical');
   check('NODE_ENV=test is critical, production passes', S.nodeEnvFinding({ NODE_ENV: 'test' }, 'x').severity === 'critical' && S.nodeEnvFinding({ NODE_ENV: 'production' }, 'x').status === 'pass' && S.nodeEnvFinding({}, 'x').status === 'fail');
+}
+
+// ── Accepted risks (0.75.1) ─────────────────────────────────────────────────
+{
+  const never = A.NEVER_ACCEPTABLE.map((n) => n.id);
+  check('accept: the never-acceptable list is exactly the decided one', J(never) === J(['portal.mfa.admins', 'portal.admins', 'portal.audit_chain', 'host.ssh.empty_passwords', 'process.node_env', 'process.switch.', 'web.tls']), J(never));
+  check('accept: no acceptable id is never-acceptable (the lists are disjoint)', A.ACCEPTABLE_FINDINGS.every((id) => A.neverAcceptable(id) === null));
+  check('accept: a Platform Admin without MFA, NODE_ENV, a test switch, the chain and TLS are refused with a reason',
+    ['portal.mfa.admins', 'process.node_env', 'process.switch.STALE_SWEEP', 'process.switch.AGENT_AUTO_UPDATE', 'portal.audit_chain', 'web.tls', 'web.tls.remote.example.com', 'host.ssh.empty_passwords'].every((id) => !A.isAcceptable(id) && typeof A.neverAcceptable(id) === 'string'));
+  check('accept: SSH, listeners and audit export are acceptable; an unknown id is not', A.isAcceptable('host.ssh.password_auth') && A.isAcceptable('network.listeners') && A.isAcceptable('portal.audit_export') && !A.isAcceptable('host.nope') && !A.isAcceptable('network.ephemeral_sockets'));
+  const mig = readFileSync(join(here, '..', 'prisma', 'migrations', '0093_security_risk_acceptance', 'migration.sql'), 'utf8');
+  const sqlIds = [...(/"findingId" IN \(([\s\S]*?)\)\);/.exec(mig)?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  check("accept: migration 0093's CHECK names exactly ACCEPTABLE_FINDINGS, in order", J(sqlIds) === J(A.ACCEPTABLE_FINDINGS), `${sqlIds.length} vs ${A.ACCEPTABLE_FINDINGS.length}`);
+
+  check('reason: trimmed, 3–300 characters', A.cleanReason('  behind the hardware firewall  ') === 'behind the hardware firewall' && A.cleanReason('ab') === null && A.cleanReason('  ab  ') === null && A.cleanReason('x'.repeat(300)) !== null && A.cleanReason('x'.repeat(301)) === null);
+  check('reason: not a string, or with control characters, is refused', A.cleanReason(42) === null && A.cleanReason(undefined) === null && A.cleanReason('ok\u0000then') === null && A.cleanReason('line\u001bescape') === null);
+  const now = new Date('2026-11-21T12:00:00Z');
+  check('expiry: none by default', A.expiryFor(undefined, now) === null && A.expiryFor(null, now) === null);
+  check('expiry: 1 and 365 days are allowed', A.expiryFor(1, now).toISOString() === '2026-11-22T12:00:00.000Z' && A.expiryFor(365, now).getTime() - now.getTime() === 365 * 86_400_000);
+  check('expiry: 0, 366, fractions and strings are refused', [0, 366, 1.5, '30', -1].every((d) => A.expiryFor(d, now) === undefined));
+
+  const base = { id: 'network.listeners', status: 'fail', evidence: 'Not loopback and not expected: udp/5353 on 0.0.0.0, tcp/8080 on 0.0.0.0 (node).', basis: { unexpected: ['tcp/8080@0.0.0.0', 'udp/5353@0.0.0.0'], rangeRead: true } };
+  const fp = A.fingerprintOf(base);
+  check('fingerprint: sha256 hex, the same for the same facts', /^[0-9a-f]{64}$/.test(fp) && fp === A.fingerprintOf({ ...base }));
+  check('fingerprint: key order in the basis does not matter', fp === A.fingerprintOf({ ...base, basis: { rangeRead: true, unexpected: base.basis.unexpected } }));
+  check('fingerprint: the wording and the time it was read do not matter (only the basis)', fp === A.fingerprintOf({ ...base, evidence: 'reworded', checkedAt: 'later' }));
+  check('fingerprint: a new offending port changes it', fp !== A.fingerprintOf({ ...base, basis: { ...base.basis, unexpected: [...base.basis.unexpected, 'tcp/9000@0.0.0.0'] } }));
+  check('fingerprint: the status is part of it (fail → unknown moves it)', fp !== A.fingerprintOf({ ...base, status: 'unknown' }));
+  check('fingerprint: without a basis it is the evidence', A.fingerprintOf({ id: 'x', status: 'unknown', evidence: 'a' }) !== A.fingerprintOf({ id: 'x', status: 'unknown', evidence: 'b' }));
+  const sshA = { id: 'host.ssh.password_auth', status: 'unknown', evidence: 'e', basis: { value: 'no', source: '/etc/ssh/sshd_config.d/60-cloudimg-settings.conf', unreadableBefore: ['/etc/ssh/sshd_config.d/50-cloud-init.conf'] } };
+  check('fingerprint: an SSH value that moves to another file changes it', A.fingerprintOf(sshA) !== A.fingerprintOf({ ...sshA, basis: { ...sshA.basis, source: '/etc/ssh/sshd_config.d/01-rem0te.conf', unreadableBefore: [] } }));
+
+  const row = { id: 'r1', findingId: 'network.listeners', status: 'fail', fingerprint: fp, reason: 'r', evidence: 'e', acceptedById: 'u', acceptedAt: new Date('2026-11-20T00:00:00Z'), expiresAt: null };
+  const live = { ...base, area: 'network', title: 't', severity: 'medium', checkedAt: 'x', fingerprint: fp };
+  check('standing: the same evidence holds', A.acceptanceStanding(row, live, now) === 'holds');
+  check('standing: moved evidence re-opens (evidence_changed)', A.acceptanceStanding(row, { ...live, fingerprint: 'f'.repeat(64) }, now) === 'evidence_changed');
+  check('standing: a check that now passes, is info, or is gone re-opens (resolved)', A.acceptanceStanding(row, { ...live, status: 'pass' }, now) === 'resolved' && A.acceptanceStanding(row, { ...live, status: 'info' }, now) === 'resolved' && A.acceptanceStanding(row, undefined, now) === 'resolved');
+  check('standing: at its expiry it re-opens (expired), even with the same evidence', A.acceptanceStanding({ ...row, expiresAt: now }, live, now) === 'expired' && A.acceptanceStanding({ ...row, expiresAt: new Date(now.getTime() + 1000) }, live, now) === 'holds');
+  check('standing: expiry is checked before the evidence', A.acceptanceStanding({ ...row, expiresAt: new Date(0) }, { ...live, fingerprint: 'f'.repeat(64) }, now) === 'expired');
+  check('reopen causes are a closed list', J(A.REOPEN_CAUSES) === J(['evidence_changed', 'expired', 'resolved', 'unaccepted']));
+
+  // The score: accepted is never pass, carries no penalty, and leaves coverage alone.
+  const f = (status, severity, accepted) => ({ id: `${status}-${severity}-${Math.random()}`, area: 'host', title: 't', status, severity, evidence: 'e', checkedAt: 'x', ...(accepted ? { acceptance: { id: 'a' } } : {}) });
+  const plain = S.scoreOf([f('fail', 'high'), f('unknown', 'medium'), f('pass', 'low')]);
+  const acc = S.scoreOf([f('fail', 'high', true), f('unknown', 'medium', true), f('pass', 'low')]);
+  check('score: accepted findings carry no penalty and are counted as accepted, not fail, unknown or pass',
+    acc.score === 100 && acc.counts.accepted === 2 && acc.counts.fail === 0 && acc.counts.unknown === 0 && acc.counts.pass === 1 && plain.score === 88, J(acc));
+  check('score: accepting does not change coverage (an accepted unknown was still not read)', acc.coverage === plain.coverage && acc.coverage === 67, `${acc.coverage} vs ${plain.coverage}`);
+  check('score: an acceptance on a passing finding is ignored', S.scoreOf([f('pass', 'low', true)]).counts.accepted === 0);
 }
 
 // ── The service's lockout rule: tightening never asks ───────────────────────

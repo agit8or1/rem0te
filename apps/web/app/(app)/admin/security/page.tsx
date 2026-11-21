@@ -28,6 +28,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { SecurityFeaturesTab } from '@/components/security-controls/security-features';
 import { apiError, Chip, CHIP } from '@/components/security-controls/shared';
 import { cn } from '@/lib/utils';
@@ -36,13 +38,16 @@ import { cn } from '@/lib/utils';
 
 type FindingStatus = 'pass' | 'fail' | 'unknown' | 'info';
 type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
+interface Acceptance { id: string; reason: string; acceptedAt: string; acceptedBy: string | null; expiresAt: string | null; evidence: string }
 interface Finding {
   id: string; area: 'host' | 'network' | 'web' | 'portal' | 'process'; title: string; status: FindingStatus; severity: Severity;
   evidence: string; checkedAt: string; fix?: string; link?: string;
+  // 0.75.1 accepted risks (admin/host-security/acceptance.ts).
+  fingerprint?: string; acceptable?: boolean; notAcceptableWhy?: string; acceptance?: Acceptance;
 }
 interface Posture {
   generatedAt: string;
-  summary: { score: number | null; grade: 'good' | 'fair' | 'poor' | 'unknown'; counts: Record<FindingStatus, number>; failing: Record<Severity, number>; coverage: number };
+  summary: { score: number | null; grade: 'good' | 'fair' | 'poor' | 'unknown'; counts: Record<FindingStatus | 'accepted', number>; failing: Record<Severity, number>; coverage: number };
   findings: Finding[];
 }
 interface Jail { jail: string; error: string | null; currentFailed?: number | null; totalFailed?: number | null; currentBanned?: number; totalBanned?: number; bannedIps?: string[]; journalMatches?: string | null; fileList?: string | null }
@@ -137,11 +142,21 @@ function OverviewTab() {
     onSuccess: (d) => qc.setQueryData(['security-posture'], d),
   });
   const [filter, setFilter] = useState<'attention' | 'all'>('attention');
+  const [accepting, setAccepting] = useState<Finding | null>(null);
+  const [showAccepted, setShowAccepted] = useState(false);
+  const reopen = useMutation({
+    mutationFn: (id: string) => securityApi.unacceptFinding(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['security-posture'] }),
+  });
 
   if (q.isLoading) return <Loading what="this server's security posture" />;
   if (q.isError || !q.data) return <ErrorCard what="the security posture" error={q.error} onRetry={() => q.refetch()} />;
   const { summary, findings } = q.data;
-  const shown = filter === 'all' ? findings : findings.filter((f) => f.status === 'fail' || f.status === 'unknown');
+  // An accepted finding lives only under Accepted risks, never in the area lists (and never as OK).
+  const open = findings.filter((f) => !f.acceptance);
+  const accepted = findings.filter((f) => f.acceptance);
+  const shown = filter === 'all' ? open : open.filter((f) => f.status === 'fail' || f.status === 'unknown');
+  const accCount = summary.counts.accepted ?? 0;
   const grade = summary.grade;
   const gradeChip = grade === 'good' ? CHIP.on : grade === 'fair' ? CHIP.warn : grade === 'poor' ? CHIP.bad : CHIP.off;
 
@@ -158,8 +173,8 @@ function OverviewTab() {
                 {grade === 'unknown' ? 'Not enough could be read to score this server' : `Posture: ${grade}`}
               </p>
               <p className="text-xs text-muted-foreground">
-                {summary.counts.fail} need attention · {summary.counts.unknown} unknown · {summary.counts.pass} OK.
-                {' '}The score counts only what could be read ({summary.coverage}% of the checks); unknown is never counted as OK.
+                {summary.counts.fail} need attention · {summary.counts.unknown} unknown · {accCount} accepted · {summary.counts.pass} OK.
+                {' '}The score counts only what could be read ({summary.coverage}% of the checks); unknown is never counted as OK, and an accepted risk is not counted as OK either — it only carries no penalty.
               </p>
               {summary.failing.critical > 0 && <p className="text-xs font-medium text-red-700 dark:text-red-400">{summary.failing.critical} critical finding{summary.failing.critical === 1 ? '' : 's'}.</p>}
             </div>
@@ -171,7 +186,7 @@ function OverviewTab() {
 
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Show">
         <Button size="sm" variant={filter === 'attention' ? 'default' : 'outline'} onClick={() => setFilter('attention')} data-testid="findings-attention">Needs attention or unknown ({summary.counts.fail + summary.counts.unknown})</Button>
-        <Button size="sm" variant={filter === 'all' ? 'default' : 'outline'} onClick={() => setFilter('all')} data-testid="findings-all">All checks ({findings.length})</Button>
+        <Button size="sm" variant={filter === 'all' ? 'default' : 'outline'} onClick={() => setFilter('all')} data-testid="findings-all">All checks ({open.length})</Button>
       </div>
 
       {AREAS.map(([area, label]) => {
@@ -181,12 +196,35 @@ function OverviewTab() {
           <Card key={area}>
             <CardHeader className="pb-2"><CardTitle className="text-sm">{label}</CardTitle></CardHeader>
             <CardContent className="divide-y p-0">
-              {rows.map((f) => <FindingRow key={f.id} f={f} />)}
+              {rows.map((f) => <FindingRow key={f.id} f={f} onAccept={() => setAccepting(f)} />)}
             </CardContent>
           </Card>
         );
       })}
       {!shown.length && <Card><CardContent className="py-6 text-sm text-muted-foreground">Nothing needs attention and nothing is unknown. Choose All checks to see what was checked.</CardContent></Card>}
+
+      {accepted.length > 0 && (
+        <Card data-testid="accepted-risks">
+          <CardHeader className="pb-2">
+            <button type="button" className="flex w-full items-center justify-between gap-2 text-left" aria-expanded={showAccepted} aria-controls="accepted-risks-list"
+              onClick={() => setShowAccepted((v) => !v)} data-testid="accepted-risks-toggle">
+              <CardTitle className="text-sm">Accepted risks ({accepted.length})</CardTitle>
+              <span className="text-xs text-muted-foreground">{showAccepted ? 'Hide' : 'Show'}</span>
+            </button>
+            <p className="text-xs text-muted-foreground">
+              Deliberate decisions, not passes. Each re-opens on its own when its evidence changes or its expiry passes.
+            </p>
+          </CardHeader>
+          {showAccepted && (
+            <CardContent id="accepted-risks-list" className="divide-y p-0">
+              {accepted.map((f) => <AcceptedRow key={f.id} f={f} onReopen={() => reopen.mutate(f.id)} busy={reopen.isPending && reopen.variables === f.id} />)}
+            </CardContent>
+          )}
+          {reopen.isError && <CardContent className="pt-0"><Mutation m={reopen} /></CardContent>}
+        </Card>
+      )}
+
+      <AcceptDialog finding={accepting} onClose={() => setAccepting(null)} onDone={() => { setAccepting(null); qc.invalidateQueries({ queryKey: ['security-posture'] }); }} />
 
       <Card>
         <CardContent className="space-y-1 py-4 text-xs text-muted-foreground">
@@ -204,11 +242,11 @@ function OverviewTab() {
   );
 }
 
-function FindingRow({ f }: { f: Finding }) {
+function FindingRow({ f, onAccept }: { f: Finding; onAccept?: () => void }) {
   return (
     <div className="space-y-1 px-4 py-3 sm:px-6" data-testid={`finding-${f.id}`} data-status={f.status}>
       <div className="flex flex-wrap items-center gap-2">
-        <StatusChip status={f.status} />
+        {f.acceptance ? <Chip className={CHIP.locked}>{f.status === 'unknown' ? 'Accepted (unknown)' : 'Accepted'}</Chip> : <StatusChip status={f.status} />}
         {(f.status === 'fail' || f.status === 'unknown') && f.severity !== 'info' && <Chip className={SEV_CHIP[f.severity]}>{f.severity}</Chip>}
         <span className="text-sm font-medium break-words">{f.title}</span>
       </div>
@@ -217,11 +255,83 @@ function FindingRow({ f }: { f: Finding }) {
       {MANUAL[f.id] && (
         <p className="text-xs">Run on the server: <code className="rounded bg-muted px-1 py-0.5 font-mono">{MANUAL[f.id]}</code></p>
       )}
+      {f.notAcceptableWhy && <p className="text-xs text-muted-foreground break-words" data-testid={`not-acceptable-${f.id}`}><span className="font-medium">Cannot be accepted:</span> {f.notAcceptableWhy}</p>}
       <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
         <span>Read {when(f.checkedAt)}</span>
         {f.link && <Link href={f.link} className="underline">Open the setting</Link>}
+        {f.acceptable && onAccept && !f.acceptance && (
+          <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={onAccept} data-testid={`accept-${f.id}`}>Accept…</Button>
+        )}
       </div>
     </div>
+  );
+}
+
+/** An accepted risk: still its own status underneath, never OK. */
+function AcceptedRow({ f, onReopen, busy }: { f: Finding; onReopen: () => void; busy: boolean }) {
+  const a = f.acceptance!;
+  return (
+    <div className="space-y-1 px-4 py-3 sm:px-6" data-testid={`accepted-${f.id}`} data-status={f.status}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Chip className={CHIP.locked}><ShieldCheck className="h-3 w-3" aria-hidden />{f.status === 'unknown' ? 'Accepted (unknown)' : 'Accepted'}</Chip>
+        {f.severity !== 'info' && <Chip className={SEV_CHIP[f.severity]}>{f.severity}</Chip>}
+        <span className="text-sm font-medium break-words">{f.title}</span>
+      </div>
+      <p className="text-xs break-words"><span className="font-medium">Why:</span> {a.reason}</p>
+      <p className="text-xs text-muted-foreground break-words">{f.evidence}</p>
+      <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+        <span>Accepted by {a.acceptedBy ?? 'unknown'} on {when(a.acceptedAt)}</span>
+        <span>{a.expiresAt ? `Re-opens ${when(a.expiresAt)}` : 'No expiry'} · re-opens if the evidence changes</span>
+        <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={onReopen} disabled={busy} data-testid={`reopen-${f.id}`}>Re-open</Button>
+      </div>
+    </div>
+  );
+}
+
+const EXPIRY_CHOICES: Array<[string, string]> = [['', 'No expiry'], ['30', '30 days'], ['90', '90 days'], ['180', '180 days'], ['365', '1 year']];
+
+/** Accept one finding: a reason (3–300 characters) and an optional expiry. May ask to confirm it is you (server.security). */
+function AcceptDialog({ finding, onClose, onDone }: { finding: Finding | null; onClose: () => void; onDone: () => void }) {
+  const [reason, setReason] = useState('');
+  const [expiry, setExpiry] = useState('');
+  useEffect(() => { if (finding) { setReason(''); setExpiry(''); } }, [finding]);
+  const m = useMutation({
+    mutationFn: () => securityApi.acceptFinding(finding!.id, { reason: reason.trim(), ...(expiry ? { expiresInDays: Number(expiry) } : {}), ...(finding?.fingerprint ? { fingerprint: finding.fingerprint } : {}) }),
+    onSuccess: () => { m.reset(); onDone(); },
+  });
+  const len = reason.trim().length;
+  const valid = len >= 3 && len <= 300;
+  return (
+    <Dialog open={!!finding} onOpenChange={(o) => { if (!o) { m.reset(); onClose(); } }}>
+      <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-lg" data-testid="accept-dialog">
+        <DialogHeader>
+          <DialogTitle>Accept this risk</DialogTitle>
+          <DialogDescription className="break-words">{finding?.title}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground break-words">{finding?.evidence}</p>
+          <p className="text-xs text-muted-foreground">
+            It moves to Accepted risks and stops counting against the score. It is never shown as OK, and it re-opens on its own if the evidence changes{expiry ? ' or the expiry passes' : ''}. Recorded in the audit log with your reason.
+          </p>
+          <div className="space-y-1">
+            <Label htmlFor="accept-reason" className="text-xs">Why this is acceptable (3–300 characters)</Label>
+            <Textarea id="accept-reason" maxLength={300} value={reason} onChange={(e) => setReason(e.target.value)} data-testid="accept-reason" />
+            <p className="text-[11px] text-muted-foreground">{len}/300</p>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="accept-expiry" className="text-xs">Re-open automatically after</Label>
+            <select id="accept-expiry" className="w-full rounded-md border bg-background p-2 text-sm" value={expiry} onChange={(e) => setExpiry(e.target.value)} data-testid="accept-expiry">
+              {EXPIRY_CHOICES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+          <Mutation m={m} />
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={() => { m.reset(); onClose(); }}>Cancel</Button>
+          <Button onClick={() => m.mutate()} disabled={!valid || m.isPending} data-testid="accept-confirm">{m.isPending ? 'Accepting…' : 'Accept risk'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

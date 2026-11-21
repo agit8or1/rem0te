@@ -7096,6 +7096,23 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //       - no npm audit fix, no eslint/semgrep, no Caddy /load renew;
 //       - the posture's OFF_SWITCHES name every *_SWEEP / *_SEALER the API reads;
 //       - the security module names no release-host path or command (§56).
+//     0.75.1 (accepted risks):
+//       - accepting a finding is Platform Admin, then assertFresh naming
+//         server.security (it hides a warning), then the service; re-opening
+//         is Platform Admin and never asks (it only shows a warning again);
+//       - only a closed list of finding ids can be accepted, the same list in
+//         acceptance.ts and migration 0093's CHECK, disjoint from the
+//         never-acceptable list (a Platform Admin without MFA, break-glass
+//         without both factors, the audit chain, empty SSH passwords,
+//         NODE_ENV, test switches, TLS);
+//       - an acceptance is recorded with logOrFail (SECURITY_FINDING_ACCEPTED)
+//         and every end of one, by a person or on its own, is audited
+//         (SECURITY_FINDING_UNACCEPTED); only SecurityService writes the table;
+//       - an acceptance holds only while the finding's fingerprint is the one
+//         stored and the expiry has not passed, and the basis behind the
+//         fingerprint never leaves the API;
+//       - ss runs as the service user (`ss -Htlnup`, no sudo): the owner of a
+//         socket is shown only when that user may see it.
 {
   console.log('\n§84 Admin → Security: closed host commands, audited and confirmed changes');
   const SRC = 'apps/api/src';
@@ -7105,7 +7122,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const ctl = read(`${SRC}/admin/security.controller.ts`);
   const posture = read(`${SRC}/admin/host-security/posture.ts`);
   const parsers = read(`${SRC}/admin/host-security/parsers.ts`);
-  const mod = [svc, ctl, posture, parsers];
+  const acceptance = read(`${SRC}/admin/host-security/acceptance.ts`);
+  const mod = [svc, ctl, posture, parsers, acceptance];
   check('server security: one exec site (host-runner.ts), shell:false, nothing else in the module imports child_process',
     (strip(runner).match(/\bspawn\(/g) ?? []).length === 1 && /shell: false/.test(runner) && !/shell: true|execSync|execFile/.test(runner)
       && mod.every((s) => !/child_process/.test(s)));
@@ -7127,14 +7145,20 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /CHANGE_IDS: ReadonlySet<string> = new Set\(\['f2b\.change', 'f2b\.install', 'f2b\.enable', 'f2b\.start', 'apt\.update', 'apt\.upgrade'\]\)/.test(runner));
   // Every mutating route: assertPlatformAdmin, then assertFresh naming its key, before (or, for the lockout, inside) the service call.
   const routes = [...ctl.matchAll(/@(Post|Patch|Delete)\('([^']+)'\)[\s\S]*?\n  async (\w+)\(.*\) \{([\s\S]*?)\n  \}/g)];
-  const badRoutes = routes.filter(([, , p, , body]) => {
+  // 0.75.1: re-opening an accepted finding only shows a warning again, so it is the one mutating route that never asks.
+  const isUnaccept = ([, m, p]) => m === 'Delete' && p === 'findings/:id/accept';
+  const unaccept = routes.find(isUnaccept);
+  check('server security: re-opening an accepted finding is Platform Admin and never asks for a fresh confirmation',
+    !!unaccept && /^\s*this\.acl\.assertPlatformAdmin\(a\);/.test(unaccept[4]) && !/assertFresh/.test(unaccept[4]) && /this\.security\.unacceptFinding\(a, id\)/.test(unaccept[4]),
+    unaccept ? unaccept[4].trim().slice(0, 200) : 'no DELETE findings/:id/accept route');
+  const badRoutes = routes.filter((r) => !isUnaccept(r)).filter(([, , p, , body]) => {
     const admin = body.indexOf('assertPlatformAdmin');
     const fresh = body.indexOf(`assertFresh(this.fresh(req), { action: '${p === 'config' ? 'login.lockout' : 'server.security'}' })`);
     const call = body.indexOf('this.security.');
     return admin < 0 || fresh < 0 || call < 0 || admin > call || (p !== 'config' && fresh > call);
   }).map((m) => m[2]);
   check('server security: every mutating route is Platform Admin, then assertFresh (server.security; login.lockout when weakening)',
-    routes.length === 8 && badRoutes.length === 0 && (ctl.match(/assertPlatformAdmin\(a\)/g) ?? []).length === (ctl.match(/@(Get|Post|Patch|Delete)\(/g) ?? []).length
+    routes.length === 10 && routes.some(([, m, p, , body]) => m === 'Post' && p === 'findings/:id/accept' && /this\.security\.acceptFinding\(a, id, dto\)/.test(body)) && badRoutes.length === 0 && (ctl.match(/assertPlatformAdmin\(a\)/g) ?? []).length === (ctl.match(/@(Get|Post|Patch|Delete)\(/g) ?? []).length
       && /static weakens\(/.test(svc),
     `${routes.length} routes; bad: ${badRoutes.join(', ')}`);
   const methods = svc.split(/\n  (?=(?:private )?(?:static )?async \w+\()/);
@@ -7158,6 +7182,47 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('server security: the module names no release-host path or command (§56); the web shows the status command instead',
     mod.concat(runner).every((s) => !/\/var\/lib\/rem0te-|rem0te-signed-/.test(s))
       && /sudo rem0te-signed-status/.test(read('apps/web/app/(app)/admin/security/page.tsx')));
+  // ── 0.75.1: accepted risks ──
+  const ids = (re, src) => [...(re.exec(src)?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  const acceptableTs = ids(/export const ACCEPTABLE_FINDINGS = \[([\s\S]*?)\] as const;/, acceptance);
+  const mig0093 = read('apps/api/prisma/migrations/0093_security_risk_acceptance/migration.sql');
+  const acceptableSql = ids(/"findingId" IN \(([\s\S]*?)\)\);/, mig0093);
+  const neverIds = [...acceptance.matchAll(/^\s*\{ id: '([^']+)'(, prefix: true)?, why: /gm)].map((m) => [m[1], !!m[2]]);
+  const neverHit = (id) => neverIds.some(([n, pre]) => (pre ? id.startsWith(n) : id === n));
+  const MUST_NEVER = ['portal.mfa.admins', 'portal.admins', 'portal.audit_chain', 'host.ssh.empty_passwords', 'process.node_env', 'process.switch.', 'web.tls'];
+  check('accepted risks: one closed list of finding ids, the same in acceptance.ts and 0093\'s CHECK, with no value-carrying id',
+    acceptableTs.length >= 20 && JSON.stringify(acceptableTs) === JSON.stringify(acceptableSql) && acceptableTs.every((id) => /^[a-z0-9_]+(\.[a-z0-9_]+)+$/.test(id)),
+    `acceptance.ts ${acceptableTs.length}, 0093 ${acceptableSql.length}`);
+  check('accepted risks: a Platform Admin without MFA, break-glass, the chain, empty SSH passwords, NODE_ENV, test switches and TLS are never acceptable, and the lists are disjoint',
+    MUST_NEVER.every((id) => neverIds.some(([n]) => n === id)) && acceptableTs.every((id) => !neverHit(id))
+      && /export function isAcceptable\(id: string\): id is AcceptableFinding \{\s*return \(ACCEPTABLE_FINDINGS as readonly string\[\]\)\.includes\(id\) && neverAcceptable\(id\) === null;/.test(acceptance),
+    JSON.stringify(neverIds));
+  check('accepted risks: acceptance.ts is pure (node:crypto and posture types only)',
+    JSON.stringify([...acceptance.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1]).sort()) === JSON.stringify(['./posture', 'node:crypto'])
+      && /^import type \{ Finding \} from '\.\/posture';$/m.test(acceptance));
+  const acceptFn = /async acceptFinding\([\s\S]*?\n  \}\n/.exec(svc)?.[0] ?? '';
+  check('accepted risks: accepting checks the closed list, the reason, the expiry and the live finding first, and is recorded with logOrFail',
+    acceptFn.indexOf('neverAcceptable(findingId)') >= 0 && acceptFn.indexOf('isAcceptable(findingId)') > acceptFn.indexOf('neverAcceptable(findingId)')
+      && acceptFn.indexOf('cleanReason(') > 0 && acceptFn.indexOf('expiryFor(') > 0 && /EVIDENCE_CHANGED/.test(acceptFn) && /FINDING_NOT_OPEN/.test(acceptFn)
+      && acceptFn.indexOf('securityFindingAcceptance.create(') > acceptFn.indexOf('this.getPosture()')
+      && /this\.audit\.logOrFail\(\{[\s\S]*?action: 'SECURITY_FINDING_ACCEPTED'/.test(acceptFn),
+    'SecurityService.acceptFinding');
+  const closeFn = /private async closeAcceptance\([\s\S]*?\n  \}\n/.exec(svc)?.[0] ?? '';
+  check('accepted risks: every end of an acceptance is a conditional write audited as SECURITY_FINDING_UNACCEPTED with its cause',
+    /updateMany\(\{\s*where: \{ id: row\.id, reopenedAt: null \}/.test(closeFn) && /if \(r\.count !== 1\) return false;/.test(closeFn) && /action: 'SECURITY_FINDING_UNACCEPTED'/.test(closeFn) && /cause/.test(closeFn)
+      && /acceptanceStanding\(row, /.test(svc) && /else await this\.closeAcceptance\(row, standing, null, now\)/.test(svc) && /this\.closeAcceptance\(row, 'unaccepted', actor/.test(svc)
+      && /'SECURITY_FINDING_ACCEPTED'/.test(mig0093) && /'SECURITY_FINDING_UNACCEPTED'/.test(mig0093));
+  const writers = walk(SRC).filter((f) => /securityFindingAcceptance\.(create|update|updateMany|upsert|delete|deleteMany|createMany)\(/.test(read(f))).map((f) => f.replace(`${SRC}/`, ''));
+  check('accepted risks: only SecurityService writes SecurityFindingAcceptance', JSON.stringify(writers) === JSON.stringify(['admin/security.service.ts']), writers.join(', '));
+  check('accepted risks: an acceptance holds only on the same fingerprint before its expiry; the basis never leaves the API',
+    /if \(row\.expiresAt && row\.expiresAt\.getTime\(\) <= now\.getTime\(\)\) return 'expired';/.test(acceptance)
+      && /if \(finding\.fingerprint !== row\.fingerprint\) return 'evidence_changed';/.test(acceptance)
+      && /const \{ basis: _basis, \.\.\.out \} = f;/.test(svc)
+      && /"SecurityFindingAcceptance_open_key" ON "SecurityFindingAcceptance"\("findingId"\) WHERE "reopenedAt" IS NULL/.test(mig0093)
+      && /char_length\(btrim\("reason"\)\) BETWEEN 3 AND 300/.test(mig0093) && /INTERVAL '365 days'/.test(mig0093));
+  check('server security: ss runs as the service user (ss -Htlnup, no sudo); the ephemeral range is a fixed /proc file',
+    /case 'ss\.listening': return \['ss', '-Htlnup'\];/.test(runner) && /portRange: '\/proc\/sys\/net\/ipv4\/ip_local_port_range',/.test(runner)
+      && /l\.proto === 'udp' && l\.state === 'UNCONN'/.test(parsers));
   check('server security: unit and behavioural proof are wired (unit in CI, e2e in run-e2e.sh)',
     /unit-host-security\.mjs/.test(read('.github/workflows/ci.yml')) && /\bhost-security\b/.test(read('scripts/run-e2e.sh'))
       && /HOSTSEC_API_PORT \?\? 3991/.test(read('apps/api/scripts/e2e-host-security.mjs')));

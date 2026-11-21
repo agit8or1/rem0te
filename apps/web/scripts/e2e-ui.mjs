@@ -1098,6 +1098,7 @@ async function serverSecurity(page, label, vp) {
   check(unknownOk === 0 && await page.locator('[data-status="unknown"]').count() > 0, `${label}: no Unknown finding is labelled OK`, `${unknownOk} labelled OK`);
   if (vp === 'phone') await noSideScroll(page, `${label} Security overview`);
   await shot(page, `${label}-security`);
+  await acceptRiskDialog(page, label, vp);
   const tabs = [
     ['access-rules', '[data-testid="unenforced-rules"]'],
     ['fail2ban', '[data-testid="jail-sshd"]'],
@@ -1117,6 +1118,55 @@ async function serverSecurity(page, label, vp) {
   const failing = page.locator('[data-testid="cert-approve.example.com"]');
   check(await failing.count() === 1 && (await failing.getAttribute('data-status')) === 'fail', `${label}: the certificate with under 20 days is not shown as valid`);
   await cleanCheck(page, `${label} Security`);
+}
+
+/**
+ * 0.75.1: accepting a finding as a risk. A never-acceptable finding (the
+ * Platform Admin without MFA) offers no Accept and says why; the listener
+ * finding's Accept… opens a dialog that refuses a reason under 3 characters,
+ * asks to confirm it is you (server.security asks in this suite), and moves
+ * the finding to a collapsed Accepted risks section labelled Accepted, never
+ * OK; Re-open puts it back. Every combination leaves it open again.
+ */
+async function acceptRiskDialog(page, label, vp) {
+  await page.locator('[data-testid="findings-attention"]').click();
+  const id = 'network.listeners';
+  const row = page.locator(`[data-testid="finding-${id}"]`);
+  check(await row.count() === 1 && await page.locator(`[data-testid="accept-${id}"]`).isVisible(), `${label}: a failing listener finding offers Accept…`);
+  const mfa = page.locator('[data-testid="finding-portal.mfa.admins"]');
+  check(await mfa.count() === 1 && await mfa.locator('[data-testid^="accept-"]').count() === 0 && /Cannot be accepted/.test(await mfa.innerText()),
+    `${label}: a Platform Admin without MFA cannot be accepted, and the row says why`, await mfa.innerText().catch(() => '(missing)'));
+  await page.locator(`[data-testid="accept-${id}"]`).click();
+  const dlg = page.locator('[data-testid="accept-dialog"]');
+  await dlg.waitFor({ timeout: 10_000 }).catch(() => {});
+  check(await dlg.isVisible(), `${label}: Accept… opens the dialog`);
+  if (vp === 'phone') { const b = await dlg.boundingBox(); check(b && b.x >= 0 && b.x + b.width <= 375.5, `${label}: the accept dialog fits the screen`, JSON.stringify(b)); }
+  await dlg.locator('[data-testid="accept-reason"]').fill('ab');
+  check(await dlg.locator('[data-testid="accept-confirm"]').isDisabled(), `${label}: a reason under 3 characters cannot be submitted`);
+  await dlg.locator('[data-testid="accept-reason"]').fill('udp/5353 and tcp/8080 are closed at the hardware firewall');
+  await dlg.locator('[data-testid="accept-expiry"]').selectOption('90');
+  await shot(page, `${label}-security-accept`);
+  await forgetStepUp(page);
+  await dlg.locator('[data-testid="accept-confirm"]').click();
+  await confirmStepUp(page, label, 'accepting a security finding');
+  await dlg.waitFor({ state: 'hidden', timeout: 15_000 }).catch(() => {});
+  check(!(await dlg.isVisible()), `${label}: the dialog closes once accepted`, await dlg.innerText().catch(() => ''));
+  await page.locator('[data-testid="accepted-risks"]').waitFor({ timeout: 15_000 }).catch(() => {});
+  check(await row.count() === 0, `${label}: the accepted finding leaves the Needs attention list`);
+  await page.locator('[data-testid="accepted-risks-toggle"]').click();
+  const acc = page.locator(`[data-testid="accepted-${id}"]`);
+  await acc.waitFor({ timeout: 10_000 }).catch(() => {});
+  const accText = await acc.innerText().catch(() => '');
+  check(/Accepted/.test(accText) && !/(^|\s)OK(\s|$)/.test(accText) && /closed at the hardware firewall/.test(accText) && /Re-opens/.test(accText) && (await acc.getAttribute('data-status')) === 'fail',
+    `${label}: Accepted risks shows it as Accepted (never OK) with who, why and the expiry`, accText);
+  const score = await page.locator('[data-testid="security-score"]').innerText();
+  check(/1 accepted/.test(score), `${label}: the summary counts it as accepted`, score);
+  if (vp === 'phone') await noSideScroll(page, `${label} Accepted risks`);
+  await shot(page, `${label}-security-accepted`);
+  await acc.locator(`[data-testid="reopen-${id}"]`).click();
+  await row.waitFor({ timeout: 15_000 }).catch(() => {});
+  check(await row.count() === 1 && await page.locator('[data-testid="accepted-risks"]').count() === 0, `${label}: Re-open puts it back under Needs attention (and asks nothing)`);
+  await cleanCheck(page, `${label} Security accept`, stepUp403);
 }
 
 // ── 0.35 ────────────────────────────────────────────────────────────────────

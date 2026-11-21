@@ -1,4 +1,4 @@
-import { BadGatewayException, BadRequestException, ConflictException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, ConflictException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import * as os from 'node:os';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -11,10 +11,13 @@ import type { ActorContext } from '../rbac/access-control.service';
 import { HostRunner, type F2bArgs, type RunResult } from './host-security/host-runner';
 import {
   certStatus, evaluateHeaders, jailWatchesOtherUnit, parseAptUpgradable, parseAutoUpgrades, parseCaddyDomains, parseF2bJail, parseF2bNumber,
-  parseF2bStatus, parseIgnoreIps, parseNpmAudit, parseRebootPkgs, parseSshdConfig, parseSsListeners, parseUfwConf,
-  unexpectedListeners, validAddress, validJail, type AptPackage, type HeaderCheck, type JailStatus, type Listener, type NpmAudit, type SshdConfig,
+  parseF2bStatus, parseIgnoreIps, parseNpmAudit, parsePortRange, parseRebootPkgs, parseSshdConfig, parseSsListeners, parseUfwConf,
+  ephemeralClientSockets, unexpectedListeners, validAddress, validJail, type AptPackage, type HeaderCheck, type JailStatus, type Listener, type NpmAudit, type SshdConfig,
 } from './host-security/parsers';
 import { nodeEnvFinding, offSwitches, scoreOf, type Finding, type Severity } from './host-security/posture';
+import {
+  acceptanceStanding, cleanReason, expiryFor, fingerprintOf, isAcceptable, neverAcceptable, type AcceptanceRow, type ReopenCause,
+} from './host-security/acceptance';
 
 /**
  * Admin → Security (rewritten in 0.74). Platform Admin only (the controller).
@@ -403,13 +406,19 @@ export class SecurityService {
       this.host.run({ id: 'unit.active', unit: 'ufw' }), this.host.run({ id: 'unit.active', unit: 'nftables' }), this.host.run({ id: 'ss.listening' }),
     ]);
     const listeners = ss.status === 0 ? parseSsListeners(ss.stdout) : null;
+    // 0.75.1: the kernel's ephemeral range, so an auto-bound UDP client
+    // socket (hbbs's) is not reported as a public service. Unreadable means
+    // nothing is excused, as before.
+    const portRange = parsePortRange(this.host.readFile('portRange'));
     return {
       checkedAt,
       ufwEnabled: parseUfwConf(this.host.readFile('ufw')),
       ufwActive: ufw.stdout.trim() === 'active' ? true : ufw.stdout.trim() ? false : null,
       nftablesActive: nft.stdout.trim() === 'active' ? true : nft.stdout.trim() ? false : null,
       listeners,
-      unexpected: listeners ? unexpectedListeners(listeners) : null,
+      portRange,
+      unexpected: listeners ? unexpectedListeners(listeners, portRange) : null,
+      ephemeral: listeners ? ephemeralClientSockets(listeners, portRange) : null,
     };
   }
 
@@ -440,7 +449,6 @@ export class SecurityService {
 
   // ── Posture ───────────────────────────────────────────────────────────────
 
-  getPosture(fresh = false) { return this.cached('posture', 60_000, () => this.buildPosture(fresh), fresh); }
 
   private async buildPosture(fresh: boolean) {
     const settle = <T>(p: Promise<T>) => p.then((v) => ({ ok: true as const, v }), (e: Error) => ({ ok: false as const, e: e?.message ?? String(e) }));
@@ -464,24 +472,28 @@ export class SecurityService {
       const at = ssh.v.checkedAt;
       const why = (k: keyof typeof c.values) => {
         const v = c.values[k];
-        return `${k} ${v.value} (${v.source === 'default' ? 'OpenSSH default' : v.source})${v.uncertain ? `; ${c.unreadable.join(', ')} could not be read and is read first` : ''}`;
+        return `${k} ${v.value} (${v.source === 'default' ? 'OpenSSH default' : v.source})${v.uncertain ? `; ${v.unreadableBefore.join(', ')} could not be read and is read first, so it may set ${k} before this` : ''}`;
       };
+      // What an acceptance is bound to: the effective value, where it came from, and what made it unsure.
+      const sshBasis = (k: keyof typeof c.values) => ({ value: c.values[k].value, source: c.values[k].source, unreadableBefore: c.values[k].unreadableBefore });
       const root = c.values.permitrootlogin;
-      if (root.uncertain) unknown('host.ssh.root_login', 'host', 'SSH: root cannot sign in with a password', 'high', why('permitrootlogin'), 'Run `sudo sshd -T | grep -i permitrootlogin` to see the effective value.', at);
+      if (root.uncertain) add({ id: 'host.ssh.root_login', area: 'host', title: 'SSH: root cannot sign in with a password', checkedAt: at, status: 'unknown', severity: 'high',
+        evidence: why('permitrootlogin'), basis: sshBasis('permitrootlogin'), fix: 'Run `sudo sshd -T | grep -i permitrootlogin` to see the effective value, or set it in a drop-in that sorts first (e.g. 01-rem0te.conf).' });
       else add({ id: 'host.ssh.root_login', area: 'host', title: 'SSH: root cannot sign in with a password', checkedAt: at,
-        status: root.value === 'yes' ? 'fail' : 'pass', severity: 'high', evidence: why('permitrootlogin'),
+        status: root.value === 'yes' ? 'fail' : 'pass', severity: 'high', evidence: why('permitrootlogin'), basis: sshBasis('permitrootlogin'),
         fix: 'Set `PermitRootLogin prohibit-password` (or `no`) in /etc/ssh/sshd_config and run `sudo systemctl reload ssh`.' });
       const pw = c.values.passwordauthentication;
-      if (pw.uncertain) unknown('host.ssh.password_auth', 'host', 'SSH: passwords are not accepted', 'medium', why('passwordauthentication'), 'Run `sudo sshd -T | grep -i passwordauthentication` to see the effective value.', at);
+      if (pw.uncertain) add({ id: 'host.ssh.password_auth', area: 'host', title: 'SSH: passwords are not accepted', checkedAt: at, status: 'unknown', severity: 'medium',
+        evidence: why('passwordauthentication'), basis: sshBasis('passwordauthentication'), fix: 'Run `sudo sshd -T | grep -i passwordauthentication` to see the effective value, or set it in a drop-in that sorts first (e.g. 01-rem0te.conf).' });
       else add({ id: 'host.ssh.password_auth', area: 'host', title: 'SSH: passwords are not accepted', checkedAt: at,
-        status: pw.value === 'no' ? 'pass' : 'fail', severity: 'medium', evidence: why('passwordauthentication'),
+        status: pw.value === 'no' ? 'pass' : 'fail', severity: 'medium', evidence: why('passwordauthentication'), basis: sshBasis('passwordauthentication'),
         fix: 'Once every administrator has an SSH key, set `PasswordAuthentication no` and reload ssh. Until then keep the fail2ban sshd jail on.' });
       const empty = c.values.permitemptypasswords;
       if (!empty.uncertain) add({ id: 'host.ssh.empty_passwords', area: 'host', title: 'SSH: empty passwords are refused', checkedAt: at,
         status: empty.value === 'yes' ? 'fail' : 'pass', severity: 'critical', evidence: why('permitemptypasswords'), fix: 'Set `PermitEmptyPasswords no` and reload ssh.' });
       const x11 = c.values.x11forwarding;
       if (!x11.uncertain) add({ id: 'host.ssh.x11', area: 'host', title: 'SSH: X11 forwarding is off', checkedAt: at,
-        status: x11.value === 'yes' ? 'fail' : 'pass', severity: 'low', evidence: why('x11forwarding'), fix: 'A server has no display: set `X11Forwarding no` and reload ssh.' });
+        status: x11.value === 'yes' ? 'fail' : 'pass', severity: 'low', evidence: why('x11forwarding'), basis: sshBasis('x11forwarding'), fix: 'A server has no display: set `X11Forwarding no` and reload ssh.' });
     }
 
     // Firewall and listeners
@@ -493,16 +505,25 @@ export class SecurityService {
         evidence: on === 'ufw' ? 'ufw is enabled (ufw.conf ENABLED=yes) and its service is active. Its rules need root to read: `sudo ufw status verbose`.' : 'The nftables service is active.' });
       else if (v.ufwActive === null && v.nftablesActive === null) unknown('host.firewall', 'network', 'A host firewall is on', 'high', 'systemctl gave no answer for ufw or nftables.', undefined, v.checkedAt);
       else add({ id: 'host.firewall', area: 'network', title: 'A host firewall is on', checkedAt: v.checkedAt, status: 'fail', severity: 'high',
+        basis: { ufwEnabled: v.ufwEnabled, ufwActive: v.ufwActive, nftablesActive: v.nftablesActive },
         evidence: `ufw: ${v.ufwEnabled === null ? 'not configured' : v.ufwEnabled ? 'enabled' : 'disabled'}, service ${v.ufwActive ? 'active' : 'inactive'}; nftables service ${v.nftablesActive ? 'active' : 'inactive'}.`,
         fix: 'Allow 22, 80, 443 and 21115–21119 (21116 also UDP), then `sudo ufw enable`. If the firewall is upstream (a cloud security group), this finding is expected.' });
       if (!v.listeners) unknown('network.listeners', 'network', 'Only expected services listen publicly', 'medium', 'ss gave no answer.', undefined, v.checkedAt);
       else {
         const u = v.unexpected ?? [];
-        const fmt = (l: Listener) => `${l.proto}/${l.port} on ${l.address}`;
+        const eph = v.ephemeral ?? [];
+        const fmt = (l: Listener) => `${l.proto}/${l.port} on ${l.address}${l.process ? ` (${l.process})` : ''}`;
+        const pub = v.listeners.filter((l) => !l.loopback).length;
+        const range = v.portRange ? `${v.portRange.low}–${v.portRange.high}` : null;
         add({ id: 'network.listeners', area: 'network', title: 'Only expected services listen publicly', checkedAt: v.checkedAt,
           status: u.length ? 'fail' : 'pass', severity: 'medium',
-          evidence: u.length ? `Not loopback and not expected: ${u.slice(0, 12).map(fmt).join(', ')}${u.length > 12 ? ` and ${u.length - 12} more` : ''}.` : `${v.listeners.filter((l) => !l.loopback).length} public sockets, all expected (SSH, Caddy, RustDesk).`,
+          evidence: (u.length ? `Not loopback and not expected: ${u.slice(0, 12).map(fmt).join(', ')}${u.length > 12 ? ` and ${u.length - 12} more` : ''}.` : `${pub - eph.length} public service socket(s), all expected (SSH, Caddy, RustDesk).`)
+            + (range ? '' : ' The ephemeral port range could not be read, so no UDP socket was excused as a client.'),
+          // What an acceptance is bound to: the offending sockets, not the count of expected ones.
+          basis: { unexpected: u.map((l) => `${l.proto}/${l.port}@${l.address}`).sort(), rangeRead: !!range },
           fix: 'Find the owner with `sudo ss -tulpn`; bind it to 127.0.0.1 or close the port in the firewall.' });
+        if (eph.length) add({ id: 'network.ephemeral_sockets', area: 'network', title: 'Ephemeral client sockets', checkedAt: v.checkedAt, status: 'info', severity: 'info',
+          evidence: `Unconnected UDP sockets on ports the kernel hands out to clients (${range}), not services: ${eph.slice(0, 12).map(fmt).join(', ')}${eph.length > 12 ? ` and ${eph.length - 12} more` : ''}. The RustDesk server (hbbs) keeps one. Not counted as a public listener.` });
       }
     }
 
@@ -510,22 +531,29 @@ export class SecurityService {
     if (!os_.ok || os_.v.state !== 'ok') unknown('host.updates.security', 'host', 'No security updates are waiting', 'high', os_.ok ? os_.v.reason ?? 'unavailable' : os_.e);
     else {
       const v = os_.v;
+      const pkgKey = (p: AptPackage) => `${p.name}=${p.version}`;
       add({ id: 'host.updates.security', area: 'host', title: 'No security updates are waiting', checkedAt: v.checkedAt, status: v.security ? 'fail' : 'pass', severity: 'high',
+        basis: { security: v.packages.filter((p) => p.security).map(pkgKey).sort() },
         evidence: v.security ? `${v.security} security update(s) of ${v.total} pending: ${v.packages.filter((p) => p.security).slice(0, 8).map((p) => p.name).join(', ')}.` : `${v.total} update(s) pending, none from a security pocket.`,
         fix: 'Run them from OS Updates, or `sudo apt-get upgrade` on the server.' });
       if (v.total) add({ id: 'host.updates.other', area: 'host', title: 'Other package updates are applied', checkedAt: v.checkedAt, status: 'fail', severity: 'low',
+        basis: { packages: v.packages.map(pkgKey).sort() },
         evidence: `${v.total} package(s) upgradable.`, fix: 'Apply them from OS Updates in a quiet hour.' });
       const age = v.listsUpdatedAt ? (Date.now() - Date.parse(v.listsUpdatedAt)) / 3_600_000 : null;
       if (age === null) unknown('host.updates.lists', 'host', 'Package lists are current', 'medium', 'No apt update stamp (/var/lib/apt/periodic/update-success-stamp).', 'Run `sudo apt-get update`.', v.checkedAt);
       else add({ id: 'host.updates.lists', area: 'host', title: 'Package lists are current', checkedAt: v.checkedAt, status: age > 48 ? 'fail' : 'pass', severity: 'medium',
+        // The stamp, not its age: a successful refresh moves it and re-opens an acceptance.
+        basis: { stamp: v.listsUpdatedAt },
         evidence: `Last successful apt update ${Math.round(age)} h ago (${v.listsUpdatedAt}). The counts above are only as new as this.`, fix: 'Run `sudo apt-get update`, and check the apt-daily timer: `systemctl status apt-daily.timer`.' });
       const cfgU = v.unattended.configured;
       if (!cfgU || v.unattended.serviceActive === null) unknown('host.updates.unattended', 'host', 'Unattended security upgrades are on', 'medium', cfgU ? 'systemctl gave no answer for unattended-upgrades.' : '/etc/apt/apt.conf.d/20auto-upgrades is missing or unreadable.', 'Run `sudo dpkg-reconfigure -plow unattended-upgrades`.', v.checkedAt);
       else add({ id: 'host.updates.unattended', area: 'host', title: 'Unattended security upgrades are on', checkedAt: v.checkedAt,
         status: cfgU.updateLists && cfgU.unattended && v.unattended.serviceActive ? 'pass' : 'fail', severity: 'medium',
+        basis: { ...cfgU, serviceActive: v.unattended.serviceActive },
         evidence: `Update-Package-Lists ${cfgU.updateLists ? 'on' : 'off'}, Unattended-Upgrade ${cfgU.unattended ? 'on' : 'off'}, service ${v.unattended.serviceActive ? 'active' : 'inactive'}.`,
         fix: 'Run `sudo dpkg-reconfigure -plow unattended-upgrades` and `sudo systemctl enable --now unattended-upgrades`.' });
       add({ id: 'host.reboot', area: 'host', title: 'No restart is pending', checkedAt: v.checkedAt, status: v.rebootRequired ? 'fail' : 'pass', severity: 'medium',
+        basis: { packages: [...v.rebootPackages].sort(), kernel: v.kernel },
         evidence: v.rebootRequired ? `A restart is pending for: ${v.rebootPackages.join(', ') || '(no package list)'}. Running kernel ${v.kernel}; a newer kernel's fixes are not in effect until the restart.` : `Running kernel ${v.kernel}; nothing is waiting for a restart.`,
         fix: 'Restart the server in a quiet hour. Rem0te, Caddy and the RustDesk server start on boot.' });
     }
@@ -537,11 +565,13 @@ export class SecurityService {
       const sshd = v.jails.some((j) => j.jail === 'sshd');
       add({ id: 'host.fail2ban', area: 'host', title: 'fail2ban is running with an sshd jail', checkedAt: v.checkedAt,
         status: v.state === 'running' && sshd ? 'pass' : 'fail', severity: 'high',
+        basis: { state: v.state, jails: v.jails.map((j) => j.jail).sort() },
         evidence: v.state === 'running' ? `Running; jails: ${v.jails.map((j) => j.jail).join(', ') || 'none'}.` : `fail2ban is ${v.state.replace('_', ' ')}.`,
         fix: v.state === 'running' ? 'Enable the sshd jail in /etc/fail2ban/jail.local and `sudo systemctl restart fail2ban`.' : 'Install or start it from the fail2ban tab.' });
       const sj = v.jails.find((j) => j.jail === 'sshd');
       const other = sj && ssh.ok && ssh.v.active ? jailWatchesOtherUnit(sj.journalMatches ?? null, 'ssh.service') : null;
       if (sj && other) add({ id: 'host.fail2ban.sshd_unit', area: 'host', title: "fail2ban's sshd jail reads the SSH server's log", checkedAt: v.checkedAt, status: 'fail', severity: 'medium',
+        basis: { watches: other, journalMatches: sj.journalMatches ?? null },
         evidence: `The jail matches journal entries from ${other}, but this host's SSH server runs as ssh.service, so it may never see a failed sign-in (total failed so far: ${sj.totalFailed ?? 'unknown'}).`,
         fix: 'In /etc/fail2ban/jail.local, under [sshd], set `journalmatch = _SYSTEMD_UNIT=ssh.service + _COMM=sshd` (or `backend = auto` with `logpath = /var/log/auth.log`), then `sudo systemctl restart fail2ban` and check `sudo fail2ban-client status sshd` counts failures.' });
     }
@@ -570,11 +600,13 @@ export class SecurityService {
           const sev: Severity = c.id === 'hsts' ? 'high' : c.id === 'csp' || c.id === 'framing' ? 'medium' : c.id === 'server' || c.id === 'powered' ? 'info' : 'low';
           add({ id: `web.header.${c.id}`, area: 'web', title: `Header: ${c.header}`, checkedAt: h.checkedAt,
             status: c.verdict === 'ok' ? 'pass' : c.verdict === 'disclosed' ? 'info' : 'fail', severity: sev,
+            basis: { verdict: c.verdict, value: c.value },
             evidence: `${c.value ? `${c.value.slice(0, 160)}. ` : ''}${c.detail}`,
             fix: c.verdict === 'ok' ? undefined : `Add it in the site's \`header\` block of /etc/caddy/Caddyfile, then \`sudo systemctl reload caddy\`.` });
         }
         const r = h.http;
         if (r && r.status) add({ id: 'web.http_redirect', area: 'web', title: 'Plain HTTP redirects to HTTPS', checkedAt: h.checkedAt,
+          basis: { status: r.status, location: r.location ?? null },
           status: [301, 302, 307, 308].includes(r.status) && /^https:\/\//.test(r.location ?? '') ? 'pass' : 'fail', severity: 'medium',
           evidence: `http://${h.host}/ answers ${r.status}${r.location ? ` → ${r.location}` : ''}.`, fix: 'Caddy redirects automatically for a site named by its domain; check the Caddyfile has no plain http:// block for it.' });
       }
@@ -590,6 +622,7 @@ export class SecurityService {
         fix: 'Each of them sets one up under Account → Security.', link: '/users' });
       const pct = p.users ? Math.round((p.usersMfa / p.users) * 100) : 100;
       add({ id: 'portal.mfa.users', area: 'portal', title: 'Accounts have MFA', checkedAt: p.checkedAt, status: p.usersMfa === p.users ? 'pass' : 'fail', severity: 'medium',
+        basis: { without: p.users - p.usersMfa },
         evidence: `${p.usersMfa} of ${p.users} active accounts (${pct}%) have an authenticator or passkey.`,
         fix: 'Turn on Require MFA (Settings → Security) so every account sets one up at its next sign-in.', link: '/settings' });
       const weakBg = p.admins.filter((a) => a.breakGlass && !(a.mfaMethods.some((m) => m.type === 'TOTP') && a.mfaMethods.some((m) => m.type === 'WEBAUTHN')));
@@ -600,6 +633,7 @@ export class SecurityService {
       const never = p.keys.filter((k) => !k.expiresAt).length;
       const stale = p.keys.filter((k) => (k.lastUsedAt ?? k.createdAt).getTime() < Date.now() - 90 * day).length;
       add({ id: 'portal.apikeys', area: 'portal', title: 'API keys expire and are in use', checkedAt: p.checkedAt, status: never || stale ? 'fail' : p.keys.length ? 'pass' : 'info', severity: 'low',
+        basis: { never, stale },
         evidence: p.keys.length ? `${p.keys.length} active key(s): ${never} never expire, ${stale} unused for 90 days or more; oldest created ${new Date(Math.min(...p.keys.map((k) => k.createdAt.getTime()))).toISOString().slice(0, 10)}.` : 'No active API keys.',
         fix: 'Revoke keys nobody uses and re-issue the rest with an expiry (Settings → API keys).', link: '/settings/api-keys' });
     }
@@ -611,6 +645,7 @@ export class SecurityService {
         evidence: c.verify.ok ? `${c.verify.checked} sealed entries verified through #${c.verify.throughSeq}.` : `${c.verify.problems.length} problem(s), first: ${c.verify.problems[0]?.kind} at #${c.verify.problems[0]?.seq}.`,
         fix: 'See Settings → Security → Containment (audit integrity), and compare with the off-host export (`audit verify --export`).', link: '/settings/security/containment' });
       add({ id: 'portal.audit_export', area: 'portal', title: 'Audit entries are exported off the host', checkedAt: now, status: c.export.configured.length && !c.export.error ? 'pass' : 'fail', severity: 'medium',
+        basis: { configured: [...c.export.configured].sort(), failing: !!c.export.error },
         evidence: c.export.configured.length ? `Exporting to ${c.export.configured.join(', ')}${c.export.error ? `; last error: ${c.export.error}` : ''}.` : 'AUDIT_EXPORT_FILE and AUDIT_EXPORT_URL are unset: someone with this host could rewrite the chain and its proof together.',
         fix: 'Set AUDIT_EXPORT_URL (or AUDIT_EXPORT_FILE on another disk) in /etc/reboot-remote/api.env.', link: '/settings/security/containment' });
     }
@@ -618,11 +653,13 @@ export class SecurityService {
     else {
       const c = cfg.v;
       add({ id: 'portal.lockout', area: 'portal', title: 'Accounts lock after repeated failed sign-ins', status: c.maxLoginAttempts > 0 && c.maxLoginAttempts <= 10 ? 'pass' : 'fail', severity: 'high',
+        basis: { maxLoginAttempts: c.maxLoginAttempts, lockoutMinutes: c.lockoutMinutes },
         evidence: c.maxLoginAttempts === 0 ? 'The lockout is off (0 attempts).' : `${c.maxLoginAttempts} failed attempts lock an account for ${c.lockoutMinutes} minutes.`,
         fix: 'Set 5 to 10 attempts under Access Rules.' });
       const u = c.unenforced;
       const on = u.geoipBlockEnabled || u.ipAllowlistEnabled || u.blockedCountries.length + u.blockedIpRanges.length + u.allowedIpRanges.length > 0;
       if (on) add({ id: 'portal.unenforced_rules', area: 'portal', title: 'No stored access rule pretends to protect', status: 'fail', severity: 'medium',
+        basis: u,
         evidence: `Stored but never enforced: GeoIP blocking ${u.geoipBlockEnabled ? 'on' : 'off'} (${u.blockedCountries.length} countries), IP allowlist ${u.ipAllowlistEnabled ? 'on' : 'off'} (${u.allowedIpRanges.length} ranges), ${u.blockedIpRanges.length} blocked ranges.`,
         fix: 'Nothing in Rem0te reads these. Clear them under Access Rules, and block addresses in the firewall or Caddy instead.' });
     }
@@ -631,6 +668,7 @@ export class SecurityService {
     const trust = this.updateTrust.status();
     if (!trust.configured) add({ id: 'portal.signed_releases', area: 'portal', title: 'Signed agent releases are published', status: 'info', severity: 'info', evidence: trust.reason ?? 'Not configured.', link: '/settings/security/update-signing' });
     else add({ id: 'portal.signed_releases', area: 'portal', title: 'Signed agent release metadata is valid', status: trust.warnings.length ? 'fail' : 'pass', severity: 'high',
+      basis: { warnings: [...trust.warnings].sort() },
       evidence: trust.warnings.length ? trust.warnings.join(' ') : `Timestamp expires ${trust.roles?.timestamp.expires}; root threshold ${trust.roles?.root.threshold}.`,
       fix: 'Re-sign and publish on the release host (see docs/signed-releases.md).', link: '/settings/security/update-signing' });
     // Whether the root keys are still on this host can only be read by the
@@ -655,6 +693,8 @@ export class SecurityService {
     else {
       const c = deps.v.audit.counts;
       add({ id: 'deps.npm', area: 'host', title: 'No known-vulnerable API dependencies', checkedAt: deps.v.scannedAt, status: c.critical + c.high ? 'fail' : 'pass', severity: c.critical ? 'critical' : 'high',
+        // The critical and high packages: a new one re-opens an acceptance.
+        basis: { packages: deps.v.audit.packages.filter((x) => x.severity === 'critical' || x.severity === 'high').map((x) => `${x.name}:${x.severity}`).sort() },
         evidence: `npm audit (production): ${c.critical} critical, ${c.high} high, ${c.moderate} moderate, ${c.low} low over ${deps.v.audit.dependencies ?? '?'} packages.`,
         fix: 'Bump the dependency in the repository and deploy with a regenerated manifest (CLAUDE.md, "Deploying"); never `npm audit fix` on the server.' });
     }
@@ -663,6 +703,135 @@ export class SecurityService {
       const st = { fail: 0, unknown: 1, pass: 2, info: 3 } as const;
       return st[a.status] - st[b.status] || sevOrder.indexOf(a.severity) - sevOrder.indexOf(b.severity) || a.id.localeCompare(b.id);
     });
-    return { generatedAt: now, summary: scoreOf(F), findings: F };
+    // 0.75.1: each finding's fingerprint, and whether it may be accepted.
+    for (const f of F) {
+      f.fingerprint = fingerprintOf(f);
+      const never = neverAcceptable(f.id);
+      f.acceptable = (f.status === 'fail' || f.status === 'unknown') && isAcceptable(f.id);
+      if (never && (f.status === 'fail' || f.status === 'unknown')) f.notAcceptableWhy = never;
+    }
+    return { generatedAt: now, findings: F };
+  }
+
+  // ── Accepted risks (0.75.1) ───────────────────────────────────────────────
+
+  /**
+   * The posture with every acceptance applied. The host reading is cached;
+   * acceptances are read from the database on every call, so accepting or
+   * re-opening shows at once. An acceptance whose finding's fingerprint
+   * moved, whose check resolved or whose expiry passed is closed here (a
+   * conditional write, so concurrent readers close it once) and audited.
+   */
+  async getPosture(fresh = false) {
+    const raw = await this.cached('posture', 60_000, () => this.buildPosture(fresh), fresh);
+    const now = new Date();
+    const rows = await this.prisma.securityFindingAcceptance.findMany({ where: { reopenedAt: null } });
+    const byId = new Map(raw.findings.map((f) => [f.id, f]));
+    const holding = new Map<string, AcceptanceRow>();
+    for (const row of rows) {
+      const standing = acceptanceStanding(row, byId.get(row.findingId) as (Finding & { fingerprint: string }) | undefined, now);
+      if (standing === 'holds') holding.set(row.findingId, row);
+      else await this.closeAcceptance(row, standing, null, now);
+    }
+    const users = holding.size
+      ? await this.prisma.user.findMany({ where: { id: { in: [...holding.values()].map((r) => r.acceptedById).filter((x): x is string => !!x) } }, select: { id: true, email: true } })
+      : [];
+    const email = new Map(users.map((u) => [u.id, u.email]));
+    const findings: Finding[] = raw.findings.map((f) => {
+      const { basis: _basis, ...out } = f;
+      const row = holding.get(f.id);
+      return row ? {
+        ...out,
+        acceptance: {
+          id: row.id, reason: row.reason, acceptedAt: row.acceptedAt.toISOString(), acceptedBy: row.acceptedById ? email.get(row.acceptedById) ?? 'a removed account' : null,
+          expiresAt: row.expiresAt?.toISOString() ?? null, evidence: row.evidence,
+        },
+      } : out;
+    });
+    return { generatedAt: raw.generatedAt, summary: scoreOf(findings), findings };
+  }
+
+  private async closeAcceptance(row: AcceptanceRow, cause: ReopenCause, actor: ActorContext | null, now: Date): Promise<boolean> {
+    const r = await this.prisma.securityFindingAcceptance.updateMany({
+      where: { id: row.id, reopenedAt: null },
+      data: { reopenedAt: now, reopenCause: cause, reopenedById: cause === 'unaccepted' ? actor?.userId ?? null : null },
+    });
+    if (r.count !== 1) return false;
+    await this.audit.log({
+      actorId: actor?.userId, actorIp: actor?.ip, action: 'SECURITY_FINDING_UNACCEPTED', resource: 'server_security', resourceId: row.findingId,
+      meta: { findingId: row.findingId, acceptanceId: row.id, cause, automatic: cause !== 'unaccepted', acceptedAt: row.acceptedAt.toISOString(), expiresAt: row.expiresAt?.toISOString() ?? null },
+    });
+    return true;
+  }
+
+  /**
+   * Accept one finding as a risk. The controller has checked Platform Admin
+   * and the fresh confirmation (server.security). Refused: an id outside the
+   * closed list (never-acceptable ones say why), a reason outside 3–300
+   * characters, an expiry outside 1–365 days, a finding that is not failing
+   * or unknown right now, evidence that moved since the page read it, and a
+   * finding already accepted.
+   */
+  async acceptFinding(actor: ActorContext, findingId: string, body: { reason?: unknown; expiresInDays?: unknown; fingerprint?: unknown }) {
+    const never = neverAcceptable(findingId);
+    if (never) throw new BadRequestException({ code: 'FINDING_NOT_ACCEPTABLE', message: `This finding cannot be accepted: ${never}` });
+    if (!isAcceptable(findingId)) throw new NotFoundException({ code: 'UNKNOWN_FINDING', message: 'There is no acceptable check with that id.' });
+    const reason = cleanReason(body.reason);
+    if (!reason) throw new BadRequestException({ code: 'INVALID_REASON', message: 'Give a reason of 3 to 300 characters.' });
+    const now = new Date();
+    const expiresAt = expiryFor(body.expiresInDays, now);
+    if (expiresAt === undefined) throw new BadRequestException({ code: 'INVALID_EXPIRY', message: 'An expiry is 1 to 365 whole days, or none.' });
+    const posture = await this.getPosture();
+    const f = posture.findings.find((x) => x.id === findingId);
+    if (!f || (f.status !== 'fail' && f.status !== 'unknown')) throw new ConflictException({ code: 'FINDING_NOT_OPEN', message: 'That check is not failing or unknown right now, so there is nothing to accept.' });
+    if (f.acceptance) throw new ConflictException({ code: 'ALREADY_ACCEPTED', message: 'That finding is already accepted.' });
+    if (typeof body.fingerprint === 'string' && body.fingerprint !== f.fingerprint) {
+      throw new ConflictException({ code: 'EVIDENCE_CHANGED', message: 'The evidence changed since the page read it. Read it again and decide on what it says now.' });
+    }
+    let row;
+    try {
+      row = await this.prisma.securityFindingAcceptance.create({ data: {
+        findingId, status: f.status, severity: f.severity, fingerprint: f.fingerprint!, evidence: f.evidence.slice(0, 2000), reason,
+        acceptedById: actor.userId, acceptedAt: now, expiresAt,
+      } });
+    } catch (e) {
+      if ((e as { code?: string }).code === 'P2002') throw new ConflictException({ code: 'ALREADY_ACCEPTED', message: 'That finding is already accepted.' });
+      throw e;
+    }
+    try {
+      // The record is the control here (it hides a warning): no audit row, no acceptance.
+      await this.audit.logOrFail({
+        actorId: actor.userId, actorIp: actor.ip, action: 'SECURITY_FINDING_ACCEPTED', resource: 'server_security', resourceId: findingId,
+        meta: { findingId, acceptanceId: row.id, status: f.status, severity: f.severity, reason, expiresAt: expiresAt?.toISOString() ?? null, fingerprint: f.fingerprint },
+      });
+    } catch (e) {
+      await this.prisma.securityFindingAcceptance.updateMany({ where: { id: row.id, reopenedAt: null }, data: { reopenedAt: new Date(), reopenCause: 'unaccepted', reopenedById: actor.userId } });
+      throw e;
+    }
+    return { id: row.id, findingId, status: f.status, reason, acceptedAt: row.acceptedAt.toISOString(), expiresAt: expiresAt?.toISOString() ?? null };
+  }
+
+  /** Re-open an accepted finding. Never asks for a fresh confirmation: it only shows a warning again. */
+  async unacceptFinding(actor: ActorContext, findingId: string) {
+    if (!isAcceptable(findingId)) throw new NotFoundException({ code: 'UNKNOWN_FINDING', message: 'There is no acceptable check with that id.' });
+    const row = await this.prisma.securityFindingAcceptance.findFirst({ where: { findingId, reopenedAt: null } });
+    if (!row || !(await this.closeAcceptance(row, 'unaccepted', actor, new Date()))) {
+      throw new NotFoundException({ code: 'NOT_ACCEPTED', message: 'That finding is not accepted.' });
+    }
+    return { findingId, reopened: true };
+  }
+
+  /** Every acceptance, newest first, open and closed: the history. */
+  async acceptanceHistory() {
+    const rows = await this.prisma.securityFindingAcceptance.findMany({ orderBy: { acceptedAt: 'desc' }, take: 200 });
+    const ids = [...new Set(rows.flatMap((r) => [r.acceptedById, r.reopenedById]).filter((x): x is string => !!x))];
+    const users = ids.length ? await this.prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, email: true } }) : [];
+    const email = new Map(users.map((u) => [u.id, u.email]));
+    return rows.map((r) => ({
+      id: r.id, findingId: r.findingId, status: r.status, severity: r.severity, reason: r.reason,
+      acceptedAt: r.acceptedAt.toISOString(), acceptedBy: r.acceptedById ? email.get(r.acceptedById) ?? 'a removed account' : null,
+      expiresAt: r.expiresAt?.toISOString() ?? null, reopenedAt: r.reopenedAt?.toISOString() ?? null, reopenCause: r.reopenCause,
+      reopenedBy: r.reopenedById ? email.get(r.reopenedById) ?? 'a removed account' : null,
+    }));
   }
 }

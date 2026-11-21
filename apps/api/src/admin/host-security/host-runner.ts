@@ -45,6 +45,7 @@ export const FILES = {
   rebootPkgs: '/var/run/reboot-required.pkgs',
   aptUpdateStamp: '/var/lib/apt/periodic/update-success-stamp',
   caddyfile: '/etc/caddy/Caddyfile',
+  portRange: '/proc/sys/net/ipv4/ip_local_port_range',
 } as const;
 export type FileId = keyof typeof FILES;
 
@@ -98,7 +99,8 @@ export function argvFor(c: ReadCommand | ChangeCommand, npmCache: string): strin
     case 'f2b': return f2bArgsOk(c.args, false) ? ['sudo', '-n', F2B_WRAPPER, ...c.args] : null;
     case 'f2b.change': return f2bArgsOk(c.args, true) ? ['sudo', '-n', F2B_WRAPPER, ...c.args] : null;
     case 'apt.upgradable': return ['apt', 'list', '--upgradable'];
-    case 'ss.listening': return ['ss', '-Htlnu'];
+    // -p names the owner only of this user's own sockets; it never needs root.
+    case 'ss.listening': return ['ss', '-Htlnup'];
     case 'npm.audit': return ['npm', 'audit', '--omit=dev', '--json', '--cache', npmCache];
     case 'f2b.install': return ['sudo', '-n', APT_GET, 'install', '-y', 'fail2ban'];
     case 'f2b.enable': return ['sudo', '-n', SYSTEMCTL, 'enable', 'fail2ban'];

@@ -5,6 +5,111 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.75.1] — 2026-11-21 · *Spanner*
+
+**Admin → Security: hbbs's UDP socket is no longer an "unexpected public listener", the SSH ordering rule is
+proven against the host that prompted it, and a Platform Admin can accept a finding as a deliberate risk — which
+re-opens on its own when the evidence changes.** Two fixes to 0.74.0's posture page (docs/server-security.md;
+check-security-invariants §84, extended). No agent, signer or sudoers change.
+
+### Fixed — a false positive on the production page
+
+- **`udp/33344` reported as an unexpected public listener.** `ss -tulpn` as root showed it was `hbbs`, UNCONN on
+  `*:33344`: the RustDesk server's own outbound socket, bound without naming a port, so the kernel picked one from
+  its ephemeral range (`/proc/sys/net/ipv4/ip_local_port_range`, 32768–60999 on this host). A service names its
+  port; the kernel never hands out one below the range. So an **unconnected UDP socket on a port inside the range**
+  is now an *ephemeral client socket*: listed on its own information line (`network.ephemeral_sockets`), not a
+  finding. TCP listeners are judged as before whatever their port, and so is UDP outside the range. If the range
+  cannot be read nothing is excused, and the listener finding says so. The port number changes when hbbs restarts,
+  which is why an allow-list entry would not have worked.
+- **`ss` now runs as `ss -Htlnup`** (still as `reboot`, no sudo), so a socket owned by the service user's own
+  processes is named (`tcp/8080 on 0.0.0.0 (node)`). Root's sockets — hbbs's included — show no owner to `reboot`,
+  and nothing asks for root to find out.
+
+### Checked — SSH's first-match-wins order (no behaviour change)
+
+The owner set `PermitRootLogin no` in `/etc/ssh/sshd_config.d/40-rem0te.conf` and asked why the finding might
+still read Unknown. The 0.74 parser already did the right thing — it was run against this host's real files and
+reported `permitrootlogin no` from `40-rem0te.conf`, **certain** — because sshd reads `sshd_config` from the top
+(its `Include` is line 12) and the drop-ins in lexical order, and keeps the first value: `40-rem0te.conf` comes
+before the root-only `50-cloud-init.conf`, so nothing that file says can override it. A value is Unknown only when
+an unreadable file is read before the first readable value. `PasswordAuthentication` *is* still Unknown on this
+host, correctly: the first readable value is in `60-cloudimg-settings.conf`, after `50-cloud-init.conf` (which,
+the owner confirms, says `yes`). What changed:
+
+- Each sshd value records the unreadable files read before it (`unreadableBefore`), and the evidence names them:
+  "…50-cloud-init.conf could not be read and is read first, so it may set passwordauthentication before this".
+  0.74 listed every unreadable file, including ones read after the value.
+- The fix line for an Unknown SSH finding suggests a drop-in that sorts first (`01-rem0te.conf`).
+- Fixtures for each ordering in `unit-host-security.mjs`: an earlier readable drop-in (certain), the same setting
+  after the unreadable file (unsure), `sshd_config` above its `Include` (certain), every file readable (first
+  drop-in wins), a default after an unreadable file (unsure), and lexical order (`10-b.conf` before `9-a.conf`).
+
+### Added — accepted risks
+
+Some findings are decisions: SSH reachable only behind the owner's hardware firewall; a single-disk host with no
+off-host audit export yet. A Platform Admin can now **accept** one finding so it stops showing as a warning.
+
+- **`POST /admin/security/findings/:id/accept`** `{ reason, expiresInDays?, fingerprint? }`: Platform Admin, then
+  `assertFresh` naming the existing `server.security` key (it hides a warning, §62; the catalog description now
+  says so), then the service. Reason 3–300 characters, trimmed, no control characters; expiry none by default,
+  1–365 days. Refused: an id outside the closed list (404 `UNKNOWN_FINDING`), a never-acceptable finding (400
+  `FINDING_NOT_ACCEPTABLE`, with why), a check that is not failing or unknown now (409 `FINDING_NOT_OPEN`),
+  evidence that moved since the page read it (409 `EVIDENCE_CHANGED`), and a second acceptance (409
+  `ALREADY_ACCEPTED`). Recorded with `logOrFail` as `SECURITY_FINDING_ACCEPTED` (finding, status, severity, the
+  reason — it is not secret —, expiry, fingerprint); if the audit write fails the acceptance is closed again.
+- **`DELETE /admin/security/findings/:id/accept`** re-opens it: Platform Admin, **never** a fresh confirmation (it
+  only shows a warning again), audited as `SECURITY_FINDING_UNACCEPTED` (`cause: unaccepted`).
+- **`GET /admin/security/findings/acceptances`**: the last 200, open and closed, with who and why each ended.
+- **It re-opens on its own.** Each finding now has a `fingerprint`: sha256 of its id, status and *basis* — the
+  facts it was decided on (the offending sockets; the effective sshd value, its file and what made it unsure; the
+  pending package versions; the vulnerable packages; …), never its wording or when it was read. The basis stays in
+  the API. On every posture read an open acceptance is closed when its expiry has passed (`expired`), its check
+  passes or is gone (`resolved`), or the fingerprint moved (`evidence_changed`) — a conditional write, audited
+  once as an automatic `SECURITY_FINDING_UNACCEPTED`. A closed acceptance never comes back, even if the evidence
+  returns to what it was. Accept the listener finding for `udp/5353`, and a new public `tcp/9000` re-opens it.
+- **Never shown as passing.** An accepted finding keeps its status (fail or unknown), moves to a collapsed
+  *Accepted risks* section labelled *Accepted* or *Accepted (unknown)* with who, when, why and until when, carries
+  no score penalty, and is counted as `accepted` in the summary instead of fail or unknown. Coverage is unchanged:
+  an accepted unknown was still not read.
+- **Never acceptable — fix these:** a Platform Admin without MFA (`portal.mfa.admins`); a break-glass account
+  without both factors (`portal.admins`); an audit chain that does not verify (`portal.audit_chain`: an incident,
+  not a risk); SSH accepting empty passwords; `NODE_ENV` not `production`; any `process.switch.*` test switch;
+  every `web.tls.*` certificate. The row says why instead of offering *Accept…*.
+- **Migration `0093_security_risk_acceptance`** — numbered 0093 because 0092 is the diagnostics palette branch
+  (0.76.0) in flight at the same time. `SecurityFindingAcceptance`, rows never deleted; CHECKs on the finding id
+  (exactly `ACCEPTABLE_FINDINGS`, 30 ids, no value-carrying ones), status, severity, fingerprint shape, reason
+  length (3–300 after trim), evidence length, expiry (after acceptance, at most 365 days) and the reopen cause; a
+  partial unique index keeps one open acceptance per finding; two `ActivityAction` values.
+
+### Tests
+
+- `unit-host-security.mjs` (CI): 123 checks — the listener fixture now runs `ss -Htlnup` with owners and a fixtured
+  port range, the range's edges, TCP inside the range still unexpected, connected and loopback UDP; eight sshd
+  ordering fixtures; the never-acceptable list, the two lists disjoint and equal to 0093's CHECK; reason, expiry,
+  fingerprint stability and movement; standing (holds, expired first, evidence_changed, resolved); the score with
+  accepted findings.
+- `e2e-host-security.mjs` (run-e2e.sh): 155 checks on 3991–3994. New: Business Owner 403 and no session 401 on
+  both routes; accepting asks (`server.security`) and stores nothing before; thirteen refusals; acceptance of a
+  failing and an unknown finding; the summary; audit rows; the database's own CHECKs; re-opening without
+  confirmation; expiry closing once on the next read; and a fourth API on the same host after a new port and a
+  readable `40-rem0te.conf` — root login decided by it (pass, not unknown), the listener acceptance re-opened
+  (`evidence_changed`), root login's resolved, the audit export's still holding.
+- `e2e-ui.mjs`: the dialog in every combination — no *Accept…* on the Platform Admin without MFA (and why), a short
+  reason refused, the step-up asked, the finding under *Accepted risks* as *Accepted* (never OK) with the reason
+  and expiry, *1 accepted* in the summary, *Re-open* putting it back, phone width without sideways scroll, no
+  console errors.
+- §84 (check-security-invariants): the two routes (accept asks, re-open never does), the closed list against
+  0093, the never-acceptable list, `acceptance.ts` pure, `logOrFail` and conditional closes, one writer, the
+  fingerprint/expiry rule, and `ss -Htlnup` without sudo.
+
+### Deploy
+
+Apply migration 0093 and regenerate the Prisma client at the target (CLAUDE.md, *A schema change needs two more
+steps*). The first posture read after the deploy has fingerprints; nothing is accepted until someone accepts it.
+
+---
+
 ## [0.75.0] — 2026-11-20 · *Spanner*
 
 **The device page's Tools panel: everything that can be done to one computer, in eight groups, each opening the flow
