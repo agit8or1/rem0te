@@ -196,8 +196,6 @@ async function all() {
   // Every capability a business can grant — and a forged computers:terminal, which the sanitiser must not honour.
   const userA = await mkUser('user-a', bizA, roleUser, { capabilities: ['computers:view', 'computers:edit', 'computers:connect', 'computers:terminal'] });
   const tech = await mkUser('tech', null, null);
-  const preset = await prisma.technicianPreset.findUnique({ where: { key: 'l2-technician' } });
-  if (preset) await prisma.technicianAssignment.create({ data: { tenantId: tenant.id, customerId: bizA.id, userId: tech.id, presetId: preset.id, capabilities: [] } });
   const mkEp = async (tag, biz, { channel = 'signed', pooled = false, platform = 'Windows', agentVersion = '0.77.0', online = true } = {}) => {
     const hostname = `TERM-${tag}-${sfx}`;
     const e = await prisma.endpoint.create({ data: {
@@ -219,6 +217,10 @@ async function all() {
   const B1 = await mkEp('B1', bizB);
 
   await startApi();
+  // The built-in presets are written when the API starts, so a fresh database has them only now.
+  const preset = await prisma.technicianPreset.findUnique({ where: { key: 'l2-technician' } });
+  if (!preset) throw new Error('the l2-technician preset is missing after the API started');
+  await prisma.technicianAssignment.create({ data: { tenantId: tenant.id, customerId: bizA.id, userId: tech.id, presetId: preset.id, capabilities: [] } });
   const SAdmin = await login(admin.email);
   const SAd = await stepUp(SAdmin);
   const SAd2 = await stepUp(await login(admin2.email));

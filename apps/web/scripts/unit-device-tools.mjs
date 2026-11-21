@@ -243,7 +243,7 @@ for (const c of ['offline', 'agent_silent']) {
 // 14. 0.76: the palette, from the diagnostics catalog's allowed and needsNewerAgent.
 {
   const f = base(); f.agentVersion = '0.75.0';
-  const g = scenario('agent 0.75.0', f, (t) => (later(t) ? 'coming_later' : palette(t) ? 'needs_newer_agent' : isAction(t) ? 'needs_approval' : 'available'));
+  const g = scenario('agent 0.75.0', f, (t) => (later(t) ? 'coming_later' : palette(t) || isTerm(t) ? 'needs_newer_agent' : isAction(t) ? 'needs_approval' : 'available'));
   check('0.75 agent: a palette check names 0.76.0', /0\.76\.0/.test(g['defender'].reason), g['defender'].reason);
   const n = base(); n.diagNeedsNewer = { defender_status: true };
   const gn = states(n);
