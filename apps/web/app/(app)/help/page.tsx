@@ -713,14 +713,14 @@ const SECTIONS: Section[] = [
           Connect, Tools, Diagnose, Run action and Patch sit beside it; Archive and the other
           rare actions are under More, each with a confirmation. The tabs are
           Overview, Performance, Monitoring, Software, Processes, Services, Network, Patches, Event logs,
-          Diagnostics, Actions, Terminal (Windows, 0.77) and History (sessions, notes, the AI-written summary and who
+          Diagnostics, Actions, Terminal (Windows, 0.77), Files (Windows, 0.78) and History (sessions, notes, the AI-written summary and who
           can connect), and
           each can be linked with <code>?tab=</code>.
         </p>
         <p className="font-medium text-foreground">Tools (0.75)</p>
         <p>
           <strong className="text-foreground">Tools</strong>, beside Connect, lists what can be done to the computer in
-          nine groups — Diagnostics, Terminal, PowerShell / Scripts, Services &amp; Processes, Software, Windows
+          nine groups — Diagnostics, Terminal and files, PowerShell / Scripts, Services &amp; Processes, Software, Windows
           Updates, Networking, Security and Maintenance — and opens the flow that already does each one: a Diagnostics check
           with its row marked, an approved action already picked on Actions, the Services, Processes, Network,
           Software or Patches tab, the Security log on Event logs, or the script library. Nothing runs from the
@@ -752,9 +752,24 @@ const SECTIONS: Section[] = [
           Admin turned them on for the business. More in{' '}
           <Link href="/docs/remote-terminal" className="underline text-foreground">Background terminal</Link>.
         </p>
+        <p className="font-medium text-foreground">Files (0.78, Platform Admins)</p>
+        <p>
+          The <strong className="text-foreground">Files</strong> tab sends a file to a Windows computer running the
+          signed agent 0.78 or later, or fetches one from it, with no screen sharing. The agent reads and writes as{' '}
+          <strong className="text-foreground">SYSTEM — full control of this computer</strong>, so only a Platform Admin
+          can do either, and sending and fetching are separate permissions. Give an absolute local path
+          (<code>C:\…</code>; no network paths, <code>..</code>, links or junctions) and a reason. An existing file
+          is never replaced unless you tick it. Your browser hashes the file (SHA-256) and the agent checks the hash
+          before the file is put in place; a fetched file is checked in your browser before you can save it. A
+          transfer starts at the computer&apos;s next heartbeat (up to about three minutes), moves through this tab
+          (keep it open), and ends after 10 minutes without progress or 60 in all. Up to 100 MB by default; a
+          Platform Admin can set a business up to 2 GB. The audit log records the path, size and hash, never the
+          content, and the server keeps no copy. More in{' '}
+          <Link href="/docs/file-transfer" className="underline text-foreground">Background file transfer</Link>.
+        </p>
         <p className="font-medium text-foreground">Nothing here is live</p>
         <p>
-          Apart from the Terminal, Rem0te has no channel to reach into a computer. Everything on that tab arrived
+          Apart from the Terminal and Files, Rem0te has no channel to reach into a computer. Everything on that tab arrived
           on a heartbeat, which happens about every three minutes, and each card says
           when its contents were collected. Pressing{' '}
           <strong className="text-foreground">Refresh</strong> queues a fresh collection

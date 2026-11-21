@@ -4556,6 +4556,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'platform/public-url.controller.ts': ['platform.configure'],
     'psa/psa.controller.ts': ['psa.connector'],
     'remote-ops/terminal.service.ts': ['terminal.open'],
+    'remote-ops/file-transfer.service.ts': ['files.transfer'],
     'reports/report-schedules.controller.ts': ['reports.schedule'],
     'script-library/script-library.service.ts': ['scripts.review'],
     'script-run/script-run.service.ts': ['scripts.direct'],
@@ -7442,9 +7443,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     JSON.stringify(routeCaps));
   const agentCtl = code(ctl).slice(code(ctl).indexOf("@Controller('remote/agent')"));
   const agentRoutes = [...agentCtl.matchAll(/@Post\('([^']+)'\)\s*\n\s*@Public\(\)/g)].map((m) => m[1]);
-  check('terminal: the agent channel is exactly poll and output, @Public, under remote/agent',
-    /@Controller\('remote\/agent'\)/.test(ctl) && JSON.stringify(agentRoutes) === JSON.stringify(['poll', 'terminal/output'])
-      && (agentCtl.match(/@(Get|Post|Put|Patch|Delete)\(/g) ?? []).length === 2 && (code(ctl).match(/@Public\(\)/g) ?? []).length === 2,
+  // 0.78 (§88) adds the four file routes; nothing else.
+  check('terminal: the agent channel is exactly poll, output and the four file routes, @Public, under remote/agent',
+    /@Controller\('remote\/agent'\)/.test(ctl) && JSON.stringify(agentRoutes) === JSON.stringify(['poll', 'terminal/output', 'files/pull', 'files/begin', 'files/push', 'files/finish'])
+      && (agentCtl.match(/@(Get|Post|Put|Patch|Delete)\(/g) ?? []).length === 6 && (code(ctl).match(/@Public\(\)/g) ?? []).length === 6,
     JSON.stringify(agentRoutes));
 
   const svc = read(`${SRC}/remote-ops/terminal.service.ts`);
@@ -7477,8 +7479,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     `end meta: ${endMeta.replace(/\s+/g, ' ').slice(0, 200)}`);
   const remoteFiles = walk(`${SRC}/remote-ops`);
   const logs = remoteFiles.flatMap((f) => [...code(read(f)).matchAll(/\b(?:this\.)?logger\.(log|warn|error|debug|verbose)\(([^;]*)\);|console\.\w+\(/g)].map((m) => `${f}: ${m[0].slice(0, 80)}`));
-  check('terminal: the remote-ops module logs nothing but two fixed warnings (the switch, a failed sweep)',
-    logs.length === 2 && logs.every((l) => /TERMINAL_SWEEP=off|sweep: \$\{String\(e\)\}/.test(l)), logs.join(' | '));
+  // 0.78: the file service's sweep has the same failed-sweep warning.
+  check('terminal: the remote-ops module logs nothing but three fixed warnings (the switch, a failed sweep in each service)',
+    logs.length === 3 && logs.every((l) => /TERMINAL_SWEEP=off|sweep: \$\{String\(e\)\}/.test(l)), logs.join(' | '));
   const writers = walk(SRC).filter((f) => f !== `${SRC}/remote-ops/terminal.service.ts`)
     .filter((f) => /\.(terminalSession|terminalFrame|terminalTranscriptChunk)\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/.test(read(f)));
   const settingWriters = walk(SRC).filter((f) => f !== `${SRC}/remote-ops/remote-ops-settings.service.ts`)
@@ -7554,6 +7557,126 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /run terminal node scripts\/e2e-terminal\.mjs/.test(read('scripts/run-e2e.sh')) && /async function terminalPanel\(/.test(read('apps/web/scripts/e2e-ui.mjs'))
       && /\.\/internal\/remote\//.test(read('.github/workflows/lab-windows.yml')),
     'ci.yml / run-e2e.sh / e2e-ui.mjs / lab-windows.yml');
+}
+
+// ── §88 (0.78): background file transfer — the same reversal, contained ─────
+//     File transfer extends §87's reversal (the agent acting on what a
+//     technician sends) to files. The agent writes and reads, as SYSTEM, a
+//     path a Platform Admin typed. It is contained the same way:
+//       - Upload and download are two platform-only capabilities
+//         (PLATFORM_CAP), separately; no business role, preset, technician
+//         or SSO mapping holds or grants them.
+//       - request() checks scope with the direction's capability, then the
+//         path rule, the reason, the size against the business's limit (100
+//         MB default, 2 GB ceiling) and the SHA-256, then
+//         assertFresh('files.transfer') (default off), then fileRefusal, then
+//         logOrFail before the row exists.
+//       - Only the technician who asked moves bytes (mine()). A Platform
+//         Admin, or the business's own member with Edit computers, may cancel.
+//       - The path rule is one shared fixture (testdata/file-paths.json),
+//         asserted by Go's CheckPath and the portal's checkPath. 0095 also
+//         refuses ".." and "/". The agent re-checks every folder on the
+//         path for a reparse point, writes to an O_EXCL temporary file,
+//         verifies the whole SHA-256 before anything is put in place, checks
+//         the final path through the handle, and replaces an existing file
+//         only when the transfer says overwrite.
+//       - No exec in the file code; the worker still listens on nothing.
+//       - Bytes are temporary: chunks go as they are acknowledged, with the
+//         transfer's end and by the sweep. Audit rows carry the path, size
+//         and SHA-256, never content.
+{
+  console.log('\n§88 Background file transfer (§87\'s reversal, extended to files, contained)');
+  const SRC = 'apps/api/src';
+  const GO = 'tools/windows-installer';
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const caps = read(`${SRC}/rbac/capabilities.ts`);
+  const capBody = (caps.match(/export const CAP = \{([\s\S]*?)\} as const;/) ?? [])[1] ?? '';
+  const platBody = (caps.match(/export const PLATFORM_CAP = \{([\s\S]*?)\} as const;/) ?? [])[1] ?? '';
+  check('files: computers:files_upload and computers:files_download are platform-only (PLATFORM_CAP, never CAP)',
+    /COMPUTERS_FILES_UPLOAD: 'computers:files_upload'/.test(platBody) && /COMPUTERS_FILES_DOWNLOAD: 'computers:files_download'/.test(platBody) && !/computers:files/.test(capBody),
+    'rbac/capabilities.ts');
+
+  const ctl = read(`${SRC}/remote-ops/file-transfer.controller.ts`);
+  const routeCaps = [...code(ctl).matchAll(/@(Get|Post|Put)\(\s*(?:'([^']*)')?\s*\)\s*\n\s*@RequireCapability\(([A-Z_.]+)\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''} ${m[3]}`);
+  check('files: every console route names its capability — upload and its chunks files_upload, download and its chunks files_download, list, read and cancel computers:view',
+    JSON.stringify(routeCaps) === JSON.stringify([
+      'GET  CAP.COMPUTERS_VIEW', 'POST uploads PLATFORM_CAP.COMPUTERS_FILES_UPLOAD', 'POST downloads PLATFORM_CAP.COMPUTERS_FILES_DOWNLOAD',
+      'GET :tid CAP.COMPUTERS_VIEW', 'POST :tid/chunks PLATFORM_CAP.COMPUTERS_FILES_UPLOAD', 'GET :tid/chunks/:seq PLATFORM_CAP.COMPUTERS_FILES_DOWNLOAD',
+      'POST :tid/received PLATFORM_CAP.COMPUTERS_FILES_DOWNLOAD', 'POST :tid/cancel CAP.COMPUTERS_VIEW',
+    ]) && /@Controller\('endpoints\/:id\/files'\)\s*\n@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)/.test(ctl) && !/@Public\(\)/.test(ctl),
+    JSON.stringify(routeCaps));
+
+  const svc = read(`${SRC}/remote-ops/file-transfer.service.ts`);
+  const reqBody = svc.slice(svc.indexOf('  async request('), svc.indexOf('  async get('));
+  const at = (s) => reqBody.indexOf(s);
+  const order = ['const ep = await this.visible(actor, endpointId, cap);', 'checkPath(body?.path)', 'cleanReason(body?.reason)', "'FILES_TOO_LARGE'", "'FILES_SHA256_INVALID'",
+    "assertFresh(freshMethod, { action: 'files.transfer'", 'const refusal = fileRefusal({', "action: 'FILE_TRANSFER_REQUESTED'", 'this.prisma.fileTransfer.create('];
+  check('files: request() runs scope (the direction\'s capability), path, reason, size, SHA-256, assertFresh(files.transfer), fileRefusal, then logOrFail before the row',
+    order.every((s) => at(s) >= 0) && order.every((s, i) => i === 0 || at(order[i - 1]) < at(s))
+      && /PLATFORM_CAP\.COMPUTERS_FILES_UPLOAD : PLATFORM_CAP\.COMPUTERS_FILES_DOWNLOAD/.test(reqBody) && /await this\.audit\.logOrFail\(\{\s*action: 'FILE_TRANSFER_REQUESTED'/.test(reqBody),
+    order.map((s) => at(s)).join(','));
+  const pol = read(`${SRC}/remote-ops/file-policy.ts`);
+  const codes = [...(pol.slice(pol.indexOf('export function fileRefusal'))).matchAll(/code: '([A-Z_]+)'/g)].map((m) => m[1]);
+  check('files: fileRefusal is pool, Windows + signed agent, device secret, agent version, a `remote` pause, connectivity, two live per computer — in that order',
+    JSON.stringify(codes) === JSON.stringify(['ENDPOINT_UNASSIGNED', 'FILES_SIGNED_AGENT_REQUIRED', 'FILES_NO_DEVICE_SECRET', 'FILES_AGENT_TOO_OLD', 'CONTAINED', 'FILES_OFFLINE', 'FILES_TOO_MANY'])
+      && !/from '(?!node:crypto'|\.\/limits'|\.\/policy')/.test(pol),
+    JSON.stringify(codes));
+  check('files: only the technician who asked moves bytes (mine(): their own transfer in that direction), for chunks in, chunks out and received',
+    /if \(t0\.technicianId !== actor\.userId \|\| t0\.direction !== direction\) throw new NotFoundException/.test(svc)
+      && ['putChunk', 'getChunk', 'received'].every((m) => new RegExp(`async ${m}\\([^)]*\\)[^{]*\\{\\s*const \\{ (?:ep, )?t \\} = await this\\.mine\\(actor, endpointId, tid, '(to|from)_computer', now\\);`).test(svc)),
+    'file-transfer.service.ts mine()');
+  check('files: cancel never asks for a fresh confirmation and goes through endAs (technician, Platform Admin, the business\'s own Edit computers)',
+    /const as = endAs\(this\.enderFacts\(actor\), t\);\s*if \(!as\) throw new NotFoundException/.test(svc) && !/assertFresh/.test(svc.slice(svc.indexOf('  async cancel('), svc.indexOf('  async forAgent('))),
+    'cancel()');
+  const endMeta = (svc.match(/action: fileEndAction\(reason\)[\s\S]*?meta: \{([\s\S]*?)\n      \},/) ?? [])[1] ?? '';
+  check('files: audit rows carry the path, size and SHA-256 — never content; chunks go with the end of a transfer and by the sweep',
+    /sha256/.test(endMeta) && /size/.test(endMeta) && /path/.test(endMeta) && !/\bdata\b|chunk/i.test(endMeta)
+      && /await this\.prisma\.fileTransferChunk\.deleteMany\(\{ where: \{ transferId: t\.id \} \}\);/.test(svc)
+      && /transfer: \{ state: \{ in: \['failed', 'cancelled'\] \} \}/.test(svc) && /FILE_CHUNK_KEEP_MS/.test(svc),
+    `end meta: ${endMeta.replace(/\s+/g, ' ').slice(0, 200)}`);
+  const writers = walk(SRC).filter((f) => f !== `${SRC}/remote-ops/file-transfer.service.ts`)
+    .filter((f) => /\.(fileTransfer|fileTransferChunk)\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/.test(read(f)));
+  check('files: only FileTransferService writes the file tables', writers.length === 0, writers.join(', '));
+
+  const goFiles = readdirSync(join(ROOT, `${GO}/internal/remote`)).filter((f) => /^(files|filepath|fs_unix|fs_windows)\.go$/.test(f)).map((f) => `${GO}/internal/remote/${f}`);
+  const fgo = read(`${GO}/internal/remote/files.go`);
+  const fwin = read(`${GO}/internal/remote/fs_windows.go`);
+  check('files: the agent\'s file code runs no process and opens no socket',
+    goFiles.length === 4 && goFiles.every((f) => !/os\/exec|exec\.Command|net\.Listen|net\.Dial/.test(read(f))), goFiles.join(', '));
+  check('files: the agent refuses a reparse point on every folder and the target, writes an O_EXCL temporary file, checks the final path by handle and the whole SHA-256 before placing it',
+    (fgo.match(/isReparse\(/g) ?? []).length >= 4 && /os\.OpenFile\(tmp, os\.O_WRONLY\|os\.O_CREATE\|os\.O_EXCL, 0o600\)/.test(fgo)
+      && (fgo.match(/finalPath\(/g) ?? []).length >= 3 && fgo.indexOf('if sum != j.SHA256 {') > 0 && fgo.indexOf('if sum != j.SHA256 {') < fgo.indexOf('place(tmp, local,'),
+    'internal/remote/files.go');
+  check('files: an existing file is replaced only when the transfer says overwrite (MoveFileEx REPLACE_EXISTING only then)',
+    /if err := place\(tmp, local, exists && j\.Overwrite\); err != nil/.test(fgo) && /if replace \{\s*flags \|= windows\.MOVEFILE_REPLACE_EXISTING\s*\}/.test(fwin)
+      && (fwin.match(/MOVEFILE_REPLACE_EXISTING/g) ?? []).length === 2,
+    'files.go / fs_windows.go');
+  check('files: the worker logs only a transfer\'s id, direction and code — never a path, content or secret',
+    [...fgo.matchAll(/w\.logf\(([^\n]*)\)/g)].length >= 4 && [...fgo.matchAll(/w\.logf\(([^\n]*)\)/g)].every((m) => !/Path|path|local|data|Data|Secret|buf/.test(m[1].replace(/"[^"]*"/g, ''))),
+    'internal/remote/files.go');
+  const fx = read(`${GO}/internal/remote/testdata/file-paths.json`);
+  check('files: one path fixture, asserted by both Go\'s CheckPath and the portal\'s checkPath',
+    JSON.parse(fx).cases.length >= 40 && /testdata\/file-paths\.json/.test(read(`${GO}/internal/remote/filepath_test.go`)) && /testdata\/file-paths\.json/.test(read('apps/api/scripts/unit-files.mjs')),
+    'testdata/file-paths.json');
+  const goL = read(`${GO}/internal/remote/limits.go`);
+  const tsL = read(`${SRC}/remote-ops/limits.ts`);
+  const mig = read('apps/api/prisma/migrations/0095_file_transfers/migration.sql');
+  check('files: the limits agree — 512 KiB chunks, eight in flight, 2 GiB, 60 minutes, 100 MB default — in TS, Go and 0095',
+    /FILE_CHUNK_BYTES = 512 \* 1024/.test(tsL) && /FileChunkBytes = 512 \* 1024/.test(goL) && /FILE_WINDOW_CHUNKS = 8/.test(tsL) && /FILE_MAX_MB_MAX = 2048/.test(tsL)
+      && /FileMaxBytes = 2048 \* 1024 \* 1024/.test(goL) && /FileTransferMax = 60 \* time\.Minute/.test(goL) && /FILE_TRANSFER_MAX_MS = 60 \* 60_000/.test(tsL)
+      && /octet_length\("data"\) BETWEEN 1 AND 524288/.test(mig) && /"inSeq" - "ackSeq" <= 8/.test(mig) && /"fileMaxMb" BETWEEN 1 AND 2048/.test(mig)
+      && /"notAfter" <= "createdAt" \+ interval '60 minutes'/.test(mig) && /position\('\.\.' in "path"\) = 0/.test(mig),
+    'limits.ts / limits.go / 0095');
+  const cat = read(`${SRC}/security-controls/confirm-catalog.ts`);
+  check('files: files.transfer is a catalog key defaulting to off',
+    /key: 'files\.transfer'[\s\S]{0,600}?default: 'off'/.test(cat), 'confirm-catalog.ts');
+  const tab = read('apps/web/components/endpoints/workspace/files-tab.tsx');
+  check('files: the console says "SYSTEM — full control of this computer", hashes in the browser and renders nothing as HTML',
+    /SYSTEM — full control of this computer/.test(tab) && /from '@\/lib\/sha256'/.test(tab) && !/dangerouslySetInnerHTML|innerHTML/.test(tab), 'files-tab.tsx');
+  check('files: the suites prove it (unit in CI, e2e with the agent\'s worker, the browser, the Windows lab)',
+    /unit-files\.mjs/.test(read('.github/workflows/ci.yml')) && /run files node scripts\/e2e-files\.mjs/.test(read('scripts/run-e2e.sh'))
+      && /async function filesPanel\(/.test(read('apps/web/scripts/e2e-ui.mjs')) && /TestLabFilesAsAdministrator/.test(read(`${GO}/internal/remote/lab_files_windows_test.go`)),
+    'ci.yml / run-e2e.sh / e2e-ui.mjs / lab_files_windows_test.go');
 }
 
 // ─── §18 addendum (0.59): no behavioural suite defaults to production's API ──

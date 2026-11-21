@@ -441,6 +441,10 @@ enum ActivityAction {
   TERMINAL_EXPIRED
   TERMINAL_REVOKED
   TERMINAL_ENDED
+  FILE_TRANSFER_REQUESTED
+  FILE_TRANSFER_COMPLETED
+  FILE_TRANSFER_FAILED
+  FILE_TRANSFER_CANCELLED
   REMOTE_OPS_SETTINGS_CHANGED
 }
 
@@ -952,6 +956,7 @@ model Endpoint {
   msaCutoverMembers MsaCutoverMember[]
   /// 0.77: background terminal sessions on this computer.
   terminalSessions  TerminalSession[]
+  fileTransfers     FileTransfer[]
   /// 0.67: false-positive reports about this computer's alerts, and rules scoped to it.
   falsePositiveReports AlertFalsePositiveReport[]
   alertQualityRules    AlertQualityRule[]
@@ -5155,11 +5160,65 @@ model TerminalTranscriptChunk {
 
 /// 0.77: a business's terminal settings (and, from 0.78, file transfer).
 /// Written only by RemoteOpsSettingsService, by a Platform Admin, audited.
+/// 0.78 Courier: one file sent to, or fetched from, a computer
+/// (docs/file-transfer.md). Only FileTransferService writes it.
+model FileTransfer {
+  /// 32 lowercase hex characters.
+  id             String    @id
+  endpointId     String
+  endpoint       Endpoint  @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  businessId     String
+  technicianId   String
+  /// to_computer | from_computer (0095 CHECK).
+  direction      String
+  /// An absolute local Windows path (0095 CHECK; the full rule in file-policy.ts).
+  path           String
+  overwrite      Boolean   @default(false)
+  reason         String
+  /// pending | transferring | completed | failed | cancelled (0095 CHECK).
+  state          String    @default("pending")
+  /// Declared by the sender: the browser for an upload, the agent for a download.
+  size           BigInt?
+  sha256         String?
+  maxBytes       BigInt
+  /// The chunks the whole file takes, the last one stored, the last one the other end took.
+  chunks         Int       @default(0)
+  inSeq          Int       @default(0)
+  ackSeq         Int       @default(0)
+  bytesDone      BigInt    @default(0)
+  createdAt      DateTime  @default(now())
+  notAfter       DateTime
+  lastProgressAt DateTime  @default(now())
+  deliveredAt    DateTime?
+  endedAt        DateTime?
+  /// A closed code (0095 CHECK).
+  endReason      String?
+  endedById      String?
+  chunkRows      FileTransferChunk[]
+
+  @@index([endpointId, state])
+  @@index([state, notAfter])
+}
+
+/// 0.78: one chunk in transit (at most 512 KiB), deleted once the other end has it.
+model FileTransferChunk {
+  transferId String
+  transfer   FileTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  seq        Int
+  data       Bytes
+  sha256     String
+  createdAt  DateTime     @default(now())
+
+  @@id([transferId, seq])
+}
+
 model RemoteOpsSetting {
   businessId          String   @id
   business            Customer @relation(fields: [businessId], references: [id], onDelete: Cascade)
   terminalTranscripts Boolean  @default(false)
   transcriptDays      Int      @default(30)
+  /// 0.78: the largest file one transfer may carry, in MiB (1–2048; 0095 CHECK).
+  fileMaxMb           Int      @default(100)
   updatedAt           DateTime @updatedAt
   updatedById         String?
 }

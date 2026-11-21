@@ -54,6 +54,7 @@ const ORDER = [
   ['session-maintenance-mdm-backup-audit.md', 'Session, maintenance, MDM and backup audit', 'Computers and monitoring', 'The 0.76.1 audit of the four-phase directive: what RustDesk can enforce, the background terminal and file transfer decision, MDM and backup providers, owner decisions and the roadmap.'],
   ['inventory.md', 'Inventory and event logs', 'Computers and monitoring', 'Specs, installed software, change history, pending updates and event-log slices.'],
   ['remote-terminal.md', 'Background terminal', 'Computers and monitoring', 'A cmd or PowerShell on a Windows computer as SYSTEM, with no screen sharing: who can open one, how it reaches the computer, the limits, ending, transcripts and what it reverses.'],
+  ['file-transfer.md', 'Background file transfer', 'Computers and monitoring', 'Send a file to, or fetch one from, a Windows computer as SYSTEM: who can, the path rule, SHA-256 at both ends, the size limit, the clocks and what is kept.'],
   ['diagnostics.md', 'One-click diagnostics', 'Computers and monitoring', 'Read-only checks a technician runs with one click: disk, services, errors, network, DNS, updates, restart.'],
   ['monitoring.md', 'Monitoring and alerts', 'Computers and monitoring', 'Monitors, inheritance, alerts, site outages, maintenance windows and escalation.'],
   ['group-policies.md', 'Device-group policies', 'Computers and monitoring', 'Monitors and client-update policies for a device group: precedence, priorities, live membership and cost.'],

@@ -313,4 +313,5 @@ terminal is waiting.
   grant with its own audit.
 - **A pseudo-console** (ConPTY), for Ctrl-C, full-screen programs and the
   console code page.
-- **File transfer** in both directions (0.78 "Courier").
+- **File transfer** in both directions shipped in 0.78 "Courier", over the
+  same worker: [file-transfer.md](file-transfer.md).

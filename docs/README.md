@@ -47,6 +47,10 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   computer as SYSTEM with no screen sharing, for Platform Admins only; how it reaches the computer (outbound, up to
   three minutes to start), the 15-minute idle and 60-minute limits, ending and revocation, opt-in transcripts, and
   exactly which rules it reverses.
+- **[file-transfer.md](file-transfer.md)** — background file transfer (0.78): send a file to, or fetch one from, a
+  Windows computer as SYSTEM, for Platform Admins only (sending and fetching separately); the path rule, SHA-256 at
+  both ends, never over an existing file unless asked, the size limit (100 MB default, 2 GB at most), the clocks,
+  and what is kept (the hash, never the content).
 - **[monitoring.md](monitoring.md)** — monitors (offline, disk, CPU, memory,
   services, event log, pending restart), inheritance, alerts, site outages,
   maintenance windows, escalation and ClientSt0r tickets (0.29).

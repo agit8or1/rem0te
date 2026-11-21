@@ -22,6 +22,7 @@ import { DeviceNetworkTab, DeviceProcessesTab, DeviceServicesTab } from '@/compo
 import { DeviceHistoryTab, type SessionRow } from '@/components/endpoints/workspace/history-tab';
 import { DeviceChatTab } from '@/components/endpoints/workspace/chat-tab';
 import { DeviceTerminalTab } from '@/components/endpoints/workspace/terminal-tab';
+import { DeviceFilesTab } from '@/components/endpoints/workspace/files-tab';
 import { OPEN_CHAT_EVENT } from '@/components/chat/chat-inbox';
 import { DiagnosticsPanel } from '@/components/endpoints/workspace/diagnostics-panel';
 import { AgentCard } from '@/components/endpoints/workspace/agent-card';
@@ -239,7 +240,7 @@ export default function EndpointDetailPage() {
     // Terminal (0.77): Windows agents only. Anyone who can see the computer
     // sees who opened one (and may end it with Edit computers); only a
     // Platform Admin opens one, and the tab says why the computer cannot.
-    ...(canView && windowsDetail ? (['terminal'] as const) : []),
+    ...(canView && windowsDetail ? (['terminal', 'files'] as const) : []),
     // Chat (0.34): on every computer the viewer can see; the tab itself says
     // when this one cannot chat (Linux, macOS, the standard agent) and why.
     ...(canView ? (['chat'] as const) : []),
@@ -299,7 +300,10 @@ export default function EndpointDetailPage() {
           endpointId={id}
           ep={ep}
           patches={patches.data}
-          perms={{ view: canView, eventLogs: canEventLogs, terminal: can(CAP.COMPUTERS_TERMINAL) }}
+          perms={{
+            view: canView, eventLogs: canEventLogs, terminal: can(CAP.COMPUTERS_TERMINAL),
+            filesUpload: can(CAP.COMPUTERS_FILES_UPLOAD), filesDownload: can(CAP.COMPUTERS_FILES_DOWNLOAD),
+          }}
           open={toolsOpen}
           onOpenChange={setToolsOpen}
           onPick={openTool}
@@ -415,6 +419,11 @@ export default function EndpointDetailPage() {
         {tabs.includes('terminal') && (
           <TabsContent value="terminal" className="mt-4">
             {active === 'terminal' && <DeviceTerminalTab endpointId={id} ep={ep} />}
+          </TabsContent>
+        )}
+        {tabs.includes('files') && (
+          <TabsContent value="files" className="mt-4">
+            {active === 'files' && <DeviceFilesTab endpointId={id} ep={ep} />}
           </TabsContent>
         )}
 

@@ -17,8 +17,12 @@ var ErrShellMissing = errors.New("remote: shell not installed")
 // nothing to do for IdleExit, the portal says stop, or ctx ends; everything
 // it started is killed before it returns.
 type Worker struct {
-	P    Portal
-	S    Spawner
+	P Portal
+	S Spawner
+	// F and FS carry file transfers (0.78). Without them a transfer is
+	// refused (path_refused) rather than left to stall.
+	F    FilePortal
+	FS   FileSystem
 	Now  func() time.Time
 	Logf func(string, ...any)
 
@@ -32,6 +36,7 @@ type Worker struct {
 
 	mu       sync.Mutex
 	sessions map[string]*session
+	files    map[string]*fileRun
 	endpoint string
 }
 
@@ -91,11 +96,11 @@ func (w *Worker) held() []Held {
 	return out
 }
 
-// Live is how many shells this worker runs now.
+// Live is how many shells and file transfers this worker runs now.
 func (w *Worker) Live() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return len(w.sessions)
+	return len(w.sessions) + len(w.files)
 }
 
 // stop ends one session: the whole process tree is killed, once.
@@ -131,16 +136,20 @@ func (w *Worker) Run(ctx context.Context) error {
 	if w.sessions == nil {
 		w.sessions = map[string]*session{}
 	}
+	if w.files == nil {
+		w.files = map[string]*fileRun{}
+	}
 	w.mu.Unlock()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	defer w.waitFiles()
 	defer w.stopAll("worker_exit")
 	go w.deadlines(ctx)
 
 	lastOK, lastBusy := w.now(), w.now()
 	backoff := time.Second
 	for ctx.Err() == nil {
-		ans, err := w.P.Poll(ctx, w.held(), true)
+		ans, err := w.P.Poll(ctx, w.held(), w.heldFiles(), true)
 		if errors.Is(err, ErrStop) {
 			w.logf("remote-worker: the portal said stop")
 			return nil
@@ -152,6 +161,7 @@ func (w *Worker) Run(ctx context.Context) error {
 			w.logf("remote-worker: poll: %v", err)
 			if w.now().Sub(lastOK) >= w.d(w.DisconnectKill, DisconnectKill) {
 				w.stopAll("disconnected")
+				w.cancelFiles()
 			}
 			if w.Live() == 0 && w.now().Sub(lastBusy) >= w.d(w.IdleExit, IdleExit) {
 				return nil
@@ -173,6 +183,9 @@ func (w *Worker) Run(ctx context.Context) error {
 		}
 		for _, in := range ans.Terminals {
 			w.apply(ctx, in)
+		}
+		for _, j := range ans.Files {
+			w.applyFile(ctx, j)
 		}
 		if w.Live() > 0 {
 			lastBusy = w.now()

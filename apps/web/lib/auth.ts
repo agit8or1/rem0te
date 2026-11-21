@@ -37,6 +37,9 @@ export const CAP = {
   SCRIPTS_REVIEW: 'scripts:review',
   // 0.77: platform-only (a Platform Admin holds it; no business can grant it).
   COMPUTERS_TERMINAL: 'computers:terminal',
+  // 0.78: send a file to / fetch one from a Windows computer (platform-only).
+  COMPUTERS_FILES_UPLOAD: 'computers:files_upload',
+  COMPUTERS_FILES_DOWNLOAD: 'computers:files_download',
 } as const;
 
 export type Capability = (typeof CAP)[keyof typeof CAP];

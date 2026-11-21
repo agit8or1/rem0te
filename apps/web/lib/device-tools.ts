@@ -29,9 +29,11 @@
  *                     says it predates the check), or it is the standard
  *                     agent and the action needs the full (signed) agent
  *   contained         a containment pause stops it for this business
- *                     (`actions` for an action, `remote` for the terminal)
+ *                     (`actions` for an action, `remote` for the terminal
+ *                     and file transfer)
  *   offline           not reporting; the request waits for a check-in
- *                     (a terminal is refused: it needs a reporting computer)
+ *                     (a terminal or a transfer is refused: it needs a
+ *                     reporting computer)
  *   needs_approval    a signed action: two approvers authorize it first
  *   available         opens and can be used now
  *
@@ -45,7 +47,7 @@ export type ToolGroup =
 
 export const TOOL_GROUPS: readonly { id: ToolGroup; label: string }[] = [
   { id: 'diagnostics', label: 'Diagnostics' },
-  { id: 'remote', label: 'Terminal' },
+  { id: 'remote', label: 'Terminal and files' },
   { id: 'scripts', label: 'PowerShell / Scripts' },
   { id: 'services', label: 'Services & Processes' },
   { id: 'software', label: 'Software' },
@@ -83,7 +85,7 @@ export const OPENS: readonly ToolState[] = ['available', 'needs_approval', 'offl
 export const opens = (s: ToolState) => OPENS.includes(s);
 
 /** The workspace tabs a tool can open (device-model.ts WorkspaceTab, the ones used here). */
-export type ToolTab = 'diagnostics' | 'actions' | 'processes' | 'services' | 'network' | 'software' | 'patches' | 'events' | 'terminal';
+export type ToolTab = 'diagnostics' | 'actions' | 'processes' | 'services' | 'network' | 'software' | 'patches' | 'events' | 'terminal' | 'files';
 
 /** Where a tool goes: a tab with what to open in it, a page, or a download. */
 export type ToolTarget =
@@ -114,6 +116,12 @@ type Need =
    * (a Platform Admin only) and confirms it is them when the policy asks.
    */
   | { kind: 'terminal'; minAgent: string }
+  /**
+   * 0.78: background file transfer on the signed Windows agent, from
+   * `minAgent`. Upload needs computers:files_upload, download
+   * computers:files_download (both a Platform Admin's only).
+   */
+  | { kind: 'files'; dir: 'upload' | 'download'; minAgent: string }
   /** Nothing behind it yet. */
   | { kind: 'later' };
 
@@ -149,6 +157,9 @@ export function toolCatalog(endpointId: string): ToolDef[] {
 
     // ── Terminal (0.77) ──
     { id: 'terminal', group: 'remote', label: 'Open a terminal (cmd or PowerShell)', description: 'A background shell as SYSTEM — full control of this computer — with no screen sharing. Needs a reason; ends after 15 minutes idle or 60 in all. Terminal tab.', need: { kind: 'terminal', minAgent: '0.77.0' }, target: { kind: 'tab', tab: 'terminal' } },
+    // ── Files (0.78) ──
+    { id: 'files-upload', group: 'remote', label: 'Send a file to the computer', description: 'Written by the agent as SYSTEM to an absolute local path, checked by SHA-256, never over an existing file unless you say so. Files tab.', need: { kind: 'files', dir: 'upload', minAgent: '0.78.0' }, target: { kind: 'tab', tab: 'files' } },
+    { id: 'files-download', group: 'remote', label: 'Fetch a file from the computer', description: 'Read by the agent as SYSTEM from an absolute local path and checked by SHA-256 in your browser. Files tab.', need: { kind: 'files', dir: 'download', minAgent: '0.78.0' }, target: { kind: 'tab', tab: 'files' } },
 
     // ── PowerShell / Scripts ──
     { id: 'run-script', group: 'scripts', label: 'Run an approved script', description: 'An approved version from the script library, with its typed arguments. Opens Automation → Scripts.', need: { kind: 'action', action: 'windows.script.run', version: 1 }, target: { kind: 'href', href: '/automation/scripts' } },
@@ -246,6 +257,9 @@ export interface ToolFacts {
     eventLogs: boolean;
     /** 0.77: holds computers:terminal (a Platform Admin only). */
     terminal: boolean;
+    /** 0.78: holds computers:files_upload / computers:files_download (a Platform Admin only). */
+    filesUpload: boolean;
+    filesDownload: boolean;
     /** May request approved actions of this risk on this computer (mayRequestActions()). */
     requestLow: boolean;
     requestHigh: boolean;
@@ -288,8 +302,8 @@ function inactive(f: ToolFacts, need: Need): string | null {
   if (f.status === 'ARCHIVED') return 'This computer is archived.';
   if (f.status === 'PENDING_ENROLLMENT') return 'This computer has not finished enrolment.';
   // Reading what it reported is how a pooled computer is inspected; nothing runs on it (§70).
-  if (f.pooled && (need.kind === 'action' || need.kind === 'diagnostic' || need.kind === 'terminal')) return 'This computer is in the unassigned pool: adopt it into a business first (Devices → Unassigned).';
-  if ((need.kind === 'diagnostic' || need.kind === 'terminal') && f.agentBound === false) return 'This computer has never authenticated with a device secret, so it cannot be asked to run anything. Re-run the installer on it once.';
+  if (f.pooled && (need.kind === 'action' || need.kind === 'diagnostic' || need.kind === 'terminal' || need.kind === 'files')) return 'This computer is in the unassigned pool: adopt it into a business first (Devices → Unassigned).';
+  if ((need.kind === 'diagnostic' || need.kind === 'terminal' || need.kind === 'files') && f.agentBound === false) return 'This computer has never authenticated with a device secret, so it cannot be asked to run anything. Re-run the installer on it once.';
   return null;
 }
 
@@ -302,6 +316,9 @@ function notPermitted(f: ToolFacts, need: Need): string | null {
     return need.connect ? 'Needs the “Remote connect” permission: this check makes the computer reach a host you name.' : need.eventLogs ? 'Needs the “Read event logs” permission.' : 'Your role does not allow this check.';
   }
   if (need.kind === 'terminal' && !f.perms.terminal) return 'Only a Platform Admin can open a terminal: it runs as SYSTEM, with full control of the computer.';
+  if (need.kind === 'files' && !(need.dir === 'upload' ? f.perms.filesUpload : f.perms.filesDownload)) {
+    return `Only a Platform Admin can ${need.dir === 'upload' ? 'send files to' : 'fetch files from'} a computer: the agent reads and writes as SYSTEM.`;
+  }
   if (need.kind === 'action') {
     const risk = f.actionRisk[need.action] ?? 'high';
     if (!(risk === 'low' ? f.perms.requestLow : f.perms.requestHigh)) {
@@ -312,7 +329,7 @@ function notPermitted(f: ToolFacts, need: Need): string | null {
 }
 
 function newerAgent(f: ToolFacts, need: Need): string | null {
-  if (need.kind === 'terminal') {
+  if (need.kind === 'terminal' || need.kind === 'files') {
     if (f.agentKind !== 'signed') return 'Needs the full (signed) agent; this computer runs the standard agent. Upgrade it from the Agent card.';
     const c = f.agentVersion ? compareVersions(f.agentVersion, need.minAgent) : null;
     if (c === null || c < 0) return `Needs the signed agent ${need.minAgent} or later${f.agentVersion ? ` (this computer reports ${f.agentVersion})` : ''}. Let it update first.`;
@@ -359,6 +376,9 @@ export function toolState(def: ToolDef, f: ToolFacts): { state: ToolState; reaso
   if (need.kind === 'terminal' && f.paused.includes('remote')) {
     return { state: 'contained', reason: 'Remote connections and chat are paused by containment for this business, and a terminal is one of them.' };
   }
+  if (need.kind === 'files' && f.paused.includes('remote')) {
+    return { state: 'contained', reason: 'Remote connections and chat are paused by containment for this business, and file transfer is one of them.' };
+  }
   const reachesAgent = need.kind !== 'server' && need.kind !== 'status';
   if (reachesAgent && f.connectivity !== 'online') {
     return {
@@ -369,11 +389,16 @@ export function toolState(def: ToolDef, f: ToolFacts): { state: ToolState; reaso
           ? `${f.connectivityText}: the request waits fifteen minutes for its next check-in, then expires.`
           : need.kind === 'terminal'
             ? `${f.connectivityText}: a terminal can only be opened on a computer that is reporting.`
+            : need.kind === 'files'
+              ? `${f.connectivityText}: a file can only be transferred with a computer that is reporting.`
             : `${f.connectivityText}: the request waits for its next check-in.`,
     };
   }
   if (need.kind === 'terminal') {
     return { state: 'available', reason: 'Asks you to confirm it is you (unless that is turned off), then starts at the computer’s next check-in — up to about three minutes.' };
+  }
+  if (need.kind === 'files') {
+    return { state: 'available', reason: 'Starts at the computer’s next check-in — up to about three minutes — with a reason in the audit log.' };
   }
   if (need.kind === 'action') {
     if (f.signer.approval === 'direct') return { state: 'available', reason: 'Direct mode: signed when you request it, after a fresh sign-in, and run at its next check-in.' };

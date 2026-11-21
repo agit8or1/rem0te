@@ -140,6 +140,11 @@ export const CONFIRM_CATALOG = [
   { key: 'terminal.open', group: 'Devices & enrolment', label: 'Opening a terminal', default: 'ask',
     prompt: 'open a terminal on this computer',
     description: 'Opening a background cmd or PowerShell on a Windows computer. It runs as SYSTEM: full control of the computer (0.77). On by default.' },
+  // 0.78: sending a file to, or fetching one from, a Windows computer. Off by
+  // default like every key but terminal.open. Cancelling never asks.
+  { key: 'files.transfer', group: 'Devices & enrolment', label: 'Transferring a file', default: 'off',
+    prompt: 'transfer a file to or from this computer',
+    description: 'Sending a file to a Windows computer, or fetching one from it. The agent reads and writes as SYSTEM (0.78).' },
 
   // ── Monitoring & notifications ──────────────────────────────────────────
   { key: 'monitoring.notify', group: 'Monitoring & notifications', label: 'Who is notified', default: 'off',

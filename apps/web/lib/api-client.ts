@@ -1070,7 +1070,21 @@ export const terminalApi = {
   end: (endpointId: string, sid: string) => api.post(`/endpoints/${endpointId}/terminal/sessions/${sid}/end`),
   transcript: (endpointId: string, sid: string) => api.get(`/endpoints/${endpointId}/terminal/sessions/${sid}/transcript`),
   settings: (businessId: string) => api.get(`/remote-ops/settings/${businessId}`),
-  putSettings: (businessId: string, body: { terminalTranscripts?: boolean; transcriptDays?: number }) => api.put(`/remote-ops/settings/${businessId}`, body),
+  putSettings: (businessId: string, body: { terminalTranscripts?: boolean; transcriptDays?: number; fileMaxMb?: number }) => api.put(`/remote-ops/settings/${businessId}`, body),
+};
+
+// Background file transfer (0.78 Courier, docs/file-transfer.md): Platform
+// Admins only, upload and download separately. Chunks are 512 KiB as base64;
+// the browser hashes the whole file itself (lib/sha256.ts).
+export const filesApi = {
+  list: (endpointId: string) => api.get(`/endpoints/${endpointId}/files`),
+  upload: (endpointId: string, body: { path: string; size: number; sha256: string; overwrite: boolean; reason: string }) => api.post(`/endpoints/${endpointId}/files/uploads`, body),
+  download: (endpointId: string, body: { path: string; reason: string }) => api.post(`/endpoints/${endpointId}/files/downloads`, body),
+  get: (endpointId: string, tid: string) => api.get(`/endpoints/${endpointId}/files/${tid}`),
+  putChunk: (endpointId: string, tid: string, body: { seq: number; data: string; sha256: string }) => api.post(`/endpoints/${endpointId}/files/${tid}/chunks`, body),
+  getChunk: (endpointId: string, tid: string, seq: number) => api.get(`/endpoints/${endpointId}/files/${tid}/chunks/${seq}`),
+  received: (endpointId: string, tid: string, sha256: string) => api.post(`/endpoints/${endpointId}/files/${tid}/received`, { sha256 }),
+  cancel: (endpointId: string, tid: string) => api.post(`/endpoints/${endpointId}/files/${tid}/cancel`),
 };
 
 // Managed Secure Access cutover (0.72, build step 4), behind MSA_GRANTS: every
