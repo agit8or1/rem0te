@@ -128,6 +128,7 @@ export const OFF_SWITCHES: ReadonlyArray<{ name: string; severity: Severity; cos
   { name: 'METRIC_SWEEP', severity: 'low', cost: 'Metric history is not rolled up or pruned (recording continues).' },
   { name: 'WINGET_INDEX_SWEEP', severity: 'low', cost: 'The winget catalog index is not refreshed.' },
   { name: 'WARRANTY_SWEEP', severity: 'low', cost: 'Warranty dates are not looked up.' },
+  { name: 'MDM_SWEEP', severity: 'low', cost: 'Mobile devices are not read from their MDM provider: inventory, compliance and command history stop updating, and unfinished commands are not expired.' },
   { name: 'AGENT_AUTO_UPDATE', severity: 'medium', cost: 'Outdated agents are never handed an update (a test switch; the setting belongs in Settings → Client updates).' },
   { name: 'SNAPSHOT_QUIET', severity: 'low', cost: 'Every heartbeat reads the snapshot schedule again (about three transactions each, for nothing).' },
 ];

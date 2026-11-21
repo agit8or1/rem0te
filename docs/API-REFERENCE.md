@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **662** of them across
-**100** controllers.
+integration, under `/api/integration/v1`). There are **666** of them across
+**101** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -557,6 +557,17 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/launcher/token` | signed in | — |
 | `PATCH` | `/api/v1/launcher/token/:id/revoke` | signed in | `COMPUTERS_CONNECT` |
 | `GET` | `/api/v1/launcher/validate` | public, throttled | — |
+
+## Mdm
+
+`apps/api/src/mdm/mdm.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/mobile-devices` | signed in | `MOBILE_VIEW` |
+| `GET` | `/api/v1/mobile-devices/:id` | signed in | `MOBILE_VIEW` |
+| `GET` | `/api/v1/mobile-devices/:id/commands` | signed in | `MOBILE_VIEW` |
+| `GET` | `/api/v1/mobile-devices/setup` | signed in | `MOBILE_VIEW` |
 
 ## Metrics
 

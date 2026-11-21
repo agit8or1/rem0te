@@ -65,6 +65,10 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[warranty.md](warranty.md)** — hardware warranty and support links (0.56): links to each vendor's support,
   warranty and driver pages, warranty dates entered by hand or looked up from Dell or Lenovo (off by default; the
   serial is sent), the device-list filter, the Warranty report, the dashboard tile and the opt-in expiring monitor.
+- **[mobile-devices.md](mobile-devices.md)** — mobile devices through an MDM provider (0.80): what Intune, the Android
+  Management API and native Apple MDM each need first, who can see phones and tablets (`mobile:view`), what is kept
+  (never an IMEI, no serial for a personal device), and commands accepted by the provider versus completed on the
+  device. Read-only, and **requires setup**: no real provider can be connected yet.
 - **[email.md](email.md)** — outbound email (0.34): the SMTP relay and which hosts it may be, confirmed recipients,
   alert emails, scheduled reports (exactly once per period, evaluated as their owner), and stopping all mail.
 - **[ai-and-tickets.md](ai-and-tickets.md)** — Ask AI and Create ticket on event-log entries and alerts (0.48):

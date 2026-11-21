@@ -5,6 +5,79 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.80.0] — 2026-11-21 · *Tablet*
+
+**Mobile devices, read-only, behind "Requires setup": roadmap 3.1, the MDM data model and driver interface.**
+*Devices → Mobile devices* shows iPhones, iPads and Android devices as an MDM provider reports them: ownership
+(corporate or personal), what is managed (the whole device, an Android work profile, Apple User Enrollment's
+managed data), enrollment, compliance with the provider's reason, and command history. **No real provider can be
+connected in this release.** The only connector is a loopback stand-in that only the test suites reach, so on any
+real install the page says *Requires setup* and lists what Intune, the Android Management API and native Apple
+MDM each need first. This follows the owner's 2026-11-21 decisions 16–18: a provider-neutral interface and a
+stand-in first, the existing provider read-only next (3.2). No agent, signer or installer change.
+
+### Added
+
+- **Migration 0096** (`MdmConnector`, `MobileDevice`, `MdmCommand`). Every closed list is a CHECK, the same words
+  in the same order as `apps/api/src/mdm/model.ts`. Three triggers keep connector, device and command in one
+  business and tenant; `MdmCommand_final_trg` refuses to move a completed, failed or expired command. A personal
+  device's serial is refused, and there is no column for an IMEI, phone number, MAC or user.
+- **Accepted is not completed.** `providerAcceptedAt` and `deviceCompletedAt` are separate columns, shown side by
+  side on the device page. The pure state machine (`mdm/command-state.ts`) refuses a device completion with no
+  provider acceptance (`not_accepted`) instead of back-filling one, and 0096's lifecycle CHECK says the same. The
+  reason: Apple's APNs push and Intune's action results both report "the provider took it" long before the phone
+  does anything, and a lock shown as done when the phone never picked it up is the failure this prevents.
+- **`MdmDriver`** on the `PsaDriver` pattern: `ready`, `listDevices`, `listCommands`, nothing that sends.
+  Provider records are parsed strictly (`mdm/schemas.ts`); a malformed record is skipped and counted, a malformed
+  page is `bad_response`.
+- **The sync**, every five minutes looking, each connector at most hourly (15-minute floor outside tests). It is
+  bounded at 20 connectors a pass and 20 device and 10 command pages of 100. It skips a business under an
+  `integration` pause, claims a connector with a conditional write, and marks a device *No longer reported* only
+  after a complete listing. `MDM_SWEEP=off` stops it. `run-e2e.sh` and `e2e-ui.mjs` set it, and *Admin →
+  Security* lists it.
+- **Four read-only routes** under `/mobile-devices` (setup, list, detail, commands), each needing the new
+  **`mobile:view`** capability. A Business Owner has it. A Business User does not by default. A technician needs it
+  on a whole-business assignment (a computer-scoped assignment cannot name a phone), and no preset grants it.
+  Naming another business is a 403; another business's or tenant's device is a 404.
+- **Console**: the list (compliance counts, platform and ownership filters, phone width, dark mode) and the
+  detail page. `/help` and `docs/mobile-devices.md` cover the provider prerequisites. `capabilities.md` and the
+  audit's roadmap mark 3.1 built.
+- **§90** in `check-security-invariants.mjs`. Its checks:
+  - no MDM provider host anywhere in the API;
+  - the stand-in reachable only through `testLoopbackAllowed`;
+  - the sweep switch;
+  - model.ts and 0096 agreeing;
+  - the separate timestamps;
+  - GET-only routes with `scope()` first;
+  - `mobile:view` never a default;
+  - only the sync writing the tables.
+
+  §41's and §69's safe-https checks now admit `mdm/drivers/`.
+
+### Tests
+
+`unit-mdm.mjs` (82 checks, in CI) and `e2e-mdm.mjs` (ports 4021–4022, a loopback stand-in, in `run-e2e.sh`). The
+e2e suite runs 67 checks covering:
+- not ready without the stand-in, with zero requests;
+- the sync;
+- default deny for Business Users and technicians;
+- a cross-tenant 404;
+- accepted vs completed;
+- the page bound recorded as partial;
+- the pause;
+- garbage pages;
+- the database's refusals.
+
+`e2e-ui.mjs` covers the list, the detail and the requires-setup state in all four combinations. **No real provider,
+phone or tablet has been used.**
+
+### Deploy
+
+Apply migration 0096 and regenerate the Prisma client at the target (CLAUDE.md, *A schema change*). Nothing else:
+with no connector, the sweep reads nothing.
+
+---
+
 ## [0.78.0] — 2026-11-21 · *Courier*
 
 **Background file transfer: a Platform Admin can send a file to a Windows computer running the signed agent, or

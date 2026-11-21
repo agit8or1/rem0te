@@ -45,7 +45,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Activity, ArrowRightLeft, BarChart3, BellRing, Building2, Cpu, WifiOff, FileCode2, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
   Monitor, MonitorCheck, MonitorX, Package, PackageCheck, PlayCircle, Plus, RefreshCw, Settings, Shield, ShieldCheck, Siren,
-  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail, Sparkles, Ticket, ListChecks, BadgeCheck, ShieldQuestion, MonitorPlay,
+  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail, Sparkles, Ticket, ListChecks, BadgeCheck, ShieldQuestion, MonitorPlay, Smartphone,
 } from 'lucide-react';
 import { CAP, type Capability } from '@/lib/auth';
 
@@ -118,6 +118,9 @@ export const NAV: NavSection[] = [
       // 0.73: live Managed Secure Access sessions and Disconnect. The page asks
       // the gated sessions route only when the server says MSA is on.
       { href: '/endpoints/managed-sessions', label: 'Managed sessions', icon: MonitorPlay, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
+      // 0.80: phones and tablets as an MDM provider reports them (read-only).
+      // mobile:view, the capability its API needs; off for a Business User by default.
+      { href: '/mobile-devices', label: 'Mobile devices', icon: Smartphone, show: (c) => c.can(CAP.MOBILE_VIEW) },
     ],
     also: ['/endpoints/new', '/trmm', '/quickstart'],
     shortcut: ADD_DEVICE,
