@@ -55,6 +55,10 @@ export class MonitoringController {
   @Post('rules/recommended')
   async recommended(@Actor() a: ActorContext, @Body() body: unknown) { return { success: true, data: await this.svc.addRecommended(a, body) }; }
 
+  /** 0.81: a backup agent's monitor template (opt-in; each rule through createRule). */
+  @Post('rules/templates')
+  async template(@Actor() a: ActorContext, @Body() body: unknown) { return { success: true, data: await this.svc.addTemplate(a, body) }; }
+
   @Patch('rules/:id')
   async updateRule(@Actor() a: ActorContext, @Param('id') id: string, @Body() body: unknown) { return { success: true, data: await this.svc.updateRule(a, id, body) }; }
 

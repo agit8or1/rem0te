@@ -81,6 +81,7 @@ Stored on `Membership.capabilities` as an allowlisted string array. The vocabula
 | | `users:manage` | Invite, disable and remove business users; set their permissions |
 | Audit | `audit:view` | See this business's audit history |
 | Integration | `integration:ticket_analysis` | Submit read-only ClientSt0r ticket analysis for this business and read its staff-only findings ([integration-clientst0r.md](integration-clientst0r.md)). Grants no remote access and no actions |
+| Backups | `backups:view` | *See backup status* (0.81): the Backups page — assets, last job, last verified restore, RPO/RTO — for the computers they can see; never an asset linked to no computer. Not a default ([backups.md](backups.md)) |
 | Monitoring | `monitoring:alerts` | See monitoring alerts for the computers they can see, and acknowledge or resolve them ([monitoring.md](monitoring.md)) |
 | | `monitoring:configure` | Add and change monitors and maintenance windows for this business. Who gets notified is set by a Business Owner |
 | Actions | `actions:request` | Ask for a catalog action on a computer they can reach ([approved-actions.md](approved-actions.md)). It never approves anything |

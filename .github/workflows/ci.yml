@@ -475,6 +475,12 @@ jobs:
       - name: Warranty vendor tests
         run: node apps/api/scripts/unit-warranty-vendors.mjs
 
+      # Backups (0.81): the strict feed, restore tests derived only from real
+      # drills of a job's own recovery point, asset state and RPO/RTO, the four
+      # opt-in monitor kinds, the push token, and the backup-agent templates.
+      - name: Backup tests
+        run: node apps/api/scripts/unit-backups.mjs
+
       # Outbound email (0.34): the SMTP host rule (every address class, IPv4-
       # mapped IPv6, what SMTP_ALLOW_LOCAL_RELAY admits, every resolved address
       # checked), the report schedule maths across zones and both DST

@@ -19,6 +19,7 @@ import { AlertEventsService } from './alert-events.service';
 import { GroupMembershipService } from '../group-policy/membership.service';
 import { FINGERPRINT_RE, type Classification } from './classify';
 import { explainAlert } from './explain';
+import { BACKUP_AGENT_TEMPLATES, TEMPLATE_IDS } from './backup-agent-templates';
 
 const bad = (e: z.ZodError) => new BadRequestException({ code: 'INVALID_REQUEST', message: e.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ') });
 const ID = /^[A-Za-z0-9_-]{8,64}$/;
@@ -331,7 +332,7 @@ export class MonitoringAdminService {
     let mayConfigure = false;
     if (scope) { try { this.assertConfigure(a, scope); mayConfigure = true; } catch { /* read-only */ } }
     return {
-      rules: rows.map((r) => this.ruleView(r)), recommended: RECOMMENDED, severities: SEVERITIES,
+      rules: rows.map((r) => this.ruleView(r)), recommended: RECOMMENDED, templates: BACKUP_AGENT_TEMPLATES, severities: SEVERITIES,
       may: { global: this.isMsp(a), business: mayConfigure },
     };
   }
@@ -428,6 +429,26 @@ export class MonitoringAdminService {
   }
 
   // ── Maintenance windows ───────────────────────────────────────────────────
+
+  /**
+   * 0.81 (roadmap 4.2): add one backup-agent template's monitors at a scope.
+   * Opt-in, a click like "Add recommended": each rule goes through createRule
+   * (scope, permission, validation, audit), and a key already at the scope is
+   * left as it is.
+   */
+  async addTemplate(a: ActorContext, raw: unknown) {
+    const d = z.object({ template: z.enum(TEMPLATE_IDS), scope: z.enum(['global', 'business']), businessId: z.string().regex(ID).optional() }).strict().safeParse(raw ?? {});
+    if (!d.success) throw bad(d.error);
+    const t = BACKUP_AGENT_TEMPLATES.find((x) => x.id === d.data.template)!;
+    const s = await this.scopeFor(a, d.data);
+    const have = new Set((await this.prisma.monitorRule.findMany({ where: { scopeKey: s.scopeKey }, select: { key: true } })).map((r) => r.key));
+    const added = [];
+    for (const r of t.rules) {
+      if (have.has(r.key)) continue;
+      added.push(await this.createRule(a, { scope: d.data.scope, ...(s.customerId ? { businessId: s.customerId } : {}), key: r.key, kind: r.kind, name: r.name, severity: r.severity, params: r.params }));
+    }
+    return { added, template: t.id };
+  }
 
   async listSuppressions(a: ActorContext, businessId?: string | null) {
     const scope = this.configScope(a, businessId);

@@ -1,0 +1,264 @@
+# Backups
+
+From 0.81 (*Vault*), Rem0te has a **Backups** page and four opt-in backup monitors. They show what a backup
+provider reports about the machines it protects:
+
+- the last job, and whether it completed;
+- whether that job's integrity check passed;
+- whether a restore of it was tested, and the last verified restore;
+- recovery point and recovery time objectives (RPO and RTO), measured against a target you set.
+
+Rem0te only reads. Nothing on the page, and nothing in the API, starts a backup, a restore, a restore drill or a
+failover.
+
+This page also covers the service-monitor templates for the UrBackup and Comet agents on Windows (roadmap 4.2).
+
+The plan behind it is Phase 4 of
+[session-maintenance-mdm-backup-audit.md](session-maintenance-mdm-backup-audit.md#phase-4-backup-verified-recovery-and-standby).
+The owner accepted these decisions on 2026-11-21:
+
+- **16.** Destructive actions need a second person and always ask. No such action exists yet.
+- **17.** St0r pushes to Rem0te. A provider Rem0te reads must be on public DNS with valid TLS.
+- **19.** St0r is the first provider once it can send a token. Otherwise Comet is.
+- **20.** Standby is readiness only.
+
+## Three facts, never one
+
+A backup job carries three separate facts, and the page shows them in separate columns:
+
+| Fact | Values | Where it comes from |
+|---|---|---|
+| **Completion** | succeeded, partial, failed, cancelled, running, unknown | The provider's report of the job |
+| **Integrity** | passed, failed, not checked | The provider's own check of what was stored, if it made one |
+| **Restore test** | verified, failed, not tested | **Rem0te works this out.** It is verified only when a restore drill that really ran passed, used *this job's own* recovery point, and checked what it restored. |
+
+**A successful job is never shown as verified.** These rules hold that line:
+
+- **The provider cannot say a restore was verified.** The report has no `restoreTest` or `verified` field, and the
+  schema refuses one.
+- **Rem0te derives the restore test from stored drills, in one place** (`deriveRestoreTests`). The newest finished
+  drill that was not simulated decides it.
+- **A simulated drill never counts.** It is stored, marked as simulated, and shown as *Simulated only (not
+  verified)*.
+- **A pass must have checked something.** A drill that reports `passed` with the validation `none` is refused.
+- **The database enforces it too.** Migration 0097 refuses a job marked `verified` or `failed` unless the drill it
+  names is a non-simulated drill of that job's own recovery point, with the matching result.
+
+The page's **Last verified restore** column shows:
+
+- when the drill ran;
+- the recovery point it restored;
+- its scope: file, volume, full image or application;
+- how long it took.
+
+When the newest real drill failed, the column says so, and still shows the last restore that passed before it.
+
+## Providers
+
+| Provider | How it reaches Rem0te | State in 0.81 |
+|---|---|---|
+| **St0r** (UrBackup) | St0r **pushes** to Rem0te with a per-business token | **Requires setup.** Rem0te accepts the push, but St0r does not send one yet: that needs a change on the St0r side |
+| **Comet Backup** | Rem0te would **read** it with a read-only Comet API token | **Planned** (roadmap 4.4). Creating a Comet connection is refused (`BACKUP_PROVIDER_NOT_AVAILABLE`) |
+| Test stand-in | Rem0te reads it | **Test only.** It works only under `NODE_ENV=test`, with `BACKUP_TEST_BASE_URL` on `127.0.0.1` |
+
+Until a Platform Admin connects a provider for the business, the page shows **Requires setup** and explains what
+is needed. Once a provider is connected but has not reported, the page shows **Waiting for the first report**.
+
+### St0r: what it needs
+
+St0r is the owner's front end for UrBackup. It already keeps backup, offsite replication and verified recovery as
+separate statuses, and records simulated drills as simulated. Its routes need a signed-in user, and it has no
+service token. So Rem0te does not connect to it. St0r pushes to Rem0te instead (decision 17).
+
+1. **Create the connection.** A Platform Admin opens **Backups**, picks the business, and presses **Connect St0r**.
+   If *Settings → Confirm it is you* asks for `backup.connection`, confirm it is you first. The push token is shown
+   **once**. Rem0te keeps only its SHA-256 and its last four characters.
+2. **Configure St0r.** Give St0r the token and this portal's address. St0r must be 3.2.140 or later, *with the
+   Rem0te push added*, which is not yet written on the St0r side.
+3. **Make the portal reachable.** The St0r host must reach the portal over HTTPS. Rem0te never opens a connection
+   to a St0r host.
+
+**Limitations:**
+
+- One St0r manages one UrBackup server, and a business can have only one St0r connection today.
+- Drills are St0r's. Rem0te shows them, but starts none in 0.81.
+- Standby is readiness only: neither St0r nor UrBackup fails a workload over.
+
+### Comet: what it will need
+
+Comet is planned and is not built in 0.81. When it is built, it will need:
+
+- **A public address.** A Comet Server on a public DNS name with a valid certificate. A private address is refused
+  (decision 17).
+- **A read-only login.** A Comet admin with a personal API token (`AuthType` `Token`), limited to the tenant that
+  matches the business.
+
+**Limitations, from Comet's API reference:**
+
+- **No verified restores.** Comet has no test-restore or dry-run method, so a Comet asset always shows "restore
+  never tested".
+- **A live device is needed.** Listing recovery points goes through a live, connected device.
+- **Read-only.** Many write methods refuse token authentication. Rem0te would only read.
+- **No failover.** Standby is readiness only.
+
+## The push (St0r)
+
+```
+POST /api/v1/backups/push
+Authorization: Bearer rbk_<connection id>_<64 hex>
+Content-Type: application/json
+
+{ "v": 1, "assets": [ … ] }
+```
+
+The checks run in this order, and nothing is written before they all pass:
+
+1. **The token.** The header must parse as a push token.
+2. **The connection.** The connection the token names must exist, be a live push connection, and have a stored
+   SHA-256 that matches the secret. The comparison is constant-time. An unknown connection, a wrong secret and a
+   revoked token all get the same `401 BACKUP_PUSH_UNAUTHORIZED`.
+3. **The body.** The body must be a strict feed, or it is refused with `400 BAD_FEED`.
+
+**The business comes from the token, never from the body.** The feed has no business field, so a feed that names
+one is refused. A feed that names another business's computer links nothing.
+
+The route is public, rate-limited, and capped by the API's 1 MB body limit. A feed holds at most:
+
+| Item | Limit |
+|---|---|
+| Assets | 500 |
+| Jobs per asset | 50 |
+| Recovery points per asset | 50 |
+| Drills per asset | 20 |
+
+A push is accepted during an `integration` containment pause, because it is inbound monitoring data. A pull is
+not made during one.
+
+Each asset in the feed is:
+
+```json
+{
+  "externalId": "fs01-c", "name": "FS01 C: volume", "type": "server",
+  "computer": { "rem0teId": "<endpoint id>" },
+  "jobs": [{ "externalId": "j1", "startedAt": "…", "finishedAt": "…", "completion": "succeeded", "integrity": "passed" }],
+  "recoveryPoints": [{ "externalId": "p1", "pointAt": "…", "location": "offsite", "jobExternalId": "j1" }],
+  "drills": [{ "externalId": "d1", "target": "isolated_vm", "scope": "full_image", "result": "passed", "simulated": false,
+               "validation": "boot", "startedAt": "…", "finishedAt": "…", "elapsedSeconds": 900, "recoveryPointExternalId": "p1" }]
+}
+```
+
+### Linking an asset to a computer
+
+An asset is linked to a computer of the token's business in one of two ways:
+
+- **By id.** It names the computer's Rem0te id (`computer.rem0teId`).
+- **By hostname.** It names a hostname that matches **exactly one** active computer in that business.
+
+An asset that matches no computer, such as a mailbox or a file share, appears on the page as **Not linked**. A
+computer that moves to another business loses its links.
+
+## Who can see it
+
+| Who | What they see |
+|---|---|
+| Platform Admin | Every business, or the one picked on the page |
+| Business Owner | Their business |
+| Business User with **See backup status** (`backups:view`) | Only assets linked to a computer they can see. Never an unlinked asset, because nothing they can see vouches for it |
+| Technician | Through an assignment that carries `backups:view`: the whole business on a whole-business assignment, else only assets on its computers |
+
+`backups:view` is new in 0.81. It is not given to Business Users by default.
+
+**Why it is a separate permission.** A backup report names more than the computers it protects. It can also name
+mailboxes, databases and file shares, which the computer permissions say nothing about.
+
+**RPO and RTO targets** are set with *Monitoring: configure* for the whole business. They are monitor thresholds.
+A target can be set for the business, or for one asset, and an asset's own target comes first. Every change is
+audited (`BACKUP_OBJECTIVE_SET`, before and after).
+
+**Connections** are a Platform Admin's:
+
+- **Creating one** asks the person to confirm it is them when the `backup.connection` key asks. It is audited with
+  `logOrFail` before the row exists.
+- **Revoking one** never asks. It drops the token hash and the credential, and keeps what was reported.
+
+## How RPO and RTO are measured
+
+- **RPO** is measured from the newest recovery point. If the provider reports no points, it is measured from the
+  last successful job.
+- **RTO** is measured **only** from a verified restore drill's elapsed time. Without one it is *Not measured*,
+  never guessed from a job's duration.
+
+## Monitors
+
+There are four new monitor kinds in **Settings → Monitoring**. None is in **Add recommended**, and none is added
+for you.
+
+| Monitor | Raises when | Clears when |
+|---|---|---|
+| **Backup stale** (`BACKUP_STALE`, default 26 h) | No successful job for this long. If the asset or business has an RPO target, that target is the window. A new asset gets the window before it alerts | A successful job arrives |
+| **Backup failed** (`BACKUP_FAILED`, default 1) | The newest finished jobs failed this many times in a row | A job succeeds |
+| **Restore drill failed** (`DRILL_FAILED`, default 30 days) | A real (not simulated) drill failed in the window, with no pass since | A later drill passes, or the failure leaves the window |
+| **RPO exceeded** (`RPO_EXCEEDED`) | The newest recovery point is older than the asset's target, else the business's. With no target, the asset is skipped unless the monitor sets `fallbackHours` | A newer point arrives |
+
+How the monitors behave:
+
+- **Stored rows only.** The monitoring sweep reads only what the provider reported and Rem0te stored. It checks at
+  most every five minutes (`MONITOR_INVENTORY_SECONDS`, the cadence 0.55's inventory monitors use).
+  `MONITOR_SWEEP=off` stops them.
+- **One alert per linked asset.** Each alert is keyed `<monitor>:<computer>:<asset>`, and is raised on the computer
+  the asset is linked to. So the alert list's visibility rule, notifications, maintenance windows and automatic PSA
+  tickets all apply as they do for any other alert.
+- **Unlinked assets raise no alert in 0.81.** An asset with no computer shows on the page only.
+- **Unlinking closes the alert.** An asset that stops being linked to the computer closes its alert.
+
+## Templates for backup agents (4.2)
+
+**Settings → Monitoring → Backup agent templates** adds service monitors for backup agents on Windows. A template
+is added only when someone presses it, as ordinary audited monitors. Each one uses `alertIfMissing: false`, so a
+computer without that agent raises nothing, and it is safe to set for a whole business. Nothing changes on the
+agent.
+
+| Template | Monitor | Service | Source |
+|---|---|---|---|
+| UrBackup client (Windows) | `backup-urbackup-client`, *Windows service stopped* | `UrBackupClientBackend` (display name "UrBackup Client Service for Backups", automatic start) | The client installer, [`urbackup.nsi`](https://github.com/uroni/urbackup_frontend_wx/blob/dev/urbackup.nsi) (`SERVICE create "UrBackupClientBackend"`) |
+| Comet Backup agent (Windows) | `backup-comet-delegate`, *Windows service stopped* | `backup.delegate`, which runs scheduled jobs | Comet's [installation](https://docs.cometbackup.com/latest/installation/comet-backup-installation) and [troubleshooting](https://docs.cometbackup.com/latest/troubleshooting) pages |
+
+**Left out, on purpose:**
+
+- **Comet's `backup.elevator` service.** Comet's documentation names it: it takes VSS snapshots and installs
+  updates. But the documentation does not say the service is meant to run at all times, so a "stopped" alert could
+  be wrong.
+- **Event-log templates.** Neither vendor documents a Windows event that marks a failed backup:
+  - UrBackup's Windows installer registers no event source.
+  - Comet's documentation names no event source or event id.
+
+  A template on an undocumented event would be a guess. If you know your agents' events, add an *Event log*
+  monitor by hand.
+
+## Switches
+
+| Variable | Effect |
+|---|---|
+| `BACKUP_SYNC_SWEEP=off` | Stops the pull sweep, which reads each enabled pull connection (exact; `run-e2e.sh` exports it, the browser suite sets it). A St0r push still arrives. In 0.81 the only pull driver is the test stand-in, so on a production server the sweep has nothing to do |
+| `BACKUP_SYNC_SECONDS` | How often the pull sweep runs (default 900) |
+| `BACKUP_TEST_BASE_URL` | The stand-in's address. Read only under `NODE_ENV=test`, only when it is `http://127.0.0.1:<port>` |
+
+## What has been tested
+
+- **Unit:** `apps/api/scripts/unit-backups.mjs`, in CI. It covers the feed, restore-test derivation, asset state,
+  the four monitors, the push token and the templates.
+- **Behavioural:** `apps/api/scripts/e2e-backups.mjs`, on ports 4051 to 4053, with a scratch database,
+  `MONITOR_SWEEP` on and a loopback stand-in. It is in `run-e2e.sh`. It proves:
+  - default deny, and refusal of another business;
+  - the push token's refusals;
+  - a successful job without a drill is never verified, and nor is one with only a simulated drill;
+  - a stale backup raising and clearing;
+  - `DRILL_FAILED` and `RPO_EXCEEDED`;
+  - the pull sweep skipping a paused business.
+- **Browser:** `apps/web/scripts/e2e-ui.mjs` drives the page at both widths and in both themes.
+
+**Not yet tested against a real provider:**
+
+- No real St0r push has been received, because St0r does not send one yet.
+- No Comet server has been read.
+- No template has been applied to a real fleet.

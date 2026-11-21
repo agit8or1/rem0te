@@ -159,6 +159,26 @@ update. The sweep looks at them at most every five minutes
     forgotten.
   - The alert lists up to ten failures with their KB and error code.
 
+### Backups (0.81)
+
+Four more kinds read only what a backup provider reported and Rem0te stored
+([backups.md](backups.md)), on the same cadence as the ones above. None is in
+*Add recommended*.
+
+- **Backup stale**: no successful job for `hours` (default 26), or for the
+  asset's or business's RPO target when one is set.
+- **Backup failed**: the newest `consecutive` finished jobs failed.
+- **Restore drill failed**: a real (not simulated) drill failed within `days`
+  and none has passed since.
+- **RPO exceeded**: the newest recovery point is older than the target. An
+  asset with no target is skipped unless `fallbackHours` is set.
+
+Each alert is one per backup asset, keyed `<monitor>:<computer>:<asset>`, on
+the computer the asset is linked to. An asset linked to no computer raises no
+alert. **Backup agent templates** add *Windows service stopped* monitors for
+the UrBackup client (`UrBackupClientBackend`) and Comet's delegate service
+(`backup.delegate`), with *alert if missing* off.
+
 ### Automatic tickets (0.55)
 
 **Settings → Monitoring → Automatic tickets** opens a ticket in the PSA when

@@ -87,6 +87,17 @@ export const CAP = {
   // produces it, and a technician needs it on a whole-business assignment
   // (a grant naming computers cannot name a phone).
   MOBILE_VIEW: 'mobile:view',
+
+  // Backups (0.81). Seeing a business's backup status: what is protected,
+  // its jobs, recovery points, restore drills and RPO/RTO. Separate from
+  // `computers:view` on purpose, like event logs: a business's recovery gaps
+  // (what is not backed up, which restores failed) are a different kind of
+  // knowledge from a computer list, and a backup asset need not be a
+  // computer at all (a database, a mailbox, a file share). Read-only: it
+  // starts no backup, restore or drill. A Business User sees only assets
+  // linked to computers they can see; a technician, those of their grant's
+  // computers (or all, on a whole-business grant).
+  BACKUPS_VIEW: 'backups:view',
 } as const;
 
 /**
@@ -194,6 +205,12 @@ export const CAPABILITY_GROUPS: {
     group: 'Actions',
     items: [
       { key: CAP.ACTIONS_REQUEST, label: 'Request approved actions', description: 'Ask for a catalog action (such as starting the Print Spooler) on a computer they can reach. Nothing runs until people on the approval roster approve it with their passkeys; this permission never approves.' },
+    ],
+  },
+  {
+    group: 'Backups',
+    items: [
+      { key: CAP.BACKUPS_VIEW, label: 'See backup status', description: "See what is backed up, each job's completion, integrity check and restore test (kept apart), recovery points, restore drills and RPO/RTO, for the computers they can see. Starts nothing." },
     ],
   },
   {

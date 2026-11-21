@@ -2244,8 +2244,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     `safePost callers: ${callers.join(', ')}`);
   // 0.56: and the warranty lookup client (warranty/client.ts), held to the same rule by § 69.
   // 0.80: and MDM drivers (mdm/drivers/), held to it by §90; in 0.80 only the loopback stand-in.
-  const outside = files.filter((f) => /from '[./]*common\/safe-https'|from '\.\/safe-https'/.test(read(f))).filter((f) => !f.startsWith('apps/api/src/ai/') && f !== 'apps/api/src/psa/connectors/webhook.ts' && f !== 'apps/api/src/warranty/client.ts' && !f.startsWith('apps/api/src/mdm/drivers/'));
-  check('AI/PSA/warranty/MDM: only ai/, the PSA webhook connector, the warranty client and MDM drivers use the typed-destination client', outside.length === 0, outside.join(', '));
+  // 0.81: and the backup drivers (backups/drivers/), held to the same rule by § 91.
+  const outside = files.filter((f) => /from '[./]*common\/safe-https'|from '\.\/safe-https'/.test(read(f))).filter((f) => !f.startsWith('apps/api/src/ai/') && f !== 'apps/api/src/psa/connectors/webhook.ts' && f !== 'apps/api/src/warranty/client.ts' && !f.startsWith('apps/api/src/mdm/drivers/') && !f.startsWith('apps/api/src/backups/drivers/'));
+  check('AI/PSA/warranty/MDM/backups: only ai/, the PSA webhook connector, the warranty client, MDM drivers and the backup drivers use the typed-destination client', outside.length === 0, outside.join(', '));
   const sh = read('apps/api/src/common/safe-https.ts');
   const post = sh.slice(sh.indexOf('export async function safePost('));
   check('safe-https: the URL is checked, resolved, every address judged with no local allowance, and the checked address is what is connected to',
@@ -4572,6 +4573,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'update-trust/update-trust.controller.ts': ['update.trust'],
     'users/users.controller.ts': ['permissions.change'],
     'warranty/warranty.controller.ts': ['warranty.settings'],
+    'backups/backups.controller.ts': ['backup.connection'],
     'msa/msa-grant.controller.ts': ['msa.grant'],
     'msa/msa-managed.controller.ts': ['msa.cutover', 'msa.reveal'],
     'msa/msa-cutover-runs.controller.ts': ['msa.cutover'],
@@ -7736,6 +7738,87 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'ci.yml / run-e2e.sh / e2e-ui.mjs / lab_files_windows_test.go');
 }
 
+// ── §89 (0.79): every catalog action declares rollback and repeatability ──────
+//     Roadmap 2.1. Each of §14's twelve actions says how it is undone (a
+//     closed kind: none, inverse with the action that undoes it, or
+//     read_only) and whether a second run with the same parameters is
+//     harmless. Both are data in the closed catalog on both sides, and the
+//     two copies must agree action by action, in §14's order:
+//       - Go: Action.Rollback (Rollback{Kind, Via}) and Action.Repeatable in
+//         internal/action/catalog.go, and RollbackKinds;
+//       - TS: CatalogAction.rollback ({ kind, via?, how }) and .repeat
+//         ({ safe, why }) in actions/catalog.ts, and ROLLBACK_KINDS.
+//     An inverse names a catalog action; read-only is always safe to repeat.
+//     In 0.79 it is data only: nothing on the agent reads either field (no
+//     plan, envelope, heartbeat or result changes), and on the portal they
+//     are only served (the catalog route and the job view), never decided
+//     on. Roadmap 2.2's bounded retry is the release that may read
+//     `repeat.safe`; it changes the last two checks in the same commit.
+{
+  console.log('\n§89 Rollback and repeatability per catalog action (the same on the agent and the portal)');
+  const CATALOG_IDS = ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect', 'windows.script.run', 'windows.software.install', 'windows.software.uninstall', 'windows.software.remove', 'windows.service.control', 'windows.process.stop'];
+  const goCat = read('tools/windows-installer/internal/action/catalog.go');
+  const goKindName = { RollbackNone: 'none', RollbackInverse: 'inverse', RollbackReadOnly: 'read_only' };
+  const goEntries = goCat.slice(goCat.indexOf('var catalog = []Action{')).split(/\n\t\{\n/).slice(1).map((e) => {
+    const id = (e.match(/ID: "([^"]+)"/) ?? [])[1];
+    const rb = e.match(/\n\t\tRollback:\s+Rollback\{Kind: (Rollback(?:None|Inverse|ReadOnly))(?:, Via: "([a-z.]+)")?\},\n/);
+    const rp = e.match(/\n\t\tRepeatable:\s+(true|false),\n/);
+    return { id, kind: rb ? goKindName[rb[1]] : null, via: rb?.[2] ?? '', safe: rp ? rp[1] === 'true' : null };
+  });
+  const goKinds = ((goCat.match(/var RollbackKinds = \[\]string\{([^}]*)\}/) ?? [])[1] ?? '').split(',').map((x) => goKindName[x.trim()]);
+  check('§89: the agent declares a closed rollback kind and Repeatable on every catalog entry, in §14\'s order',
+    JSON.stringify(goEntries.map((e) => e.id)) === JSON.stringify(CATALOG_IDS) && goEntries.every((e) => e.kind && typeof e.safe === 'boolean')
+      && /const \(\s*RollbackNone\s+= "none"\s*RollbackInverse\s+= "inverse"\s*RollbackReadOnly = "read_only"\s*\)/.test(goCat)
+      && /\n\tRollback\s+Rollback\n\tRepeatable bool\n\}/.test(goCat),
+    `missing: ${goEntries.filter((e) => !e.kind || typeof e.safe !== 'boolean').map((e) => e.id).join(', ')}`);
+  const tsCat = read('apps/api/src/actions/catalog.ts');
+  const tsKinds = [...((tsCat.match(/export const ROLLBACK_KINDS = \[([^\]]*)\] as const;/) ?? [])[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  const tsEntries = [...tsCat.matchAll(/^export const [A-Z_]+: CatalogAction = \{\s*id: '([^']+)'[\s\S]*?\n\};$/gm)].map((m) => {
+    const rb = m[0].match(/\n {2}rollback: \{ kind: '(none|inverse|read_only)'(?:, via: '([a-z.]+)')?, how: '(?:[^'\\]|\\.){20,300}' \},\n/);
+    const rp = m[0].match(/\n {2}repeat: \{ safe: (true|false), why: '(?:[^'\\]|\\.){20,300}' \},\n/);
+    return { id: m[1], kind: rb?.[1] ?? null, via: rb?.[2] ?? '', safe: rp ? rp[1] === 'true' : null };
+  });
+  check('§89: the portal declares rollback (kind, how) and repeat (safe, why) on every catalog action, in §14\'s order',
+    JSON.stringify(tsEntries.map((e) => e.id)) === JSON.stringify(CATALOG_IDS) && tsEntries.every((e) => e.kind && typeof e.safe === 'boolean')
+      && /\n {2}rollback: Rollback;\n[\s\S]{0,200}\n {2}repeat: Repeat;\n\}/.test(tsCat),
+    `missing: ${tsEntries.filter((e) => !e.kind || typeof e.safe !== 'boolean').map((e) => e.id).join(', ')}`);
+  check('§89: the rollback kinds are the same closed list, in the same order, on both sides',
+    JSON.stringify(goKinds) === JSON.stringify(['none', 'inverse', 'read_only']) && JSON.stringify(tsKinds) === JSON.stringify(goKinds),
+    `agent ${JSON.stringify(goKinds)}, portal ${JSON.stringify(tsKinds)}`);
+  const differ = CATALOG_IDS.filter((id, i) => JSON.stringify(goEntries[i]) !== JSON.stringify(tsEntries[i]));
+  check('§89: the agent and the portal agree on every action\'s rollback kind, the action that undoes it, and whether it is safe to repeat',
+    differ.length === 0, differ.map((id) => `${id}: agent ${JSON.stringify(goEntries.find((e) => e.id === id))}, portal ${JSON.stringify(tsEntries.find((e) => e.id === id))}`).join('; '));
+  check('§89: an inverse names a catalog action and nothing else names one; read-only is always safe to repeat',
+    tsEntries.every((e) => (e.kind === 'inverse' ? CATALOG_IDS.includes(e.via) : e.via === '') && (e.kind !== 'read_only' || e.safe === true)));
+  const fx = JSON.parse(read('tools/windows-installer/internal/action/testdata/rollback-repeat.json'));
+  check('§89: the shared fixture (Go test and unit test) says the same as both catalogs',
+    JSON.stringify(fx.rollbackKinds) === JSON.stringify(tsKinds)
+      && JSON.stringify(fx.actions.map((a) => ({ id: a.id, kind: a.rollback, via: a.via, safe: a.repeatable }))) === JSON.stringify(tsEntries),
+    'testdata/rollback-repeat.json');
+  // Data only in 0.79: nothing on the agent reads the fields outside catalog.go and its tests.
+  const goFiles = [];
+  const goWalk = (d) => { for (const n of readdirSync(join(ROOT, d))) { const r = `${d}/${n}`; if (statSync(join(ROOT, r)).isDirectory()) goWalk(r); else if (n.endsWith('.go')) goFiles.push(r); } };
+  goWalk('tools/windows-installer');
+  const goReaders = goFiles.filter((f) => !f.endsWith('_test.go') && f !== 'tools/windows-installer/internal/action/catalog.go')
+    .filter((f) => /\.Rollback\.(?:Kind|Via)\b|\.Repeatable\b|\bRollback(?:Kinds|None|Inverse|ReadOnly)\b/.test(read(f)));
+  check('§89: the agent reads neither field (data only; no plan, envelope or heartbeat change)', goFiles.length > 50 && goReaders.length === 0, goReaders.join(', ') || `${goFiles.length} Go files`);
+  // Every file that loads the catalog, and any .rollback / .repeat it reads (a call, e.g. String#repeat, is not a read).
+  const tsReaders = walk('apps/api/src').filter((f) => f.endsWith('.ts') && !f.endsWith('actions/catalog.ts'))
+    .filter((f) => /from '(?:\.\/|(?:\.\.\/)+actions\/)catalog'/.test(read(f)) && /\.(rollback|repeat)\b(?!\s*\()/.test(read(f)));
+  check('§89: on the portal they are only served (the catalog route and the job view), never decided on',
+    JSON.stringify(tsReaders.map((f) => f.slice(f.indexOf('apps/api/src')))) === JSON.stringify(['apps/api/src/actions/actions.service.ts'])
+      && (read('apps/api/src/actions/actions.service.ts').match(/\.(rollback|repeat)\b(?!\()/g) ?? []).length === 4,
+    tsReaders.join(', '));
+  check('§89: the docs table, the console and the suites carry it',
+    /## Rollback and repeating an action \(0\.79\)/.test(read('docs/approved-actions.md'))
+      && /data-help="rollback-repeat"/.test(read('apps/web/app/(app)/help/page.tsx'))
+      && /testId="action-note"/.test(read('apps/web/components/endpoints/endpoint-actions.tsx')) && /testId="job-note"/.test(read('apps/web/components/endpoints/endpoint-actions.tsx'))
+      && /data-testid="tool-note"/.test(read('apps/web/components/endpoints/workspace/tools-panel.tsx'))
+      && /unit-action-rollback\.mjs/.test(read('.github/workflows/ci.yml')) && existsSync(join(ROOT, 'tools/windows-installer/internal/action/rollback_test.go'))
+      && /action-note/.test(read('apps/web/scripts/e2e-ui.mjs')) && /tool-note/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    'docs/approved-actions.md, /help, Actions tab, Tools panel, unit-action-rollback.mjs in CI, rollback_test.go, e2e-ui.mjs');
+}
+
 // ── §90 (0.80): mobile devices through an MDM provider — read-only ──────────
 //     The model, a provider-neutral driver interface, a bounded sync and four
 //     read-only routes, proven against a loopback stand-in. No real provider
@@ -7935,85 +8018,106 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     existsSync(wireDir) && leaks.length === 0, leaks.slice(0, 5).join('; ') || 'scripts/compat/wire');
 }
 
-// ── §89 (0.79): every catalog action declares rollback and repeatability ──────
-//     Roadmap 2.1. Each of §14's twelve actions says how it is undone (a
-//     closed kind: none, inverse with the action that undoes it, or
-//     read_only) and whether a second run with the same parameters is
-//     harmless. Both are data in the closed catalog on both sides, and the
-//     two copies must agree action by action, in §14's order:
-//       - Go: Action.Rollback (Rollback{Kind, Via}) and Action.Repeatable in
-//         internal/action/catalog.go, and RollbackKinds;
-//       - TS: CatalogAction.rollback ({ kind, via?, how }) and .repeat
-//         ({ safe, why }) in actions/catalog.ts, and ROLLBACK_KINDS.
-//     An inverse names a catalog action; read-only is always safe to repeat.
-//     In 0.79 it is data only: nothing on the agent reads either field (no
-//     plan, envelope, heartbeat or result changes), and on the portal they
-//     are only served (the catalog route and the job view), never decided
-//     on. Roadmap 2.2's bounded retry is the release that may read
-//     `repeat.safe`; it changes the last two checks in the same commit.
+// ── §91 (0.81 Vault): backups — provider facts, read-only ─────────────────────
+//   - No provider is reached from outside backups/drivers/; there is no
+//     fetch or raw request in backups/, safePost only in the drivers, and
+//     the stand-in reads BACKUP_TEST_BASE_URL only through testLoopbackAllowed.
+//   - Only BackupIngestService writes asset, job, point and drill rows; the
+//     feed has no business, no restoreTest and no "verified": completion,
+//     integrity and a verified restore are never collapsed, and 0097's CHECK
+//     and trigger hold it in the database too.
+//   - The push: @Public, rate-limited, the token's SHA-256 compared in
+//     constant time, the business taken from the connection only.
+//   - Reads go through assetWhere; connections are Platform Admin with
+//     assertFresh('backup.connection').
+//   - The four monitor kinds are opt-in (never in RECOMMENDED), swept from
+//     stored rows; the 4.2 templates are SERVICE_STOPPED with alertIfMissing
+//     false, from cited vendor sources, added only through createRule.
+//   - BACKUP_SYNC_SWEEP=off is exact and exported by run-e2e.sh.
 {
-  console.log('\n§89 Rollback and repeatability per catalog action (the same on the agent and the portal)');
-  const CATALOG_IDS = ['windows.service.start', 'windows.update.install', 'windows.service.restart', 'windows.reboot.schedule', 'windows.reboot.cancel', 'windows.logs.collect', 'windows.script.run', 'windows.software.install', 'windows.software.uninstall', 'windows.software.remove', 'windows.service.control', 'windows.process.stop'];
-  const goCat = read('tools/windows-installer/internal/action/catalog.go');
-  const goKindName = { RollbackNone: 'none', RollbackInverse: 'inverse', RollbackReadOnly: 'read_only' };
-  const goEntries = goCat.slice(goCat.indexOf('var catalog = []Action{')).split(/\n\t\{\n/).slice(1).map((e) => {
-    const id = (e.match(/ID: "([^"]+)"/) ?? [])[1];
-    const rb = e.match(/\n\t\tRollback:\s+Rollback\{Kind: (Rollback(?:None|Inverse|ReadOnly))(?:, Via: "([a-z.]+)")?\},\n/);
-    const rp = e.match(/\n\t\tRepeatable:\s+(true|false),\n/);
-    return { id, kind: rb ? goKindName[rb[1]] : null, via: rb?.[2] ?? '', safe: rp ? rp[1] === 'true' : null };
-  });
-  const goKinds = ((goCat.match(/var RollbackKinds = \[\]string\{([^}]*)\}/) ?? [])[1] ?? '').split(',').map((x) => goKindName[x.trim()]);
-  check('§89: the agent declares a closed rollback kind and Repeatable on every catalog entry, in §14\'s order',
-    JSON.stringify(goEntries.map((e) => e.id)) === JSON.stringify(CATALOG_IDS) && goEntries.every((e) => e.kind && typeof e.safe === 'boolean')
-      && /const \(\s*RollbackNone\s+= "none"\s*RollbackInverse\s+= "inverse"\s*RollbackReadOnly = "read_only"\s*\)/.test(goCat)
-      && /\n\tRollback\s+Rollback\n\tRepeatable bool\n\}/.test(goCat),
-    `missing: ${goEntries.filter((e) => !e.kind || typeof e.safe !== 'boolean').map((e) => e.id).join(', ')}`);
-  const tsCat = read('apps/api/src/actions/catalog.ts');
-  const tsKinds = [...((tsCat.match(/export const ROLLBACK_KINDS = \[([^\]]*)\] as const;/) ?? [])[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
-  const tsEntries = [...tsCat.matchAll(/^export const [A-Z_]+: CatalogAction = \{\s*id: '([^']+)'[\s\S]*?\n\};$/gm)].map((m) => {
-    const rb = m[0].match(/\n {2}rollback: \{ kind: '(none|inverse|read_only)'(?:, via: '([a-z.]+)')?, how: '(?:[^'\\]|\\.){20,300}' \},\n/);
-    const rp = m[0].match(/\n {2}repeat: \{ safe: (true|false), why: '(?:[^'\\]|\\.){20,300}' \},\n/);
-    return { id: m[1], kind: rb?.[1] ?? null, via: rb?.[2] ?? '', safe: rp ? rp[1] === 'true' : null };
-  });
-  check('§89: the portal declares rollback (kind, how) and repeat (safe, why) on every catalog action, in §14\'s order',
-    JSON.stringify(tsEntries.map((e) => e.id)) === JSON.stringify(CATALOG_IDS) && tsEntries.every((e) => e.kind && typeof e.safe === 'boolean')
-      && /\n {2}rollback: Rollback;\n[\s\S]{0,200}\n {2}repeat: Repeat;\n\}/.test(tsCat),
-    `missing: ${tsEntries.filter((e) => !e.kind || typeof e.safe !== 'boolean').map((e) => e.id).join(', ')}`);
-  check('§89: the rollback kinds are the same closed list, in the same order, on both sides',
-    JSON.stringify(goKinds) === JSON.stringify(['none', 'inverse', 'read_only']) && JSON.stringify(tsKinds) === JSON.stringify(goKinds),
-    `agent ${JSON.stringify(goKinds)}, portal ${JSON.stringify(tsKinds)}`);
-  const differ = CATALOG_IDS.filter((id, i) => JSON.stringify(goEntries[i]) !== JSON.stringify(tsEntries[i]));
-  check('§89: the agent and the portal agree on every action\'s rollback kind, the action that undoes it, and whether it is safe to repeat',
-    differ.length === 0, differ.map((id) => `${id}: agent ${JSON.stringify(goEntries.find((e) => e.id === id))}, portal ${JSON.stringify(tsEntries.find((e) => e.id === id))}`).join('; '));
-  check('§89: an inverse names a catalog action and nothing else names one; read-only is always safe to repeat',
-    tsEntries.every((e) => (e.kind === 'inverse' ? CATALOG_IDS.includes(e.via) : e.via === '') && (e.kind !== 'read_only' || e.safe === true)));
-  const fx = JSON.parse(read('tools/windows-installer/internal/action/testdata/rollback-repeat.json'));
-  check('§89: the shared fixture (Go test and unit test) says the same as both catalogs',
-    JSON.stringify(fx.rollbackKinds) === JSON.stringify(tsKinds)
-      && JSON.stringify(fx.actions.map((a) => ({ id: a.id, kind: a.rollback, via: a.via, safe: a.repeatable }))) === JSON.stringify(tsEntries),
-    'testdata/rollback-repeat.json');
-  // Data only in 0.79: nothing on the agent reads the fields outside catalog.go and its tests.
-  const goFiles = [];
-  const goWalk = (d) => { for (const n of readdirSync(join(ROOT, d))) { const r = `${d}/${n}`; if (statSync(join(ROOT, r)).isDirectory()) goWalk(r); else if (n.endsWith('.go')) goFiles.push(r); } };
-  goWalk('tools/windows-installer');
-  const goReaders = goFiles.filter((f) => !f.endsWith('_test.go') && f !== 'tools/windows-installer/internal/action/catalog.go')
-    .filter((f) => /\.Rollback\.(?:Kind|Via)\b|\.Repeatable\b|\bRollback(?:Kinds|None|Inverse|ReadOnly)\b/.test(read(f)));
-  check('§89: the agent reads neither field (data only; no plan, envelope or heartbeat change)', goFiles.length > 50 && goReaders.length === 0, goReaders.join(', ') || `${goFiles.length} Go files`);
-  // Every file that loads the catalog, and any .rollback / .repeat it reads (a call, e.g. String#repeat, is not a read).
-  const tsReaders = walk('apps/api/src').filter((f) => f.endsWith('.ts') && !f.endsWith('actions/catalog.ts'))
-    .filter((f) => /from '(?:\.\/|(?:\.\.\/)+actions\/)catalog'/.test(read(f)) && /\.(rollback|repeat)\b(?!\s*\()/.test(read(f)));
-  check('§89: on the portal they are only served (the catalog route and the job view), never decided on',
-    JSON.stringify(tsReaders.map((f) => f.slice(f.indexOf('apps/api/src')))) === JSON.stringify(['apps/api/src/actions/actions.service.ts'])
-      && (read('apps/api/src/actions/actions.service.ts').match(/\.(rollback|repeat)\b(?!\()/g) ?? []).length === 4,
-    tsReaders.join(', '));
-  check('§89: the docs table, the console and the suites carry it',
-    /## Rollback and repeating an action \(0\.79\)/.test(read('docs/approved-actions.md'))
-      && /data-help="rollback-repeat"/.test(read('apps/web/app/(app)/help/page.tsx'))
-      && /testId="action-note"/.test(read('apps/web/components/endpoints/endpoint-actions.tsx')) && /testId="job-note"/.test(read('apps/web/components/endpoints/endpoint-actions.tsx'))
-      && /data-testid="tool-note"/.test(read('apps/web/components/endpoints/workspace/tools-panel.tsx'))
-      && /unit-action-rollback\.mjs/.test(read('.github/workflows/ci.yml')) && existsSync(join(ROOT, 'tools/windows-installer/internal/action/rollback_test.go'))
-      && /action-note/.test(read('apps/web/scripts/e2e-ui.mjs')) && /tool-note/.test(read('apps/web/scripts/e2e-ui.mjs')),
-    'docs/approved-actions.md, /help, Actions tab, Tools panel, unit-action-rollback.mjs in CI, rollback_test.go, e2e-ui.mjs');
+  console.log('\n§91 Backups (provider facts, read-only; completion, integrity and restore kept apart)');
+  const SRC = 'apps/api/src';
+  const B = `${SRC}/backups`;
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const all = walk(SRC);
+  const bk = all.filter((f) => f.startsWith(`${B}/`));
+  const src = (f) => code(read(f));
+
+  const net = bk.filter((f) => /(?<![.\w]|async |\n  )fetch\(|\bhttps?\.request\(|\bhttps?\.get\(|axios|undici|\bgot\(/.test(src(f)));
+  check('backups: no fetch or raw request anywhere in backups/', net.length === 0, net.join(', '));
+  const posts = all.filter((f) => /\bsafe(Post|Get)\(/.test(src(f)) && f.startsWith(`${B}/`) && !f.startsWith(`${B}/drivers/`));
+  check('backups: safe-https only in backups/drivers/', posts.length === 0, posts.join(', '));
+  const testUrl = all.filter((f) => /process\.env\.BACKUP_TEST_BASE_URL|env\[['"]BACKUP_TEST_BASE_URL/.test(src(f)));
+  const standin = src(`${B}/drivers/standin.ts`);
+  check('backups: BACKUP_TEST_BASE_URL is read only by the stand-in, and only through testLoopbackAllowed',
+    testUrl.length === 1 && testUrl[0] === `${B}/drivers/standin.ts` && /const v = process\.env\.BACKUP_TEST_BASE_URL;\s*return v && testLoopbackAllowed\(v\)/.test(standin), testUrl.join(', '));
+  const drivers = src(`${B}/drivers/index.ts`);
+  check('backups: the only driver in this release is the stand-in', /DRIVERS: Partial<Record<ConnectionKind, BackupDriver>> = \{\s*standin: standinDriver,?\s*\}/.test(drivers), 'drivers/index.ts');
+  const imp = all.filter((f) => !f.startsWith(`${B}/`) && /from '[./]*backups\/(drivers|backup-ingest|push-token)/.test(read(f)));
+  check('backups: nothing outside backups/ imports a driver, the ingest service or the push token', imp.length === 0, imp.join(', '));
+
+  const writes = all.filter((f) => /\.(backupProtectedAsset|backupJob|backupRecoveryPoint|restoreDrill)\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/.test(src(f)));
+  check('backups: only BackupIngestService writes asset, job, recovery point and drill rows', writes.length === 1 && writes[0] === `${B}/backup-ingest.service.ts`, writes.join(', '));
+  const model = src(`${B}/model.ts`);
+  const feedSchemas = ['FeedJob', 'FeedPoint', 'FeedDrill', 'FeedAsset', 'Feed'].map((n) => (model.match(new RegExp(`export const ${n} = z\\.object\\(\\{[\\s\\S]*?\\}\\)\\.strict\\(\\)`)) ?? [''])[0]);
+  check('backups: every feed schema is strict', feedSchemas.every(Boolean), feedSchemas.map((s, i) => (s ? '' : i)).join(','));
+  check('backups: the feed names no business, tenant, restoreTest or "verified" — the provider cannot say a job was verified',
+    feedSchemas.every((s) => !/\b(businessId|customerId|tenantId|restoreTest|verified)\s*:/.test(s)), 'model.ts');
+  check('backups: a drill must say whether it was simulated, and a pass must have validated something',
+    /simulated: z\.boolean\(\),/.test(model) && /result !== 'passed' \|\| d\.validation !== 'none'/.test(model), 'model.ts FeedDrill');
+  check('backups: a job is verified only by a passed, non-simulated drill of its own recovery point (deriveRestoreTests)',
+    /!d\.simulated/.test(model) && /recoveryPointId/.test(model) && /'verified'/.test(model), 'model.ts deriveRestoreTests');
+  const mig = read('apps/api/prisma/migrations/0097_backups/migration.sql');
+  check('0097: the job keeps completion, integrity and restoreTest as three columns, restoreTest tied to a drill by CHECK and trigger',
+    /"completion" TEXT NOT NULL/.test(mig) && /"integrity" TEXT NOT NULL DEFAULT 'not_checked'/.test(mig) && /"restoreTest" TEXT NOT NULL DEFAULT 'not_tested'/.test(mig)
+      && /\("restoreTest" = 'not_tested'\) = \("restoreDrillId" IS NULL\)/.test(mig) && /CREATE FUNCTION backup_job_restore_test\(\)/.test(mig) && /AND NOT d\."simulated"/.test(mig),
+    '0097');
+  check('0097: a same-business trigger on every backup table, and the four monitor kinds in the ticket-rule CHECK',
+    ['BackupProtectedAsset', 'BackupJob', 'BackupRecoveryPoint', 'RestoreDrill', 'BackupObjective'].every((t) => new RegExp(`ON "${t}"\\s+FOR EACH ROW EXECUTE FUNCTION backup_same_business\\(\\)`).test(mig))
+      && ['BACKUP_STALE', 'BACKUP_FAILED', 'DRILL_FAILED', 'RPO_EXCEEDED'].every((k) => mig.includes(`ALTER TYPE "MonitorKind" ADD VALUE '${k}'`) && new RegExp(`"MonitorTicketPolicy_kinds"[\\s\\S]*'${k}'`).test(mig)), '0097');
+
+  const ctl = src(`${B}/backups.controller.ts`);
+  const push = (ctl.match(/export class BackupPushController[\s\S]*$/) ?? [''])[0];
+  check('push: @Public, @RateLimit, token parsed from the Authorization header, the same 401 for every refusal',
+    /@Post\(\)\s*@Public\(\)\s*@RateLimit\(\d+\)/.test(push) && /parsePushAuth\(auth\)/.test(push) && /if \(!secretMatches\(t\.secret, live \? conn!\.pushTokenHash : null\) \|\| !live\) throw refuse\(\);/.test(push), 'BackupPushController');
+  check('push: the body never chooses a business — the ingest gets the token\'s connection',
+    !/businessId|customerId/.test(push) && /this\.ingest\.ingest\(conn!, f\.feed\)/.test(push) && /parseFeed\(body\)/.test(push), 'BackupPushController');
+  const tok = src(`${B}/push-token.ts`);
+  check('push token: stored only as SHA-256, compared with timingSafeEqual', /createHash\('sha256'\)/.test(tok) && /timingSafeEqual/.test(tok) && !/sealSecret/.test(tok), 'push-token.ts');
+  const ingest = src(`${B}/backup-ingest.service.ts`);
+  check('ingest: every row is written with the connection\'s business; computers are linked only inside it',
+    /const customerId = conn\.customerId;/.test(ingest) && /where: \{ id: c\.rem0teId, customerId, status: 'ACTIVE' \}/.test(ingest) && /where: \{ customerId, status: 'ACTIVE', hostname:/.test(ingest), 'backup-ingest.service.ts');
+
+  const svc = src(`${B}/backups.service.ts`);
+  check('reads: overview and asset go through assetWhere; backups:view is required off the owner path',
+    /const where = this\.assetWhere\(a, businessId\);/.test(svc) && /AND: \[\{ id \}, this\.assetWhere\(a, businessId\)\]/.test(svc) && /CAP\.BACKUPS_VIEW/.test(svc) && /endpointVisibilityWhere\(a, scope\)/.test(svc), 'backups.service.ts');
+  const conns = (ctl.match(/export class BackupConnectionsController[\s\S]*?\n\}/) ?? [''])[0];
+  check('connections: Platform Admin (class guard); create names backup.connection before the service call; revoke never asks',
+    /@UseGuards\(PlatformAdminGuard\)\s*export class BackupConnectionsController/.test(ctl) && /assertFresh\([^;]*action: 'backup\.connection'[^;]*\);\s*return \{ success: true, data: await this\.svc\.createConnection/.test(conns)
+      && !/assertFresh/.test((conns.match(/async revoke[\s\S]*$/) ?? [''])[0]), 'BackupConnectionsController');
+  check('connections: logOrFail before the row; no token, hash or credential in a view', /logOrFail\(\{\s*action: 'BACKUP_CONNECTION_CREATED'/.test(svc)
+    && !/(pushTokenHash|credentialEnc)\s*[:,]/.test((svc.match(/private connectionView[\s\S]*?\n  \}/) ?? [''])[0]), 'backups.service.ts');
+  check('backups: no route starts a backup, a restore, a drill or a failover', !/@(Post|Put)\('[^']*(restore|drill|failover|run|start)[^']*'\)/.test(ctl), 'backups.controller.ts');
+
+  const eng = src(`${SRC}/monitoring/engine.ts`);
+  const rec = (eng.match(/export const RECOMMENDED[\s\S]*?\n\];/) ?? [''])[0];
+  check('monitor kinds: BACKUP_STALE, BACKUP_FAILED, DRILL_FAILED and RPO_EXCEEDED, opt-in — none in RECOMMENDED',
+    /export const BACKUP_KINDS: ReadonlySet<MonitorKind> = new Set\(\['BACKUP_STALE', 'BACKUP_FAILED', 'DRILL_FAILED', 'RPO_EXCEEDED'\]\);/.test(eng) && rec && !/BACKUP_|DRILL_FAILED|RPO_EXCEEDED/.test(rec), 'engine.ts');
+  const mon = src(`${SRC}/monitoring/monitoring.service.ts`);
+  const ev = (mon.match(/private async evaluateBackupRules[\s\S]*?\n  \}\n/) ?? [''])[0];
+  check('monitor kinds: evaluated by the sweep from stored rows only — the backup tables are read, never written, by monitoring',
+    !!ev && /this\.prisma\.backupProtectedAsset\.findMany/.test(ev) && !/backup\w*\.(create|update|upsert|delete)/i.test(mon) && /evaluateBackupRules\(backupWork, open, now\)/.test(mon), 'monitoring.service.ts');
+  const tpl = src(`${SRC}/monitoring/backup-agent-templates.ts`);
+  const kinds = [...tpl.matchAll(/kind: '([A-Z_]+)'/g)].map((m) => m[1]);
+  check('templates: SERVICE_STOPPED only, alertIfMissing false, each citing a vendor source',
+    kinds.length >= 1 && kinds.every((k) => k === 'SERVICE_STOPPED') && (tpl.match(/alertIfMissing: false/g) ?? []).length === kinds.length && (tpl.match(/source: 'https:\/\//g) ?? []).length === (tpl.match(/^\s{4}id: '/gm) ?? []).length, 'backup-agent-templates.ts');
+  const adm = src(`${SRC}/monitoring/monitoring-admin.service.ts`);
+  const addT = (adm.match(/async addTemplate[\s\S]*?\n  \}/) ?? [''])[0];
+  check('templates: added only on request, each rule through createRule', /this\.createRule\(a, /.test(addT) && !/monitorRule\.(create|upsert)/.test(addT), 'addTemplate');
+
+  const sync = src(`${B}/backup-sync.service.ts`);
+  check('BACKUP_SYNC_SWEEP=off is exact, and the pull skips a business under an integration pause',
+    /if \(process\.env\.BACKUP_SYNC_SWEEP === 'off'\) return;/.test(sync) && /activePause\(this\.prisma, 'integration', c\.customerId\)/.test(sync) && /^export BACKUP_SYNC_SWEEP=off$/m.test(read('scripts/run-e2e.sh')), 'backup-sync.service.ts / run-e2e.sh');
 }
 
 if (failures.length > 0) {

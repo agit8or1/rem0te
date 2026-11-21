@@ -45,7 +45,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Activity, ArrowRightLeft, BarChart3, BellRing, Building2, Cpu, WifiOff, FileCode2, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
   Monitor, MonitorCheck, MonitorX, Package, PackageCheck, PlayCircle, Plus, RefreshCw, Settings, Shield, ShieldCheck, Siren,
-  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail, Sparkles, Ticket, ListChecks, BadgeCheck, ShieldQuestion, MonitorPlay, Smartphone,
+  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail, Sparkles, Ticket, ListChecks, BadgeCheck, ShieldQuestion, MonitorPlay, Smartphone, Archive,
 } from 'lucide-react';
 import { CAP, type Capability } from '@/lib/auth';
 
@@ -150,6 +150,11 @@ export const NAV: NavSection[] = [
   {
     id: 'patching', label: 'Patching', icon: ShieldCheck, kind: 'link',
     items: [{ href: '/patching', label: 'Patching', icon: ShieldCheck, show: (c) => c.can(CAP.COMPUTERS_VIEW) }],
+  },
+  {
+    // 0.81: backup status from a provider (read-only), RPO/RTO measured against target.
+    id: 'backups', label: 'Backups', icon: Archive, kind: 'link',
+    items: [{ href: '/backups', label: 'Backups', icon: Archive, show: (c) => c.can(CAP.BACKUPS_VIEW) }],
   },
   {
     id: 'remote', label: 'Remote Support', icon: Headset, kind: 'hub',

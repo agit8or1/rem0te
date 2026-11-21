@@ -252,7 +252,7 @@ function startApi() {
     HBBS_PRESENCE_HOST: '127.0.0.2', I_KNOW_THIS_IS_NOT_PRODUCTION: '1',
     // Nothing in the background acts on this database while the browser looks at it.
     MONITOR_SWEEP: 'off', CLIENT_UPDATE_SWEEP: 'off', PATCH_POLICY_SWEEP: 'off', METRIC_SWEEP: 'off', AUDIT_SEALER: 'off',
-    RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off', TRAY_SWEEP: 'off', AUTO_MIGRATION_SWEEP: 'off', WINGET_INDEX_SWEEP: 'off', WARRANTY_SWEEP: 'off', AUTOMATION_SWEEP: 'off', RESTART_WINDOW_SWEEP: 'off',
+    RETENTION_SWEEP: 'off', REPORT_SCHEDULE_SWEEP: 'off', SCRIPT_OUTPUT_SWEEP: 'off', CHAT_RETENTION_SWEEP: 'off', TRAY_SWEEP: 'off', AUTO_MIGRATION_SWEEP: 'off', WINGET_INDEX_SWEEP: 'off', WARRANTY_SWEEP: 'off', BACKUP_SYNC_SWEEP: 'off', AUTOMATION_SWEEP: 'off', RESTART_WINDOW_SWEEP: 'off',
     // 0.59: the SSO session safety-net.
     SSO_SESSION_SWEEP: 'off',
     // 0.77: the terminal sweep (expiry and transcript pruning).
@@ -462,6 +462,7 @@ async function cleanup() {
       return prisma.endpoint.deleteMany({ where: { id: { in: eps } } });
     }],
     ['device groups', () => prisma.endpointGroup.deleteMany({ where: { customerId: { in: ids } } })],
+    ['backups', () => prisma.backupConnection.deleteMany({ where: { customerId: { in: ids } } })],
     ['scripts', () => prisma.script.deleteMany({ where: { customerId: { in: ids } } })],
     ['branding', restoreBranding],
     ['sites', () => prisma.site.deleteMany({ where: { customerId: { in: ids } } })],
@@ -1764,6 +1765,7 @@ async function combo(browser, f, vp, theme) {
     await terminalPanel(page, f, vp, theme, label);
     await filesPanel(page, f, vp, theme, label);
     await mobileDevicesUi(page, f, vp, theme, label);
+    await backupsUi(page, f, vp, theme, label);
     if (theme === 'light') await mainPagesSweep(page, f, vp, label);
   } finally { await ctx.close(); }
   await mobileRequiresSetup(browser, f, vp, theme, label);
@@ -2288,6 +2290,63 @@ async function msaReadinessUi(page, f, vp, theme, label) {
   check(cur === 'Managed sessions', `${label}: Managed sessions is the current Devices tab`, String(cur));
   if (vp === 'phone') await noSideScroll(page, `${label} Managed sessions`);
   await cleanCheck(page, `${label} Managed sessions`);
+}
+
+// ── 0.81: Backups ───────────────────────────────────────────────────────────
+// A business of its own with a St0r connection row (the hash of a token
+// nobody holds) and one asset on its computer: a job that succeeded with its
+// integrity check passed and no restore drill, and a simulated drill that
+// passed. The page must show three separate facts and never "verified".
+async function seedBackups(f) {
+  const E = await prisma.customer.create({ data: { tenantId: f.tenant.id, name: `BKP ${sfx} Backups` } });
+  created.businesses.push(E.id);
+  const ep = await prisma.endpoint.create({ data: {
+    tenantId: f.tenant.id, customerId: E.id, name: `BKP-${sfx}-FS`, hostname: `bkp-${sfx}.corp.example.com`, platform: 'Windows',
+    status: 'ACTIVE', isOnline: true, isManaged: true, accessMode: 'COMPANY_WIDE', lastSeenAt: new Date(),
+  } });
+  const conn = await prisma.backupConnection.create({ data: {
+    id: `bkc${randomBytes(12).toString('hex')}`, customerId: E.id, kind: 'st0r', transport: 'push', enabled: true,
+    pushTokenHash: createHash('sha256').update(randomBytes(32)).digest('hex'), pushTokenLast4: 'ab12', lastSyncAt: new Date(), lastResult: 'OK', createdById: f.admin.id,
+  } });
+  const now = Date.now();
+  const asset = await prisma.backupProtectedAsset.create({ data: { customerId: E.id, connectionId: conn.id, externalId: 'fs-c', name: `BKP ${sfx} FS C: volume`, assetType: 'server', endpointId: ep.id, firstSeenAt: new Date(now - 30 * 86_400_000), lastSeenAt: new Date() } });
+  const job = await prisma.backupJob.create({ data: { customerId: E.id, assetId: asset.id, externalId: 'j1', startedAt: new Date(now - 3 * 3_600_000), finishedAt: new Date(now - 2 * 3_600_000), completion: 'succeeded', integrity: 'passed' } });
+  const pt = await prisma.backupRecoveryPoint.create({ data: { customerId: E.id, assetId: asset.id, externalId: 'p1', pointAt: new Date(now - 2 * 3_600_000), location: 'offsite', jobId: job.id } });
+  await prisma.restoreDrill.create({ data: { customerId: E.id, assetId: asset.id, externalId: 'd1', recoveryPointId: pt.id, recoveryPointAt: pt.pointAt, target: 'isolated_vm', scope: 'full_image', result: 'passed', simulated: true, validation: 'boot', startedAt: new Date(now - 3_600_000), finishedAt: new Date(now - 1_800_000), elapsedSeconds: 1500 } });
+  return { E, ep, asset };
+}
+
+/**
+ * Backups (0.81), as the Platform Admin, at both widths and in both themes:
+ * Acme (no provider) reads "Requires setup"; the backups business shows its
+ * asset with completion, integrity and restore test apart, "Simulated only
+ * (not verified)", the providers' limitations; no sideways scroll at 375 px.
+ */
+async function backupsUi(page, f, vp, theme, label) {
+  await go(page, '/backups');
+  const sel = page.getByTestId('backups-business');
+  await sel.waitFor({ timeout: 15_000 });
+  await page.waitForFunction((id) => !!document.querySelector(`[data-testid="backups-business"] option[value="${id}"]`), f.backups.E.id, { timeout: 15_000 }).catch(() => {});
+  await sel.selectOption(f.A.id);
+  await page.getByTestId('backups-needs').waitFor({ timeout: 15_000 }).catch(() => {});
+  const needs = await page.getByTestId('backups-needs').getAttribute('data-state').catch(() => null);
+  const needsText = await page.getByTestId('backups-needs').innerText().catch(() => '');
+  check(needs === 'requires_setup' && /No backup provider is connected/.test(needsText), `${label}: a business with no provider reads "Requires setup" and says what is needed`, `${needs} ${needsText.slice(0, 200)}`);
+  await sel.selectOption(f.backups.E.id);
+  const cell = page.locator(`[data-asset="${f.backups.asset.id}"]`);
+  await cell.waitFor({ timeout: 15_000 }).catch(() => {});
+  const row = cell.locator('xpath=ancestor::tr');
+  const attr = async (a) => row.locator(`[data-${a}]`).first().getAttribute(`data-${a}`).catch(() => null);
+  const facts = { backup: await attr('backup'), completion: await attr('completion'), integrity: await attr('integrity'), restore: await attr('restore'), drill: await attr('drill') };
+  const text = await row.innerText().catch(() => '');
+  check(facts.backup === 'ok' && facts.completion === 'succeeded' && facts.integrity === 'passed' && facts.restore === 'not_tested' && facts.drill === 'simulated_only' && /Simulated only \(not verified\)/.test(text) && !/\bVerified\b/.test(text),
+    `${label}: succeeded, integrity passed, restore not tested, simulated only — never "Verified"`, JSON.stringify({ facts, text: text.slice(0, 300) }));
+  const prov = await page.getByTestId('backups-providers').innerText().catch(() => '');
+  check(/St0r/.test(prov) && /Comet/.test(prov) && await page.getByTestId('backups-connections').count() === 1, `${label}: providers and (Platform Admin) connections are shown`, prov.slice(0, 200));
+  await themeCheck(page, theme, `${label} Backups`);
+  if (vp === 'phone') await noSideScroll(page, `${label} Backups`);
+  await shot(page, `${label}-backups`);
+  await cleanCheck(page, `${label} Backups`);
 }
 
 // ── 0.75: the device page's Tools panel ────────────────────────────────────
@@ -3549,6 +3608,7 @@ async function main() {
   f.tools = await seedTools(f);
   f.rollbackJob = await seedRollbackJob(f);
   f.mobile = await seedMobile(f);
+  f.backups = await seedBackups(f);
   if (process.env.UI_HOLD === '1') {
     // Debugging only: leave the stack and fixtures up until interrupted.
     console.log(`  holding: ${WEB}  admin ${f.admin.email} / owner ${f.owner.email}  password in UI_HOLD_PW_FILE`);

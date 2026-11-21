@@ -6,6 +6,7 @@ import {
   agentMonitorConfig, dedupKeyOf, type Destination, isEmailDestination, dueLevels, effectiveRules, EMPTY_STATE, evaluateEvents, evaluateLive, evaluateService, evaluateWarranty,
   NotifyLevel, OUTAGE, outageDecision, outageKeyOf, sanitizeReport, scopesFor, SEVERITY_RANK, suppressionFor,
   drivePrefixOf, evaluateDrives, evaluateFailedUpdates, evaluateMissingUpdates, evaluateUptime, type SeenUpdates,
+  ASSET_ID, assetKeyOf, BACKUP_KINDS, evaluateBackup,
   type Live, type MonitorStateLike, type RuleLike, type Severity, type Verdict,
 } from './engine';
 import { AlertTicketsService } from './alert-tickets.service';
@@ -377,6 +378,8 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
     // 0.55: a drive monitor's alerts are one per drive; while the rule applies, any of them is valid.
     const validPrefixes = new Set<string>();
     const inventoryWork: { ep: Ep; rules: (RuleLike & MonitorRule)[] }[] = [];
+    // 0.81: the backup kinds, per computer, over the backup assets linked to it.
+    const backupWork: { ep: Ep; rules: (RuleLike & MonitorRule)[] }[] = [];
     // Group membership, once for this tick and never kept past it: the
     // groups that carry a monitor, each evaluated over its whole business.
     const membership = await this.groups.snapshot(rules.filter((r) => r.groupId).map((r) => r.groupId!));
@@ -384,10 +387,13 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
       const eff = effectiveRules(rules, scopesFor(ep, membership.groupsOf(ep.id)));
       const inv = eff.filter((r) => INVENTORY_KINDS.has(r.kind));
       if (inv.length) inventoryWork.push({ ep, rules: inv });
+      const bk = eff.filter((r) => BACKUP_KINDS.has(r.kind));
+      if (bk.length) backupWork.push({ ep, rules: bk });
       for (const r of eff) {
         const dk = dedupKeyOf(r.key, ep.id);
         valid.add(dk);
-        if (r.kind === 'DRIVE_FREE') validPrefixes.add(drivePrefixOf(r.key, ep.id));
+        // 0.81: likewise a backup monitor's alerts, one per asset.
+        if (r.kind === 'DRIVE_FREE' || BACKUP_KINDS.has(r.kind)) validPrefixes.add(drivePrefixOf(r.key, ep.id));
         const st = states.get(`${ep.id}|${r.key}`) ?? EMPTY_STATE;
         if (SWEEP_KINDS.has(r.kind)) {
           const live: Live = {
@@ -425,14 +431,76 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
         }
       }
     }
-    if (inventoryWork.length && now.getTime() - this.inventoryAt >= inventoryEveryMs()) {
+    if ((inventoryWork.length || backupWork.length) && now.getTime() - this.inventoryAt >= inventoryEveryMs()) {
       this.inventoryAt = now.getTime();
-      await this.evaluateInventoryRules(inventoryWork, open, now);
+      if (inventoryWork.length) await this.evaluateInventoryRules(inventoryWork, open, now);
+      if (backupWork.length) await this.evaluateBackupRules(backupWork, open, now);
     }
     // An open alert whose monitor no longer applies (removed, disabled, moved scope) or whose computer was retired.
     for (const [dk, a] of open) {
       if (!valid.has(dk) && !validPrefixes.has(dk.slice(0, dk.lastIndexOf(':') + 1))) await this.resolveOpen(dk, null, 'Closed: the monitor no longer applies to this computer, or the computer was retired.', now);
       void a;
+    }
+  }
+
+  /**
+   * 0.81: BACKUP_STALE, BACKUP_FAILED, DRILL_FAILED and RPO_EXCEEDED, from the
+   * backup rows a provider reported (backups/) — stored data only, read here
+   * and written nowhere. One alert per asset linked to the computer
+   * (assetKeyOf); an asset no longer linked (or gone) closes its alert. A
+   * verdict raises (or rewrites a changed title, without counting a repeat),
+   * clears, or — skip, hold — leaves things as they are.
+   */
+  private async evaluateBackupRules(work: { ep: Ep; rules: (RuleLike & MonitorRule)[] }[], open: Map<string, { id: string; dedupKey: string; title: string }>, now: Date) {
+    const ids = work.map((w) => w.ep.id);
+    type Asset = Prisma.BackupProtectedAssetGetPayload<{ include: { objective: true; jobs: true; recoveryPoints: true; drills: true } }>;
+    const byEp = new Map<string, Asset[]>();
+    const bizIds = new Set<string>();
+    for (let i = 0; i < ids.length; i += 200) {
+      const rows = await this.prisma.backupProtectedAsset.findMany({
+        where: { endpointId: { in: ids.slice(i, i + 200) } },
+        include: {
+          objective: true,
+          jobs: { orderBy: [{ startedAt: 'desc' }, { id: 'asc' }], take: 20 },
+          recoveryPoints: { orderBy: [{ pointAt: 'desc' }, { id: 'asc' }], take: 1 },
+          drills: { orderBy: [{ startedAt: 'desc' }, { id: 'asc' }], take: 20 },
+        },
+        orderBy: { id: 'asc' }, take: 5000,
+      });
+      for (const r of rows) {
+        if (!r.endpointId || !ASSET_ID.test(r.id)) continue;
+        const l = byEp.get(r.endpointId) ?? []; l.push(r); byEp.set(r.endpointId, l);
+        bizIds.add(r.customerId);
+      }
+    }
+    const bizObj = new Map((bizIds.size ? await this.prisma.backupObjective.findMany({ where: { customerId: { in: [...bizIds] }, assetId: null } }) : []).map((o) => [o.customerId, o]));
+    for (const { ep, rules } of work) {
+      // An asset of another business can never be linked here (0097's trigger); checked again anyway.
+      const assets = (byEp.get(ep.id) ?? []).filter((x) => x.customerId === ep.customerId);
+      for (const r of rules) {
+        try {
+          const prefix = drivePrefixOf(r.key, ep.id);
+          const seen = new Set<string>();
+          for (const x of assets) {
+            const dk = assetKeyOf(r.key, ep.id, x.id);
+            seen.add(dk);
+            const v = evaluateBackup(r, `${ep.name} · ${x.name}`, {
+              firstSeenAt: x.firstSeenAt, jobs: x.jobs, points: x.recoveryPoints, drills: x.drills,
+              objective: x.objective ? { rpoMinutes: x.objective.rpoMinutes, rtoMinutes: x.objective.rtoMinutes } : null,
+              businessObjective: bizObj.get(x.customerId) ?? null,
+            }, now);
+            const cur = open.get(dk);
+            if (v.verdict === 'breach') {
+              if (!cur || cur.title !== v.title.slice(0, 300)) await this.raise(ep, r, v.title, { ...v.detail, assetId: x.id, asset: x.name }, now, false, dk);
+            } else if (v.verdict === 'ok' && cur) {
+              await this.resolveOpen(dk, null, 'Cleared: the backup provider\'s latest report no longer shows the problem.', now);
+            }
+          }
+          for (const dk of open.keys()) if (dk.startsWith(prefix) && !seen.has(dk)) await this.resolveOpen(dk, null, 'Closed: that backup asset is no longer linked to this computer.', now);
+        } catch (e) {
+          this.logger.warn(`backup monitor ${r.key} on ${ep.id}: ${(e as Error).message}`);
+        }
+      }
     }
   }
 
