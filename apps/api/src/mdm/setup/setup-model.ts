@@ -27,7 +27,7 @@ export const STATES = ['available', 'requires_setup', 'unsupported', 'planned'] 
 export type CapabilityState = (typeof STATES)[number];
 
 /** The account that owns the push certificate, as the person typed it: an Apple Account is an e-mail address. */
-export const APPLE_ACCOUNT_RE = /^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(\.[A-Za-z0-9-]{1,63}){0,6}\.[A-Za-z]{2,24}$/;
+export const APPLE_ACCOUNT_RE = /^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,200}\.[A-Za-z]{2,24}$/;
 
 export const DAY_MS = 86_400_000;
 export const daysLeft = (notAfter: Date, now: Date) => Math.ceil((notAfter.getTime() - now.getTime()) / DAY_MS);

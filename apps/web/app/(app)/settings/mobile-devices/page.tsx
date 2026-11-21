@@ -208,7 +208,7 @@ export default function MobileDeviceSettingsPage() {
       {d && (
         <>
           <p className="text-xs text-muted-foreground" data-testid="mdm-settings-decisions">
-            Decided by the owner (2026-11-21): one Apple push certificate for this whole install; signed with your own organization's MDM vendor certificate (mdmcert.download only for a first test device while Apple's permission is pending); iOS and iPadOS 16 or later; Android for customers' devices. {confirmSentence(ask, 'Each change asks you to confirm it is you.')}
+            Decided by the owner (2026-11-21): one Apple push certificate for this whole install; signed with your own organization&apos;s MDM vendor certificate (mdmcert.download only for a first test device while Apple&apos;s permission is pending); iOS and iPadOS 16 or later; Android for customers&apos; devices. {confirmSentence(ask, 'Each change asks you to confirm it is you.')}
           </p>
 
           {/* ── Apple ───────────────────────────────────────────── */}
@@ -237,7 +237,7 @@ export default function MobileDeviceSettingsPage() {
                 </Step>
 
                 <Step n={2} title="Generate the push request" state={capState('apple.push_request')} testId="mdm-apple-csr">
-                  <p className="text-muted-foreground">Rem0te makes the push certificate's private key and its certificate signing request (CSR). The key is sealed inside Rem0te and never leaves it: Apple's rule is that the vendor who signs the request must not have it.</p>
+                  <p className="text-muted-foreground">Rem0te makes the push certificate&apos;s private key and its certificate signing request (CSR). The key is sealed inside Rem0te and never leaves it: Apple&apos;s rule is that the vendor who signs the request must not have it.</p>
                   <Checks auto="The key is RSA 2048 and sealed before anything is shown; the CSR verifies against it." cannot="Nothing: this step is entirely inside Rem0te." />
                   {d.apple.pushKey.present ? (
                     <div className="space-y-2">
@@ -266,7 +266,7 @@ export default function MobileDeviceSettingsPage() {
                   {route === 'own_vendor' && (
                     <>
                       <p className="text-muted-foreground">
-                        In your developer account, under Certificates, create an <strong>MDM CSR</strong> certificate (it appears once Apple grants the permission) and download it (<span className="font-mono">mdm.cer</span>). Export its private key from where you made its request (from a Mac's Keychain as a .p12, then <span className="font-mono">openssl pkcs12 -in vendor.p12 -nocerts -nodes -out vendor.key</span>). Download the Apple WWDR intermediate (G3) and the Apple Root CA from <Ext href="https://www.apple.com/certificateauthority/">Apple PKI</Ext>.
+                        In your developer account, under Certificates, create an <strong>MDM CSR</strong> certificate (it appears once Apple grants the permission) and download it (<span className="font-mono">mdm.cer</span>). Export its private key from where you made its request (from a Mac&apos;s Keychain as a .p12, then <span className="font-mono">openssl pkcs12 -in vendor.p12 -nocerts -nodes -out vendor.key</span>). Download the Apple WWDR intermediate (G3) and the Apple Root CA from <Ext href="https://www.apple.com/certificateauthority/">Apple PKI</Ext>.
                       </p>
                       <Checks auto="The key is RSA and is the certificate's; the certificate is unexpired; it is signed by the intermediate, the intermediate by the root, the root by itself. The key is sealed. Rem0te then signs its request (SHA256withRSA) with the chain in Apple's order." cannot="That the root is really Apple's (compare the SHA-256 shown after upload with Apple's published one), or that Apple will accept the request." />
                       {d.apple.vendor.present ? (
