@@ -231,6 +231,16 @@ jobs:
       - name: Diagnostics catalog tests
         run: node apps/api/scripts/unit-diagnostics-catalog.mjs
 
+      # Read-only diagnostics palette (0.76): the thirteen checks' catalog
+      # entries, the typed-parameter schema (one host-name rule in the portal,
+      # the agent and the database), every sanitizer against hostile input,
+      # every interpretation threshold, the OS end-of-servicing table, the
+      # build-time palette guard (each refusal proven by mutation) — and, with
+      # the runner's pwsh, every key run against stub cmdlets in a desktop and
+      # a Server world with no secret reaching a post.
+      - name: Diagnostics palette tests
+        run: node apps/api/scripts/unit-diagnostics-palette.mjs
+
       # System inventory snapshots (0.33): the process / service / adapter
       # sanitisers, row and byte bounds, and the build-time guard on the
       # heartbeat's snapshot block (each refusal proven by mutation) — and,

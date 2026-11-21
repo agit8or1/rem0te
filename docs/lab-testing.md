@@ -168,6 +168,22 @@ had it running again, start type *Manual*, by the time the scan finished — and
 entries alone still let a scan return an update. Only the policy stopped it. The finding that a disabled
 `wuauserv` is turned back on during a scan is recorded on every run.
 
+### The read-only diagnostics palette (0.76, `agent-lab-windows (diagnostics palette)`)
+
+`tools/lab/windows/diagnostics-lab.mjs` cuts the heartbeat's diagnostics region out of the signed installer
+exactly as the portal serves it (`buildSignedWindowsScript('0.76.0')`) and runs it under Windows PowerShell 5.1,
+first as the runner's administrator and then as SYSTEM from a one-off scheduled task, through the agent's own
+dispatcher, three runs per heartbeat. Only `Invoke-RestMethod` is replaced, by a file write, so nothing leaves the
+runner. All thirteen palette keys run: `dns_lookup` looks up `localhost`; `tcp_port` dials 127.0.0.1:135, which
+must be open, and 127.0.0.1:1, which must be refused. A configuration fingerprint taken before and after each
+caller (service start types, firewall profiles, scheduled-task state, BitLocker volumes, the W32Time parameters)
+must not change. Each result then goes through the portal's own `sanitizeResult()`, `capResult()` and
+`interpret()`, and a Healthy finding built on a value the agent could not read fails the run. Windows Update is
+pointed by policy at a WSUS on 127.0.0.1:8530 that does not exist before anything runs, as in the agent job
+(only the policy part of `wuBlockScript`), although no palette check touches it. The evidence summary shows the
+worst finding per check and caller. It proves the palette on Windows Server only, never on a desktop or the
+fleet. `--dry-run` parses and runs the harness under pwsh off Windows, which proves the plumbing, not Windows.
+
 ## Reading the evidence
 
 Every run uploads one artifact, **`lab-evidence-windows`**:
@@ -216,6 +232,10 @@ On Windows Server 2025 Datacenter 10.0.26100, the runner GitHub calls `windows-l
 - **It is Windows Server, not Windows 10 or 11.** The runner's edition and build are in the evidence. Service
   control, the process table, the registry, msiexec and PowerShell 5.1 behave the same way on both, but a
   desktop's defaults (UAC prompts, Defender settings, Store-installed components) are not tested.
+- **The diagnostics palette is not run on a desktop.** BitLocker is not installed on the runner and it has no
+  Secure Boot or TPM that a desktop would, so those come back Unsupported or Unknown there; Security Center
+  (antivirus products) does not exist on Server. A desktop's answers are proven only against stubs
+  (`unit-diagnostics-palette.mjs`).
 - **There is no real user session.** Nobody is signed in at the console. Anything that depends on the person
   at the computer — RustDesk's connection-approval prompt, the tray, chat, a restart warning someone reads — is
   untested here. The RustDesk server process runs in whatever session the service starts it in, and the

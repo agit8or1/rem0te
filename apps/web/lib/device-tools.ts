@@ -20,11 +20,13 @@
  *   unsupported       this OS or agent has nothing to run it (Linux, macOS,
  *                     RustDesk only)
  *   inactive          archived, not enrolled, or in the unassigned pool
- *   not_permitted     the person's role does not allow it (the button would 403)
+ *   not_permitted     the person's role does not allow it (the button would 403;
+ *                     for a check, the diagnostics catalog's `allowed`, 0.76)
  *   not_configured    the server has no approval signer, so no action can be
  *                     approved
  *   needs_newer_agent the agent does not report the action (or is older than
- *                     the release that added it), or it is the standard
+ *                     the release that added it, or the diagnostics catalog
+ *                     says it predates the check), or it is the standard
  *                     agent and the action needs the full (signed) agent
  *   contained         a containment pause stops it for this business
  *   offline           not reporting; the request waits for a check-in
@@ -90,8 +92,11 @@ export type ToolTarget =
 type Need =
   /** Read-only, server side: works for anyone who can see the computer. */
   | { kind: 'server' }
-  /** A read-only diagnostics-catalog key the heartbeat runs (Windows agents). */
-  | { kind: 'diagnostic'; key: string; eventLogs?: boolean; minAgent?: string }
+  /**
+   * A read-only diagnostics-catalog key the heartbeat runs (Windows agents).
+   * `connect`: the key needs computers:connect (0.76: dns_lookup, tcp_port).
+   */
+  | { kind: 'diagnostic'; key: string; eventLogs?: boolean; connect?: boolean; minAgent?: string }
   /** A tab that shows what the agent reported (Windows agents). */
   | { kind: 'view'; eventLogs?: boolean; minAgent?: string }
   /** Asks every agent (any OS) to scan or re-collect: POST /endpoints/:id/inventory/refresh. */
@@ -121,6 +126,8 @@ export function toolCatalog(endpointId: string): ToolDef[] {
   const e = encodeURIComponent(endpointId);
   const diag = (check: string): ToolTarget => ({ kind: 'tab', tab: 'diagnostics', check });
   const act = (action: string): ToolTarget => ({ kind: 'tab', tab: 'actions', action });
+  /** The release that added the read-only palette (catalog.ts PALETTE_MIN_AGENT). */
+  const PALETTE = '0.76.0';
   return [
     // ── Diagnostics ──
     { id: 'test-connection', group: 'diagnostics', label: 'Test connection', description: 'The server checks RustDesk, the relay and this computer’s last check-in. Diagnostics tab.', need: { kind: 'server' }, target: { kind: 'tab', tab: 'diagnostics', check: 'test-connection' } },
@@ -157,16 +164,32 @@ export function toolCatalog(endpointId: string): ToolDef[] {
     { id: 'network', group: 'networking', label: 'Network adapters', description: 'Addresses, gateways, DNS servers and DHCP for every adapter.', need: { kind: 'view', minAgent: '0.33.0' }, target: { kind: 'tab', tab: 'network' } },
     { id: 'network-connectivity', group: 'networking', label: 'Network connectivity', description: 'Whether the computer can reach this server, and which adapters are up. Read-only.', need: { kind: 'diagnostic', key: 'network_connectivity' }, target: diag('network_connectivity') },
     { id: 'dns-resolution', group: 'networking', label: 'DNS resolution', description: 'Resolve this server’s name and one fixed public name, with timings. Read-only.', need: { kind: 'diagnostic', key: 'dns_resolution' }, target: diag('dns_resolution') },
+    // 0.76: the read-only palette's networking checks.
+    { id: 'dns-lookup', group: 'networking', label: 'DNS lookup', description: 'Resolve a host name you give through this computer’s resolver. Read-only.', need: { kind: 'diagnostic', key: 'dns_lookup', connect: true, minAgent: PALETTE }, target: diag('dns_lookup') },
+    { id: 'tcp-port', group: 'networking', label: 'TCP port test', description: 'Whether this computer can connect to a host and port you give. Connects and closes; sends nothing.', need: { kind: 'diagnostic', key: 'tcp_port', connect: true, minAgent: PALETTE }, target: diag('tcp_port') },
+    { id: 'route-table', group: 'networking', label: 'Routes', description: 'The routing table: destinations, next hops and metrics. Read-only.', need: { kind: 'diagnostic', key: 'route_table', minAgent: PALETTE }, target: diag('route_table') },
     { id: 'flush-dns', group: 'networking', label: 'Flush DNS / renew DHCP', description: 'No approved action does this yet.', need: { kind: 'later' }, target: null },
 
     // ── Security ──
     { id: 'security-log', group: 'security', label: 'Security event log', description: 'Sign-ins, account changes and audit entries from the Security log. Event logs tab.', need: { kind: 'view', eventLogs: true }, target: { kind: 'tab', tab: 'events', log: 'Security' } },
-    { id: 'security-posture', group: 'security', label: 'Antivirus, firewall, BitLocker, Secure Boot', description: 'Not collected yet, so nothing is shown — unknown is not healthy.', need: { kind: 'later' }, target: null },
+    // 0.76: the read-only palette's security checks, and the server's own OS support check.
+    { id: 'defender', group: 'security', label: 'Microsoft Defender', description: 'Real-time and tamper protection, signature age and the last scan. Read-only.', need: { kind: 'diagnostic', key: 'defender_status', minAgent: PALETTE }, target: diag('defender_status') },
+    { id: 'firewall', group: 'security', label: 'Windows Firewall', description: 'Each profile on or off, and its default inbound and outbound action. Read-only.', need: { kind: 'diagnostic', key: 'firewall_status', minAgent: PALETTE }, target: diag('firewall_status') },
+    { id: 'bitlocker', group: 'security', label: 'BitLocker', description: 'Protection and encryption of every volume. Recovery keys are never read.', need: { kind: 'diagnostic', key: 'bitlocker_status', minAgent: PALETTE }, target: diag('bitlocker_status') },
+    { id: 'secure-boot-tpm', group: 'security', label: 'Secure Boot and TPM', description: 'Whether Secure Boot is on and a TPM is present and ready. Read-only.', need: { kind: 'diagnostic', key: 'secure_boot_tpm', minAgent: PALETTE }, target: diag('secure_boot_tpm') },
+    { id: 'local-admins', group: 'security', label: 'Local administrators', description: 'Who is in the local Administrators group. Read-only.', need: { kind: 'diagnostic', key: 'local_admins', minAgent: PALETTE }, target: diag('local_admins') },
+    { id: 'os-support', group: 'security', label: 'Windows support', description: 'Whether this Windows build still gets security updates, from the inventory and a table on the server. Nothing is sent to the computer.', need: { kind: 'server' }, target: { kind: 'tab', tab: 'diagnostics', check: 'os_support' } },
 
     // ── Maintenance ──
     { id: 'restart-schedule', group: 'maintenance', label: 'Schedule a restart', description: 'With a 15-minute warning on screen; waits for an open RustDesk session. Actions tab.', need: { kind: 'action', action: 'windows.reboot.schedule', version: 1 }, target: act('windows.reboot.schedule') },
     { id: 'restart-cancel', group: 'maintenance', label: 'Cancel a scheduled restart', description: 'Asks Windows to cancel a pending shutdown. Actions tab.', need: { kind: 'action', action: 'windows.reboot.cancel', version: 1 }, target: act('windows.reboot.cancel') },
     { id: 'logs-collect', group: 'maintenance', label: 'Collect diagnostic logs', description: 'System and Application errors, the agent’s journal and the RustDesk log, redacted. Actions tab.', need: { kind: 'action', action: 'windows.logs.collect', version: 1, eventLogs: true }, target: act('windows.logs.collect') },
+    // 0.76: the read-only palette's maintenance checks.
+    { id: 'time-sync', group: 'maintenance', label: 'Time sync', description: 'The Windows Time service and its last successful sync. Read-only.', need: { kind: 'diagnostic', key: 'time_sync', minAgent: PALETTE }, target: diag('time_sync') },
+    { id: 'activation', group: 'maintenance', label: 'Windows activation', description: 'Activated, in a grace period or unlicensed. The product key is never read.', need: { kind: 'diagnostic', key: 'windows_activation', minAgent: PALETTE }, target: diag('windows_activation') },
+    { id: 'unexpected-shutdowns', group: 'maintenance', label: 'Unexpected shutdowns', description: 'Restarts without a clean shutdown, and blue screens, in the last 30 days. Read-only.', need: { kind: 'diagnostic', key: 'unexpected_shutdowns', minAgent: PALETTE }, target: diag('unexpected_shutdowns') },
+    { id: 'scheduled-tasks', group: 'maintenance', label: 'Scheduled tasks', description: 'Tasks outside Windows’ own folder, with their last result. What they run is never read.', need: { kind: 'diagnostic', key: 'scheduled_tasks', minAgent: PALETTE }, target: diag('scheduled_tasks') },
+    { id: 'signed-in', group: 'maintenance', label: 'Signed-in users', description: 'Who is signed in to Windows now. Read-only.', need: { kind: 'diagnostic', key: 'signed_in_sessions', minAgent: PALETTE }, target: diag('signed_in_sessions') },
   ];
 }
 
@@ -187,6 +210,13 @@ export interface ToolFacts {
   pooled: boolean;
   /** The diagnostics catalog's agentBound; null while it has not been read. */
   agentBound: boolean | null;
+  /**
+   * 0.76: the diagnostics catalog's per-key `allowed` (the person holds the
+   * key's capability) and `needsNewerAgent` (the server knows this agent
+   * predates the key); null while it has not been read.
+   */
+  diagAllowed: Record<string, boolean> | null;
+  diagNeedsNewer: Record<string, boolean> | null;
   /** lib/connectivity.ts. */
   connectivity: 'online' | 'agent_silent' | 'offline';
   /** Already worded, e.g. "Offline since 3d ago". */
@@ -253,6 +283,10 @@ function notPermitted(f: ToolFacts, need: Need): string | null {
   if (need.kind === 'later') return null;
   if (!f.perms.view) return 'Your role does not include viewing this computer’s details.';
   if ('eventLogs' in need && need.eventLogs && !f.perms.eventLogs) return 'Needs the “Read event logs” permission.';
+  // 0.76: the diagnostics catalog says whether this person holds the key's capability.
+  if (need.kind === 'diagnostic' && f.diagAllowed && f.diagAllowed[need.key] === false) {
+    return need.connect ? 'Needs the “Remote connect” permission: this check makes the computer reach a host you name.' : need.eventLogs ? 'Needs the “Read event logs” permission.' : 'Your role does not allow this check.';
+  }
   if (need.kind === 'action') {
     const risk = f.actionRisk[need.action] ?? 'high';
     if (!(risk === 'low' ? f.perms.requestLow : f.perms.requestHigh)) {
@@ -267,6 +301,9 @@ function newerAgent(f: ToolFacts, need: Need): string | null {
     if (f.agentKind !== 'signed') return 'Needs the full (signed) agent; this computer runs the standard agent. Upgrade it from the Agent card.';
     if (!f.agentActions.includes(`${need.action}@${need.version}`)) return 'This computer’s agent does not report support for this action yet. Let it update first.';
     return null;
+  }
+  if (need.kind === 'diagnostic' && f.diagNeedsNewer?.[need.key]) {
+    return `This computer’s agent${f.agentVersion ? ` (${f.agentVersion})` : ''} is older than ${need.minAgent ?? 'the release that added this check'}. Update the agent; a signed agent gets it with the next signed release.`;
   }
   if ((need.kind === 'view' || need.kind === 'diagnostic') && 'minAgent' in need && need.minAgent && f.agentVersion) {
     const c = compareVersions(f.agentVersion, need.minAgent);

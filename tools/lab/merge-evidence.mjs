@@ -10,6 +10,8 @@
 //   go-os.json               the Go runner's Windows edition and build
 //   preflight-evidence-<v>.jsonl  the agent's RustDesk preflight (0.69.0) against release <v>
 //   enforce-evidence-<v>.jsonl    the agent's MSA enforcement cycle (0.72.0) against release <v>
+//   diagnostics-evidence.jsonl    the read-only diagnostics palette (0.76.0), as admin and SYSTEM
+//   diagnostics-os.json           that runner's Windows edition and build
 //
 // Every result is { id, status: pass|fail|skip, detail, real, os }. For the
 // RustDesk rows, "fail" means RustDesk did not do what was asked — a finding,
@@ -173,6 +175,30 @@ if (goFile) {
   }
 } else problems.push('no Go lab evidence (go-evidence.jsonl)');
 
+// ── The diagnostics palette (0.76.0) ────────────────────────────────────────
+// Each line is one palette key for one caller (admin, system), or that
+// caller's harness, parse or read-only line. Interpreted lines also carry
+// key, caller and overall (the worst finding), which the summary tabulates.
+const DIAG_CALLERS = ['admin', 'system'];
+const diagOsFile = files.find((p) => /diagnostics-os\.json$/.test(p));
+const diagOs = diagOsFile ? osOf(readJson(diagOsFile)) : null;
+if (diagOs) runners.push({ job: 'diagnostics', os: diagOs });
+const diagFile = files.find((p) => /diagnostics-evidence\.jsonl$/.test(p));
+const diag = [];
+if (diagFile) {
+  for (const line of readFileSync(diagFile, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    const r = JSON.parse(line);
+    diag.push(r);
+    add(r.id, r.status, r.detail, diagOs, r.real);
+  }
+  for (const c of DIAG_CALLERS) {
+    const h = diag.find((r) => r.id === `diagnostics/${c}/harness`);
+    if (!h) problems.push(`diagnostics: no ${c} harness result`);
+    else if (h.status !== 'pass') problems.push(`diagnostics ${c}: ${String(h.detail).slice(0, 300)}`);
+  }
+} else problems.push('no diagnostics palette evidence (diagnostics-evidence.jsonl)');
+
 const evidence = {
   schema: 'rem0te-lab-evidence/1',
   generatedAt: new Date().toISOString(),
@@ -221,6 +247,16 @@ if (versions.length) {
       md.push(`| ${v} | ${c} | ${p.readRendezvous?.matches ? 'ok' : 'no ' + q(p.readRendezvous?.value).slice(0, 40)} | ${cells.join(' | ')} | ${cnt('after5sMatches')} | ${cnt('afterRestartMatches')} | ${KEYS.filter((k) => p.options?.[k]?.second?.matches).length}/${KEYS.length} | ${pwc} | ${ssc} | ${live} | ${stop} | ${ctl} |`);
     }
   }
+  md.push('');
+}
+if (diag.length) {
+  md.push('## Diagnostics palette (0.76.0): the heartbeat\'s own region, interpreted by the portal', '',
+    'Each cell is the worst finding the portal\'s `interpret()` drew from that run, then whether the lab passed it: an open port where one listens, a refused port where none does, and no Healthy resting on a value that was not read. `read-only` compares the configuration fingerprint before and after.', '');
+  const row = (c, id) => diag.find((r) => r.id === `diagnostics/${c}/${id}`);
+  const cell = (r) => (!r ? '—' : `${r.overall ?? (r.status === 'fail' ? 'failed' : '')} ${r.status === 'pass' ? '✓' : r.status === 'fail' ? '✗' : '–'}`.trim());
+  const ids = [...new Set(diag.map((r) => r.id.split('/').slice(2).join('/')))];
+  md.push(`| check | ${DIAG_CALLERS.join(' | ')} |`, `|---|${DIAG_CALLERS.map(() => '---|').join('')}`);
+  for (const id of ids) md.push(`| ${id} | ${DIAG_CALLERS.map((c) => cell(row(c, id))).join(' | ')} |`);
   md.push('');
 }
 md.push('## Every result', '', '| id | status | detail |', '|---|---|---|');

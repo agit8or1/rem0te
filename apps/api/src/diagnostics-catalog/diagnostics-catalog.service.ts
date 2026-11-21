@@ -16,9 +16,10 @@ import { MonitoringService } from '../monitoring/monitoring.service';
 import {
   CATALOG, MAX_AGENT_RESULT_CHARS, MAX_RUNS_PER_DEVICE, MAX_RUNS_PER_USER, PICKUP_TTL_MINUTES,
   RATE_WINDOW_MINUTES, RUNS_PER_HEARTBEAT, RUN_TTL_MINUTES, START_TTL_MINUTES,
-  SNAPSHOT_KEYS, capResult, catalogEntry, isCatalogKey, isSnapshotKey, publicCatalog, resultCapFor, sanitizeResult,
+  SNAPSHOT_KEYS, agentTooOld, capResult, catalogEntry, isCatalogKey, isSnapshotKey, parseDiagnosticParams, publicCatalog, resultCapFor, sanitizeResult,
   type CatalogEntry, type SnapshotKey,
 } from './catalog';
+import { interpret, osSupport } from './interpret';
 import {
   Pacer, QUIET_CAP_MS, QUIET_MAX_ENTRIES, WATCH_WINDOW_MS, automaticState, dueKeys, ineligible, isWindows, parseScheduleUpdate, perMinuteFrom,
   quietUntil, scheduleFrom, sweepEnabled, type KeyHistory, type SnapshotSchedule,
@@ -99,9 +100,10 @@ export class DiagnosticsCatalogService {
   async catalogFor(actor: ActorContext, endpointId: string) {
     await this.assertVisible(actor, endpointId, 'computers:view');
     this.acl.assertCapability(actor, 'computers:view');
-    const [ep, node] = await Promise.all([
-      this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { platform: true, isOnline: true, lastSeenAt: true } }),
+    const [ep, node, inv] = await Promise.all([
+      this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { platform: true, isOnline: true, lastSeenAt: true, agentVersion: true } }),
       this.prisma.rustdeskNode.findUnique({ where: { endpointId }, select: { agentSecretHash: true } }),
+      this.prisma.endpointInventory.findUnique({ where: { endpointId }, select: { osCaption: true, osBuild: true, collectedAt: true } }),
     ]);
     const supported = isWindows(ep?.platform);
     return {
@@ -109,7 +111,15 @@ export class DiagnosticsCatalogService {
       agentBound: !!node?.agentSecretHash,
       isOnline: !!ep?.isOnline,
       lastSeenAt: ep?.lastSeenAt ?? null,
-      items: publicCatalog().map((e) => ({ ...e, allowed: this.can(actor, e.capability as Capability) })),
+      agentVersion: ep?.agentVersion ?? null,
+      // 0.76: from the stored inventory and a static table; nothing is asked of the computer.
+      osSupport: supported ? osSupport(inv?.osCaption, inv?.osBuild, inv?.collectedAt?.toISOString() ?? null, Date.now()) : null,
+      items: publicCatalog().map((e) => ({
+        ...e,
+        allowed: this.can(actor, e.capability as Capability),
+        // 0.76: known to be older than the release that added this key (unknown versions are not refused).
+        needsNewerAgent: agentTooOld(e, ep?.agentVersion),
+      })),
     };
   }
 
@@ -117,11 +127,16 @@ export class DiagnosticsCatalogService {
    * Ask a computer to run one catalog diagnostic. The body is a key and
    * nothing else; an unknown key is refused before anything is written.
    */
-  async request(actor: ActorContext, endpointId: string, key: unknown) {
+  async request(actor: ActorContext, endpointId: string, key: unknown, rawParams?: unknown) {
     if (!isCatalogKey(key)) {
       throw new BadRequestException({ code: 'UNKNOWN_DIAGNOSTIC', message: `Not a catalog diagnostic. Known: ${CATALOG.map((e) => e.key).join(', ')}` });
     }
     const entry = catalogEntry(key)!;
+    // 0.76: the closed parameter schema, before anything is read or written.
+    // A key without one takes nothing; dns_lookup and tcp_port take exactly theirs.
+    const parsed = parseDiagnosticParams(key, rawParams);
+    if (!parsed.ok) throw new BadRequestException({ code: 'INVALID_DIAGNOSTIC_PARAMS', message: parsed.error });
+    const params = parsed.params;
     const cap = entry.capability as Capability;
     const endpoint = await this.assertVisible(actor, endpointId, cap);
     this.acl.assertCapability(actor, cap);
@@ -130,7 +145,7 @@ export class DiagnosticsCatalogService {
     assertAssigned(endpoint);
 
     const [ep, node] = await Promise.all([
-      this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { platform: true } }),
+      this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { platform: true, agentVersion: true } }),
       this.prisma.rustdeskNode.findUnique({ where: { endpointId }, select: { agentSecretHash: true } }),
     ]);
     if (!isWindows(ep?.platform)) {
@@ -141,10 +156,15 @@ export class DiagnosticsCatalogService {
     if (!node?.agentSecretHash) {
       throw new ConflictException({ code: 'AGENT_NOT_BOUND', message: 'This computer has never authenticated with a device secret, so it cannot be asked to run anything. Re-run the installer on it once.' });
     }
+    // 0.76: an agent known to predate this key would only refuse it.
+    if (agentTooOld(entry, ep?.agentVersion)) {
+      throw new ConflictException({ code: 'DIAGNOSTIC_NEEDS_NEWER_AGENT', message: `${entry.label} needs agent ${entry.minAgent} or later; this computer reports ${ep?.agentVersion}. Update the agent from the Agent card (a signed agent gets it with the next signed release).` });
+    }
 
-    // One open run of a key per computer: a second click returns the first.
+    // One open run of a key per computer: a second click returns the first —
+    // for a key with parameters, only one asked with the same parameters.
     const existing = await this.prisma.diagnosticRun.findFirst({ where: { endpointId, key, status: { in: [...OPEN] } }, orderBy: { requestedAt: 'desc' } });
-    if (existing && existing.expiresAt > new Date()) return { run: await this.present(actor, existing), deduplicated: true };
+    if (existing && existing.expiresAt > new Date() && JSON.stringify(existing.params ?? null) === JSON.stringify(params)) return { run: await this.present(actor, existing), deduplicated: true };
 
     const since = new Date(Date.now() - minutes(RATE_WINDOW_MINUTES));
     const [perDevice, perUser] = await Promise.all([
@@ -172,6 +192,7 @@ export class DiagnosticsCatalogService {
     const run = await this.prisma.diagnosticRun.create({
       data: {
         endpointId, tenantId: endpoint.tenantId, customerId: endpoint.customerId, key,
+        ...(params ? { params: params as Prisma.InputJsonValue } : {}),
         requestedById: actor.userId, expiresAt: new Date(Date.now() + minutes(PICKUP_TTL_MINUTES)),
       },
     });
@@ -179,7 +200,8 @@ export class DiagnosticsCatalogService {
       tenantId: endpoint.tenantId ?? undefined, customerId: endpoint.customerId ?? undefined,
       actorId: actor.userId, actorIp: actor.ip,
       action: 'ENDPOINT_DIAGNOSTIC_REQUESTED', resource: 'endpoint', resourceId: endpointId,
-      meta: { runId: run.id, key, capability: cap, risk: entry.risk },
+      // The canonical parameters (a host name, a port, a timeout): what the computer was asked to reach.
+      meta: { runId: run.id, key, capability: cap, risk: entry.risk, ...(params ? { params } : {}) },
     });
     return { run: await this.present(actor, run), deduplicated: false };
   }
@@ -277,10 +299,14 @@ export class DiagnosticsCatalogService {
       automatic: r.requestedById === null,
       requestedBy: { id: r.requestedById, name: u ? ([u.firstName, u.lastName].filter(Boolean).join(' ') || u.email) : null },
       error: r.error, truncated: r.truncated, resultBytes: r.resultBytes,
+      // 0.76: the canonical parameters a palette run was asked with (dns_lookup, tcp_port).
+      params: r.params ?? null,
       // A recent_system_errors result is event-log text: someone who can see
       // the computer but not read its logs sees that it ran, not what it said.
       result: readable ? r.result : null,
       resultWithheld: !readable && r.result !== null,
+      // 0.76: what it means, item by item, judged at the time it was read.
+      interpretation: readable && r.status === 'COMPLETED' && r.result ? interpret(r.key, r.result, r.completedAt?.toISOString() ?? null) : null,
     };
   }
 
@@ -465,7 +491,7 @@ export class DiagnosticsCatalogService {
    * heartbeat that authenticated with the device secret. Returns ids and
    * keys — never parameters — and re-authorizes each requester first.
    */
-  async forHeartbeat(endpointId: string): Promise<{ id: string; key: string }[]> {
+  async forHeartbeat(endpointId: string): Promise<{ id: string; key: string; params?: unknown }[]> {
     await this.expire({ endpointId });
     try {
       await this.scheduleAutomatic(endpointId);
@@ -482,19 +508,21 @@ export class DiagnosticsCatalogService {
     });
     if (!due.length) return [];
     const ep = await this.prisma.endpoint.findUnique({ where: { id: endpointId }, select: { id: true, customerId: true, accessMode: true, tenantId: true } });
-    const out: { id: string; key: string }[] = [];
+    const out: { id: string; key: string; params?: unknown }[] = [];
     for (const r of due) {
       const entry = catalogEntry(r.key);
       // An automatic run has no requester to re-check; it was decided on this
       // heartbeat, from this computer's own state, for a snapshot key only.
-      const why = !entry ? 'unknown_key' : !ep ? 'endpoint_missing' : r.requestedById === null ? (isSnapshotKey(r.key) ? null : 'not_a_snapshot') : await this.requesterStillAllowed(r, entry, ep);
+      // 0.76: stored parameters are checked again, with the same rule, before they leave.
+      const reparsed = parseDiagnosticParams(r.key, r.params ?? undefined);
+      const why = !entry ? 'unknown_key' : !ep ? 'endpoint_missing' : !reparsed.ok ? 'bad_params' : r.requestedById === null ? (isSnapshotKey(r.key) ? null : 'not_a_snapshot') : await this.requesterStillAllowed(r, entry, ep);
       if (why) {
         const n = await this.prisma.diagnosticRun.updateMany({ where: { id: r.id, status: 'REQUESTED' }, data: { status: 'FAILED', error: `Not delivered: the person who requested this is no longer allowed to (${why}).`, completedAt: new Date() } });
         if (n.count) await this.auditDone(r, 'failed', { reason: why });
         continue;
       }
       const n = await this.prisma.diagnosticRun.updateMany({ where: { id: r.id, status: 'REQUESTED' }, data: { status: 'DELIVERED', deliveredAt: new Date(), dispatchCount: { increment: 1 } } });
-      if (n.count) out.push({ id: r.id, key: r.key });
+      if (n.count) out.push(reparsed.ok && reparsed.params ? { id: r.id, key: r.key, params: reparsed.params } : { id: r.id, key: r.key });
     }
     return out;
   }
@@ -519,7 +547,7 @@ export class DiagnosticsCatalogService {
    * another machine's run, or file one diagnostic's output under another.
    */
   async report(endpointId: string, dto: { runId: string; key: string; state: string; result?: unknown; error?: string }) {
-    if (!isCatalogKey(dto.key)) return { accepted: false, reason: 'unknown_key' };
+    if (!isCatalogKey(dto.key)) return dto.key === 'unknown' && dto.state === 'failed' ? this.refusedByAgent(endpointId, dto.runId) : { accepted: false, reason: 'unknown_key' };
     this.quiet.delete(endpointId);
     const run = await this.prisma.diagnosticRun.findFirst({ where: { id: dto.runId, endpointId } });
     if (!run) return { accepted: false, reason: 'unknown_run' };
@@ -558,6 +586,22 @@ export class DiagnosticsCatalogService {
     });
     if (n.count) await this.auditDone(run, 'completed', { resultBytes: capped.bytes, truncated: capped.truncated, duration: entry.duration });
     if (n.count && run.requestedById === null && isSnapshotKey(run.key)) await this.pruneAutomatic(endpointId, run.key, run.id);
+    return { accepted: !!n.count };
+  }
+
+  /**
+   * An agent that does not know a key reports it failed under the key
+   * 'unknown' (heartbeat.ps1 since 0.31). That is accepted for this device's
+   * own open run only, and only ever marks it FAILED — so a computer whose
+   * agent predates a key says so at once instead of expiring ten minutes on.
+   */
+  private async refusedByAgent(endpointId: string, runId: string) {
+    const run = await this.prisma.diagnosticRun.findFirst({ where: { id: runId, endpointId } });
+    if (!run) return { accepted: false, reason: 'unknown_run' };
+    if (run.status !== 'DELIVERED' && run.status !== 'RUNNING') return { accepted: false, reason: `already_${run.status.toLowerCase()}` };
+    const error = `This computer's agent does not have the ${catalogEntry(run.key)?.label ?? run.key} check, so it refused it. Update the agent (Agent card); a signed agent gets new checks with the next signed release.`;
+    const n = await this.prisma.diagnosticRun.updateMany({ where: { id: run.id, status: run.status }, data: { status: 'FAILED', error, completedAt: new Date(), startedAt: run.startedAt ?? new Date() } });
+    if (n.count) await this.auditDone(run, 'failed', { reason: 'agent_unknown_key' });
     return { accepted: !!n.count };
   }
 

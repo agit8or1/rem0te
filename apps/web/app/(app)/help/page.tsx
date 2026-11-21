@@ -732,9 +732,9 @@ const SECTIONS: Section[] = [
           agent</em> (including the standard agent, where an action needs the full agent), <em>Unsupported here</em>{' '}
           (Linux, macOS, RustDesk only), <em>Paused</em> (containment), <em>Not reporting</em> (the request waits for
           a check-in), <em>Not permitted</em> (shown without a button), <em>Not set up</em> (no approval signer) or{' '}
-          <em>Unavailable</em> (archived, not enrolled, unassigned). Flush DNS / renew DHCP and antivirus, firewall,
-          BitLocker and Secure Boot status are listed as <em>Coming later</em>: nothing collects them yet, and
-          nothing is shown in their place — unknown is never healthy.
+          <em>Unavailable</em> (archived, not enrolled, unassigned). Flush DNS / renew DHCP is listed as{' '}
+          <em>Coming later</em>: no approved action does it yet. Since 0.76 the Security, Networking and Maintenance
+          groups also list the read-only palette checks below, each opening its row on Diagnostics.
         </p>
         <p className="font-medium text-foreground">Nothing here is live</p>
         <p>
@@ -789,6 +789,33 @@ const SECTIONS: Section[] = [
           expires and says so. <em>Recent system errors</em> needs the event-log permission; every
           other check needs only to see the computer. Every run is in the audit log. More in{' '}
           <Link href="/docs/diagnostics" className="underline text-foreground">One-click diagnostics</Link>.
+        </p>
+        <p className="font-medium text-foreground">Security, networking and maintenance checks (0.76)</p>
+        <p>
+          The list is grouped into <strong className="text-foreground">Security</strong> (Microsoft Defender,
+          Windows Firewall, BitLocker, Secure Boot and TPM, local administrators, and whether this Windows build
+          still gets security updates), <strong className="text-foreground">Networking</strong> (a DNS lookup, a TCP
+          port test and the routing table, beside the older connectivity and DNS checks),{' '}
+          <strong className="text-foreground">Maintenance</strong> (time sync, activation, unexpected shutdowns,
+          scheduled tasks and who is signed in, beside pending updates and reboot status) and General.{' '}
+          <strong className="text-foreground">Run all security checks</strong> queues every security check you may
+          run, one request each. Every check only reads: no recovery key, product key or the command a task runs is
+          ever collected.
+        </p>
+        <p>
+          Each result is read for you as <em>Healthy</em>, <em>Warning</em>, <em>Critical</em>, <em>Unknown</em> or{' '}
+          <em>Unsupported</em>, finding by finding, with the worst one as the check&apos;s. <em>Unknown</em> means it
+          could not be read and is never shown as healthy. The Windows support row is worked out on the server from
+          the last inventory and a table of end-of-servicing dates; nothing is sent to the computer, and a table more
+          than a year old says <em>Unknown</em> rather than <em>Supported</em>.
+        </p>
+        <p>
+          <em>DNS lookup</em> takes a host name, and <em>TCP port test</em> a host, a port and a timeout of 1, 2, 3, 5
+          or 10 seconds: letters, digits, hyphens and dots only, checked here, again on the server and again on the
+          computer. They make the computer reach a host you name, so they need the <em>Remote connect</em> permission. The
+          new checks need agent 0.76.0 or later; an older agent shows <em>Needs a newer agent</em> and no Run. They
+          are marked <em>Tested only on GitHub&rsquo;s Windows Server runner</em>: they have run on Windows Server in the lab, not yet on a Windows
+          desktop or a customer&apos;s computer.
         </p>
         <p className="font-medium text-foreground">Processes, Services and Network</p>
         <p>

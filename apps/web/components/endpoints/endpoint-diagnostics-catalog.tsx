@@ -8,8 +8,9 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
+import { DEFAULT_TCP_TIMEOUT, TCP_TIMEOUTS, paramsSummary, parseDiagnosticParams, portFromText, type ParamSchema } from '@/lib/diagnostic-params';
 import {
-  Stethoscope, Play, Loader2, CheckCircle2, XCircle, Clock, AlertTriangle, ShieldCheck, Lock,
+  Stethoscope, Play, Loader2, CheckCircle2, XCircle, Clock, AlertTriangle, ShieldCheck, Lock, FlaskConical, HelpCircle, MinusCircle,
 } from 'lucide-react';
 
 /**
@@ -23,6 +24,14 @@ import {
  *
  * Results are rendered as text, never markup — every field came from a
  * managed computer and is attacker-influenced on a compromised one.
+ *
+ * 0.76 (the read-only palette): the list is grouped (Security, Networking,
+ * Maintenance, General); two keys take typed parameters (a DNS name; a TCP
+ * host, port and timeout), checked here by lib/diagnostic-params.ts and again
+ * by the server; each palette result carries the server's interpretation —
+ * Healthy, Warning, Critical, Unknown or Unsupported, per finding, with the
+ * worst as the run's — and Unknown is never drawn as Healthy. The Windows
+ * support row is the server's own reading of the inventory and sends nothing.
  */
 
 type RunStatus = 'REQUESTED' | 'DELIVERED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'EXPIRED';
@@ -32,7 +41,7 @@ interface CatalogItem {
   key: string;
   label: string;
   description: string;
-  capability: string;
+  capability: 'computers:view' | 'computers:event_logs' | 'computers:connect' | string;
   capabilityReason: string;
   supportedOs: string[];
   duration: 'seconds' | 'minute' | 'minutes';
@@ -42,8 +51,27 @@ interface CatalogItem {
   allowed: boolean;
   /** 0.33: shown as a snapshot on that workspace tab instead of in this list. */
   tab?: 'processes' | 'services' | 'network';
+  /** 0.76: the group it is listed under. */
+  group?: 'general' | 'security' | 'networking' | 'maintenance';
+  /** 0.76: the oldest agent that carries it, and whether this computer's is older. */
+  minAgent?: string;
+  needsNewerAgent?: boolean;
+  /** 0.76: the closed parameter schema, for the two keys that take one. */
+  params?: ParamSchema;
+  /** 0.76: where it has run for real. */
+  evidence?: 'lab_windows_server';
 }
-interface CatalogResponse { supported: boolean; agentBound: boolean; isOnline: boolean; lastSeenAt: string | null; items: CatalogItem[] }
+type HealthState = 'healthy' | 'warning' | 'critical' | 'unknown' | 'unsupported';
+interface Finding { id: string; label: string; state: HealthState; detail: string; evidenceAt: string | null }
+interface Interpretation { version: number; overall: HealthState; findings: Finding[] }
+interface OsSupport extends Finding { build: string | null; channel: string | null; endsOn: string | null; tableReviewed: string }
+interface CatalogResponse {
+  supported: boolean; agentBound: boolean; isOnline: boolean; lastSeenAt: string | null;
+  agentVersion?: string | null;
+  /** 0.76: the server's reading of the inventory's Windows build; null off Windows. */
+  osSupport?: OsSupport | null;
+  items: CatalogItem[];
+}
 interface Run {
   id: string; key: string; label: string; status: RunStatus;
   requestedAt: string; deliveredAt: string | null; startedAt: string | null; completedAt: string | null; expiresAt: string;
@@ -54,7 +82,20 @@ interface Run {
   result: Record<string, unknown> | null; resultWithheld: boolean;
   /** A snapshot run (0.33): its result is on the workspace tab, not in the history. */
   resultOnTab?: boolean;
+  /** 0.76: the typed parameters it was asked with (dns_lookup, tcp_port). */
+  params?: Record<string, unknown> | null;
+  /** 0.76: the server's reading of a completed palette result. */
+  interpretation?: Interpretation | null;
 }
+
+const GROUPS: { id: NonNullable<CatalogItem['group']>; label: string; blurb: string }[] = [
+  { id: 'security', label: 'Security', blurb: 'Antivirus, firewall, disk encryption, boot integrity and who is an administrator.' },
+  { id: 'networking', label: 'Networking', blurb: 'Name resolution, reaching a host and port, and the routing table.' },
+  { id: 'maintenance', label: 'Maintenance', blurb: 'Updates, restarts, time, activation, crashes, scheduled tasks and who is signed in.' },
+  { id: 'general', label: 'General', blurb: 'Inventory, disks, services, errors and processes.' },
+];
+
+const CAP_NEEDS: Record<string, string> = { 'computers:event_logs': 'needs “Read event logs”', 'computers:connect': 'needs “Remote connect”' };
 
 const TAB_NAME: Record<string, string> = { process_list: 'Processes', service_list: 'Services', network_adapters: 'Network' };
 
@@ -91,6 +132,38 @@ function StatusPill({ status }: { status: RunStatus }) {
   };
   const m = map[status];
   return <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${m.cls}`}>{m.icon}{m.label}</span>;
+}
+
+const HEALTH: Record<HealthState, { label: string; cls: string; icon: React.ReactNode }> = {
+  healthy: { label: 'Healthy', cls: 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-200', icon: <CheckCircle2 className="h-3 w-3" /> },
+  warning: { label: 'Warning', cls: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200', icon: <AlertTriangle className="h-3 w-3" /> },
+  critical: { label: 'Critical', cls: 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300', icon: <XCircle className="h-3 w-3" /> },
+  // Unknown is grey with a question mark, never green: not knowing is not healthy.
+  unknown: { label: 'Unknown', cls: 'bg-muted text-muted-foreground', icon: <HelpCircle className="h-3 w-3" /> },
+  unsupported: { label: 'Unsupported', cls: 'bg-slate-100 text-slate-700 dark:bg-slate-900 dark:text-slate-300', icon: <MinusCircle className="h-3 w-3" /> },
+};
+
+/** One health state. Anything the server did not name is drawn as Unknown. */
+function HealthPill({ state }: { state: HealthState | string }) {
+  const known = Object.prototype.hasOwnProperty.call(HEALTH, state);
+  const key = (known ? state : 'unknown') as HealthState;
+  const m = HEALTH[key];
+  return <span data-health={key} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${m.cls}`}>{m.icon}{m.label}</span>;
+}
+
+function Findings({ interpretation }: { interpretation: Interpretation }) {
+  if (!interpretation.findings.length) return null;
+  return (
+    <ul className="space-y-1" data-findings="">
+      {interpretation.findings.map((f) => (
+        <li key={f.id} className="flex flex-wrap items-start gap-2 text-xs">
+          <HealthPill state={f.state} />
+          <span className="font-medium">{f.label}</span>
+          <span className="text-muted-foreground">{f.detail}</span>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 /** Requested → delivered → running → done, with the time of each step reached. */
@@ -215,6 +288,104 @@ function Result({ run }: { run: Run }) {
       );
     case 'refresh_inventory':
       return <p className="text-sm">Inventory collected: {s(r.osCaption)} build {s(r.osBuild)}, {s(r.disks)} disk(s), {s(r.networks)} network adapter(s), {s(r.software)} installed program(s). The Specs tab has been updated.</p>;
+    // ── 0.76: the palette ──
+    case 'defender_status': {
+      if (r.supported === false) return <p className="text-xs text-muted-foreground">{r.reason === 'not_running' ? 'Microsoft Defender did not answer.' : 'Microsoft Defender is not installed.'}{r.error ? ` (${s(r.error)})` : ''}</p>;
+      const yn = (v: unknown) => (v === true ? 'On' : v === false ? 'Off' : 'Not reported');
+      return (
+        <div className="space-y-3">
+          <Table head={['Setting', 'Value']} rows={[
+            ['Defender service', yn(r.amServiceEnabled)], ['Antivirus', yn(r.antivirusEnabled)], ['Real-time protection', yn(r.realTimeProtectionEnabled)],
+            ['Behaviour monitoring', yn(r.behaviorMonitorEnabled)], ['Tamper protection', yn(r.isTamperProtected)], ['Mode', s(r.runningMode)],
+            ['Signatures', `${s(r.signatureVersion)}${r.signatureLastUpdated ? ` · ${formatDate(r.signatureLastUpdated as string)}` : ''}`],
+            ['Last quick scan', r.quickScanEndAt ? formatDate(r.quickScanEndAt as string) : '—'], ['Last full scan', r.fullScanEndAt ? formatDate(r.fullScanEndAt as string) : '—'],
+          ]} />
+          {arr(r.registeredAntivirus).length > 0 && (
+            <div><h4 className="text-xs font-medium mb-1">Registered with Windows Security</h4>
+              <Table head={['Product', 'State']} rows={arr(r.registeredAntivirus).map((a) => [s(a.name), <span key="p" className="font-mono">{s(a.productState)}</span>])} /></div>
+          )}
+        </div>
+      );
+    }
+    case 'firewall_status':
+      return (
+        <div className="space-y-2">
+          <Table head={['Profile', 'On', 'Inbound', 'Outbound']} rows={arr(r.profiles).map((p) => [s(p.name), p.enabled === true ? 'Yes' : p.enabled === false ? 'No' : '—', s(p.defaultInbound), s(p.defaultOutbound)])} />
+          <p className="text-xs text-muted-foreground">Networks in use: {arr(r.activeCategories).join(', ') || 'none reported'}. Service: {s(r.serviceState)}.</p>
+        </div>
+      );
+    case 'bitlocker_status':
+      if (r.supported === false) return <p className="text-xs text-muted-foreground">BitLocker is not available here.</p>;
+      return <Table head={['Volume', 'Type', 'Protection', 'Status', 'Encrypted', 'Method', 'Protectors']} rows={arr(r.volumes).map((v) => [
+        <span key="m" className="font-mono">{s(v.mountPoint)}</span>, s(v.volumeType), s(v.protectionStatus), s(v.volumeStatus),
+        typeof v.encryptionPercentage === 'number' ? `${v.encryptionPercentage}%` : '—', s(v.encryptionMethod), arr(v.protectorTypes).join(', ') || '—',
+      ])} />;
+    case 'secure_boot_tpm': {
+      const t = (r.tpm ?? {}) as Record<string, unknown>;
+      return <Table head={['Item', 'Value']} rows={[
+        ['Secure Boot', s(r.secureBoot)], ['TPM present', t.present === true ? 'Yes' : t.present === false ? 'No' : '—'], ['TPM ready', t.ready === true ? 'Yes' : t.ready === false ? 'No' : '—'],
+        ['TPM version', s(t.specVersion)], ['TPM manufacturer', s(t.manufacturer)],
+      ]} />;
+    }
+    case 'local_admins':
+      return (
+        <div className="space-y-2">
+          <Table head={['Member', 'Kind', 'Source', '']} rows={arr(r.members).map((m) => [s(m.name), s(m.kind), s(m.source), m.builtinAdministrator ? 'Built-in Administrator' : ''])} />
+          {r.method ? <p className="text-[11px] text-muted-foreground">Read with {s(r.method)}.</p> : null}
+        </div>
+      );
+    case 'dns_lookup': {
+      const l = (r.lookup ?? {}) as Record<string, unknown>;
+      return (
+        <div className="space-y-2">
+          <Table head={['Name', 'Result', 'Addresses', 'Time']} rows={[[
+            <span key="n" className="font-mono">{s(l.name)}</span>,
+            l.ok ? <span key="r" className="text-green-700 dark:text-green-400">Resolved</span> : <span key="r" className="text-red-600">{l.timedOut ? 'Timed out' : s(l.error) === '—' ? 'Failed' : s(l.error)}</span>,
+            <span key="a" className="font-mono">{arr(l.addresses).join(', ') || '—'}</span>, `${s(l.latencyMs)} ms`,
+          ]]} />
+          <p className="text-xs text-muted-foreground">DNS servers: <span className="font-mono">{arr(r.resolvers).join(', ') || 'none reported'}</span>. The answer may come from the computer&apos;s cache.</p>
+        </div>
+      );
+    }
+    case 'tcp_port':
+      return <Table head={['Host', 'Port', 'Outcome', 'Time', 'Address']} rows={[[
+        <span key="h" className="font-mono">{s(r.host)}</span>, <span key="p" className="font-mono">{s(r.port)}</span>, s(r.outcome),
+        r.latencyMs != null ? `${s(r.latencyMs)} ms` : '—', <span key="a" className="font-mono">{s(r.remoteAddress)}</span>,
+      ]]} />;
+    case 'route_table':
+      return (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">{s(r.routeCount)} routes.</p>
+          <Table head={['Destination', 'Next hop', 'Interface', 'Metric', 'Family']} rows={arr(r.routes).map((x) => [
+            <span key="d" className="font-mono">{s(x.destination)}</span>, <span key="n" className="font-mono">{s(x.nextHop)}</span>, s(x.interfaceAlias), s(x.routeMetric), s(x.addressFamily),
+          ])} />
+        </div>
+      );
+    case 'time_sync': {
+      const q = (r.status ?? {}) as Record<string, unknown>;
+      return <Table head={['Item', 'Value']} rows={[
+        ['Type', s(r.type)], ['NTP server', s(r.ntpServer)], ['Service', `${s(r.serviceState)}${r.serviceStart ? ` (${s(r.serviceStart)})` : ''}`],
+        ['Source', s(q.source)], ['Stratum', s(q.stratum)], ['Last sync', q.lastSyncAt ? formatDate(q.lastSyncAt as string) : '—'],
+      ]} />;
+    }
+    case 'windows_activation':
+      return <Table head={['Product', 'Channel', 'Licence', 'Grace']} rows={arr(r.products).map((x) => [s(x.name), s(x.channel), s(x.licenseStatus),
+        typeof x.graceMinutes === 'number' && x.graceMinutes > 0 ? `${Math.round(x.graceMinutes / 1440)} d` : '—'])} />;
+    case 'unexpected_shutdowns':
+      return <Table head={['When', 'Kind', 'Event', 'Bug check']} rows={arr(r.events).map((e) => [formatDate(e.at as string), s(e.kind),
+        <span key="i" className="font-mono">{s(e.eventId)}</span>, <span key="b" className="font-mono">{s(e.bugcheckCode)}</span>])} />;
+    case 'scheduled_tasks':
+      return (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">{s(r.taskCount)} tasks outside {'\\Microsoft\\'} ({s(r.microsoftTasks)} of Windows&apos; own not listed). What a task runs is never read.</p>
+          <Table head={['Task', 'State', 'Runs as', 'Last run', 'Result', 'Next run']} rows={arr(r.tasks).map((t) => [
+            <span key="p" className="font-mono">{`${s(t.path)}${s(t.name)}`}</span>, s(t.state), s(t.runAs),
+            t.lastRunAt ? formatDate(t.lastRunAt as string) : '—', <span key="r" className="font-mono">{s(t.lastResult)}</span>, t.nextRunAt ? formatDate(t.nextRunAt as string) : '—',
+          ])} />
+        </div>
+      );
+    case 'signed_in_sessions':
+      return <Table head={['Session', 'User', 'Since']} rows={arr(r.sessions).map((x) => [<span key="i" className="font-mono">{s(x.sessionId)}</span>, s(x.user), x.since ? formatDate(x.since as string) : '—'])} />;
     default:
       return <p className="text-sm text-muted-foreground">No viewer for this diagnostic.</p>;
   }
@@ -224,9 +395,11 @@ function RunDetail({ run, now }: { run: Run; now: number }) {
   return (
     <div className="space-y-2 rounded-md border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">{run.label}</span>
+          {paramsSummary(run.params) && <span className="font-mono text-xs text-muted-foreground" data-run-params="">{paramsSummary(run.params)}</span>}
           <StatusPill status={run.status} />
+          {run.interpretation && <HealthPill state={run.interpretation.overall} />}
         </div>
         <span className="text-xs text-muted-foreground">
           {run.automatic ? 'Asked for automatically' : `Asked by ${run.requestedBy.name ?? 'a former user'}`} {ago(run.requestedAt, now)}
@@ -239,9 +412,85 @@ function RunDetail({ run, now }: { run: Run; now: number }) {
       {run.status === 'COMPLETED' && run.resultOnTab && <p className="text-xs text-muted-foreground">The result is on the {TAB_NAME[run.key] ?? 'device'} tab.</p>}
       {run.status === 'COMPLETED' && !run.resultOnTab && (run.resultWithheld
         ? <p className="text-xs text-muted-foreground flex items-center gap-1"><Lock className="h-3 w-3" />The result contains event-log text, which needs the &ldquo;Read event logs&rdquo; permission.</p>
-        : <Result run={run} />)}
+        : (
+          <div className="space-y-3">
+            {run.interpretation && <Findings interpretation={run.interpretation} />}
+            <Result run={run} />
+          </div>
+        ))}
       {run.truncated && <p className="text-[11px] text-amber-700 dark:text-amber-400">Some lists were shortened to fit the result size limit.</p>}
     </div>
+  );
+}
+
+
+/** A parameter form's text, before it is parsed. */
+interface FormState { name: string; host: string; port: string; timeout: number }
+const EMPTY_FORM: FormState = { name: '', host: '', port: '', timeout: DEFAULT_TCP_TIMEOUT };
+const touched = (schema: ParamSchema, f: FormState) => (schema === 'dns_lookup' ? f.name !== '' : f.host !== '' || f.port !== '');
+function formParams(schema: ParamSchema, f: FormState): Record<string, unknown> {
+  return schema === 'dns_lookup' ? { name: f.name.trim() } : { host: f.host.trim(), port: portFromText(f.port), timeoutSeconds: f.timeout };
+}
+
+/** The DNS name, or the TCP host, port and timeout. Plain inputs: nothing typed here is ever drawn as markup. */
+function ParamForm({ item, form, onChange, error, disabled, onSubmit }: {
+  item: CatalogItem & { params: ParamSchema }; form: FormState; onChange: (f: FormState) => void;
+  error: string | null; disabled: boolean; onSubmit: () => void;
+}) {
+  const id = (f: string) => `diag-${item.key}-${f}`;
+  const field = 'h-8 rounded-md border bg-background px-2 text-xs font-mono';
+  return (
+    <form className="space-y-1" data-diag-form={item.key} onSubmit={(e) => { e.preventDefault(); if (!disabled) onSubmit(); }}>
+      <div className="flex flex-wrap items-end gap-2">
+        {item.params === 'dns_lookup' ? (
+          <label htmlFor={id('name')} className="flex flex-col gap-0.5 text-[11px] text-muted-foreground">
+            Name to resolve
+            <input id={id('name')} data-diag-param="name" className={`${field} w-64`} maxLength={253} autoComplete="off" spellCheck={false}
+              placeholder="intranet.example.com" value={form.name} onChange={(e) => onChange({ ...form, name: e.target.value })} />
+          </label>
+        ) : (
+          <>
+            <label htmlFor={id('host')} className="flex flex-col gap-0.5 text-[11px] text-muted-foreground">
+              Host
+              <input id={id('host')} data-diag-param="host" className={`${field} w-56`} maxLength={253} autoComplete="off" spellCheck={false}
+                placeholder="fileserver.example.com" value={form.host} onChange={(e) => onChange({ ...form, host: e.target.value })} />
+            </label>
+            <label htmlFor={id('port')} className="flex flex-col gap-0.5 text-[11px] text-muted-foreground">
+              Port
+              <input id={id('port')} data-diag-param="port" className={`${field} w-20`} inputMode="numeric" maxLength={5} autoComplete="off"
+                placeholder="445" value={form.port} onChange={(e) => onChange({ ...form, port: e.target.value })} />
+            </label>
+            <label htmlFor={id('timeout')} className="flex flex-col gap-0.5 text-[11px] text-muted-foreground">
+              Timeout
+              <select id={id('timeout')} data-diag-param="timeoutSeconds" className="h-8 rounded-md border bg-background px-2 text-xs"
+                value={form.timeout} onChange={(e) => onChange({ ...form, timeout: Number(e.target.value) })}>
+                {TCP_TIMEOUTS.map((t) => <option key={t} value={t}>{t} s</option>)}
+              </select>
+            </label>
+          </>
+        )}
+      </div>
+      {error && <p className="text-[11px] text-red-600 dark:text-red-400" data-diag-param-error="">{error}</p>}
+    </form>
+  );
+}
+
+/** The server's own reading of the inventory's Windows build. Nothing is sent to the computer, so there is no Run. */
+function OsSupportRow({ os, focused }: { os: OsSupport; focused: boolean }) {
+  return (
+    <li data-diag-key="os_support" data-focused={focused ? 'true' : undefined} tabIndex={-1}
+      className={`space-y-1 py-3 outline-none ${focused ? '-mx-2 rounded-md bg-primary/5 px-2 ring-1 ring-primary/40' : ''}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium">{os.label}</span>
+        <HealthPill state={os.state} />
+        <span className="text-[11px] text-muted-foreground">runs on the server</span>
+      </div>
+      <p className="text-xs">{os.detail}</p>
+      <p className="text-[11px] text-muted-foreground">
+        {os.build ? `Build ${os.build}` : 'No build'}{os.channel ? ` · ${os.channel}` : ''}{os.endsOn ? ` · security updates until ${os.endsOn}` : ''}.
+        {' '}From the computer&apos;s last inventory{os.evidenceAt ? ` (${formatDate(os.evidenceAt)})` : ''} and a table kept on the server, last reviewed {os.tableReviewed}. Nothing is sent to the computer.
+      </p>
+    </li>
   );
 }
 
@@ -253,6 +502,8 @@ export function EndpointDiagnosticsCatalog({ endpointId, focusKey }: {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [selected, setSelected] = useState<string | null>(null);
+  const [forms, setForms] = useState<Record<string, FormState>>({});
+  const [batch, setBatch] = useState<{ done: number; total: number } | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 15_000); return () => clearInterval(t); }, []);
 
@@ -268,8 +519,10 @@ export function EndpointDiagnosticsCatalog({ endpointId, focusKey }: {
     refetchInterval: (q) => ((q.state.data ?? []).some((r) => OPEN.includes(r.status)) ? 4000 : false),
   });
 
+  const post = (key: string, params?: Record<string, unknown>) =>
+    api.post(`/endpoints/${endpointId}/diagnostics/runs`, params ? { key, params } : { key }).then((r) => r.data?.data as { run: Run; deduplicated: boolean });
   const run = useMutation({
-    mutationFn: (key: string) => api.post(`/endpoints/${endpointId}/diagnostics/runs`, { key }).then((r) => r.data?.data as { run: Run; deduplicated: boolean }),
+    mutationFn: (v: { key: string; params?: Record<string, unknown> }) => post(v.key, v.params),
     onSuccess: (d) => {
       setSelected(d.run.id);
       if (d.deduplicated) toast({ title: 'Already queued', description: `${d.run.label} is already waiting for this computer.` });
@@ -283,7 +536,9 @@ export function EndpointDiagnosticsCatalog({ endpointId, focusKey }: {
     if (!focusKey || !ready) return;
     const row = document.querySelector<HTMLElement>(`[data-diag-key="${CSS.escape(focusKey)}"]`);
     row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    row?.querySelector<HTMLButtonElement>('button[data-diag-run]')?.focus({ preventScroll: true });
+    // A parameter form's first field, else the Run button, else (the server's own Windows support row) the row itself.
+    const target = row?.querySelector<HTMLElement>('[data-diag-param]') ?? row?.querySelector<HTMLButtonElement>('button[data-diag-run]') ?? row;
+    target?.focus({ preventScroll: true });
   }, [focusKey, ready]);
 
   const c = catalog.data;
@@ -301,6 +556,89 @@ export function EndpointDiagnosticsCatalog({ endpointId, focusKey }: {
       ? 'This computer has never authenticated with a device secret, so it cannot be asked to run anything. Re-run the installer on it once.'
       : null;
 
+  // Snapshot keys have their own tabs (Processes, Services, Network).
+  const listed = c.items.filter((item) => !item.tab);
+  const groupOf = (item: CatalogItem) => (GROUPS.some((g) => g.id === item.group) ? item.group! : 'general');
+  const busyKey = (key: string) => { const last = latestByKey.get(key); return !!last && OPEN.includes(last.status); };
+  const runnable = (item: CatalogItem) => item.allowed && !item.needsNewerAgent && !blocked && !busyKey(item.key);
+  // "Run all security checks": every security key this person may run now, one request each, in catalog order.
+  const security = listed.filter((i) => groupOf(i) === 'security');
+  const securityRunnable = security.filter((i) => runnable(i) && !i.params);
+
+  async function runAllSecurity() {
+    const keys = securityRunnable;
+    if (!keys.length) return;
+    setBatch({ done: 0, total: keys.length });
+    let queued = 0, already = 0;
+    const failed: string[] = [];
+    for (const item of keys) {
+      try { const d = await post(item.key); if (d.deduplicated) already++; else queued++; } catch (e) { failed.push(`${item.label}: ${errText(e, 'refused')}`); }
+      setBatch((b) => (b ? { ...b, done: b.done + 1 } : b));
+    }
+    setBatch(null);
+    qc.invalidateQueries({ queryKey: ['diagnostics-runs', endpointId] });
+    toast({
+      title: failed.length ? 'Some security checks were not queued' : 'Security checks queued',
+      description: [`${queued} queued`, already ? `${already} already waiting` : '', ...failed].filter(Boolean).join('. '),
+      variant: failed.length ? 'destructive' : undefined,
+    });
+  }
+
+  const renderRow = (item: CatalogItem) => {
+    const last = latestByKey.get(item.key);
+    const busy = busyKey(item.key);
+    const pending = run.isPending && run.variables?.key === item.key;
+    const form = forms[item.key] ?? EMPTY_FORM;
+    const parsed = item.params ? parseDiagnosticParams(item.params, item.label, formParams(item.params, form)) : null;
+    const paramError = item.params && parsed && !parsed.ok && touched(item.params, form) ? parsed.error : null;
+    const disabled = !item.allowed || !!item.needsNewerAgent || !!blocked || busy || pending || !!batch || (!!parsed && !parsed.ok);
+    const title = !item.allowed ? `Needs ${item.capability}` : item.needsNewerAgent ? `Needs agent ${item.minAgent ?? 'a newer release'}` : parsed && !parsed.ok ? parsed.error : undefined;
+    const go = () => {
+      if (parsed && !parsed.ok) return;
+      run.mutate(parsed && parsed.ok && parsed.params ? { key: item.key, params: parsed.params as Record<string, unknown> } : { key: item.key });
+    };
+    return (
+      <li key={item.key} data-diag-key={item.key} data-focused={focusKey === item.key ? 'true' : undefined}
+        className={`flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between ${focusKey === item.key ? '-mx-2 rounded-md bg-primary/5 px-2 ring-1 ring-primary/40' : ''}`}>
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium">{item.label}</span>
+            <span className="text-[11px] text-muted-foreground">takes {DURATION[item.duration]}</span>
+            {CAP_NEEDS[item.capability] && <span className="text-[11px] text-muted-foreground" title={item.capabilityReason}>{CAP_NEEDS[item.capability]}</span>}
+            {item.evidence === 'lab_windows_server' && (
+              <span data-lab-only="" className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                title="This check has run for real only on GitHub's Windows Server runner (the lab), never on a Windows 10 or 11 desktop or a customer's computer. Treat its reading as new.">
+                <FlaskConical className="h-3 w-3" />Tested only on GitHub&rsquo;s Windows Server runner
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">{item.description}</p>
+          {item.needsNewerAgent && (
+            <p className="text-xs text-amber-700 dark:text-amber-400" data-diag-needs-newer="">
+              Needs agent {item.minAgent ?? 'a newer release'} or later; this computer reports {c.agentVersion ?? 'no version'}. Update the agent from the Agent card (a signed agent gets it with the next signed release).
+            </p>
+          )}
+          {item.params && !item.needsNewerAgent && item.allowed && !blocked && (
+            <ParamForm item={item as CatalogItem & { params: ParamSchema }} form={form} error={paramError} disabled={disabled} onSubmit={go}
+              onChange={(f) => setForms((m) => ({ ...m, [item.key]: f }))} />
+          )}
+          {last && (
+            <button type="button" onClick={() => setSelected(last.id)} className="flex flex-wrap items-center gap-2 text-xs hover:underline">
+              <StatusPill status={last.status} />
+              {last.status === 'COMPLETED' && last.interpretation && <HealthPill state={last.interpretation.overall} />}
+              {paramsSummary(last.params) && <span className="font-mono text-muted-foreground">{paramsSummary(last.params)}</span>}
+              <span className="text-muted-foreground">{last.status === 'COMPLETED' ? `result ${ago(last.completedAt, now)}` : ago(last.requestedAt, now)}</span>
+            </button>
+          )}
+        </div>
+        <Button size="sm" variant="outline" className="shrink-0" data-diag-run="" disabled={disabled} title={title} onClick={go}>
+          {busy || pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : !item.allowed ? <Lock className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+          <span className="ml-1.5">{busy ? 'Waiting' : 'Run'}</span>
+        </Button>
+      </li>
+    );
+  };
+
   return (
     <div className="space-y-4">
       <Card>
@@ -312,46 +650,39 @@ export function EndpointDiagnosticsCatalog({ endpointId, focusKey }: {
           </CardTitle>
           <p className="text-xs text-muted-foreground">
             Fixed checks the agent already carries. Nothing is changed on the computer and no approval is needed; every run is recorded in the audit log.
+            {' '}A reading is Healthy, Warning, Critical, Unknown or Unsupported; Unknown means it could not be read, never that it is fine.
             {!c.isOnline && c.supported && ` This computer looks offline (last seen ${ago(c.lastSeenAt, now)}); a request waits fifteen minutes for it.`}
           </p>
         </CardHeader>
-        <CardContent className="space-y-2">
+        <CardContent className="space-y-5">
           {blocked && <p className="text-sm text-amber-700 dark:text-amber-400 flex items-center gap-2"><AlertTriangle className="h-4 w-4" />{blocked}</p>}
-          <ul className="divide-y">
-            {/* Snapshot keys have their own tabs (Processes, Services, Network). */}
-            {c.items.filter((item) => !item.tab).map((item) => {
-              const last = latestByKey.get(item.key);
-              const busy = !!last && OPEN.includes(last.status);
-              return (
-                <li key={item.key} data-diag-key={item.key} data-focused={focusKey === item.key ? 'true' : undefined}
-                  className={`flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between ${focusKey === item.key ? '-mx-2 rounded-md bg-primary/5 px-2 ring-1 ring-primary/40' : ''}`}>
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-medium">{item.label}</span>
-                      <span className="text-[11px] text-muted-foreground">takes {DURATION[item.duration]}</span>
-                      {item.capability !== 'computers:view' && <span className="text-[11px] text-muted-foreground" title={item.capabilityReason}>needs &ldquo;Read event logs&rdquo;</span>}
-                    </div>
-                    <p className="text-xs text-muted-foreground">{item.description}</p>
-                    {last && (
-                      <button type="button" onClick={() => setSelected(last.id)} className="flex items-center gap-2 text-xs hover:underline">
-                        <StatusPill status={last.status} />
-                        <span className="text-muted-foreground">{last.status === 'COMPLETED' ? `result ${ago(last.completedAt, now)}` : ago(last.requestedAt, now)}</span>
-                      </button>
-                    )}
+          {GROUPS.map((g) => {
+            const items = listed.filter((i) => groupOf(i) === g.id);
+            const os = g.id === 'security' ? c.osSupport ?? null : null;
+            if (!items.length && !os) return null;
+            return (
+              <section key={g.id} data-diag-group={g.id} aria-labelledby={`diag-group-${g.id}`}>
+                <div className="flex flex-wrap items-end justify-between gap-2 border-b pb-2">
+                  <div>
+                    <h3 id={`diag-group-${g.id}`} className="text-sm font-semibold">{g.label}</h3>
+                    <p className="text-[11px] text-muted-foreground">{g.blurb}</p>
                   </div>
-                  <Button
-                    size="sm" variant="outline" className="shrink-0" data-diag-run=""
-                    disabled={!item.allowed || !!blocked || busy || (run.isPending && run.variables === item.key)}
-                    title={!item.allowed ? `Needs ${item.capability}` : undefined}
-                    onClick={() => run.mutate(item.key)}
-                  >
-                    {busy || (run.isPending && run.variables === item.key) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : !item.allowed ? <Lock className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-                    <span className="ml-1.5">{busy ? 'Waiting' : 'Run'}</span>
-                  </Button>
-                </li>
-              );
-            })}
-          </ul>
+                  {g.id === 'security' && security.length > 0 && (
+                    <Button size="sm" variant="secondary" data-diag-run-all="security" disabled={!securityRunnable.length || !!batch || run.isPending}
+                      title={!securityRunnable.length ? 'None of the security checks can be run now.' : `Queues ${securityRunnable.length} check${securityRunnable.length === 1 ? '' : 's'}, one request each.`}
+                      onClick={() => { void runAllSecurity(); }}>
+                      {batch ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                      <span className="ml-1.5">{batch ? `Queuing ${batch.done}/${batch.total}…` : 'Run all security checks'}</span>
+                    </Button>
+                  )}
+                </div>
+                <ul className="divide-y">
+                  {os && <OsSupportRow os={os} focused={focusKey === 'os_support'} />}
+                  {items.map(renderRow)}
+                </ul>
+              </section>
+            );
+          })}
         </CardContent>
       </Card>
 
@@ -365,7 +696,12 @@ export function EndpointDiagnosticsCatalog({ endpointId, focusKey }: {
             : (
               <Table head={['Requested', 'Diagnostic', 'By', 'Status', '']} rows={history.map((r) => [
                 <span key="t" title={formatDate(r.requestedAt)}>{ago(r.requestedAt, now)}</span>,
-                r.label, r.automatic ? 'Automatic' : r.requestedBy.name ?? '—', <StatusPill key="s" status={r.status} />,
+                <span key="d" className="flex flex-wrap items-center gap-1.5">
+                  {r.label}
+                  {paramsSummary(r.params) && <span className="font-mono text-muted-foreground" data-run-params="">{paramsSummary(r.params)}</span>}
+                </span>,
+                r.automatic ? 'Automatic' : r.requestedBy.name ?? '—',
+                <span key="s" className="flex flex-wrap items-center gap-1"><StatusPill status={r.status} />{r.status === 'COMPLETED' && r.interpretation && <HealthPill state={r.interpretation.overall} />}</span>,
                 <button key="v" type="button" className="text-xs text-primary hover:underline" onClick={() => setSelected(r.id)}>{selected === r.id ? 'Shown above' : 'View'}</button>,
               ])} />
             )}

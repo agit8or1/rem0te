@@ -1239,7 +1239,7 @@ export class EnrollmentService {
 
     // Diagnostics catalog (0.31): runs staged for this machine, as catalog
     // keys only. Authenticated heartbeats only, and best-effort like the rest.
-    let diagnostics: { id: string; key: string }[] = [];
+    let diagnostics: { id: string; key: string; params?: unknown }[] = [];
     if (authenticated) {
       try {
         diagnostics = await this.diagnostics.forHeartbeat(node.endpointId);

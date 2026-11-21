@@ -1748,6 +1748,7 @@ async function combo(browser, f, vp, theme) {
     await msaReadinessUi(page, f, vp, theme, label);
     await headerAgentUpgrade(page, f, vp, theme, label);
     await toolsPanel(page, f, vp, theme, label);
+    await diagnosticsPaletteUi(page, f, vp, theme, label);
     if (theme === 'light') await mainPagesSweep(page, f, vp, label);
   } finally { await ctx.close(); }
   await apiKeys(browser, f, vp, theme, label);
@@ -2277,7 +2278,9 @@ async function msaReadinessUi(page, f, vp, theme, label) {
 // A business of its own (no TAG in the names, so the list, palette and map
 // never meet them): a signed Windows agent reporting every catalog action, a
 // standard Windows agent, the read-only Linux and macOS agents, each with a
-// device secret and checking in now, and an offline standard one.
+// device secret and checking in now, and an offline standard one. 0.76: the
+// signed agent reports 0.76.0, so it carries the read-only palette; the
+// standard and offline ones report 0.73.0 and must say they need a newer one.
 async function seedTools(f) {
   const D = await prisma.customer.create({ data: { tenantId: f.tenant.id, name: `TLS ${sfx} Tools` } });
   created.businesses.push(D.id);
@@ -2294,7 +2297,7 @@ async function seedTools(f) {
   };
   return {
     D,
-    signed: await mk('SIGNED', { updateChannel: 'signed', signedSeenAt: new Date(), agentActions: ACTIONS }),
+    signed: await mk('SIGNED', { updateChannel: 'signed', signedSeenAt: new Date(), agentActions: ACTIONS, agentVersion: '0.76.0' }),
     standard: await mk('STANDARD', {}),
     linux: await mk('LINUX', { platform: 'Linux', osVersion: 'Ubuntu 24.04', agentVersion: '0.33.0' }),
     mac: await mk('MAC', { platform: 'macOS', osVersion: 'macOS 15.1', agentVersion: '0.33.0' }),
@@ -2318,9 +2321,16 @@ const closeTools = async (page) => { await page.keyboard.press('Escape'); await 
 const ACTION_TOOLS = ['run-script', 'service-control', 'service-restart', 'spooler-start', 'process-stop', 'software-install', 'software-remove', 'install-updates', 'restart-schedule', 'restart-cancel', 'logs-collect'];
 const DIAG_TOOLS = ['refresh-inventory', 'disk-space', 'service-health', 'top-processes', 'recent-errors', 'reboot-status', 'network-connectivity', 'dns-resolution'];
 const VIEW_TOOLS = ['services', 'processes', 'software-list', 'network', 'security-log'];
-const SERVER_TOOLS = ['test-connection', 'diagnostics-report'];
+const SERVER_TOOLS = ['test-connection', 'diagnostics-report', 'os-support'];
 const SCAN_TOOLS = ['patch-scan', 'restart-pending'];
-const LATER_TOOLS = ['flush-dns', 'security-posture'];
+const LATER_TOOLS = ['flush-dns'];
+/** 0.76: the read-only palette's tools and the catalog key each opens. */
+const PALETTE_TOOLS = {
+  defender: 'defender_status', firewall: 'firewall_status', bitlocker: 'bitlocker_status', 'secure-boot-tpm': 'secure_boot_tpm', 'local-admins': 'local_admins',
+  'dns-lookup': 'dns_lookup', 'tcp-port': 'tcp_port', 'route-table': 'route_table',
+  'time-sync': 'time_sync', activation: 'windows_activation', 'unexpected-shutdowns': 'unexpected_shutdowns', 'scheduled-tasks': 'scheduled_tasks', 'signed-in': 'signed_in_sessions',
+};
+const SECURITY_KEYS = ['defender_status', 'firewall_status', 'bitlocker_status', 'secure_boot_tpm', 'local_admins'];
 /** What each fixture must show, tool by tool (lib/device-tools.ts; this suite has no approval signer). */
 function expectedTools(kind) {
   const e = {};
@@ -2329,6 +2339,8 @@ function expectedTools(kind) {
   const reads = kind === 'linux' || kind === 'mac' ? 'unsupported' : kind === 'offline' ? 'offline' : 'available';
   for (const t of [...DIAG_TOOLS, ...VIEW_TOOLS]) e[t] = reads;
   for (const t of SCAN_TOOLS) e[t] = kind === 'offline' && t === 'patch-scan' ? 'offline' : 'available';
+  // 0.76: only the signed fixture's agent (0.76.0) carries the palette; the agent is decided before connectivity.
+  for (const t of Object.keys(PALETTE_TOOLS)) e[t] = kind === 'linux' || kind === 'mac' ? 'unsupported' : kind === 'signed' ? 'available' : 'needs_newer_agent';
   // No approval signer here: every action says so, before the agent is looked at — except where the OS cannot run it at all.
   for (const t of ACTION_TOOLS) e[t] = kind === 'linux' || kind === 'mac' ? 'unsupported' : 'not_configured';
   return e;
@@ -2359,8 +2371,9 @@ async function toolsPanel(page, f, vp, theme, label) {
       const reason = await page.getByTestId('tool-restart-schedule').innerText();
       check(/No approval signer is configured/.test(reason) && await page.getByTestId('tool-restart-schedule').getAttribute('data-disabled') === 'true',
         `${label}: an action with no signer is shown disabled, saying why`, reason.slice(0, 200));
-      const later = await page.getByTestId('tool-security-posture').innerText();
-      check(/Coming later/i.test(later) && /unknown is not healthy/.test(later), `${label}: Security posture is labelled Coming later, and says unknown is not healthy`, later.slice(0, 200));
+      const later = await page.getByTestId('tool-flush-dns').innerText();
+      check(/Coming later/i.test(later), `${label}: Flush DNS / renew DHCP is labelled Coming later`, later.slice(0, 200));
+      check(await page.getByTestId('tool-security-posture').count() === 0, `${label}: 0.76 replaced the security-posture placeholder with the checks themselves`);
       await themeCheck(page, theme, `${label} Tools panel`);
       await shot(page, `${label}-tools-${kind}`);
     }
@@ -2371,6 +2384,10 @@ async function toolsPanel(page, f, vp, theme, label) {
     if (kind === 'mac') {
       const r = await page.getByTestId('tool-services').innerText();
       check(/macOS agent is read-only/.test(r), `${label}: on macOS an unsupported tool says the agent is read-only`, r.slice(0, 200));
+    }
+    if (kind === 'standard') {
+      const r = await page.getByTestId('tool-defender').innerText();
+      check(/older than 0\.76\.0/.test(r), `${label}: on a 0.73 agent a palette check says it needs 0.76.0`, r.slice(0, 200));
     }
     if (kind === 'offline') {
       const r = await page.getByTestId('tool-disk-space').innerText();
@@ -2402,6 +2419,9 @@ async function toolsPanel(page, f, vp, theme, label) {
     'security-log': { tab: 'events', extra: async () => new URL(page.url()).searchParams.get('log') === 'Security'
       && (await page.locator('[role="tabpanel"][data-state="active"] [role="combobox"]').first().innerText().catch(() => '')).trim() === 'Security' },
     'patch-scan': { tab: 'patches' }, 'restart-pending': { tab: 'patches' },
+    // 0.76: each palette check, and the server's own Windows support row.
+    ...Object.fromEntries(Object.entries(PALETTE_TOOLS).map(([t, k]) => [t, { tab: 'diagnostics', check: k }])),
+    'os-support': { tab: 'diagnostics', check: 'os_support' },
   };
   const before = await prisma.diagnosticRun.count({ where: { endpointId: ep.id } });
   for (const [tool, want] of Object.entries(landing)) {
@@ -2438,6 +2458,136 @@ async function toolsPanel(page, f, vp, theme, label) {
   check(await page.locator('[data-diag-key="dns_resolution"][data-focused="true"]').count() === 1, `${label}: ?tab=diagnostics&check=… marks that check on a fresh load`);
   if (vp === 'phone') await noSideScroll(page, `${label} diagnostics opened from Tools`);
   await cleanCheck(page, `${label} Tools deep link`);
+}
+
+/**
+ * The read-only diagnostics palette (0.76) on the Diagnostics tab, as the
+ * Platform Admin, at both widths and in both themes, on the Tools fixtures:
+ *
+ *   - the four groups in order (Security, Networking, Maintenance, General),
+ *     with the Windows support row first under Security, read on the server:
+ *     the fixture has no inventory, so it must say Unknown — never Healthy;
+ *   - every palette row labelled lab-tested only;
+ *   - a seeded firewall reading with two profiles not reported: the run and
+ *     its row say Unknown, never Healthy, and the finding says why;
+ *   - the DNS and TCP forms refuse a bad name and a bad port before anything
+ *     is sent, and the Run button stays disabled;
+ *   - on the standard computer (agent 0.73.0) every palette row says it needs
+ *     0.76.0, and its Run is disabled;
+ *   - on desktop/light: a DNS lookup and a TCP test are requested with exactly
+ *     their canonical parameters, shown in the run and the history, and
+ *     "Run all security checks" queues exactly the five security keys, one run
+ *     each. The runs it made are deleted again (never an audit row).
+ */
+async function diagnosticsPaletteUi(page, f, vp, theme, label) {
+  const T = f.tools;
+  const ep = T.signed;
+  const now = Date.now();
+  const done = new Date(now - 10 * 60_000);
+  const seeded = await prisma.diagnosticRun.create({ data: {
+    endpointId: ep.id, tenantId: f.tenant.id, customerId: T.D.id, key: 'firewall_status', status: 'COMPLETED', requestedById: f.admin.id,
+    requestedAt: new Date(done.getTime() - 60_000), deliveredAt: done, startedAt: done, completedAt: done, expiresAt: new Date(now + 3600_000),
+    result: { profiles: [{ name: 'Domain', enabled: true, defaultInbound: 'Block', defaultOutbound: 'Allow' }], activeCategories: ['Private'], serviceState: 'Running' },
+    resultBytes: 160,
+  } });
+  try {
+    await go(page, `/endpoints/${ep.id}?tab=diagnostics`);
+    await page.locator('[data-diag-group]').first().waitFor({ timeout: 15_000 }).catch(() => {});
+    await settled(page, 10_000);
+    const groups = await page.locator('[data-diag-group]').evaluateAll((els) => els.map((e) => e.getAttribute('data-diag-group')));
+    check(groups.join('|') === 'security|networking|maintenance|general', `${label}: Diagnostics is grouped Security, Networking, Maintenance, General`, groups.join('|'));
+    const secKeys = await page.locator('[data-diag-group="security"] [data-diag-key]').evaluateAll((els) => els.map((e) => e.getAttribute('data-diag-key')));
+    check(secKeys.join('|') === ['os_support', ...SECURITY_KEYS].join('|'), `${label}: Security lists the Windows support row, then the five security checks`, secKeys.join('|'));
+    const os = page.locator('[data-diag-key="os_support"]');
+    const osHealth = await os.locator('[data-health]').first().getAttribute('data-health').catch(() => null);
+    check(osHealth === 'unknown' && !/Healthy/.test(await os.innerText()) && await os.locator('button[data-diag-run]').count() === 0,
+      `${label}: with no inventory, Windows support says Unknown (not Healthy) and has no Run — it runs on the server`, `${osHealth} ${(await os.innerText()).slice(0, 200)}`);
+    const lab = await page.locator('[data-diag-key] [data-lab-only]').count();
+    check(lab === Object.keys(PALETTE_TOOLS).length, `${label}: every palette check is labelled lab-tested only`, String(lab));
+    check(await page.locator('[data-diag-key="dns_lookup"]').innerText().then((t) => /Remote connect/.test(t)), `${label}: DNS lookup says it needs Remote connect`);
+
+    // Unknown is never drawn as Healthy.
+    const fw = page.locator('[data-diag-key="firewall_status"]');
+    check(await fw.locator('[data-health]').first().getAttribute('data-health').catch(() => null) === 'unknown', `${label}: a firewall reading with profiles not reported is Unknown on its row`);
+    await fw.locator('button:not([data-diag-run])').first().click();
+    const detail = page.locator('[data-findings]').first();
+    await detail.waitFor({ timeout: 10_000 }).catch(() => {});
+    const states = await detail.locator('[data-health]').evaluateAll((els) => els.map((e) => e.getAttribute('data-health')));
+    const dt = await detail.innerText().catch(() => '');
+    check(states.join('|') === 'healthy|unknown|unknown' && /Private profile/.test(dt) && /Not reported/.test(dt),
+      `${label}: its findings: Domain Healthy, Private and Public Unknown (not reported)`, `${states.join('|')} ${dt.slice(0, 200)}`);
+
+    // The forms refuse before anything is sent.
+    const before = await prisma.diagnosticRun.count({ where: { endpointId: ep.id } });
+    const dns = page.locator('[data-diag-key="dns_lookup"]');
+    await dns.locator('[data-diag-param="name"]').fill('bad_name!');
+    check(await dns.locator('[data-diag-param-error]').isVisible() && await dns.locator('button[data-diag-run]').isDisabled(), `${label}: DNS lookup refuses "bad_name!" and keeps Run disabled`);
+    await dns.locator('[data-diag-param="name"]').fill('intranet.example.com');
+    check(!(await dns.locator('[data-diag-param-error]').count()) && !(await dns.locator('button[data-diag-run]').isDisabled()), `${label}: …and accepts intranet.example.com`);
+    const tcp = page.locator('[data-diag-key="tcp_port"]');
+    await tcp.locator('[data-diag-param="host"]').fill('fileserver.example.com');
+    await tcp.locator('[data-diag-param="port"]').fill('70000');
+    check(/1 to 65535/.test(await tcp.locator('[data-diag-param-error]').innerText().catch(() => '')) && await tcp.locator('button[data-diag-run]').isDisabled(), `${label}: TCP port test refuses port 70000`);
+    await tcp.locator('[data-diag-param="port"]').fill('445');
+    await tcp.locator('[data-diag-param="timeoutSeconds"]').selectOption('3');
+    check(!(await tcp.locator('button[data-diag-run]').isDisabled()), `${label}: …and accepts port 445`);
+    check(await prisma.diagnosticRun.count({ where: { endpointId: ep.id } }) === before, `${label}: typing in the forms sent nothing`);
+    await themeCheck(page, theme, `${label} Diagnostics palette`);
+    if (vp === 'phone') await noSideScroll(page, `${label} Diagnostics palette`);
+    await shot(page, `${label}-diagnostics-palette`);
+    await cleanCheck(page, `${label} Diagnostics palette`);
+
+    if (vp === 'desktop' && theme === 'light') {
+      const since = new Date();
+      await dns.locator('button[data-diag-run]').click();
+      await page.waitForFunction(() => !!document.querySelector('[data-run-params]'), null, { timeout: 10_000 }).catch(() => {});
+      await tcp.locator('button[data-diag-run]').click();
+      await settled(page, 10_000);
+      // The second POST can still be in flight when the page settles: wait for both rows.
+      let mine = [];
+      for (let i = 0; i < 40; i++) {
+        mine = await prisma.diagnosticRun.findMany({ where: { endpointId: ep.id, requestedAt: { gte: since } }, orderBy: { requestedAt: 'asc' } });
+        if (mine.some((r) => r.key === 'dns_lookup') && mine.some((r) => r.key === 'tcp_port')) break;
+        await new Promise((res) => setTimeout(res, 250));
+      }
+      const pd = mine.find((r) => r.key === 'dns_lookup')?.params;
+      const pt = mine.find((r) => r.key === 'tcp_port')?.params;
+      check(JSON.stringify(pd) === JSON.stringify({ name: 'intranet.example.com' }), `${label}: DNS lookup was requested with exactly {name}`, JSON.stringify(pd));
+      check(JSON.stringify(pt) === JSON.stringify({ host: 'fileserver.example.com', port: 445, timeoutSeconds: 3 }), `${label}: TCP port test was requested with exactly {host, port, timeoutSeconds}`, JSON.stringify(pt));
+      await page.waitForFunction(() => [...document.querySelectorAll('[data-run-params]')].some((e) => e.textContent === 'fileserver.example.com:445 (3 s)'), null, { timeout: 10_000 }).catch(() => {});
+      check(await page.locator('[data-run-params]', { hasText: 'fileserver.example.com:445 (3 s)' }).count() >= 1, `${label}: the parameters are shown with the run`);
+
+      const all = page.locator('[data-diag-run-all="security"]');
+      check(!(await all.isDisabled()), `${label}: Run all security checks is enabled`);
+      const since2 = new Date();
+      await all.click();
+      await page.waitForFunction(() => /Run all security checks/.test(document.querySelector('[data-diag-run-all="security"]')?.textContent ?? ''), null, { timeout: 20_000 }).catch(() => {});
+      await settled(page, 10_000);
+      const sec = await prisma.diagnosticRun.findMany({ where: { endpointId: ep.id, requestedAt: { gte: since2 } }, orderBy: { requestedAt: 'asc' } });
+      check(sec.map((r) => r.key).join('|') === SECURITY_KEYS.join('|') && sec.every((r) => r.params === null && r.status === 'REQUESTED'),
+        `${label}: Run all security checks queued exactly the five security checks, in order, one run each, without parameters`, sec.map((r) => `${r.key}:${r.status}`).join('|'));
+      await page.waitForFunction(() => document.querySelector('[data-diag-run-all="security"]')?.hasAttribute('disabled'), null, { timeout: 10_000 }).catch(() => {});
+      check(await all.isDisabled(), `${label}: with every security check waiting, Run all security checks is disabled`);
+      await cleanCheck(page, `${label} Diagnostics palette runs`);
+      await prisma.diagnosticRun.deleteMany({ where: { endpointId: ep.id, requestedAt: { gte: since }, id: { not: seeded.id } } });
+    }
+
+    // An agent older than the palette: every palette row says so, and cannot be run.
+    await go(page, `/endpoints/${T.standard.id}?tab=diagnostics`);
+    await page.locator('[data-diag-group]').first().waitFor({ timeout: 15_000 }).catch(() => {});
+    const rows = await page.locator('[data-diag-key]').evaluateAll((els) => els.map((e) => ({
+      key: e.getAttribute('data-diag-key'), newer: !!e.querySelector('[data-diag-needs-newer]'), lab: !!e.querySelector('[data-lab-only]'),
+      disabled: e.querySelector('button[data-diag-run]')?.hasAttribute('disabled') ?? null, form: !!e.querySelector('[data-diag-form]'),
+    })));
+    const pal = rows.filter((r) => r.lab);
+    check(pal.length === Object.keys(PALETTE_TOOLS).length && pal.every((r) => r.newer && r.disabled === true && !r.form),
+      `${label}: on agent 0.73.0 every palette check says it needs a newer agent, with Run disabled and no form`, JSON.stringify(pal.filter((r) => !(r.newer && r.disabled && !r.form))));
+    check(rows.filter((r) => !r.lab && r.key !== 'os_support').every((r) => !r.newer), `${label}: …and the older checks do not`);
+    check(await page.locator('[data-diag-run-all="security"]').isDisabled(), `${label}: …and Run all security checks is disabled`);
+    await cleanCheck(page, `${label} Diagnostics palette on an older agent`);
+  } finally {
+    await prisma.diagnosticRun.deleteMany({ where: { id: seeded.id } });
+  }
 }
 
 /**

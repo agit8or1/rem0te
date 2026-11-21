@@ -37,6 +37,20 @@ export const DIAGNOSTIC_KEYS = [
   'process_list',
   'service_list',
   'network_adapters',
+  // 0.76: the read-only palette — security posture, networking, maintenance.
+  'defender_status',
+  'firewall_status',
+  'bitlocker_status',
+  'secure_boot_tpm',
+  'local_admins',
+  'dns_lookup',
+  'tcp_port',
+  'route_table',
+  'time_sync',
+  'windows_activation',
+  'unexpected_shutdowns',
+  'scheduled_tasks',
+  'signed_in_sessions',
 ] as const;
 export type DiagnosticKey = (typeof DIAGNOSTIC_KEYS)[number];
 
@@ -46,8 +60,13 @@ export interface CatalogEntry {
   key: DiagnosticKey;
   label: string;
   description: string;
-  /** The capability a requester needs — and the one needed to read the result. */
-  capability: 'computers:view' | 'computers:event_logs';
+  /**
+   * The capability a requester needs — and the one needed to read the result.
+   * 0.76: dns_lookup and tcp_port need computers:connect, because they make
+   * the computer reach a host the requester names, on its own network: what
+   * a remote session already gives, and View computers alone does not.
+   */
+  capability: 'computers:view' | 'computers:event_logs' | 'computers:connect';
   /** Why that capability, for the docs and the UI tooltip. */
   capabilityReason: string;
   supportedOs: readonly ['windows'];
@@ -61,74 +80,242 @@ export interface CatalogEntry {
    * Diagnostics list, which would only repeat the tab.
    */
   tab?: 'processes' | 'services' | 'network';
+  /** 0.76: the Diagnostics tab's group. Snapshot keys have their tab instead. */
+  group: DiagnosticGroup;
+  /**
+   * 0.76: the oldest agent that carries this key's block. The standard agent
+   * reports the portal release it was installed from; the signed agent its
+   * own release, so a signed computer has the palette after the first signed
+   * publish at or after 0.76.0. An older agent is refused at the request
+   * (DIAGNOSTIC_NEEDS_NEWER_AGENT) rather than handed a key it would refuse.
+   */
+  minAgent?: string;
+  /** 0.76: the closed parameter schema, for the two keys that take one (PARAM_SCHEMAS). */
+  params?: 'dns_lookup' | 'tcp_port';
+  /** 0.76: where it has run for real. Every palette key: GitHub's Windows Server runner only, until fleet evidence exists. */
+  evidence?: 'lab_windows_server';
 }
+
+export type DiagnosticGroup = 'general' | 'security' | 'networking' | 'maintenance';
+export const DIAGNOSTIC_GROUPS: readonly { id: DiagnosticGroup; label: string }[] = [
+  { id: 'security', label: 'Security' },
+  { id: 'networking', label: 'Networking' },
+  { id: 'maintenance', label: 'Maintenance' },
+  { id: 'general', label: 'General' },
+];
+/** The release that added the palette keys. */
+export const PALETTE_MIN_AGENT = '0.76.0';
+/** "Run all security checks" runs exactly these, in this order. */
+export const SECURITY_KEYS = ['defender_status', 'firewall_status', 'bitlocker_status', 'secure_boot_tpm', 'local_admins'] as const;
 
 const W = ['windows'] as const;
 const RO = { risk: 'read_only', expectedImpact: 'none', approvals: 'none (read-only)', supportedOs: W } as const;
 const VIEW = 'computers:view' as const;
+const PAL = { minAgent: PALETTE_MIN_AGENT, evidence: 'lab_windows_server' } as const;
 
 export const CATALOG: readonly CatalogEntry[] = [
   {
-    key: 'refresh_inventory', label: 'Refresh inventory', ...RO, capability: VIEW, duration: 'minute',
+    key: 'refresh_inventory', label: 'Refresh inventory', ...RO, group: 'general', capability: VIEW, duration: 'minute',
     description: 'Re-collect hardware, operating system, disks, network adapters and installed software, and update the Specs tab.',
     capabilityReason: 'The same data, and the same capability, as the Specs tab and its Refresh button.',
   },
   {
-    key: 'disk_space', label: 'Disk space', ...RO, capability: VIEW, duration: 'seconds',
+    key: 'disk_space', label: 'Disk space', ...RO, group: 'general', capability: VIEW, duration: 'seconds',
     description: 'Size and free space of every fixed volume, with the percentage free.',
     capabilityReason: 'Already part of the inventory anyone who can see the computer can read.',
   },
   {
-    key: 'service_health', label: 'Service health', ...RO, capability: VIEW, duration: 'seconds',
+    key: 'service_health', label: 'Service health', ...RO, group: 'general', capability: VIEW, duration: 'seconds',
     description: 'Services set to start automatically that are not running, and the state of every service a monitor watches on this computer.',
     capabilityReason: 'Service names and states only — the same as the service monitors report. No paths or accounts.',
   },
   {
-    key: 'recent_system_errors', label: 'Recent system errors', ...RO, capability: 'computers:event_logs', duration: 'seconds',
+    key: 'recent_system_errors', label: 'Recent system errors', ...RO, group: 'general', capability: 'computers:event_logs', duration: 'seconds',
     description: 'Critical and Error events from the System and Application logs in the last 24 hours, grouped by source and event id with a count, first and last time, and a shortened message.',
     capabilityReason: 'It returns event-log message text, which is what computers:event_logs gates on the Event Log tab.',
   },
   {
-    key: 'top_processes', label: 'Top processes', ...RO, capability: VIEW, duration: 'seconds',
+    key: 'top_processes', label: 'Top processes', ...RO, group: 'general', capability: VIEW, duration: 'seconds',
     description: 'The ten processes using the most processor time and the ten using the most memory: name, process id, CPU seconds and working set. No command lines, paths or users.',
     capabilityReason: 'Process names are no more than the installed-software list already shows.',
   },
   {
-    key: 'network_connectivity', label: 'Network connectivity', ...RO, capability: VIEW, duration: 'seconds',
+    key: 'network_connectivity', label: 'Network connectivity', ...RO, group: 'networking', capability: VIEW, duration: 'seconds',
     description: 'Whether this computer can open a TCP connection to the rem0te server it already reports to, and which network adapters are up or down with their addresses.',
     capabilityReason: 'Adapters and addresses are already in the inventory; the reach test is to this server only.',
   },
   {
-    key: 'dns_resolution', label: 'DNS resolution', ...RO, capability: VIEW, duration: 'seconds',
+    key: 'dns_resolution', label: 'DNS resolution', ...RO, group: 'networking', capability: VIEW, duration: 'seconds',
     description: 'Resolve the rem0te server name and one fixed public name (dns.msftncsi.com), reporting the DNS servers in use, the answers and how long each took.',
     capabilityReason: 'Names are fixed by the agent, not chosen by the requester; nothing about the user is read.',
   },
   {
-    key: 'pending_updates', label: 'Pending updates', ...RO, capability: VIEW, duration: 'minutes',
+    key: 'pending_updates', label: 'Pending updates', ...RO, group: 'maintenance', capability: VIEW, duration: 'minutes',
     description: 'Ask Windows Update which updates are available but not installed (the existing update scan), and update the Patches tab. Installs nothing.',
     capabilityReason: 'The same scan, and the same capability, as the inventory Refresh button.',
   },
   {
-    key: 'reboot_status', label: 'Reboot status', ...RO, capability: VIEW, duration: 'seconds',
+    key: 'reboot_status', label: 'Reboot status', ...RO, group: 'maintenance', capability: VIEW, duration: 'seconds',
     description: 'Whether Windows is waiting for a restart, and which of the standard signals say so (component servicing, Windows Update, pending file renames, the update agent), with the last boot time.',
     capabilityReason: 'Flags and the boot time only; the rename list itself (which holds paths) is never read.',
   },
   {
-    key: 'process_list', label: 'Processes', ...RO, capability: VIEW, duration: 'seconds', tab: 'processes',
+    key: 'process_list', label: 'Processes', ...RO, group: 'general', capability: VIEW, duration: 'seconds', tab: 'processes',
     description: 'Every running process: name, process id, processor time, working set, the user it runs as where Windows lets the agent read it, and when it started. No command lines, paths, modules or environment.',
     capabilityReason: 'Process names and owners are no more than the console already shows (installed software, the signed-in user). Command lines, which can carry secrets, are never collected.',
   },
   {
-    key: 'service_list', label: 'Services', ...RO, capability: VIEW, duration: 'seconds', tab: 'services',
+    key: 'service_list', label: 'Services', ...RO, group: 'general', capability: VIEW, duration: 'seconds', tab: 'services',
     description: 'Every installed Windows service: name, display name, state, start mode and the account it runs as. No binary paths or arguments.',
     capabilityReason: 'The same service names and states the monitors read, plus the run-as account name. Binary paths and arguments are never collected.',
   },
   {
-    key: 'network_adapters', label: 'Network adapters', ...RO, capability: VIEW, duration: 'seconds', tab: 'network',
+    key: 'network_adapters', label: 'Network adapters', ...RO, group: 'networking', capability: VIEW, duration: 'seconds', tab: 'network',
     description: 'Every network connection Windows lists: status, speed, MAC address, IPv4 and IPv6 addresses, gateways, DNS servers and suffix, and DHCP (server and lease).',
     capabilityReason: 'Adapters, MAC and addresses are already in the inventory on the Specs tab; this adds gateways, DNS and DHCP detail.',
   },
+
+  // ── 0.76: the read-only palette ──
+  {
+    key: 'defender_status', label: 'Microsoft Defender', ...RO, ...PAL, group: 'security', capability: VIEW, duration: 'seconds',
+    description: 'Real-time protection, tamper protection, signature age and the last quick and full scan (Get-MpComputerStatus), and any antivirus registered with Security Center. Starts no scan and updates nothing.',
+    capabilityReason: 'Protection states and dates only; no detections, file names or exclusions are read.',
+  },
+  {
+    key: 'firewall_status', label: 'Windows Firewall', ...RO, ...PAL, group: 'security', capability: VIEW, duration: 'seconds',
+    description: 'Each firewall profile (Domain, Private, Public) as Windows applies it: on or off and the default inbound and outbound action, the categories of the networks connected now, and the firewall service.',
+    capabilityReason: 'Profile states only; no rules, ports or programs are listed.',
+  },
+  {
+    key: 'bitlocker_status', label: 'BitLocker', ...RO, ...PAL, group: 'security', capability: VIEW, duration: 'seconds',
+    description: 'Every volume BitLocker knows: protection on or off, encryption status and percentage, the method, and which kinds of protector it has (TPM, recovery password…). Recovery keys and protector ids are never read.',
+    capabilityReason: 'States and protector kinds only. A recovery key would unlock the disk, so the agent never reads one and the server keeps only a closed list of protector kinds.',
+  },
+  {
+    key: 'secure_boot_tpm', label: 'Secure Boot and TPM', ...RO, ...PAL, group: 'security', capability: VIEW, duration: 'seconds',
+    description: 'Whether Secure Boot is on (or the firmware is legacy BIOS, which cannot say), and whether a TPM is present, enabled, activated and ready, with its manufacturer and specification version.',
+    capabilityReason: 'Firmware and TPM states only; nothing is cleared, provisioned or changed.',
+  },
+  {
+    key: 'local_admins', label: 'Local administrators', ...RO, ...PAL, group: 'security', capability: VIEW, duration: 'seconds',
+    description: 'Who is in the local Administrators group (found by its well-known SID): each member’s account name, whether it is a user or a group, where it comes from (local, Active Directory, Entra ID, Microsoft account) and which one is the built-in Administrator.',
+    capabilityReason: 'Account names, as the Processes tab already shows its owners. No SIDs, passwords, profile paths or group policy are read.',
+  },
+  {
+    key: 'dns_lookup', label: 'DNS lookup', ...RO, ...PAL, group: 'networking', capability: 'computers:connect', duration: 'seconds', params: 'dns_lookup',
+    description: 'Resolve a host name you give through this computer’s own resolver (hosts file, cache, then DNS), with the addresses, how long it took and the DNS servers in use. Waits at most ten seconds.',
+    capabilityReason: 'You choose the name, and the computer asks its own network about it — what a remote session already lets you do. A name is checked against one strict rule on the portal, in the database and on the computer.',
+  },
+  {
+    key: 'tcp_port', label: 'TCP port test', ...RO, ...PAL, group: 'networking', capability: 'computers:connect', duration: 'seconds', params: 'tcp_port',
+    description: 'Whether this computer can open a TCP connection to a host and port you give, within a timeout you pick (1–10 seconds): open, refused, no answer, or the name did not resolve. It connects and closes; no data is sent.',
+    capabilityReason: 'You choose where the computer connects, on its own network — what a remote session already lets you do. The host, port and timeout are checked against closed rules on the portal, in the database and on the computer.',
+  },
+  {
+    key: 'route_table', label: 'Routes', ...RO, ...PAL, group: 'networking', capability: VIEW, duration: 'seconds',
+    description: 'The IPv4 and IPv6 routing table: destination, next hop, interface and metric, leaving out the multicast and broadcast routes every computer has. Up to 200 routes.',
+    capabilityReason: 'Addresses and gateways the Network tab already shows, in routing-table form.',
+  },
+  {
+    key: 'time_sync', label: 'Time sync', ...RO, ...PAL, group: 'maintenance', capability: VIEW, duration: 'seconds',
+    description: 'The Windows Time service: its state, where it gets the time (domain or NTP server), and its own report of the last successful sync, source and stratum (w32tm /query /status). Asks for no resync.',
+    capabilityReason: 'Time-service settings and status only.',
+  },
+  {
+    key: 'windows_activation', label: 'Windows activation', ...RO, ...PAL, group: 'maintenance', capability: VIEW, duration: 'minute',
+    description: 'Whether Windows is activated, in a grace period or unlicensed, with the licence channel and the grace time left. The product key is never read.',
+    capabilityReason: 'The licence status Windows shows in Settings → Activation; no key, not even its last five characters.',
+  },
+  {
+    key: 'unexpected_shutdowns', label: 'Unexpected shutdowns', ...RO, ...PAL, group: 'maintenance', capability: VIEW, duration: 'seconds',
+    description: 'Restarts without a clean shutdown (Kernel-Power 41, EventLog 6008) and blue screens (BugCheck 1001) in the last 30 days, with the time and the bugcheck code. No message text.',
+    capabilityReason: 'Event times, ids and the bugcheck code only — not event-log text, so View computers is enough.',
+  },
+  {
+    key: 'scheduled_tasks', label: 'Scheduled tasks', ...RO, ...PAL, group: 'maintenance', capability: VIEW, duration: 'minute',
+    description: 'The scheduled tasks outside Windows’ own \\Microsoft\\ folder: name, folder, state, author, the account it runs as, and its last and next run with the last result. What a task runs, and its arguments, are never read.',
+    capabilityReason: 'Names, states and times. A task’s command line can carry secrets, so its actions are never collected.',
+  },
+  {
+    key: 'signed_in_sessions', label: 'Signed-in users', ...RO, ...PAL, group: 'maintenance', capability: VIEW, duration: 'seconds',
+    description: 'Who is signed in to Windows now: one row per session with a desktop (the owner of its Explorer), with the session number and since when.',
+    capabilityReason: 'The signed-in account names the Processes tab already shows as process owners.',
+  },
 ];
+
+// ── Typed parameters (0.76) ─────────────────────────────────────────────────
+//
+// Two keys take parameters, and only these. The schema is closed: exactly the
+// listed fields, each checked here at the request, again in migration 0092's
+// CHECK, and again by the agent's own copy of the rule (Test-Rem0tePalHost,
+// Test-Rem0tePalKeys) before anything is resolved or dialled. Every other key
+// takes none, and a request that sends any is refused.
+
+/**
+ * A host name or an IPv4 address: labels of letters, digits and hyphens, not
+ * starting or ending with a hyphen, at most 63 characters each, joined by
+ * single dots, at most 253 in all. No scheme, port, path, user, wildcard,
+ * space, underscore or trailing dot. The same source text is the agent's
+ * (windows-script.ts PALETTE_HOSTNAME_RE) and the database's (0092).
+ */
+export const HOSTNAME_RE_SOURCE = '^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$';
+const HOSTNAME_RE = new RegExp(HOSTNAME_RE_SOURCE);
+export const HOSTNAME_MAX = 253;
+/** The closed list of TCP test timeouts, seconds. */
+export const TCP_TIMEOUTS = [1, 2, 3, 5, 10] as const;
+export const DEFAULT_TCP_TIMEOUT = 5;
+/** The fields each schema has, exactly. */
+export const PARAM_FIELDS = { dns_lookup: ['name'], tcp_port: ['host', 'port', 'timeoutSeconds'] } as const;
+
+export function isHostName(v: unknown): v is string {
+  return typeof v === 'string' && v.length >= 1 && v.length <= HOSTNAME_MAX && !/[\r\n]/.test(v) && HOSTNAME_RE.test(v);
+}
+
+export type DiagnosticParams = { name: string } | { host: string; port: number; timeoutSeconds: number };
+export type ParamsResult = { ok: true; params: DiagnosticParams | null } | { ok: false; error: string };
+
+/**
+ * The one parameter check. For a key without a schema, anything but
+ * undefined or null is refused. For dns_lookup and tcp_port, a plain object
+ * with exactly the schema's fields (tcp_port's timeoutSeconds may be left out
+ * and is then the default), each valid; the canonical object is returned and
+ * is what is stored, delivered and audited.
+ */
+export function parseDiagnosticParams(key: string, raw: unknown): ParamsResult {
+  const entry = BY_KEY.get(key);
+  if (!entry) return { ok: false, error: 'Not a catalog diagnostic.' };
+  if (!entry.params) return raw === undefined || raw === null ? { ok: true, params: null } : { ok: false, error: `${entry.label} takes no parameters.` };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.getPrototypeOf(raw) !== Object.prototype) return { ok: false, error: `${entry.label} needs its parameters.` };
+  const r = raw as Record<string, unknown>;
+  const fields: readonly string[] = PARAM_FIELDS[entry.params];
+  const extra = Object.keys(r).filter((k) => !fields.includes(k));
+  if (extra.length) return { ok: false, error: `Unknown parameter: ${extra.slice(0, 3).join(', ').slice(0, 80)}.` };
+  if (entry.params === 'dns_lookup') {
+    if (!isHostName(r.name)) return { ok: false, error: 'The name must be a host name or IPv4 address: letters, digits, hyphens and dots, at most 253 characters.' };
+    return { ok: true, params: { name: r.name } };
+  }
+  if (!isHostName(r.host)) return { ok: false, error: 'The host must be a host name or IPv4 address: letters, digits, hyphens and dots, at most 253 characters.' };
+  if (typeof r.port !== 'number' || !Number.isInteger(r.port) || r.port < 1 || r.port > 65535) return { ok: false, error: 'The port must be a whole number from 1 to 65535.' };
+  const to = r.timeoutSeconds === undefined ? DEFAULT_TCP_TIMEOUT : r.timeoutSeconds;
+  if (typeof to !== 'number' || !(TCP_TIMEOUTS as readonly number[]).includes(to)) return { ok: false, error: `The timeout must be one of ${TCP_TIMEOUTS.join(', ')} seconds.` };
+  return { ok: true, params: { host: r.host, port: r.port, timeoutSeconds: to } };
+}
+
+/** a.b.c compared as numbers; null when either is not a version. */
+export function compareVersions(a: string, b: string): number | null {
+  const p = (v: string) => (/^\d+\.\d+\.\d+/.test(v) ? v.split(/[.+-]/).slice(0, 3).map(Number) : null);
+  const x = p(a), y = p(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1;
+  return 0;
+}
+
+/** Whether an agent that reports `agentVersion` is known to be too old for `entry`. Unknown versions are not refused. */
+export function agentTooOld(entry: { minAgent?: string }, agentVersion: string | null | undefined): boolean {
+  if (!entry.minAgent || !agentVersion) return false;
+  const c = compareVersions(agentVersion, entry.minAgent);
+  return c !== null && c < 0;
+}
 
 /** The keys shown as workspace snapshots (0.33), and the tab each belongs to. */
 export const SNAPSHOT_KEYS = ['process_list', 'service_list', 'network_adapters'] as const;
@@ -243,6 +430,37 @@ const START = ['Automatic', 'AutomaticDelayedStart', 'Manual', 'Disabled', 'Boot
 const oneOf = <T extends string>(v: unknown, allowed: readonly T[], dflt: T): T =>
   typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : dflt;
 
+/** A dual-mode socket names an IPv4 peer ::ffff:a.b.c.d; keep the IPv4 form. */
+function unmapV4(v: string): string {
+  const rest = v.slice(7);
+  return v.slice(0, 7).toLowerCase() === '::ffff:' && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(rest) ? rest : v;
+}
+const oneOfOrNull = <T extends string>(v: unknown, allowed: readonly T[]): T | null =>
+  typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : null;
+const matchOrNull = (v: unknown, re: RegExp): string | null => {
+  const s = str(v, 256);
+  return s && re.test(s) ? s : null;
+};
+// 0.76 palette: every enumerated field is one of a closed list, or null.
+const DEFENDER_MODES = ['Normal', 'Passive Mode', 'SxS Passive Mode', 'EDR Block Mode', 'Not running'] as const;
+const FIREWALL_PROFILES = ['Domain', 'Private', 'Public'] as const;
+const FIREWALL_ACTIONS = ['Allow', 'Block', 'NotConfigured'] as const;
+export const NETWORK_CATEGORIES = ['Public', 'Private', 'DomainAuthenticated'] as const;
+const MOUNT_RE = /^([A-Za-z]:|\\\\\?\\Volume\{[0-9A-Fa-f-]{36}\}\\)$/;
+const BL_VOLUME_TYPES = ['OperatingSystem', 'Data', 'FixedData', 'Removable'] as const;
+const BL_PROTECTION = ['On', 'Off', 'Unknown'] as const;
+const BL_VOLUME_STATUS = ['FullyDecrypted', 'FullyEncrypted', 'EncryptionInProgress', 'DecryptionInProgress', 'EncryptionSuspended', 'DecryptionSuspended', 'FullyEncryptedWipeInProgress', 'FullyEncryptedWipeSuspended'] as const;
+const BL_METHODS = ['None', 'Aes128', 'Aes256', 'Aes128Diffuser', 'Aes256Diffuser', 'XtsAes128', 'XtsAes256', 'Hardware', 'Unknown'] as const;
+/** Protector KINDS. A protector's id and its recovery password are never collected; only one of these names is kept. */
+export const BL_PROTECTORS = ['Tpm', 'RecoveryPassword', 'ExternalKey', 'NumericPassword', 'TpmPin', 'TpmStartupKey', 'TpmPinStartupKey', 'PublicKey', 'Password', 'TpmNetworkKey', 'AdAccountOrGroup', 'Unknown'] as const;
+const PRINCIPAL_SOURCES = ['Local', 'ActiveDirectory', 'AzureAD', 'MicrosoftAccount', 'Unknown'] as const;
+export const TCP_OUTCOMES = ['open', 'refused', 'timeout', 'not_resolved', 'unreachable', 'error'] as const;
+const CIDR_RE = /^[0-9a-fA-F:.%]{2,64}\/[0-9]{1,3}$/;
+const W32TIME_TYPES = ['NT5DS', 'NTP', 'NoSync', 'AllSync'] as const;
+export const SHUTDOWN_KINDS = ['kernel_power', 'unexpected_shutdown', 'bugcheck'] as const;
+const SHUTDOWN_IDS: Record<(typeof SHUTDOWN_KINDS)[number], number> = { kernel_power: 41, unexpected_shutdown: 6008, bugcheck: 1001 };
+const TASK_STATES = ['Ready', 'Running', 'Disabled', 'Queued', 'Unknown'] as const;
+
 const procRow = (p: Record<string, unknown>) => {
   // Process names, not paths: anything after a separator is dropped.
   const raw = str(p.name, 128);
@@ -341,6 +559,8 @@ export function sanitizeResult(key: string, raw: unknown): Record<string, unknow
       return {
         // Derived from the signals, not trusted from a separate flag.
         pending: uniq.length > 0,
+        // 0.76: whether a signal list came back at all (an empty one is "none pending").
+        read: Array.isArray(r.sources),
         sources: uniq,
         lastBootAt: iso(r.lastBootAt),
         uptimeSeconds: int(r.uptimeSeconds, 0, 60 * 60 * 24 * 3650),
@@ -409,6 +629,193 @@ export function sanitizeResult(key: string, raw: unknown): Record<string, unknow
             dhcpLeaseExpiresAt: iso(a.dhcpLeaseExpiresAt),
           };
         }).filter((a) => a.name),
+      };
+    // ── 0.76: the read-only palette ──
+    case 'defender_status': {
+      if (bool(r.supported) !== true) return { supported: false, reason: oneOf(r.reason, ['not_installed', 'not_running'] as const, 'not_installed'), error: str(r.error, 200) };
+      return {
+        supported: true,
+        amServiceEnabled: bool(r.amServiceEnabled), antivirusEnabled: bool(r.antivirusEnabled),
+        realTimeProtectionEnabled: bool(r.realTimeProtectionEnabled), behaviorMonitorEnabled: bool(r.behaviorMonitorEnabled),
+        isTamperProtected: bool(r.isTamperProtected),
+        runningMode: oneOfOrNull(r.runningMode, DEFENDER_MODES),
+        signatureVersion: matchOrNull(r.signatureVersion, /^[0-9.]{1,32}$/),
+        signatureLastUpdated: iso(r.signatureLastUpdated),
+        signatureAgeDays: int(r.signatureAgeDays, 0, 65535),
+        quickScanEndAt: iso(r.quickScanEndAt), fullScanEndAt: iso(r.fullScanEndAt),
+        securityCenterRead: bool(r.securityCenterRead) ?? false,
+        registeredAntivirus: list(r.registeredAntivirus, 8).map((a) => ({ name: str(a.name, 128), productState: int(a.productState, 0, 0xFFFFFF) })).filter((a) => a.name),
+      };
+    }
+    case 'firewall_status':
+      return {
+        profiles: list(r.profiles, 3).map((p) => ({
+          name: oneOfOrNull(p.name, FIREWALL_PROFILES),
+          enabled: bool(p.enabled),
+          defaultInbound: oneOfOrNull(p.defaultInbound, FIREWALL_ACTIONS),
+          defaultOutbound: oneOfOrNull(p.defaultOutbound, FIREWALL_ACTIONS),
+        })).filter((p) => p.name),
+        activeCategories: [...new Set((Array.isArray(r.activeCategories) ? r.activeCategories : []).filter((c): c is string => typeof c === 'string' && (NETWORK_CATEGORIES as readonly string[]).includes(c)))],
+        serviceState: oneOfOrNull(r.serviceState, STATES),
+      };
+    case 'bitlocker_status': {
+      if (bool(r.supported) !== true) return { supported: false, reason: oneOf(r.reason, ['not_installed', 'not_available'] as const, 'not_installed'), error: str(r.error, 200) };
+      return {
+        supported: true,
+        volumes: list(r.volumes, 26).map((v) => {
+          const mp = str(v.mountPoint, 64);
+          return {
+            mountPoint: mp && MOUNT_RE.test(mp) ? mp : null,
+            volumeType: oneOfOrNull(v.volumeType, BL_VOLUME_TYPES),
+            protectionStatus: oneOfOrNull(v.protectionStatus, BL_PROTECTION),
+            volumeStatus: oneOfOrNull(v.volumeStatus, BL_VOLUME_STATUS),
+            lockStatus: oneOfOrNull(v.lockStatus, ['Locked', 'Unlocked'] as const),
+            encryptionMethod: oneOfOrNull(v.encryptionMethod, BL_METHODS),
+            encryptionPercentage: int(v.encryptionPercentage, 0, 100),
+            // Kinds only, from a closed list: never a protector's id or secret.
+            protectorTypes: [...new Set((Array.isArray(v.protectorTypes) ? v.protectorTypes : []).filter((t): t is string => typeof t === 'string' && (BL_PROTECTORS as readonly string[]).includes(t)))].sort(),
+          };
+        }).filter((v) => v.mountPoint),
+      };
+    }
+    case 'secure_boot_tpm': {
+      const t = (r.tpm && typeof r.tpm === 'object' && !Array.isArray(r.tpm) ? r.tpm : {}) as Record<string, unknown>;
+      return {
+        secureBoot: oneOf(r.secureBoot, ['on', 'off', 'unsupported', 'unknown'] as const, 'unknown'),
+        secureBootError: str(r.secureBootError, 200),
+        tpm: {
+          read: bool(t.read) ?? false,
+          present: bool(t.present), ready: bool(t.ready), enabled: bool(t.enabled), activated: bool(t.activated),
+          manufacturer: matchOrNull(t.manufacturer, /^[A-Za-z0-9 ._-]{1,32}$/),
+          specVersion: matchOrNull(t.specVersion, /^[0-9., ]{1,32}$/),
+          error: str(t.error, 200),
+        },
+      };
+    }
+    case 'local_admins':
+      return {
+        method: oneOf(r.method, ['localaccounts', 'cim', 'none'] as const, 'none'),
+        error: str(r.error, 200),
+        members: list(r.members, 100).map((m) => {
+          const name = str(m.name, 128);
+          return {
+            name: name && ACCOUNT_RE.test(name) ? name : null,
+            kind: oneOf(m.kind, ['User', 'Group', 'Unknown'] as const, 'Unknown'),
+            source: oneOfOrNull(m.source, PRINCIPAL_SOURCES),
+            builtinAdministrator: bool(m.builtinAdministrator) ?? false,
+          };
+        }),
+      };
+    case 'dns_lookup': {
+      const l = (r.lookup && typeof r.lookup === 'object' && !Array.isArray(r.lookup) ? r.lookup : {}) as Record<string, unknown>;
+      return {
+        resolvers: ips(r.resolvers, 8),
+        lookup: {
+          name: isHostName(l.name) ? l.name : null,
+          ok: bool(l.ok) ?? false,
+          addresses: ips(l.addresses, 16),
+          latencyMs: int(l.latencyMs, 0, 600_000),
+          timedOut: bool(l.timedOut) ?? false,
+          error: str(l.error, 200),
+        },
+      };
+    }
+    case 'tcp_port':
+      return {
+        host: isHostName(r.host) ? r.host : null,
+        port: int(r.port, 1, 65535),
+        timeoutSeconds: int(r.timeoutSeconds, 1, 10),
+        outcome: oneOf(r.outcome, TCP_OUTCOMES, 'error'),
+        latencyMs: int(r.latencyMs, 0, 600_000),
+        // A dual-mode socket reports an IPv4 peer as ::ffff:a.b.c.d; keep the IPv4 form.
+        remoteAddress: typeof r.remoteAddress === 'string' && IP_RE.test(r.remoteAddress) ? unmapV4(r.remoteAddress) : null,
+        socketError: int(r.socketError, 0, 100_000),
+        error: str(r.error, 200),
+      };
+    case 'route_table':
+      return {
+        read: Array.isArray(r.routes),
+        routeCount: int(r.routeCount, 0, 100_000),
+        routes: list(r.routes, 200).map((x) => {
+          const d = str(x.destination, 70), hop = str(x.nextHop, 64), alias = str(x.interfaceAlias, 128);
+          return {
+            destination: d && CIDR_RE.test(d) ? d : null,
+            nextHop: hop && IP_RE.test(hop) ? hop : null,
+            interfaceAlias: alias,
+            routeMetric: int(x.routeMetric, 0, 10_000_000),
+            addressFamily: oneOfOrNull(x.addressFamily, ['IPv4', 'IPv6'] as const),
+          };
+        }).filter((x) => x.destination),
+      };
+    case 'time_sync': {
+      const q = (r.status && typeof r.status === 'object' && !Array.isArray(r.status) ? r.status : {}) as Record<string, unknown>;
+      return {
+        type: oneOfOrNull(r.type, W32TIME_TYPES),
+        ntpServer: matchOrNull(r.ntpServer, /^[A-Za-z0-9.,: -]{1,256}$/),
+        serviceState: oneOfOrNull(r.serviceState, STATES),
+        serviceStart: oneOfOrNull(r.serviceStart, START),
+        status: {
+          ran: bool(q.ran) ?? false,
+          exitCode: int(q.exitCode, -2_147_483_648, 4_294_967_295),
+          leapIndicator: int(q.leapIndicator, 0, 3),
+          stratum: int(q.stratum, 0, 16),
+          lastSyncAt: iso(q.lastSyncAt),
+          source: matchOrNull(q.source, /^[A-Za-z0-9 .,:()_-]{1,128}$/),
+          pollSeconds: int(q.pollSeconds, 0, 10_000_000),
+        },
+      };
+    }
+    case 'windows_activation':
+      return {
+        products: list(r.products, 4).map((p) => ({
+          name: str(p.name, 128),
+          channel: matchOrNull(p.channel, /^[A-Za-z0-9_:. -]{1,32}$/),
+          licenseStatus: int(p.licenseStatus, 0, 6),
+          graceMinutes: int(p.graceMinutes, 0, 10_000_000),
+        })).filter((p) => p.name),
+      };
+    case 'unexpected_shutdowns':
+      return {
+        windowDays: 30,
+        // Whether the agent sent a list at all: an empty one is "none", a missing one is "not read".
+        read: Array.isArray(r.events),
+        events: list(r.events, 50).map((e) => ({
+          at: iso(e.at),
+          kind: oneOfOrNull(e.kind, SHUTDOWN_KINDS),
+          eventId: int(e.eventId, 0, 65535),
+          bugcheckCode: matchOrNull(e.bugcheckCode, /^0x[0-9A-F]{8}$/),
+        })).filter((e) => e.kind && e.at && SHUTDOWN_IDS[e.kind] === e.eventId),
+      };
+    case 'scheduled_tasks':
+      return {
+        read: Array.isArray(r.tasks),
+        taskCount: int(r.taskCount, 0, 100_000),
+        microsoftTasks: int(r.microsoftTasks, 0, 100_000),
+        tasks: list(r.tasks, 300).map((t) => {
+          const runAs = str(t.runAs, 128);
+          const last = iso(t.lastRunAt), next = iso(t.nextRunAt);
+          return {
+            path: str(t.path, 256),
+            name: str(t.name, 256),
+            state: oneOf(t.state, TASK_STATES, 'Unknown'),
+            author: str(t.author, 128),
+            runAs: runAs && ACCOUNT_RE.test(runAs) ? runAs : null,
+            // Task Scheduler's "never" is 1999-11-30; anything before 2000 is no date.
+            lastRunAt: last && last >= '2000' ? last : null,
+            lastResult: int(t.lastResult, -2_147_483_648, 4_294_967_295),
+            nextRunAt: next && next >= '2000' ? next : null,
+          };
+        }).filter((t) => t.name),
+      };
+    case 'signed_in_sessions':
+      return {
+        method: 'explorer',
+        read: Array.isArray(r.sessions),
+        userNamesRead: bool(r.userNamesRead) ?? false,
+        sessions: list(r.sessions, 64).map((x) => {
+          const u = str(x.user, 128);
+          return { sessionId: int(x.sessionId, 0, 65535), user: u && ACCOUNT_RE.test(u) ? u : null, since: iso(x.since) };
+        }).filter((x) => x.sessionId !== null),
       };
     default:
       return null;
