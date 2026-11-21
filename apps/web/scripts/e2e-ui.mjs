@@ -257,6 +257,10 @@ function startApi() {
     SSO_SESSION_SWEEP: 'off',
     // 0.77: the terminal sweep (expiry and transcript pruning).
     TERMINAL_SWEEP: 'off',
+    // 0.80: the MDM sync. The Mobile devices page reads rows this suite writes;
+    // the stand-in address makes its connector "ready" (loopback, NODE_ENV=test)
+    // and nothing listens there, because nothing syncs.
+    MDM_SWEEP: 'off', MDM_TEST_BASE_URL: 'http://127.0.0.1:3509',
     // 0.72: Managed Secure Access is off, as in production; the suite checks
     // the console asks no gated /msa/managed or /msa/grants route.
     MSA_GRANTS: 'off',
@@ -461,6 +465,7 @@ async function cleanup() {
     ['scripts', () => prisma.script.deleteMany({ where: { customerId: { in: ids } } })],
     ['branding', restoreBranding],
     ['sites', () => prisma.site.deleteMany({ where: { customerId: { in: ids } } })],
+    ['MDM connectors', () => prisma.mdmConnector.deleteMany({ where: { customerId: { in: ids } } })],
     ['memberships', () => prisma.membership.deleteMany({ where: { OR: [{ customerId: { in: ids } }, { userId: { in: created.users } }] } })],
     ['businesses', () => prisma.customer.deleteMany({ where: { id: { in: ids } } })],
     ['users', () => prisma.user.deleteMany({ where: { id: { in: created.users } } })],
@@ -1669,6 +1674,10 @@ async function memberChecks(browser, f, vp, theme, label) {
       `${label}: a tool the Business User may not use has no button (it would 403)`);
     await closeTools(page);
     await cleanCheck(page, `${label} Business User Tools`);
+    // 0.80: no View mobile devices — no nav entry, and the API refuses the list.
+    const mr = await page.request.get(`${WEB}/api/v1/mobile-devices`, { headers: { 'x-forwarded-for': ip() } });
+    check(mr.status() === 403 && await page.locator('a[href="/mobile-devices"]').count() === 0,
+      `${label}: a Business User without View mobile devices has no Mobile devices link, and the API refuses the list (HTTP ${mr.status()})`);
   } finally { await ctx.close(); }
 }
 
@@ -1754,8 +1763,10 @@ async function combo(browser, f, vp, theme) {
     await diagnosticsPaletteUi(page, f, vp, theme, label);
     await terminalPanel(page, f, vp, theme, label);
     await filesPanel(page, f, vp, theme, label);
+    await mobileDevicesUi(page, f, vp, theme, label);
     if (theme === 'light') await mainPagesSweep(page, f, vp, label);
   } finally { await ctx.close(); }
+  await mobileRequiresSetup(browser, f, vp, theme, label);
   await apiKeys(browser, f, vp, theme, label);
   if (theme === 'light') await memberChecks(browser, f, vp, theme, label);
   await dashboardFit(browser, f, vp, theme, label);
@@ -3405,6 +3416,117 @@ async function assistWindow(browser, f) {
 
 // ── Run ─────────────────────────────────────────────────────────────────────
 let copyDir = null;
+// ── 0.80: Devices → Mobile devices ─────────────────────────────────────────
+// Rows written straight to this suite's database (MDM_SWEEP is off: nothing
+// syncs). Business A gets a stand-in connector — ready, because the API runs
+// under NODE_ENV=test with a loopback MDM_TEST_BASE_URL nothing listens on —
+// two devices and two commands: a lock the provider ACCEPTED that the device
+// has not finished, and a sync it completed. A business of its own, with its
+// own owner and no connector, shows "Requires setup" and the empty state.
+async function seedMobile(f) {
+  const E = await prisma.customer.create({ data: { tenantId: f.tenant.id, name: `MDM ${sfx} Empty` } });
+  created.businesses.push(E.id);
+  const roleOwner = await prisma.role.findFirst({ where: { type: 'BUSINESS_OWNER' } });
+  const ownerE = await prisma.user.create({ data: { email: `ui-mdm-owner-${sfx}@test.invalid`, passwordHash: await argon2.hash(PW, { type: argon2.argon2id }), firstName: 'UI', lastName: 'mdm', status: 'ACTIVE' } });
+  created.users.push(ownerE.id);
+  await prisma.membership.create({ data: { userId: ownerE.id, tenantId: f.tenant.id, customerId: E.id, roleId: roleOwner.id } });
+  const now = Date.now();
+  const k = await prisma.mdmConnector.create({ data: { tenantId: f.tenant.id, customerId: f.A.id, provider: 'standin', externalTenantId: `ui-${sfx}`, enabled: true, lastSyncAt: new Date(now - 5 * 60_000), lastSyncResult: 'ok', lastSyncDevices: 2 } });
+  const dev = (data) => prisma.mobileDevice.create({ data: { tenantId: f.tenant.id, customerId: f.A.id, connectorId: k.id, provider: 'standin', lastSyncedAt: new Date(now - 5 * 60_000), ...data } });
+  const ipad = await dev({ providerDeviceId: `ui-ipad-${sfx}`, name: `${TAG} Front desk iPad`, platform: 'ipados', ownership: 'corporate', managementScope: 'device', enrollmentState: 'enrolled',
+    complianceState: 'compliant', model: 'iPad (10th generation)', manufacturer: 'Apple', osVersion: '18.1', serialNumber: 'DMPXK12ABCD', storageTotalBytes: 64_000_000_000n, storageFreeBytes: 20_000_000_000n, lastCheckInAt: new Date(now - 9 * 60_000) });
+  const pixel = await dev({ providerDeviceId: `ui-pixel-${sfx}`, name: `${TAG} Jo personal Pixel`, platform: 'android', ownership: 'byod', managementScope: 'work_profile', enrollmentState: 'enrolled',
+    complianceState: 'noncompliant', complianceReason: 'Screen lock required by the work profile policy', model: 'Pixel 8', manufacturer: 'Google', osVersion: '15', lastCheckInAt: new Date(now - 3 * 60_000) });
+  const cmd = (data) => prisma.mdmCommand.create({ data: { tenantId: f.tenant.id, customerId: f.A.id, mobileDeviceId: ipad.id, connectorId: k.id, origin: 'provider', ...data } });
+  await cmd({ providerCommandId: `ui-lock-${sfx}`, kind: 'lock', state: 'acknowledged', requestedAt: new Date(now - 30 * 60_000), sentAt: new Date(now - 30 * 60_000), providerAcceptedAt: new Date(now - 29 * 60_000), expiresAt: new Date(now + 86_400_000) });
+  await cmd({ providerCommandId: `ui-sync-${sfx}`, kind: 'sync', state: 'completed', requestedAt: new Date(now - 90 * 60_000), sentAt: new Date(now - 90 * 60_000), providerAcceptedAt: new Date(now - 89 * 60_000), deviceCompletedAt: new Date(now - 80 * 60_000), expiresAt: new Date(now + 86_400_000) });
+  return { E, ownerE, ipad, pixel };
+}
+
+async function mobileDevicesUi(page, f, vp, theme, label) {
+  const m = f.mobile;
+  await go(page, '/mobile-devices');
+  await page.getByTestId('mdm-rows').waitFor({ timeout: 15_000 }).catch(() => {});
+  const h1 = await page.locator('main h1').first().innerText().catch(() => '');
+  const setupState = await page.getByTestId('mdm-setup').getAttribute('data-state').catch(() => null);
+  const rows = await page.locator('[data-testid="mdm-rows"] li').evaluateAll((els) => els.map((e) => ({ c: e.getAttribute('data-compliance'), t: e.textContent ?? '' })));
+  const ours = rows.filter((r) => r.t.includes(TAG));
+  check(h1 === 'Mobile devices' && setupState === 'available' && ours.length === 2 && /Read-only/.test(await page.getByTestId('mdm-readonly-note').innerText().catch(() => '')),
+    `${label}: Mobile devices lists the two devices, says read-only, and the provider is available`, JSON.stringify({ h1, setupState, ours: ours.length }));
+  const cur = await page.locator('[data-section-tabs="devices"] a[aria-current="page"]').innerText().catch(() => null);
+  check(cur === 'Mobile devices', `${label}: Mobile devices is the current Devices tab`, String(cur));
+  await page.getByTestId('mdm-count-noncompliant').click();
+  await page.waitForFunction(() => {
+    const r = [...document.querySelectorAll('[data-testid="mdm-rows"] li')];
+    return r.length > 0 && r.every((x) => x.getAttribute('data-compliance') === 'noncompliant');
+  }, null, { timeout: 15_000 }).catch(() => {});
+  const nc = await page.locator('[data-testid="mdm-rows"] li').evaluateAll((els) => els.map((e) => e.textContent ?? ''));
+  check(nc.length >= 1 && nc.some((t) => t.includes(`${TAG} Jo personal Pixel`) && t.includes('Personal (BYOD)') && t.includes('Screen lock required')),
+    `${label}: Not compliant filters to the personal Pixel, with its ownership and the provider's reason`, nc.join(' | ').slice(0, 300));
+  await page.getByTestId('mdm-filter-clear').click();
+  await themeCheck(page, theme, `${label} Mobile devices`);
+  if (vp === 'phone') await noSideScroll(page, `${label} Mobile devices`);
+  await shot(page, `${label}-mobile-devices`);
+  await cleanCheck(page, `${label} Mobile devices`);
+
+  await page.locator(`a[href="/mobile-devices/${m.ipad.id}"]`).first().click();
+  await page.waitForURL((u) => u.pathname === `/mobile-devices/${m.ipad.id}`, { timeout: 15_000 });
+  await hydrated(page); await settled(page);
+  await page.getByTestId('mdm-commands').waitFor({ timeout: 15_000 }).catch(() => {});
+  const own = await page.getByTestId('mdm-ownership-card').innerText().catch(() => '');
+  const comp = await page.getByTestId('mdm-compliance-card').innerText().catch(() => '');
+  const serial = await page.getByTestId('mdm-serial').innerText().catch(() => '');
+  check(/Corporate/.test(own) && /Whole device/.test(own) && /Compliant/.test(comp) && /DMPXK12ABCD/.test(serial),
+    `${label}: the iPad's page shows ownership, compliance and its serial`, JSON.stringify({ own, comp, serial }).slice(0, 300));
+  const lock = page.locator('[data-testid="mdm-commands"] li[data-kind="lock"]');
+  const sync = page.locator('[data-testid="mdm-commands"] li[data-kind="sync"]');
+  const lockState = await lock.getAttribute('data-state').catch(() => null);
+  const lockAcc = await lock.getByTestId('mdm-cmd-accepted').getAttribute('data-done').catch(() => null);
+  const lockDone = await lock.getByTestId('mdm-cmd-completed').getAttribute('data-done').catch(() => null);
+  const lockText = await lock.innerText().catch(() => '');
+  check(lockState === 'acknowledged' && lockAcc === 'yes' && lockDone === 'no' && /Accepted by the provider/.test(lockText) && /Not yet: waiting for the device/.test(lockText),
+    `${label}: the lock reads accepted by the provider and NOT completed on the device, side by side`, JSON.stringify({ lockState, lockAcc, lockDone, lockText: lockText.slice(0, 200) }));
+  check(await sync.getAttribute('data-state').catch(() => null) === 'completed' && await sync.getByTestId('mdm-cmd-accepted').getAttribute('data-done').catch(() => null) === 'yes'
+    && await sync.getByTestId('mdm-cmd-completed').getAttribute('data-done').catch(() => null) === 'yes',
+  `${label}: the sync reads both accepted and completed`);
+  check(await page.locator('main button').filter({ hasText: /^(Lock|Wipe|Retire|Send)/ }).count() === 0, `${label}: the device page offers no command to send`);
+  await themeCheck(page, theme, `${label} mobile device`);
+  if (vp === 'phone') await noSideScroll(page, `${label} mobile device`);
+  await shot(page, `${label}-mobile-device`);
+  await cleanCheck(page, `${label} mobile device`);
+
+  await go(page, `/mobile-devices/${m.pixel.id}`);
+  await page.getByTestId('mdm-ownership-card').waitFor({ timeout: 15_000 }).catch(() => {});
+  const pOwn = await page.getByTestId('mdm-ownership-card').innerText().catch(() => '');
+  const pSerial = await page.getByTestId('mdm-serial').innerText().catch(() => '');
+  await page.getByTestId('mdm-no-commands').waitFor({ timeout: 15_000 }).catch(() => {});
+  check(/Personal \(BYOD\)/.test(pOwn) && /Work profile only/.test(pOwn) && /Not kept for a personal device/.test(pSerial) && await page.getByTestId('mdm-no-commands').isVisible(),
+    `${label}: the personal Pixel: work profile only, no serial kept, no commands`, JSON.stringify({ pOwn, pSerial }).slice(0, 300));
+  if (vp === 'phone') await noSideScroll(page, `${label} personal mobile device`);
+  await cleanCheck(page, `${label} personal mobile device`);
+}
+
+/** A Business Owner whose business has no provider: Requires setup, what each provider needs, the empty state. */
+async function mobileRequiresSetup(browser, f, vp, theme, label) {
+  const ctx = await newContext(browser, vp, theme);
+  try {
+    const page = await signIn(ctx, f.mobile.ownerE.email, `${label} (owner, no MDM provider)`, theme);
+    await go(page, '/mobile-devices');
+    await page.getByTestId('mdm-setup').waitFor({ timeout: 15_000 }).catch(() => {});
+    await page.getByTestId('mdm-empty').waitFor({ timeout: 15_000 }).catch(() => {});
+    const state = await page.getByTestId('mdm-setup').getAttribute('data-state').catch(() => null);
+    const prereq = await page.locator('[data-testid="mdm-prerequisites"] li').allInnerTexts().catch(() => []);
+    const empty = await page.getByTestId('mdm-empty').innerText().catch(() => '');
+    check(state === 'requires_setup' && await page.getByTestId('mdm-requires-setup').isVisible() && prereq.length === 3
+      && /Intune/.test(prereq[0]) && /quota/.test(prereq[1]) && /APNs/.test(prereq[2]) && /once an MDM provider is connected/.test(empty),
+    `${label}: with no provider the page says Requires setup, lists the three providers' prerequisites and an empty state`, JSON.stringify({ state, prereq: prereq.length, empty }));
+    await themeCheck(page, theme, `${label} Mobile devices (requires setup)`);
+    if (vp === 'phone') await noSideScroll(page, `${label} Mobile devices (requires setup)`);
+    await shot(page, `${label}-mobile-requires-setup`);
+    await cleanCheck(page, `${label} Mobile devices (requires setup)`);
+  } finally { await ctx.close(); }
+}
+
 async function main() {
   section('Stack');
   await ensureSeeded();
@@ -3426,6 +3548,7 @@ async function main() {
   f.msa = await seedMsa(f);
   f.tools = await seedTools(f);
   f.rollbackJob = await seedRollbackJob(f);
+  f.mobile = await seedMobile(f);
   if (process.env.UI_HOLD === '1') {
     // Debugging only: leave the stack and fixtures up until interrupted.
     console.log(`  holding: ${WEB}  admin ${f.admin.email} / owner ${f.owner.email}  password in UI_HOLD_PW_FILE`);

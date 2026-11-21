@@ -1,0 +1,166 @@
+# Mobile devices (MDM)
+
+*0.80.0 "Tablet".* Rem0te can show iPhones, iPads and Android devices as a
+mobile-device-management (MDM) provider reports them: model, OS, ownership,
+enrollment, compliance and the commands the provider has run. It is
+**read-only**, and in this release **no real provider can be connected**: the
+page says **Requires setup** and lists what each kind of provider needs.
+
+What 0.80 builds is the part that does not need an account: the data model,
+a provider-neutral driver interface, a sync, the read-only routes and the
+console pages, all proven against a loopback stand-in that only the test
+suites can reach. Connecting the owner's existing provider, read-only, is the
+next step (roadmap 3.2). Sending lock, lost mode or wipe comes after that (3.3
+and 3.4).
+
+Rem0te never installs anything on a phone or tablet. The Rem0te agent is for
+Windows, Linux and macOS computers only. A mobile device is enrolled in the
+provider, and the provider manages it.
+
+## What a provider needs
+
+These are the prerequisites from the [session, maintenance, MDM and backup
+audit](session-maintenance-mdm-backup-audit.md#phase-3-mdm-iosipados-and-android).
+They are the provider's, not Rem0te's, and every one of them has to exist
+before a connector can read anything.
+
+| | Third-party MDM (for example Microsoft Intune) | Android Management API | Native Apple MDM |
+|---|---|---|---|
+| What Rem0te would be | A reader of the customer's existing MDM (and later a command relay) | An EMM: Google holds the device channel; Rem0te holds policies and reads state | The MDM server itself: check-in and command endpoints, device certificates |
+| What has to exist first | The customer's provider tenant; an app registration or API account with **read-only** scopes; a provider licence per device | A **Google Cloud project** with the API on, a service account, Pub/Sub for notifications, and an **enterprise** per customer. Since October 2025 a new project has **no device quota**: up to 500 devices needs a business justification, more needs a separate application, at most two projects per developer. Reviews have taken weeks, so ask early | An **MDM Vendor CSR Signing Certificate** from Apple (requested by the Account Holder of an Apple Developer Program or Enterprise Program account). Per customer, an **APNs MDM push certificate**, renewed **every year with the same Apple Account** or every enrolled device is orphaned. **Apple Business Manager** (or School Manager) for automated enrollment and supervision. Managed Apple Accounts for User Enrollment |
+| Ownership | As the provider reports it (Intune: company or personal) | Fully managed (corporate) or work profile (personal) | Supervised (corporate) or User Enrollment (personal) |
+| Accepted vs completed | Action results: pending, done, failed | Long-running Operations; `done` and the device's report are separate | APNs push is fire-and-forget; completion is the device's next check-in |
+| Effort | Lowest: one connector | Medium | Highest |
+| Planned | **3.2**, first | After 3.2; quota requested early | Last, if ever |
+
+The owner accepted this order on 2026-11-21 (decision 18): the interface and a
+stand-in first, then the existing provider read-only. Providers must be on
+public DNS with verified TLS (decision 17): a connector goes through the same
+outbound HTTPS client as AI and PSA connectors, which refuses private
+addresses, redirects and unverified certificates.
+
+## Who can see mobile devices
+
+A new permission, **View mobile devices** (`mobile:view`).
+
+| | Sees mobile devices |
+|---|---|
+| Platform Admin | Every business's (or one, chosen) |
+| Business Owner | Their business's |
+| Business User | Only if the Business Owner grants *View mobile devices*. Off by default |
+| MSP technician | Only with *View mobile devices* on an assignment covering the **whole** business. No preset grants it |
+
+It is separate from *View computers* because a phone list (names, models, and
+whether it is somebody's own phone) is a different disclosure from the
+computer inventory, and the people who look after desktops are not always the
+ones who should see staff phones. A technician assignment that names
+particular computers cannot name a phone, so only a whole-business assignment
+counts.
+
+Everyone is held to their own business. Naming another business is refused
+(403), and asking for a device or its commands by the id of one in another
+business, or another tenant, is "not found" (404).
+
+## What is kept
+
+| Kept | Why |
+|---|---|
+| Name, platform (iOS, iPadOS, Android), model, manufacturer, OS version | To find and recognise the device |
+| Ownership (corporate or personal) and what is managed (the whole device, an Android work profile, or Apple User Enrollment's managed apps and data) | Decides what can ever be done to it: a personal device's management can only remove the work data |
+| Enrollment state and date, last check-in | Whether the provider still reaches it |
+| Compliance state and the provider's reason | The provider evaluates; Rem0te shows |
+| Storage total and free | Inventory |
+| Serial number, **corporate devices only** | Asset records and, later, warranty. A personal device's serial is dropped before it is stored, and the database refuses one |
+| Command history | What the provider ran, and how far each command got |
+
+**Not kept**, even if a provider sends it: the IMEI or MEID, phone number,
+Wi-Fi and Bluetooth MAC addresses, and the signed-in user. They are not in the
+record Rem0te parses, so they are stripped on arrival. The IMEI identifies a
+phone line as much as a device, and nothing planned needs it: commands address
+the provider's own device id.
+
+A device the provider stops returning, in a complete listing, is marked
+**No longer reported** and hidden from the list unless you ask for it. Nothing
+is deleted.
+
+## Commands: accepted is not completed
+
+Every command moves through six states:
+
+| State | Means |
+|---|---|
+| Queued | Rem0te has it and has not sent it (from 3.3; nothing is queued in 0.80) |
+| Sent to provider | Sent, or issued in the provider's own console |
+| **Accepted by provider** | The provider took it. **The device has not necessarily done anything** |
+| **Completed on device** | The device itself reported it done |
+| Failed | The provider refused it, or the device reported a failure (with the code) |
+| Expired | Not finished by its deadline (the provider's, or seven days) |
+
+*Accepted by the provider* and *Completed on the device* are two timestamps,
+`providerAcceptedAt` and `deviceCompletedAt`, shown side by side on the
+device's page and never merged into one "done". A lock the provider accepted
+an hour ago and the phone has not picked up is shown as exactly that.
+
+The rules (`apps/api/src/mdm/command-state.ts`, and the same shape as CHECKs in
+migration 0096):
+
+- A device completion is recorded only after a provider acceptance. A report
+  that says "completed" with no acceptance is refused and counted, never
+  back-filled: the command stays *Sent*.
+- Once accepted, only the device can fail a command; the provider can no
+  longer reject it.
+- Completed, failed and expired are final. A later report never moves them,
+  and the database refuses to.
+
+In 0.80 every command shown came from the provider's own console. *Wipe*,
+*Retire* and *Remove work data* are marked **Destructive**; when they can be
+sent from Rem0te (3.4) they will need a second person to approve (decision
+16).
+
+## The sync
+
+The API reads each enabled connector at most once an hour
+(`MDM_SYNC_MINUTES`, with a 15-minute floor outside the test suites), from a
+sweep that looks every five minutes (`MDM_SWEEP_SECONDS`). It is bounded:
+
+- at most 20 connectors a pass;
+- at most 20 pages of 100 devices and 10 pages of 100 commands per connector
+  per pass. A listing cut off by the bound is recorded as **partial**, and
+  only a complete listing marks devices *No longer reported*;
+- every page and record is parsed strictly. A page that is not one is
+  **bad response**; a single malformed device or command is skipped and
+  counted;
+- a business under an *integration* containment pause is skipped
+  (**paused**), and its provider is not asked;
+- a connector is claimed with a conditional write before it is read, so two
+  API processes never read the same one at once.
+
+`MDM_SWEEP=off` stops it. *Admin → Security* reports the switch as off. It is
+off in every test suite except the one that proves it.
+
+## The stand-in
+
+The only connector in 0.80 is a **stand-in**: a small HTTP server the test
+suite runs on `127.0.0.1`, answering in the provider-neutral shape the sync
+parses. The API reaches it only when `NODE_ENV` is `test` and
+`MDM_TEST_BASE_URL` is exactly `http://127.0.0.1:<port>`. Under any other
+setting it is **not ready**, the sync records that, and no request is made. No
+real provider's host name appears anywhere in the MDM module, and nothing in
+the console or the API creates a connector.
+
+## What has been tested
+
+| | Evidence |
+|---|---|
+| The command state machine, the provider record schemas, the closed lists against 0096 | Unit (`apps/api/scripts/unit-mdm.mjs`, in CI) |
+| Sync, scope, default deny, cross-tenant refusal, accepted vs completed, bounds, pause, the database's refusals | API, against the stand-in only (`apps/api/scripts/e2e-mdm.mjs`) |
+| The pages at desktop and phone width, light and dark | Browser (`apps/web/scripts/e2e-ui.mjs`) |
+| A real provider, a real phone or tablet | **None.** No provider has been called from this server |
+
+## Planned
+
+- **3.2** — the first real connector, read-only: the owner's existing provider,
+  its credential sealed, through the public-HTTPS client only.
+- **3.3** — lock, lost mode and locate, with their own permission, audited,
+  accepted and completed shown separately.
+- **3.4** — wipe, retire and work-data removal, approved by a second person.

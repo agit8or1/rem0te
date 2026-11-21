@@ -76,6 +76,17 @@ export const CAP = {
   // A technician needs these on a grant covering the whole business.
   SCRIPTS_AUTHOR: 'scripts:author',
   SCRIPTS_REVIEW: 'scripts:review',
+
+  // Mobile devices (0.80 Tablet): reading the phones and tablets an MDM
+  // provider reports for this business — inventory, ownership, compliance
+  // and command history. Read-only; it sends nothing to a device. Separate
+  // from `computers:view` because a phone list (names, models, whose own
+  // device it is) is a different disclosure from the computer inventory, and
+  // the people who look after desktops are not necessarily the ones who see
+  // staff phones. Off by default for a Business User; no technician preset
+  // produces it, and a technician needs it on a whole-business assignment
+  // (a grant naming computers cannot name a phone).
+  MOBILE_VIEW: 'mobile:view',
 } as const;
 
 /**
@@ -190,6 +201,12 @@ export const CAPABILITY_GROUPS: {
     items: [
       { key: CAP.SCRIPTS_AUTHOR, label: 'Write scripts', description: "Add scripts to this business's library, edit them (each edit is a new version) and submit versions for review. Never approves a run." },
       { key: CAP.SCRIPTS_REVIEW, label: 'Review scripts', description: "Approve or reject someone else's script version. Never one they wrote or edited. Approving needs a fresh sign-in, and runs nothing; with this permission they can also propose an approved version to the approval signer's allowlist, which its own approvers decide." },
+    ],
+  },
+  {
+    group: 'Mobile devices',
+    items: [
+      { key: CAP.MOBILE_VIEW, label: 'View mobile devices', description: "See this business's phones and tablets as its MDM provider reports them: model, OS, ownership, compliance and command history. Read-only; nothing can be sent to a device. A technician needs it on an assignment covering the whole business." },
     ],
   },
 ];
