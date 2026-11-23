@@ -43,7 +43,7 @@ called an Apple or Google API, and no phone or tablet has been used.
                                     │                     │               │
  iPhone / iPad ──HTTPS──▶ Caddy (remote.agit8or.net :443) │               │
    │  check-in, PUT ServerURL ─▶ /api/v1/mdm/apple/* ─────┼──▶ Nest API :3001 ──────────────────────┐
-   │  ACME (device identity) ──▶ /mdm/acme/*  (NEW route) │      mdm/apple/   protocol, queue,      │
+   │  ACME (device identity) ──▶ /acme/rem0te-mdm/*  (NEW)│      mdm/apple/   protocol, queue,      │
    │                                │                     │                   profiles, APNs client  │
    │                                ▼                     │      mdm/drivers/apple.ts  (MdmDriver)   │
    │                      step-ca :127.0.0.1 (rem0te-mdm-ca user,              mdm/drivers/android.ts│
@@ -127,9 +127,9 @@ reused unchanged.
   (`remote.agit8or.net`), never a test host.
 - **`AccessRights`** is a bit field (1 inspect profiles, 2 install and remove profiles, 4 lock and passcode
   removal, 8 erase, 16 device information, 32 network information, 256 apps, 1024 security, and so on). Rem0te
-  asks for what its closed command list needs and no more: **1 + 4 + 8 + 16 + 256 + 1024** for corporate devices
-  (`ProfileList`, lock, erase, information, apps, security); the erase bit only when the business allows
-  destructive actions at all. Adding a right later means re-enrolling, so the first PR records the decision.
+  asks for what its closed command list needs and no more: **1 + 4 + 8 + 16 + 256 + 1024** (1309) for corporate
+  devices (`ProfileList`, lock, erase, information, apps, security). Adding a right later means re-enrolling, so
+  **decision 25 (2026-11-23)** grants erase from the first enrollment; it stays unsendable until M5's gating.
 - **Device authentication behind Caddy.** By default the device presents its identity certificate over mutual
   TLS. With `SignMessage` true every message also carries an `Mdm-Signature` header, a detached CMS signature,
   for servers behind a proxy that does not pass the client certificate on
@@ -162,8 +162,10 @@ documentation has not been read yet, **to confirm in the Apple enrollment PR**).
 - It is Apple's recommendation, the key never leaves the device, and attestation binds the certificate to real
   Apple hardware and its serial, so a stolen enrollment link cannot be replayed from a laptop.
 - step-ca runs as its own system user (`rem0te-mdm-ca`) on `127.0.0.1`. **The portal (`reboot`) cannot read the
-  CA key**, the same separation the release keys have (§56). The portal asks step-ca for nothing but a one-time
-  ACME authorization per enrollment link; it never signs a certificate itself.
+  CA key**, the same separation the release keys have (§56). The portal asks step-ca for nothing and never signs
+  a certificate itself. (The plan had the portal make a one-time ACME authorization per link; step-ca offers no
+  such hook, so **decision 27** accepts ACME open to attested Apple devices, with enrollment needing a claimed
+  link and the certificate bound at `Authenticate`.)
 - iOS 16 is the floor. Devices that cannot run iOS 16 (or iPadOS 16) are **unsupported**, said on the
   enrollment page. iPads below A11 enroll with a hardware-bound key but no attestation; whether step-ca's
   `device-attest-01` accepts a request with no attestation statement is **unconfirmed** and decides whether those
@@ -582,7 +584,7 @@ A sketch for the section the first implementation PR adds, extending §90:
 3. **Sealed.** The six purposes above exist in `SecretPurpose`, each used only by its own module, and none of
    their plaintexts reaches a view, audit meta or log.
 4. **The CA is not the portal's.** Nothing in `apps/api/src` names the step-ca key directory or spawns step-ca;
-   the portal reaches it only on loopback for one-time authorizations.
+   the portal never calls it (decision 27: no per-order authorization; enrollment needs a claimed link).
 5. **Closed commands.** The Apple `RequestType`s and Android command types Rem0te can send are exact, ordered
    lists, the same in the module and in a CHECK. `AccessRights` is one constant.
 6. **Device messages verified first.** The check-in and server handlers call the signature check before any
@@ -696,7 +698,7 @@ plan above, it says why.
 | Caddy | One route, `/acme/rem0te-mdm/*`, to `https://127.0.0.1:9451`, verified against the device CA's root copied to `/etc/caddy/rem0te-mdm-ca-root.crt`. It is in `deploy/caddy/Caddyfile` **commented out**; nothing else of step-ca is reachable |
 | Wizard step 6 | Settings → Mobile devices: upload the device CA's root and intermediate (public certificates only, `checkDeviceCa`), upload the profile-signing certificate and key (`checkProfileSigner`; the key sealed under **`rem0te-mdm-profile-sign-v1`**), create and revoke one-time links, see enrolled devices. Renewal moved to step 7 and ABM to step 8, as in the design's table |
 | Links | `POST /mdm/apple/links` (Platform Admin, `assertFresh` naming **`mdm.enroll`**, a §62 key, default `off`); 32 random bytes shown once, only the SHA-256 stored; per business, corporate only, 15 minutes to 24 hours (an hour by default). Revoking never asks |
-| Profile | `GET /mdm/apple/enroll/<token>` claims the link with one conditional update (`open → claimed`) and returns a CMS-signed `.mobileconfig`: an ACME identity payload (`HardwareBound`, `Attest`, P-384) and the MDM payload with `SignMessage`, `CheckOutWhenRemoved`, production APNs and `AccessRights` 1301. Any link that cannot be claimed is the same 404 |
+| Profile | `GET /mdm/apple/enroll/<token>` claims the link with one conditional update (`open → claimed`) and returns a CMS-signed `.mobileconfig`: an ACME identity payload (`HardwareBound`, `Attest`, P-384) and the MDM payload with `SignMessage`, `CheckOutWhenRemoved`, production APNs and `AccessRights` 1309 (erase granted, never sent; decision 25). Any link that cannot be claimed is the same 404 |
 | Check-in | `PUT /mdm/apple/checkin` (`Authenticate`, `TokenUpdate`, `CheckOut`). `Authenticate` must name a claimed link (`?enroll=`) within an hour of the claim, carry the push certificate's topic and run iOS/iPadOS 16 or later (decision 24); it consumes the link (`claimed → used`) in the same transaction that creates the device |
 | Commands | `PUT /mdm/apple/server`. The queue holds only the five inventory commands, in this order: `DeviceInformation`, `SecurityInfo`, `InstalledApplicationList`, `ProfileList`, `CertificateList`. They are queued at the first `TokenUpdate` and again every 24 hours; `NotNow` puts a command back in the queue |
 | Push | The MDM sweep pushes `{"mdm": PushMagic}` to every device with queued work (at most 100 a pass, not more often than hourly per device) through `common/safe-h2.ts`, one HTTP/2 connection per pass, with the push certificate as the TLS client certificate. `410` / `BadDeviceToken` stops pushing to that token; a refused certificate or topic stops the pass |
@@ -721,17 +723,21 @@ check-in, 2 MB for a command result.
   one-time authorizations". step-ca's `device-attest-01` has no per-order hook that calls back to Rem0te, so any
   genuine Apple device that reaches the route can get a certificate. That certificate does nothing by itself: a
   device can enroll only by naming a claimed, unexpired link at `Authenticate`, and the certificate is bound
-  there. An owner decision (below).
+  there. **Decided (27)**, below.
 - **No PKCS#12, anywhere, not even in tests.** The plan allowed a PKCS#12 test identity because mdmb needed one.
   mdmb also speaks SCEP, so the suite gives it a SCEP identity from the scratch step-ca. That path exists only
   under `NODE_ENV=test` on `127.0.0.1` (`scepTestIdentity` refuses otherwise), and the install script refuses
   the SCEP provisioner without `--prefix`.
 - **SHA-1 is accepted in `Mdm-Signature`**, with SHA-256/384/512. mdmb signs with SHA-1 (its CMS library's
   default), and that every Apple device uses SHA-256 is not confirmed. The authority is the device's own key and
-  the chain to Rem0te's CA. An owner decision (below).
-- **`AccessRights` is 1301, without erase (8).** The plan above asked for 1 + 4 + 8 + 16 + 256 + 1024 on corporate
-  devices. M2 sends no destructive command, and a profile should not grant what nothing uses; but rights are fixed
-  at enrollment, so this is an owner decision (25, below).
+  the chain to Rem0te's CA. **Decided (28)**: accepted for now, and the digest each device used is recorded
+  (`AppleDevice.signatureDigest`, a closed CHECK) and shown in step 6, **to revisit once real devices have checked
+  in**.
+- **`AccessRights` is 1309, with erase (8)**, as the plan asked (decision 25). The first build had 1301, since M2
+  sends no destructive command; but rights are fixed at enrollment, and nothing is enrolled yet, so erase is granted
+  now to spare every device a re-enrollment at M5. It is **granted, never sendable**: no erase or wipe request type
+  exists in the closed queue list or 0101's CHECK, and M5 brings the second person and the always-ask
+  `mdm.destructive` check before one can.
 - **No new sweep.** Pushes, re-queues and expiry run inside `MDM_SWEEP` (`AppleMdmService.pass`, called only by
   the sync), so `MDM_SWEEP=off` stops them and there is no new off switch.
 - **Containment.** As the design's table: check-ins are always answered and inventory is not held by any pause.
@@ -746,14 +752,14 @@ they can only wake a device, and only with the push certificate. They are in no 
 counts and two passcode booleans, never the lists themselves. Error results keep `apple:<domain>:<code>`, never
 Apple's description text.
 
-### Owner decisions this raises
+### Owner decisions (decided 2026-11-23, "accept recs")
 
-| # | Decision | What 0.84 does | Why it matters |
+| # | Decision | Decided | What 0.84 does |
 |---|---|---|---|
-| 25 | **`AccessRights` without erase** | 1301 = inspect profiles (1) + device lock and passcode removal (4) + query device information (16) + inspect installed apps (256) + security queries (1024). No erase (8), no profile or app installation | Rights are fixed when the profile is installed. **Adding erase for M5 means every device enrolls again.** The alternative is to include 8 now and have the portal refuse to send it until M5 |
-| 26 | **ACME path** `/acme/rem0te-mdm/*` | As above | The path is in every enrolled device's profile for good |
-| 27 | **ACME with no per-order authorization** | Any attested Apple device reaching the route gets a certificate; enrollment still needs a claimed link | Closing it needs a step-ca webhook provisioner (a later change) or keeping the route off except while enrolling |
-| 28 | **SHA-1 in `Mdm-Signature`** | Accepted | Refusing it may refuse some devices; to be decided against a real device |
+| 25 | **`AccessRights`** | **Grant erase now**: nothing is enrolled yet, and adding it at M5 would mean every device enrolling again | 1309 = inspect profiles (1) + lock and passcode removal (4) + erase (8) + device information (16) + inspect installed apps (256) + security queries (1024). No profile or app installation. Erase is **granted, never sendable**: no erase or wipe request type in `REQUEST_TYPES` or 0101's CHECK (§93); the second person and the always-ask `mdm.destructive` arrive with M5 |
+| 26 | **ACME path** | **`/acme/rem0te-mdm/*`** | As above; in every enrolled device's profile for good |
+| 27 | **ACME with no per-order authorization** | **Accepted** | Any attested Apple device reaching the route can get a certificate; enrollment still needs a claimed, unexpired link, and the certificate is bound at `Authenticate`. A step-ca webhook provisioner could close it later |
+| 28 | **SHA-1 in `Mdm-Signature`** | **Accepted for now; record and revisit** | SHA-1, SHA-256, SHA-384 and SHA-512 are accepted. Each device's newest verified digest is `AppleDevice.signatureDigest` (0101 CHECK, `SIGNATURE_DIGESTS`), shown in step 6's device list. **Revisit once real devices have checked in**: if they all use SHA-256, refuse SHA-1 |
 
 ### Host changes at deploy (none made)
 

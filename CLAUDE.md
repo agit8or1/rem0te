@@ -2226,7 +2226,8 @@ iPad, and no real APNs call has been made.** (§92 is 0.83's.)
 - **Closed commands.** The request types (the five inventory commands, in
   order) and the command, device and link states are 0101's CHECKs, word for
   word. No lock, erase or other request type exists in `mdm/apple`.
-  `ACCESS_RIGHTS` is one constant, 1301, without erase (8), named only by
+  `ACCESS_RIGHTS` is one constant, 1309: erase (8) is granted at enrollment
+  (decision 25) but never sendable, because no such request type exists. It is named only by
   `protocol.ts` and `profile.ts`. Every command body comes from its type
   (`commandFor`).
 - **Verified first.** `checkin` and `server` call `verified()` (the detached
@@ -2249,6 +2250,10 @@ iPad, and no real APNs call has been made.** (§92 is 0.83's.)
   `AppleCommand`. The Apple code writes no `MobileDevice`, `MdmCommand` or
   connector; the sync does. The only connector it creates is an enabled
   `apple` one, in `ensureAppleConnectors`.
+- **Digest.** SHA-1 is accepted in `Mdm-Signature` for now (decision 28).
+  Every verified message records its digest in `AppleDevice.signatureDigest`,
+  and `SIGNATURE_DIGESTS` is 0101's CHECK. Revisit once real devices have
+  checked in.
 - **Kept.** No IMEI, MEID, phone number, MAC, user or UnlockToken column, and
   the check-in reads none of them. Links are corporate only. No push token or
   magic in an audit row, a log line or the admin view.

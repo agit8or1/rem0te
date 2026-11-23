@@ -69,7 +69,7 @@ export class AppleMdmService implements AppleReader {
   ) {}
 
   /** Mdm-Signature, verified before anything is parsed. Returns the signer's certificate SHA-256, or null. */
-  private async verified(raw: Buffer | undefined, header: string | string[] | undefined, now: Date): Promise<{ sha256: string; notAfter: Date } | null> {
+  private async verified(raw: Buffer | undefined, header: string | string[] | undefined, now: Date): Promise<{ sha256: string; notAfter: Date; digest: string } | null> {
     if (!Buffer.isBuffer(raw) || !raw.length) return null;
     if (typeof header !== 'string' || !header.length || header.length > MAX_SIGNATURE_HEADER) return null;
     const compact = header.replace(/\s+/g, '');
@@ -78,7 +78,7 @@ export class AppleMdmService implements AppleReader {
     if (!trust) return null;
     const v = verifyDetachedCms(Buffer.from(compact, 'base64'), raw, trust, now);
     if (!v.ok) return null;
-    return { sha256: v.signerSha256, notAfter: new Date(v.signer.validTo) };
+    return { sha256: v.signerSha256, notAfter: new Date(v.signer.validTo), digest: v.digest };
   }
 
   private parse(raw: Buffer): PlistDict | null {
@@ -117,7 +117,7 @@ export class AppleMdmService implements AppleReader {
         if (await tx.appleDevice.findUnique({ where: { certSha256: signer.sha256 }, select: { id: true } })) return null;
         return tx.appleDevice.create({
           data: {
-            tenantId: link.tenantId, customerId: link.customerId, linkId: enroll, udid: m.udid, certSha256: signer.sha256, certNotAfter: signer.notAfter,
+            tenantId: link.tenantId, customerId: link.customerId, linkId: enroll, udid: m.udid, certSha256: signer.sha256, certNotAfter: signer.notAfter, signatureDigest: signer.digest,
             topic: m.topic, state: 'authenticated', authenticatedAt: now, lastSeenAt: now, platform,
             productName: m.facts.productName, osVersion: m.facts.osVersion, buildVersion: m.facts.buildVersion,
             // Profile enrollment is corporate only (the link's ownership), so the serial is kept (0096's rule).
@@ -141,7 +141,7 @@ export class AppleMdmService implements AppleReader {
       const first = dev.state === 'authenticated';
       const r = await this.prisma.appleDevice.updateMany({
         where: { id: dev.id, state: { not: 'checked_out' } },
-        data: { state: 'enrolled', enrolledAt: dev.enrolledAt ?? now, pushToken: m.pushToken, pushMagic: m.pushMagic, pushTokenInvalidAt: null, lastSeenAt: now },
+        data: { state: 'enrolled', enrolledAt: dev.enrolledAt ?? now, pushToken: m.pushToken, pushMagic: m.pushMagic, pushTokenInvalidAt: null, lastSeenAt: now, signatureDigest: signer.digest },
       });
       if (r.count !== 1) return refuse();
       if (first) {
@@ -154,7 +154,7 @@ export class AppleMdmService implements AppleReader {
     // CheckOut: the device left management (the profile was removed). Final.
     await this.prisma.$transaction([
       this.prisma.appleCommand.updateMany({ where: { appleDeviceId: dev.id, state: { in: ['queued', 'sent'] } }, data: { state: 'cancelled' } }),
-      this.prisma.appleDevice.updateMany({ where: { id: dev.id, state: { not: 'checked_out' } }, data: { state: 'checked_out', checkedOutAt: now, checkoutReason: 'checkout', pushToken: null, pushMagic: null, lastSeenAt: now } }),
+      this.prisma.appleDevice.updateMany({ where: { id: dev.id, state: { not: 'checked_out' } }, data: { state: 'checked_out', checkedOutAt: now, checkoutReason: 'checkout', pushToken: null, pushMagic: null, lastSeenAt: now, signatureDigest: signer.digest } }),
     ]);
     await this.audit.log({ action: 'MDM_APPLE_DEVICE_CHECKED_OUT', actorIp: ip, tenantId: dev.tenantId, customerId: dev.customerId, resource: 'apple_device', resourceId: dev.id });
     return empty;
@@ -172,7 +172,7 @@ export class AppleMdmService implements AppleReader {
     if (r.status === 'invalid') return refuse(400);
     const dev = await this.prisma.appleDevice.findFirst({ where: { udid: r.udid, certSha256: signer.sha256, state: 'enrolled' } });
     if (!dev) return refuse();
-    await this.prisma.appleDevice.update({ where: { id: dev.id }, data: { lastSeenAt: now } });
+    await this.prisma.appleDevice.update({ where: { id: dev.id }, data: { lastSeenAt: now, signatureDigest: signer.digest } });
 
     if (r.status !== 'Idle') {
       const cmd = await this.prisma.appleCommand.findFirst({ where: { commandUuid: r.commandUuid.toUpperCase(), appleDeviceId: dev.id, state: 'sent' } });
@@ -332,7 +332,7 @@ export class AppleMdmService implements AppleReader {
       select: {
         id: true, customerId: true, state: true, platform: true, deviceName: true, productName: true, osVersion: true, serialNumber: true,
         authenticatedAt: true, enrolledAt: true, checkedOutAt: true, checkoutReason: true, lastSeenAt: true, lastPushAt: true, lastPushOkAt: true,
-        lastPushResult: true, lastInventoryAt: true, certNotAfter: true, customer: { select: { name: true } },
+        lastPushResult: true, lastInventoryAt: true, certNotAfter: true, signatureDigest: true, customer: { select: { name: true } },
         commands: { orderBy: { queuedAt: 'desc' }, take: 10, select: { requestType: true, state: true, queuedAt: true, sentAt: true, respondedAt: true, errorCode: true } },
       },
     });

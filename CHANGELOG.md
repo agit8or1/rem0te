@@ -23,24 +23,28 @@ driver, `apple`.
 Migration 0101 and one new confirm key, `mdm.enroll` (default `off`). There is no agent, signer or sudoers change,
 and the API's dependencies do not change: the HTTP/2 client is Node's own.
 
-### Needs an owner decision
+### Decided
 
-These are recorded in `docs/own-mdm.md` ("M2 as built") as decisions 25–28.
+The owner accepted the recommendations ("accept recs", 2026-11-23) for decisions 25–28, recorded in
+`docs/own-mdm.md` ("M2 as built"):
 
-- **25: `AccessRights` is 1301, without erase (8).** 1301 is inspect profiles (1), lock and passcode removal (4),
-  device information (16), installed apps (256) and security queries (1024). The design had asked for 8 as well
-  on corporate devices. Rights are fixed when the profile is installed, so **adding erase for M5 means every
-  device enrolls again**. The alternative is to grant 8 now and have the portal refuse to send it until M5.
+- **25: `AccessRights` is 1309, with erase (8), granted now.** 1309 is inspect profiles (1), lock and passcode
+  removal (4), erase (8), device information (16), installed apps (256) and security queries (1024). Rights are
+  fixed when the profile is installed, and nothing is enrolled yet, so granting erase now spares every device a
+  re-enrollment at M5. **Erase stays unsendable**: no erase or wipe request type exists in the closed queue list or
+  0101's CHECK, and the second person and the always-ask `mdm.destructive` arrive with M5. (The first build of this
+  release had 1301.)
 - **26: the ACME path is `/acme/rem0te-mdm/*`, not the design's `/mdm/acme/*`.** step-ca builds its directory's
   links from the request host and `/acme/<provisioner>/`, which cannot be changed. This was checked against
   v0.30.2. The path is in every enrolled profile for good.
-- **27: ACME has no per-order authorization.** step-ca's `device-attest-01` cannot call back to Rem0te, so any
-  genuine Apple device that reaches the route can get a certificate from the CA. That certificate alone enrolls
-  nothing: `Authenticate` must name a claimed, unexpired link, and that is where the certificate is bound to the
-  device. Closing the gap needs a step-ca webhook provisioner, or the route on only while enrolling.
-- **28: SHA-1 is accepted in `Mdm-Signature`**, alongside SHA-256/384/512. mdmb signs with SHA-1 (its CMS
-  library's default), and it is not confirmed that every Apple device uses SHA-256. Signing is with the device's
-  own key, which chains to Rem0te's CA.
+- **27: ACME has no per-order authorization, accepted.** step-ca's `device-attest-01` cannot call back to Rem0te,
+  so any genuine Apple device that reaches the route can get a certificate from the CA. That certificate alone
+  enrolls nothing: `Authenticate` must name a claimed, unexpired link, and that is where the certificate is bound
+  to the device.
+- **28: SHA-1 is accepted in `Mdm-Signature` for now**, alongside SHA-256/384/512. mdmb signs with SHA-1 (its CMS
+  library's default), and it is not confirmed that every Apple device uses SHA-256. Each device's newest verified
+  digest is recorded in `AppleDevice.signatureDigest` (0101 CHECK, `SIGNATURE_DIGESTS`) and shown in step 6's
+  device list, **to revisit once real devices have checked in**.
 
 ### Added
 
@@ -75,7 +79,8 @@ These are recorded in `docs/own-mdm.md` ("M2 as built") as decisions 25–28.
 - **The signed profile** (`GET /mdm/apple/enroll/<token>`). Opening the link claims it (`open → claimed`, one
   conditional update) and returns a CMS-signed `.mobileconfig`:
   - an ACME identity payload: `HardwareBound`, `Attest`, P-384;
-  - the MDM payload: `SignMessage`, `CheckOutWhenRemoved`, production APNs and `AccessRights` 1301.
+  - the MDM payload: `SignMessage`, `CheckOutWhenRemoved`, production APNs and `AccessRights` 1309 (erase granted,
+    never sent).
 
   Any token that cannot be claimed (unknown, used, expired, revoked) gets the same 404 with no body.
 - **Check-in** (`PUT /mdm/apple/checkin`): `Authenticate`, `TokenUpdate`, `CheckOut`, and **commands** (`PUT
@@ -142,26 +147,27 @@ certificate. They are in no audit row, log line or view.
   them.
 - **Containment** follows the design's table. Check-ins are always answered and inventory is held by no pause.
   There is nothing that acts to hold.
-- **`docs/own-mdm.md`** marks M2 built and adds "M2 as built": the differences, decisions 25–28 and the deploy
+- **`docs/own-mdm.md`** marks M2 built and adds "M2 as built": the differences, decisions 25–28 (decided) and the deploy
   steps. **`docs/mobile-devices.md`**, **`docs/capabilities.md`** (iPhone and iPad enrollment: **planned** →
   **requires setup**) and `/help` describe step 6.
 
 ### Tests
 
-- **`apps/api/scripts/unit-mdm-apple.mjs`** (62 checks, in CI). Stand-in certificates are made at run time, and
+- **`apps/api/scripts/unit-mdm-apple.mjs`** (64 checks, in CI). Stand-in certificates are made at run time, and
   signatures are made by openssl. It covers:
   - plist round trips and refusals (DTD subset, entities, unknown tags, binary, depth, size, duplicate keys);
   - detached signatures: accepted, and refused when the body changed, under another CA, expired, not yet valid,
     a CA, attached, with two signers, or not CMS;
   - BER indefinite lengths;
-  - the signed profile, which openssl verifies, with 1301 and no PKCS#12, and SCEP only under test;
+  - the signed profile, which openssl verifies, with 1309 and no PKCS#12, and SCEP only under test;
+  - the signature digest returned for recording, and 0101's digest CHECK;
   - check-in and report reading (no UnlockToken, IMEI or user channel);
   - the five command bodies and the inventory facts;
   - the APNs body and status mapping, and the stub only on `https://127.0.0.1` under test;
   - the driver's records through the sync's own parsers;
   - `checkDeviceCa` and `checkProfileSigner`;
   - 0101's lists.
-- **`apps/api/scripts/e2e-mdm-apple.mjs`** (84 checks, ports 4061–4064, in `run-e2e.sh`), on a scratch API and
+- **`apps/api/scripts/e2e-mdm-apple.mjs`** (86 checks, ports 4061–4064, in `run-e2e.sh`), on a scratch API and
   database. It runs:
   - step-ca installed by the real setup script under `--prefix`;
   - ACME on loopback: links that follow the host, and an order offering only `device-attest-01`;
@@ -172,6 +178,7 @@ certificate. They are in no audit row, log line or view.
   - the push to the HTTP/2 stand-in, with the exact body and headers;
   - the sync's `MobileDevice` and `MdmCommand` rows;
   - `CheckOut`, revoke and an expired claim;
+  - the digest each device signed with, recorded and listed (mdmb: SHA-1);
   - no secret in any answer or audit row.
 
   CI's e2e job builds mdmb at commit `7adfa11f` and fetches step-ca v0.30.2 by SHA-256. Without them the suite is

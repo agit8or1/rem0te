@@ -5621,6 +5621,8 @@ model AppleDevice {
   /// SHA-256 of the identity certificate that signs this device's messages.
   certSha256            String              @unique
   certNotAfter          DateTime
+  /// sha1 | sha256 | sha384 | sha512: the newest verified Mdm-Signature's digest (0101 CHECK, decision 28).
+  signatureDigest       String
   topic                 String
   /// authenticated | enrolled | checked_out (0101 CHECK).
   state                 String              @default("authenticated")

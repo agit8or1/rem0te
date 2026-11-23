@@ -56,14 +56,25 @@ export const DEVICE_INFO_QUERIES = [
 /**
  * The MDM payload's AccessRights, one constant (Apple: "MDM" payload). In
  * M2: 1 inspect profiles (ProfileList), 4 lock and passcode removal (M4's
- * DeviceLock), 16 device information, 256 inspect installed apps, 1024
- * security queries (SecurityInfo, CertificateList). NOT 8 (erase): that bit
- * is for the business that allows destructive actions (M5, decision 16), and
- * every device enrolled without it must enroll again to get it. Changing
- * this constant changes what new enrollments grant, and nothing for devices
+ * DeviceLock), 8 erase (M5's EraseDevice), 16 device information, 256
+ * inspect installed apps, 1024 security queries (SecurityInfo,
+ * CertificateList). Decision 25 (2026-11-23): erase is GRANTED NOW, because
+ * rights are fixed at enrollment and adding it later would mean every device
+ * enrolling again. Granting it sends nothing: no erase or wipe request type
+ * exists in REQUEST_TYPES or 0101's CHECK, and M5 brings the second person
+ * and the always-ask `mdm.destructive` before one can. Changing this
+ * constant changes what new enrollments grant, and nothing for devices
  * already enrolled.
  */
-export const ACCESS_RIGHTS = 1 + 4 + 16 + 256 + 1024;
+export const ACCESS_RIGHTS = 1 + 4 + 8 + 16 + 256 + 1024;
+
+/**
+ * The digest a device's Mdm-Signature used (decision 28: SHA-1 is accepted for
+ * now, and recorded per device to revisit once real devices have checked in).
+ * The same list as cms.ts's digests and 0101's CHECK.
+ */
+export const SIGNATURE_DIGESTS = ['sha1', 'sha256', 'sha384', 'sha512'] as const;
+export type SignatureDigest = (typeof SIGNATURE_DIGESTS)[number];
 
 /** A command stays in the queue this long, then expires. */
 export const COMMAND_TTL_MS = 7 * 24 * 3_600_000;

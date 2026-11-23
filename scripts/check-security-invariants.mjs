@@ -8305,7 +8305,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //       - the push key and the profile signer are opened in memory by one
 //         caller each; the device CA's key is never the portal's;
 //       - the request types and states are closed lists, the same in
-//         protocol.ts and 0101; AccessRights one constant, without erase; no
+//         protocol.ts and 0101; AccessRights one constant (erase granted, never sendable); no
 //         lost-device or destructive request type;
 //       - Mdm-Signature is verified before any parse; a refusal has no body;
 //       - links: Platform Admin, assertFresh naming mdm.enroll, a 256-bit
@@ -8389,8 +8389,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     JSON.stringify(tsList('REQUEST_TYPES')) === JSON.stringify(['DeviceInformation', 'SecurityInfo', 'InstalledApplicationList', 'ProfileList', 'CertificateList'])
       && !walk(D).some((f) => /EraseDevice|DeviceLock|EnableLostMode|DisableLostMode|ClearPasscode|RemoveProfile|InstallProfile|InstallApplication|RestartDevice|ShutDownDevice|DeviceConfigured|Settings'/.test(code(read(f)))),
     JSON.stringify(tsList('REQUEST_TYPES')));
-  check('closed: AccessRights is one constant, 1+4+16+256+1024 (no erase, no profile install), named only by the profile',
-    /export const ACCESS_RIGHTS = 1 \+ 4 \+ 16 \+ 256 \+ 1024;/.test(proto) && JSON.stringify(all.filter((f) => /\bACCESS_RIGHTS\b/.test(code(read(f)))).sort()) === JSON.stringify([`${D}/profile.ts`, `${D}/protocol.ts`])
+  // Decision 25 (2026-11-23): erase (8) is granted at enrollment so M5 needs no re-enrollment; it stays unsendable (the check above).
+  check('closed: AccessRights is one constant, 1+4+8+16+256+1024 (erase granted, no profile or app install), named only by the profile',
+    /export const ACCESS_RIGHTS = 1 \+ 4 \+ 8 \+ 16 \+ 256 \+ 1024;/.test(proto) && JSON.stringify(all.filter((f) => /\bACCESS_RIGHTS\b/.test(code(read(f)))).sort()) === JSON.stringify([`${D}/profile.ts`, `${D}/protocol.ts`])
       && /AccessRights: ACCESS_RIGHTS,/.test(prof), 'protocol.ts / profile.ts');
   check('closed: every command body is built from its type alone (commandFor); the queue creates only REQUEST_TYPES',
     /export function commandFor\(type: RequestType\): PlistDict \{\s*switch \(type\) \{/.test(proto) && /data: REQUEST_TYPES\.map\(\(t: RequestType\) => \(\{/.test(mdm)
@@ -8447,6 +8448,11 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('kept: no IMEI, MEID, phone number, MAC, user or UnlockToken column; the check-in never reads them; a link is corporate only',
     devTable.length > 500 && !/imei|meid|phone|mac\b|wifi|bluetooth|"user|email|unlock/i.test(devTable)
       && !/UnlockToken|IMEI|MEID|PhoneNumber|WiFiMAC|BluetoothMAC|UserID|UserShortName/.test(code(proto).replace("if (d.EnrollmentID !== undefined || d.UserID !== undefined) return { type: 'invalid', why: 'user_channel' };", '')) && /CHECK \("ownership" IN \('corporate'\)\)/.test(sql), 'protocol.ts / 0101');
+  // Decision 28: SHA-1 accepted for now; every device's digest is recorded, from verified() only, against a closed list.
+  const dgSql = (sql.match(/CONSTRAINT "AppleDevice_signatureDigest_check" CHECK \("signatureDigest" IN \(([^)]*)\)\)/) ?? ['', ''])[1];
+  check('digest: every verified message records its digest (signer.digest, from verifyDetachedCms); SIGNATURE_DIGESTS is 0101\'s CHECK',
+    JSON.stringify([...dgSql.matchAll(/'([^']+)'/g)].map((x) => x[1])) === JSON.stringify(tsList('SIGNATURE_DIGESTS'))
+      && /digest: v\.digest \};/.test(vf) && (code(mdm).match(/signatureDigest: signer\.digest/g) ?? []).length === 4, 'apple-mdm.service.ts / 0101');
   check('kept: no push token or magic in an audit row, a log line or the admin view',
     ![...code(mdm).matchAll(/this\.audit\.log(?:OrFail)?\(\{[\s\S]*?\}\);/g)].some((m) => /pushToken|pushMagic|PushMagic/.test(m[0]))
       && !/this\.logger\.\w+\([^)]*push(Token|Magic)/.test(code(mdm)) && !/pushToken|pushMagic/.test((mdm.match(/async adminList[\s\S]*?\n  \}\n/) ?? [''])[0]), 'apple-mdm.service.ts');

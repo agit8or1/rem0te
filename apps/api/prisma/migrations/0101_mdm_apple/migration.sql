@@ -102,6 +102,8 @@ CREATE TABLE "AppleDevice" (
     "udid" TEXT NOT NULL,
     "certSha256" TEXT NOT NULL,
     "certNotAfter" TIMESTAMP(3) NOT NULL,
+    -- Decision 28: the digest of the newest verified Mdm-Signature (SHA-1 accepted for now; revisit with real devices).
+    "signatureDigest" TEXT NOT NULL,
     "topic" TEXT NOT NULL,
     "state" TEXT NOT NULL DEFAULT 'authenticated',
     "pushToken" TEXT,
@@ -141,6 +143,7 @@ CREATE TABLE "AppleDevice" (
     CONSTRAINT "AppleDevice_platform_check" CHECK ("platform" IN ('ios', 'ipados')),
     CONSTRAINT "AppleDevice_udid_check" CHECK ("udid" ~ '^[A-Fa-f0-9-]{24,64}$'),
     CONSTRAINT "AppleDevice_cert_check" CHECK ("certSha256" ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT "AppleDevice_signatureDigest_check" CHECK ("signatureDigest" IN ('sha1', 'sha256', 'sha384', 'sha512')),
     CONSTRAINT "AppleDevice_topic_check" CHECK ("topic" ~ '^com\.apple\.mgmt\.[A-Za-z0-9.-]{1,100}$'),
     CONSTRAINT "AppleDevice_push_check" CHECK (
       ("pushToken" IS NULL) = ("pushMagic" IS NULL)

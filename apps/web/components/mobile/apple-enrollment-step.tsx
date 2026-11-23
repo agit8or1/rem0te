@@ -30,7 +30,7 @@ interface Link { id: string; businessName: string; state: string; createdAt: str
 interface Device {
   id: string; businessName: string; state: string; platform: string; deviceName: string | null; productName: string | null; osVersion: string | null;
   serialNumber: string | null; enrolledAt: string | null; lastSeenAt: string | null; lastPushAt: string | null; lastPushOkAt: string | null; lastPushResult: string | null;
-  lastInventoryAt: string | null; commands: { requestType: string; state: string; errorCode: string | null }[];
+  lastInventoryAt: string | null; signatureDigest: string; commands: { requestType: string; state: string; errorCode: string | null }[];
 }
 
 const when = (s?: string | null) => (s ? new Date(s).toLocaleString() : '—');
@@ -192,7 +192,7 @@ export function AppleEnrollmentStep({ view, ask, onView, onNote }: {
         {(devices.data ?? []).length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
-              <thead><tr className="text-left text-muted-foreground"><th className="p-1">Device</th><th className="p-1">Business</th><th className="p-1">State</th><th className="p-1">Last check-in</th><th className="p-1">Last push</th><th className="p-1">Inventory</th></tr></thead>
+              <thead><tr className="text-left text-muted-foreground"><th className="p-1">Device</th><th className="p-1">Business</th><th className="p-1">State</th><th className="p-1">Last check-in</th><th className="p-1">Last push</th><th className="p-1">Inventory</th><th className="p-1">Signature</th></tr></thead>
               <tbody>
                 {(devices.data ?? []).map((x) => (
                   <tr key={x.id} className="border-t" data-device-state={x.state}>
@@ -202,6 +202,7 @@ export function AppleEnrollmentStep({ view, ask, onView, onNote }: {
                     <td className="p-1">{when(x.lastSeenAt)}</td>
                     <td className="p-1">{x.lastPushResult ?? '—'}{x.lastPushAt ? ` (${when(x.lastPushAt)})` : ''}</td>
                     <td className="p-1">{when(x.lastInventoryAt)}{x.commands.some((c) => c.state === 'error') ? `; ${x.commands.filter((c) => c.state === 'error').length} not answered` : ''}</td>
+                    <td className="p-1" data-testid="mdm-device-digest" title="The digest of the device's newest signed message. SHA-1 is accepted for now and will be revisited once real devices have checked in.">{x.signatureDigest.toUpperCase().replace('SHA', 'SHA-')}</td>
                   </tr>
                 ))}
               </tbody>

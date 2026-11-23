@@ -376,7 +376,7 @@ async function all() {
   check(verified === 'ok' && /<key>SignMessage<\/key>\s*<true\/>/.test(p1), 'openssl verifies the profile\'s signature under the device CA\'s root', verified.slice(0, 300));
   const ar = Number(p1.match(/<key>AccessRights<\/key>\s*<integer>(\d+)<\/integer>/)?.[1]);
   check(p1.includes(`<string>http://127.0.0.1:${PORT}/api/v1/mdm/apple/server</string>`) && p1.includes(`checkin?enroll=${L1.id}</string>`) && p1.includes(`<string>${topic}</string>`)
-    && ar === 1301 && (ar & 8) === 0 && (ar & 2) === 0, 'it names ServerURL, CheckInURL with the link id, the push topic, and AccessRights 1301 (no erase, no profile install)', `AccessRights ${ar}`);
+    && ar === 1309 && (ar & 8) === 8 && (ar & 2) === 0, 'it names ServerURL, CheckInURL with the link id, the push topic, and AccessRights 1309 (erase granted, decision 25; no profile install)', `AccessRights ${ar}`);
   check(!p1.includes('com.apple.security.pkcs12') && p1.includes('com.apple.security.scep') && p1.includes('TEST ONLY') && !/PRIVATE KEY|<key>Password<\/key>/.test(p1),
     'no PKCS#12 identity and no key: the device makes its own (here the TEST ONLY SCEP payload, under NODE_ENV=test only)');
   const linkAfter = await prisma.appleEnrollmentLink.findUnique({ where: { id: L1.id } });
@@ -481,6 +481,12 @@ async function all() {
   check(others.every((t) => byType[t]?.state === 'error' && /^apple:/.test(byType[t].errorCode ?? '')), 'the three mdmb does not implement come back as errors with Apple\'s domain and code, never its text', JSON.stringify(others.map((t) => [t, byType[t]?.state, byType[t]?.errorCode])));
   dB = await prisma.appleDevice.findFirst({ where: { udid: udidB } });
   check(dB.lastInventoryAt && dB.deviceName && dB.profileCount >= 1 && dB.lastSeenAt >= dB.lastPushOkAt, 'the device\'s name came from DeviceInformation; it connected after the push', JSON.stringify({ n: dB.deviceName }));
+  check(['sha1', 'sha256', 'sha384', 'sha512'].includes(dB.signatureDigest), `the digest of its Mdm-Signature is recorded (decision 28): ${dB.signatureDigest}`, String(dB.signatureDigest));
+  {
+    const r = await req('GET', '/mdm/apple/devices', { s: S.admin });
+    const row = (r.data ?? []).find((x) => x.id === dB.id);
+    check(r.status === 200 && row?.signatureDigest === dB.signatureDigest, 'the admin device list shows the signature digest', JSON.stringify(row && { d: row.signatureDigest }));
+  }
   const audits1 = await prisma.activityLog.findMany({ where: { createdAt: { gte: started }, action: { in: ['MDM_APPLE_COMMAND_RESULT'] } } });
   check(audits1.length >= 5 && audits1.every((a) => !/Description|LocalizedDescription|Unknown request type/i.test(JSON.stringify(a.metadata))), 'every result is audited with ids, the type and the code only', String(audits1.length));
   r = await req('GET', '/mdm/setup', { s: F });

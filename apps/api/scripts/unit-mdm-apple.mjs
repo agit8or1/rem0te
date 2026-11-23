@@ -9,7 +9,7 @@
  *     certificate is expired, a CA or not for client auth, the signature is
  *     attached, there are two signers, or it is not CMS; BER is accepted;
  *   - the signed profile: an attached SignedData that openssl verifies, with
- *     the MDM payload's fixed AccessRights (no erase), SignMessage and the
+ *     the MDM payload's fixed AccessRights (erase granted, decision 25), SignMessage and the
  *     production APNs; never a PKCS#12 payload; SCEP refused outside test;
  *   - the protocol: check-in messages read from named keys only (no
  *     UnlockToken, no user channel), reports, error codes, the inventory
@@ -103,8 +103,8 @@ try {
   console.log('\ncms (Mdm-Signature)');
   const good = sigWith(dev);
   const v = CMS.verifyDetachedCms(good, body, trust, now);
-  ok('a detached signature over the exact body verifies under the device CA, naming the signer and its SHA-256',
-    v.ok && v.signer.raw.equals(dev.raw) && /^[0-9a-f]{64}$/.test(v.signerSha256), JSON.stringify(v.ok ? v.signerSha256 : v));
+  ok('a detached signature over the exact body verifies under the device CA, naming the signer, its SHA-256 and the digest (recorded per device, decision 28)',
+    v.ok && v.signer.raw.equals(dev.raw) && /^[0-9a-f]{64}$/.test(v.signerSha256) && PR.SIGNATURE_DIGESTS.includes(v.digest), JSON.stringify(v.ok ? v.signerSha256 : v));
   const withAttrs = path.join(tmp, 'attrs.der');
   openssl('cms', '-sign', '-binary', '-in', bodyP, '-signer', f('dev2.crt', P.certPem(dev)), '-inkey', keyP, '-outform', 'DER', '-out', withAttrs);
   ok('signed attributes (content type + message digest) are checked and accepted', CMS.verifyDetachedCms(readFileSync(withAttrs), body, trust, now).ok);
@@ -145,8 +145,9 @@ try {
   const [idp, mdmp] = prof.PayloadContent;
   ok('two payloads: an ACME identity (hardware-bound, attested, P-384) and com.apple.mdm', idp.PayloadType === 'com.apple.security.acme' && idp.HardwareBound === true && idp.Attest === true
     && idp.KeyType === 'ECSECPrimeRandom' && Number(idp.KeySize) === 384 && mdmp.PayloadType === 'com.apple.mdm');
-  ok(`AccessRights is ${PR.ACCESS_RIGHTS} = 1+4+16+256+1024: no erase (8), no profile install (2), no app install (4096)`,
-    Number(mdmp.AccessRights) === 1301 && PR.ACCESS_RIGHTS === 1301 && (1301 & 8) === 0 && (1301 & 2) === 0 && (1301 & 4096) === 0);
+  ok(`AccessRights is ${PR.ACCESS_RIGHTS} = 1+4+8+16+256+1024: erase granted (decision 25), no profile install (2), no app install (4096)`,
+    Number(mdmp.AccessRights) === 1309 && PR.ACCESS_RIGHTS === 1309 && (1309 & 8) === 8 && (1309 & 2) === 0 && (1309 & 4096) === 0);
+  ok('erase is granted but unsendable: no erase or wipe request type', !PR.REQUEST_TYPES.some((t) => /Erase|Wipe|Lock|Clear/i.test(t)) && !PR.isRequestType('EraseDevice'));
   ok('SignMessage, CheckOutWhenRemoved, production APNs, the identity named by UUID, the check-in URL carries the link id',
     mdmp.SignMessage === true && mdmp.CheckOutWhenRemoved === true && mdmp.UseDevelopmentAPNS === false && mdmp.IdentityCertificateUUID === idp.PayloadUUID
       && mdmp.CheckInURL === `https://portal.example.com/api/v1/mdm/apple/checkin?enroll=${linkId}` && mdmp.ServerURL === 'https://portal.example.com/api/v1/mdm/apple/server');
@@ -268,6 +269,8 @@ try {
       && JSON.stringify(chk('AppleCommand_state_check', 'state')) === JSON.stringify(PR.APPLE_COMMAND_STATES)
       && JSON.stringify(chk('AppleDevice_state_check', 'state')) === JSON.stringify(PR.APPLE_DEVICE_STATES)
       && JSON.stringify(chk('AppleEnrollmentLink_state_check', 'state')) === JSON.stringify(PR.LINK_STATES));
+  const dg = sql.match(/CONSTRAINT "AppleDevice_signatureDigest_check" CHECK \("signatureDigest" IN \(([^)]*)\)\)/);
+  ok('the signature digest CHECK is SIGNATURE_DIGESTS, in order', !!dg && JSON.stringify([...dg[1].matchAll(/'([^']+)'/g)].map((x) => x[1])) === JSON.stringify(PR.SIGNATURE_DIGESTS));
   ok('the provider CHECKs name exactly standin and apple', (sql.match(/"provider" IN \('standin', 'apple'\)/g) ?? []).length === 2);
   const s = new X509Certificate(signerCert.raw);
   ok('(stand-ins are TEST ONLY)', /TEST/.test(s.subject) && /TEST/.test(ca.cert.subject));
