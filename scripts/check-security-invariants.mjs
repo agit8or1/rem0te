@@ -2245,7 +2245,11 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   // 0.56: and the warranty lookup client (warranty/client.ts), held to the same rule by § 69.
   // 0.80: and MDM drivers (mdm/drivers/), held to it by §90; in 0.80 only the loopback stand-in.
   // 0.81: and the backup drivers (backups/drivers/), held to the same rule by § 91.
-  const outside = files.filter((f) => /from '[./]*common\/safe-https'|from '\.\/safe-https'/.test(read(f))).filter((f) => !f.startsWith('apps/api/src/ai/') && f !== 'apps/api/src/psa/connectors/webhook.ts' && f !== 'apps/api/src/warranty/client.ts' && !f.startsWith('apps/api/src/mdm/drivers/') && !f.startsWith('apps/api/src/backups/drivers/'));
+  // 0.84: and common/safe-h2.ts (its URL check and error type), mdm/apple/apns.ts (the error type, §93) and
+  //       mdm/apple/apple-enrollment.service.ts (testLoopbackAllowed for the test API's base), none of which calls safeGet/safePost.
+  const H2_OK = ['apps/api/src/common/safe-h2.ts', 'apps/api/src/mdm/apple/apns.ts', 'apps/api/src/mdm/apple/apple-enrollment.service.ts'];
+  const outside = files.filter((f) => /from '[./]*common\/safe-https'|from '\.\/safe-https'/.test(read(f))).filter((f) => !f.startsWith('apps/api/src/ai/') && f !== 'apps/api/src/psa/connectors/webhook.ts' && f !== 'apps/api/src/warranty/client.ts' && !f.startsWith('apps/api/src/mdm/drivers/') && !f.startsWith('apps/api/src/backups/drivers/')
+    && !(H2_OK.includes(f) && !/\bsafe(Get|Post|Request)\(/.test(read(f))));
   check('AI/PSA/warranty/MDM/backups: only ai/, the PSA webhook connector, the warranty client, MDM drivers and the backup drivers use the typed-destination client', outside.length === 0, outside.join(', '));
   const sh = read('apps/api/src/common/safe-https.ts');
   const post = sh.slice(sh.indexOf('export async function safePost('));
@@ -4575,6 +4579,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'warranty/warranty.controller.ts': ['warranty.settings'],
     'backups/backups.controller.ts': ['backup.connection'],
     'mdm/setup/mdm-setup.controller.ts': ['mdm.setup'],
+    'mdm/apple/apple.controller.ts': ['mdm.enroll'],
     'msa/msa-grant.controller.ts': ['msa.grant'],
     'msa/msa-managed.controller.ts': ['msa.cutover', 'msa.reveal'],
     'msa/msa-cutover-runs.controller.ts': ['msa.cutover'],
@@ -7843,12 +7848,16 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   const mdmFiles = walk(DIR);
   const HOSTS = /graph\.microsoft\.com|manage\.microsoft\.com|intune\.microsoft|androidmanagement\.googleapis|play\.google\.com\/work|mdmenrollment\.apple\.com|push\.apple\.com|deviceenrollment\.apple|identity\.apple\.com|business\.apple\.com\/.*mdm|workspaceone|jamfcloud|kandji\.io|meraki\.com\/.*sm/i;
-  const hostHits = walk(SRC).filter((f) => HOSTS.test(read(f)));
-  check('mdm: no MDM provider host appears anywhere in apps/api/src', hostHits.length === 0, hostHits.join(', '));
+  // 0.84 (§93): the exact list of allowed hosts — Apple's push host, once, as a constant in mdm/apple/apns.ts.
+  const ALLOWED_HOSTS = { [`${DIR}/apple/apns.ts`]: ["export const APNS_ORIGIN = 'https://api.push.apple.com';"] };
+  const stripAllowed = (f) => (ALLOWED_HOSTS[f] ?? []).reduce((t, line) => t.split(line).join(''), read(f));
+  const hostHits = walk(SRC).filter((f) => HOSTS.test(stripAllowed(f)) || (ALLOWED_HOSTS[f] ?? []).some((line) => read(f).split(line).length !== 2));
+  check('mdm: no MDM provider host appears anywhere in apps/api/src, except the allowed list (api.push.apple.com once, as APNS_ORIGIN in mdm/apple/apns.ts)', hostHits.length === 0, hostHits.join(', '));
   // 0.83: the plist DTD identifier a PushCertRequest names (never fetched), in setup/pki.ts only (§92).
   const DTD = 'http://www.apple.com/DTDs/PropertyList-1.0.dtd';
-  const urlHits = mdmFiles.filter((f) => /https?:\/\/(?!127\.0\.0\.1)/.test(f === `${DIR}/setup/pki.ts` ? read(f).split(DTD).join('') : read(f)));
-  check('mdm: the module holds no URL (the stand-in\'s base comes from MDM_TEST_BASE_URL only)', urlHits.length === 0, urlHits.join(', '));
+  // 0.84: and in apple/plist.ts (the same DTD line), and APNS_ORIGIN (above).
+  const urlHits = mdmFiles.filter((f) => /https?:\/\/(?!127\.0\.0\.1)/.test(stripAllowed(f).split(f === `${DIR}/setup/pki.ts` || f === `${DIR}/apple/plist.ts` ? DTD : '\u0000').join('')));
+  check('mdm: the module holds no URL but the allowed ones (the stand-in\'s base comes from MDM_TEST_BASE_URL only)', urlHits.length === 0, urlHits.join(', '));
   const imports = (f) => [...read(f).matchAll(/^import [^;]*? from '([^']+)';/gm)].map((m) => m[1]);
   check('mdm: model.ts imports nothing; command-state.ts only ./model; schemas.ts only zod, ./model and common/text',
     imports(`${DIR}/model.ts`).length === 0 && JSON.stringify(imports(`${DIR}/command-state.ts`)) === JSON.stringify(['./model'])
@@ -7860,8 +7869,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const members = [...iface.matchAll(/^\s*([a-zA-Z]+)[(:]/gm)].map((m) => m[1]);
   check('mdm: MdmDriver reads only — provider, label, ready, listDevices, listCommands; no send, cancel or wipe',
     JSON.stringify(members) === JSON.stringify(['provider', 'label', 'ready', 'listDevices', 'listCommands']), JSON.stringify(members));
-  const outbound = walk(SRC).filter((f) => !f.startsWith(DIR) ? false : /from 'https?'|from 'node:https?'|require\('https?'\)|\bfetch\(|axios|undici/.test(read(f)));
-  check('mdm: no HTTP client in the module except common/safe-https', outbound.length === 0 && mdmFiles.filter((f) => /safeGet|safePost/.test(read(f))).every((f) => /from '\.\.\/\.\.\/common\/safe-https'/.test(read(f))), outbound.join(', '));
+  const outbound = walk(SRC).filter((f) => !f.startsWith(DIR) ? false : /from 'https?'|from 'node:https?'|from '(node:)?http2'|require\('https?'\)|\bfetch\(|axios|undici/.test(read(f)));
+  check('mdm: no HTTP client in the module except common/safe-https (and, for APNs only, common/safe-h2: §93)', outbound.length === 0 && mdmFiles.filter((f) => /safeGet|safePost/.test(read(f))).every((f) => /from '\.\.\/\.\.\/common\/safe-https'/.test(read(f))), outbound.join(', '));
 
   const si = read(`${DIR}/drivers/standin.ts`);
   const envReaders = walk(SRC).filter((f) => /MDM_TEST_BASE_URL/.test(code(read(f))));
@@ -7872,8 +7881,12 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     envReaders.join(', '));
   const idx = read(`${DIR}/drivers/index.ts`);
   const model = read(`${DIR}/model.ts`);
-  check('mdm: the stand-in is the only driver and the only provider',
-    /export const PROVIDERS = \['standin'\] as const;/.test(model) && /standin: standinDriver,\n\};/.test(idx) && readdirSync(join(ROOT, `${DIR}/drivers`)).sort().join() === 'index.ts,standin.ts',
+  // 0.84 (§93): two drivers — the stand-in and `apple`, which reads Rem0te's own Apple tables through the reader the sync hands it, and calls nothing.
+  const apd = read(`${DIR}/drivers/apple.ts`);
+  check('mdm: the drivers are exactly the stand-in and `apple`; the apple driver makes no call (no HTTP, no safe-https, no Prisma of its own)',
+    /export const PROVIDERS = \['standin', 'apple'\] as const;/.test(model) && /standin: standinDriver,\n\s*apple: appleDriver\(deps\.apple\),\n\s*\};/.test(idx)
+      && readdirSync(join(ROOT, `${DIR}/drivers`)).sort().join() === 'apple.ts,index.ts,standin.ts'
+      && !/safe-https|safe-h2|fetch\(|PrismaService|prisma\./.test(code(apd)) && /ready: \(\) => \(\{ ok: true \}\)/.test(apd),
     'model.ts PROVIDERS / drivers/');
 
   const sync = read(`${DIR}/mdm-sync.service.ts`);
@@ -7893,7 +7906,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 
   const sql = read('apps/api/prisma/migrations/0096_mobile_devices/migration.sql');
   const listOf = (name) => { const m = model.match(new RegExp(`export const ${name} = \\[([^\\]]*)\\] as const;`)); return m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null; };
-  const checkOf = (c, col) => { const m = sql.match(new RegExp(`CONSTRAINT "${c}" CHECK \\("${col}" (?:IS NULL OR "${col}" )?IN \\(([^)]*)\\)`)); return m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null; };
+  const sql101 = read('apps/api/prisma/migrations/0101_mdm_apple/migration.sql');
+  // 0.84: the provider CHECKs are re-made by 0101 with `apple`; the others are still 0096's.
+  const checkOf = (c, col) => { const src = /_provider_check$/.test(c) ? sql101 : sql; const m = src.match(new RegExp(`CONSTRAINT "${c}" CHECK \\("${col}" (?:IS NULL OR "${col}" )?IN \\(([^)]*)\\)`)); return m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null; };
   const pairs = [
     ['PROVIDERS', 'MdmConnector_provider_check', 'provider'], ['PROVIDERS', 'MobileDevice_provider_check', 'provider'],
     ['PLATFORMS', 'MobileDevice_platform_check', 'platform'], ['OWNERSHIPS', 'MobileDevice_ownership_check', 'ownership'],
@@ -7939,8 +7954,11 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'capabilities.ts / presets.ts');
   const writers = walk(SRC).filter((f) => f !== `${DIR}/mdm-sync.service.ts`)
     .filter((f) => /\.(mdmConnector|mobileDevice|mdmCommand)\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/.test(read(f)));
-  check('mdm: only MdmSyncService writes the MDM tables, and nothing creates a connector',
-    writers.length === 0 && !/mdmConnector\.(create|createMany|upsert)\(/.test(sync), writers.join(', '));
+  // 0.84 (§93): the sync creates connectors in one place, ensureAppleConnectors, and only `apple` ones.
+  const ensure = (sync.match(/async ensureAppleConnectors\([\s\S]*?\n  \}\n/) ?? [''])[0];
+  check('mdm: only MdmSyncService writes the MDM tables; the only connector it creates is an enabled `apple` one, in ensureAppleConnectors',
+    writers.length === 0 && (sync.match(/mdmConnector\.(create|createMany|upsert)\(/g) ?? []).length === 1 && /this\.prisma\.mdmConnector\.createMany\(\{/.test(ensure)
+      && /provider: 'apple', externalTenantId: 'rem0te', enabled: true/.test(ensure) && /skipDuplicates: true/.test(ensure), writers.join(', '));
   check('mdm: 0096 keeps connector, device and command in one business and tenant (three triggers)',
     ['MdmConnector_business_trg', 'MobileDevice_business_trg', 'MdmCommand_business_trg'].every((n) => new RegExp(`CREATE TRIGGER "${n}" BEFORE INSERT OR UPDATE`).test(sql)),
     '0096');
@@ -8200,10 +8218,11 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const ctl = read(`${D}/mdm-setup.controller.ts`);
   const pki = read(`${D}/pki.ts`);
   const model = read(`${D}/setup-model.ts`);
-  const PURPOSES = ['rem0te-apns-push-key-v1', 'rem0te-mdm-vendor-key-v1', 'rem0te-apns-push-cert-v1', 'rem0te-amapi-sa-key-v1'];
+  // 0.84 (§93): and the profile-signing key, the fifth.
+  const PURPOSES = ['rem0te-apns-push-key-v1', 'rem0te-mdm-vendor-key-v1', 'rem0te-apns-push-cert-v1', 'rem0te-amapi-sa-key-v1', 'rem0te-mdm-profile-sign-v1'];
   const box = read(`${SRC}/common/secret-box.ts`);
   const users = walk(SRC).filter((f) => f !== `${SRC}/common/secret-box.ts` && PURPOSES.some((pp) => read(f).includes(`'${pp}'`)));
-  check('sealed: four purposes in SecretPurpose, each used only in mdm/setup/mdm-setup.service.ts',
+  check('sealed: five purposes in SecretPurpose, each used only in mdm/setup/mdm-setup.service.ts',
     PURPOSES.every((pp) => box.includes(`'${pp}'`) && svc.includes(`'${pp}'`)) && JSON.stringify(users) === JSON.stringify([`${D}/mdm-setup.service.ts`]), users.join(', '));
   const viewFn = code((svc.match(/async view\([\s\S]*?\n  \}\n/) ?? [''])[0]);
   // A sealed column may be named only as a presence test: !!r.xEnc, r.xEnc ? …, r.xEnc && ….
@@ -8216,7 +8235,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('sealed: mdm/setup logs nothing but one fixed warning (the reminder pass\'s error name)',
     (code(svc).match(/this\.logger\.\w+\(/g) ?? []).length === 1 && /this\.logger\.warn\(`push certificate reminder: \$\{\(e as Error\)\.name\}`\)/.test(svc)
       && !/logger|console\./.test(code(pki) + code(model) + code(ctl)), 'mdm-setup.service.ts');
-  const returns = [...code(svc).matchAll(/return \{[^;]*\};/g)].map((m) => m[0]);
+  // 0.84: the two in-memory openers (openPushIdentity, openProfileSigner) return keys by design; §93 holds their callers.
+  const OPENERS = /async (openPushIdentity|openProfileSigner)\([\s\S]*?\n  \}\n/g;
+  const returns = [...code(svc).replace(OPENERS, '').matchAll(/return \{[^;]*\};/g)].map((m) => m[0]);
   check('keys never returned: no return names a private key or a sealed value; the CSR only from pushCsr(), the signed request only from signPushRequest()',
     returns.every((x) => !/keyPem|privateKey|\w+Enc\b|sealed\b/.test(presence(x))) && /return \{ filename: 'rem0te-push\.csr', csr: r\.pushCsrPem/.test(svc)
       && (code(svc).match(/csr: r\.pushCsrPem/g) ?? []).length === 1 && (code(svc).match(/request: req\.file/g) ?? []).length === 1, 'returns');
@@ -8234,17 +8255,19 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && !readdirSync(join(ROOT, 'apps/api/scripts')).some((f) => /\.(pem|cer|crt|p12|key|der)$/.test(f)), 'ci.yml / scripts');
   const writeRoutes = [...ctl.matchAll(/@(Put|Post)\([^)]*\)[^{]*?\{\n\s*(.*)\n/g)].map((m) => m[2].trim());
   const deleteBodies = [...ctl.matchAll(/@Delete\([^)]*\)[\s\S]*?\{([^}]*)\}/g)].map((m) => m[1]);
-  check('controller: Platform Admin by class guard; no @Public; all eight writes call this.fresh() first; the four deletes never ask',
+  // 0.84: step 6 adds two writes (the device CA, the profile signer) and their two deletes.
+  check('controller: Platform Admin by class guard; no @Public; all ten writes call this.fresh() first; the six deletes never ask',
     /@Controller\('mdm\/setup'\)\s*\n@UseGuards\(PlatformAdminGuard\)/.test(ctl) && !/@Public\(\)/.test(ctl)
-      && writeRoutes.length === 8 && writeRoutes.every((l) => /^this\.fresh\(req, /.test(l))
-      && deleteBodies.length === 4 && deleteBodies.every((b) => !/fresh/.test(b)) && /action: 'mdm\.setup'/.test(ctl), JSON.stringify(writeRoutes));
+      && writeRoutes.length === 10 && writeRoutes.every((l) => /^this\.fresh\(req, /.test(l))
+      && deleteBodies.length === 6 && deleteBodies.every((b) => !/fresh/.test(b)) && /action: 'mdm\.setup'/.test(ctl), JSON.stringify(writeRoutes));
   const cat = read(`${SRC}/security-controls/confirm-catalog.ts`);
   check('confirm: mdm.setup is a catalog key, default off like the others', /\{ key: 'mdm\.setup', group: 'Integrations', label: '[^']+', default: 'off',/.test(cat), 'confirm-catalog.ts');
   const writers = walk(SRC).filter((f) => /mdmPlatformSetup\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/.test(read(f)));
   check('writes: only MdmSetupService writes MdmPlatformSetup, never creates or deletes it; a person\'s write is conditional on the revision read',
     JSON.stringify(writers) === JSON.stringify([`${D}/mdm-setup.service.ts`]) && !/mdmPlatformSetup\.(create|upsert|delete)/.test(svc)
       && /where: \{ id: ID, revision: r\.revision \}/.test(svc) && (svc.match(/mdmPlatformSetup\.updateMany\(/g) ?? []).length === 2, writers.join(', '));
-  const credFns = ['generatePushKey', 'setVendor', 'installPushCert', 'setAndroidKey', 'deletePushKey', 'deleteVendor', 'deletePushCert', 'deleteAndroidKey', 'signPushRequest'];
+  const credFns = ['generatePushKey', 'setVendor', 'installPushCert', 'setAndroidKey', 'deletePushKey', 'deleteVendor', 'deletePushCert', 'deleteAndroidKey', 'signPushRequest',
+    'setDeviceCa', 'deleteDeviceCa', 'setProfileSigner', 'deleteProfileSigner'];
   const bad = credFns.filter((fn) => { const b = (svc.match(new RegExp(`async ${fn}\\([\\s\\S]*?\\n  \\}\\n`)) ?? [''])[0]; return !b || !/this\.audit\.logOrFail\(/.test(b) || (b.includes('this.write(') && b.indexOf('logOrFail') > b.indexOf('this.write(')); });
   check('audit: every credential change (and the signing) is logOrFail before its write', bad.length === 0, bad.join(', '));
   const inst = (svc.match(/async installPushCert[\s\S]*?\n  \}\n/) ?? [''])[0];
@@ -8270,6 +8293,176 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('suites: e2e-mdm-setup in run-e2e.sh; the wizard in e2e-ui.mjs; the Mobile devices page links to it',
     /\bmdm-setup\b/.test((read('scripts/run-e2e.sh').match(/for t in credentials[^\n]*/) ?? [''])[0]) && /async function mdmSettingsUi\(/.test(read('apps/web/scripts/e2e-ui.mjs'))
       && /href="\/settings\/mobile-devices"/.test(read('apps/web/app/(app)/mobile-devices/page.tsx')), 'run-e2e.sh / e2e-ui.mjs');
+}
+
+// ── §93 (0.84 Harbor): Rem0te's own Apple MDM server — enrollment, check-in, inventory ──
+//     docs/own-mdm.md M2, from its "Invariant sketch". Nothing has run on a
+//     real iPhone or iPad, and no real APNs call has been made: the proof is
+//     mdmb, step-ca on loopback and an HTTP/2 stub. What must stay true:
+//       - Apple's push host only as APNS_ORIGIN in apns.ts (§90 amended);
+//         apns.ts the only caller of safe-h2, safe-h2 the only module that
+//         presents a client certificate; the push body exactly {"mdm": magic};
+//       - the push key and the profile signer are opened in memory by one
+//         caller each; the device CA's key is never the portal's;
+//       - the request types and states are closed lists, the same in
+//         protocol.ts and 0101; AccessRights one constant, without erase; no
+//         lost-device or destructive request type;
+//       - Mdm-Signature is verified before any parse; a refusal has no body;
+//       - links: Platform Admin, assertFresh naming mdm.enroll, a 256-bit
+//         token stored as SHA-256, claimed and consumed conditionally;
+//       - no PKCS#12 identity anywhere; a SCEP identity only under NODE_ENV=test;
+//       - one writer per Apple table; MobileDevice still only the sync's;
+//         nothing about a device kept that 0096 forbids, and no UnlockToken;
+//       - no new sweep: everything runs inside MDM_SWEEP.
+{
+  console.log('\n§93 Own Apple MDM (signed check-ins, inventory only, one push site; nothing real yet)');
+  const SRC = 'apps/api/src';
+  const D = `${SRC}/mdm/apple`;
+  const code = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const all = walk(SRC);
+  const apns = read(`${D}/apns.ts`), h2 = read(`${SRC}/common/safe-h2.ts`), proto = read(`${D}/protocol.ts`), prof = read(`${D}/profile.ts`);
+  const mdm = read(`${D}/apple-mdm.service.ts`), enr = read(`${D}/apple-enrollment.service.ts`), ctl = read(`${D}/apple.controller.ts`);
+  const mw = read(`${D}/apple-raw-body.middleware.ts`), mod = read(`${SRC}/mdm/mdm.module.ts`), sync = read(`${SRC}/mdm/mdm-sync.service.ts`);
+  const setup = read(`${SRC}/mdm/setup/mdm-setup.service.ts`);
+  const sql = read('apps/api/prisma/migrations/0101_mdm_apple/migration.sql');
+
+  // 1–2. Hosts and the one push site.
+  const appleHost = all.filter((f) => /api\.push\.apple\.com|api\.sandbox\.push\.apple\.com/.test(read(f)));
+  check('hosts: api.push.apple.com appears only in mdm/apple/apns.ts, once, as APNS_ORIGIN; the sandbox host nowhere',
+    JSON.stringify(appleHost) === JSON.stringify([`${D}/apns.ts`]) && (apns.match(/api\.push\.apple\.com/g) ?? []).length === 1
+      && /export const APNS_ORIGIN = 'https:\/\/api\.push\.apple\.com';/.test(apns), appleHost.join(', '));
+  const h2Users = all.filter((f) => f !== `${SRC}/common/safe-h2.ts` && /common\/safe-h2'/.test(read(f)));
+  const clientCert = all.filter((f) => /\b(tls|http2)\.connect\(/.test(code(read(f))) && /\bcert: /.test(code(read(f))));
+  const openers = all.filter((f) => /\bopenSafeH2\(/.test(code(read(f))) && f !== `${SRC}/common/safe-h2.ts`);
+  check('one push site: apns.ts is the only importer and caller of safe-h2; safe-h2 the only module that presents a client certificate',
+    JSON.stringify(h2Users) === JSON.stringify([`${D}/apns.ts`]) && JSON.stringify(openers) === JSON.stringify([`${D}/apns.ts`])
+      && JSON.stringify(clientCert) === JSON.stringify([`${SRC}/common/safe-h2.ts`]), JSON.stringify({ h2Users, openers, clientCert }));
+  check('one push site: the body is exactly {"mdm": PushMagic}, POST /3/device/<token>, apns-push-type mdm and the push topic; TLS 1.2+, verified, h2 only',
+    /export const pushBody = \(pushMagic: string\) => JSON\.stringify\(\{ mdm: pushMagic \}\);/.test(apns)
+      && /this\.h2\.request\('POST', `\/3\/device\/\$\{token\}`, \{\s*'apns-topic': this\.topic, 'apns-push-type': 'mdm', 'apns-priority': '10', 'content-type': 'application\/json',\s*\}, Buffer\.from\(pushBody\(pushMagic\), 'utf8'\)\);/.test(apns)
+      && (code(apns).match(/this\.h2\.request\(/g) ?? []).length === 1
+      && /rejectUnauthorized: true, minVersion: 'TLSv1\.2', ALPNProtocols: \['h2'\]/.test(h2) && /const r = checkResolved\(addrs, 'none'\);/.test(h2)
+      && /REDIRECT_REFUSED/.test(h2), 'apns.ts / safe-h2.ts');
+  check('one push site: the loopback stub only under NODE_ENV=test — APNS_TEST_BASE_URL read only in apns.ts, through testLoopbackH2Allowed',
+    JSON.stringify(all.filter((f) => /APNS_TEST_BASE_URL|APNS_TEST_CA_FILE/.test(code(read(f))))) === JSON.stringify([`${D}/apns.ts`])
+      && /if \(test && testLoopbackH2Allowed\(test\)\)/.test(apns) && /return process\.env\.NODE_ENV === 'test' && TEST_H2\.test\(raw\);/.test(h2)
+      && /const TEST_H2 = \/\^https:\\\/\\\/127\\\.0\\\.0\\\.1:\[0-9\]\{2,5\}\$\/;/.test(h2), 'apns.ts / safe-h2.ts');
+
+  // 3. Sealed material opened in memory by one caller each.
+  const callers = (fn) => all.filter((f) => new RegExp(`\\.${fn}\\(`).test(code(read(f))));
+  check('sealed: the push identity is opened only by AppleMdmService.pushPass, the profile signer only by AppleEnrollmentService.claim; nothing they return is stored or logged',
+    JSON.stringify(callers('openPushIdentity')) === JSON.stringify([`${D}/apple-mdm.service.ts`]) && JSON.stringify(callers('openProfileSigner')) === JSON.stringify([`${D}/apple-enrollment.service.ts`])
+      && /const identity = await this\.setup\.openPushIdentity\(now\);\s*\n\s*if \(!identity\) return 0;/.test(mdm) && /try \{ client = await ApnsClient\.open\(identity\); \}/.test(mdm)
+      && /const signer = await this\.setup\.openProfileSigner\(\);/.test(enr) && /signProfile\(plist, signer, now\)/.test(enr)
+      && !/this\.logger\.\w+\([^)]*(identity|signer|key)/.test(code(mdm) + code(enr)),
+    'openers');
+  check('sealed: the profile-signing key is sealed before anything is written, and logOrFail precedes the write',
+    /const sealed = sealSecret\(this\.encKey, 'rem0te-mdm-profile-sign-v1', s\.keyPem\);/.test(setup)
+      && (() => { const b = (setup.match(/async setProfileSigner[\s\S]*?\n  \}\n/) ?? [''])[0]; return b.indexOf('sealSecret') < b.indexOf('logOrFail') && b.indexOf('logOrFail') < b.indexOf('this.write('); })(), 'setProfileSigner');
+
+  // 4. The CA is not the portal's.
+  const caNames = all.filter((f) => /rem0te-mdm-ca\b(?!-setup)|\/etc\/rem0te-mdm-ca|\/var\/lib\/rem0te-mdm-ca|intermediate_ca_key|root_ca_key|step-ca\b/.test(code(read(f)).replace("'Device identity CA (step-ca)'", '')));
+  const spawns = walk(`${SRC}/mdm`).filter((f) => /child_process|\bspawn\(|\bexecFile/.test(read(f)));
+  check('the CA is not the portal\'s: no code in apps/api/src names its directories, its keys or step-ca, and nothing in mdm/ spawns a process; the portal never calls the CA',
+    caNames.length === 0 && spawns.length === 0 && !/acme\/rem0te-mdm\/(new-|order|authz|finalize)/.test(code(enr)), [...caNames, ...spawns].join(', '));
+  const caSh = read('deploy/mdm-ca/rem0te-mdm-ca-setup.sh');
+  check('the CA\'s install script: a pinned step-ca SHA-256, its own user, loopback only, ACME device-attest-01 with Apple attestation, SCEP refused without --prefix, keys never overwritten',
+    /^STEP_CA_SHA256=[0-9a-f]{64}$/m.test(caSh) && /sha_ok "\$tmp\/\$STEP_CA_TARBALL" "\$STEP_CA_SHA256" \|\| die/.test(caSh) && /USER_NAME=rem0te-mdm-ca/.test(caSh)
+      && /"address": "127\.0\.0\.1:\$\{port\}"/.test(caSh) && /"challenges": \["device-attest-01"\], "attestationFormats": \["apple"\]/.test(caSh)
+      && /\[\[ -n \$prefix \]\] \|\| die "the SCEP provisioner is for the test suite only/.test(caSh) && /holds some keys but not all: refusing to guess/.test(caSh)
+      && /if \[\[ \$have -eq 0 \]\]; then/.test(caSh), 'rem0te-mdm-ca-setup.sh');
+  const caddy = read('deploy/caddy/Caddyfile');
+  const acmeRoutes = caddy.match(/^\s*#?\s*handle \/acme[^\n]*/gm) ?? [];
+  check('Caddy: exactly one step-ca route, /acme/rem0te-mdm/*, to https://127.0.0.1:9451 verified against the device CA root; nothing else of step-ca',
+    acmeRoutes.length === 1 && /#?handle \/acme\/rem0te-mdm\/\* \{/.test(acmeRoutes[0]) && /reverse_proxy https:\/\/127\.0\.0\.1:9451 \{/.test(caddy)
+      && /tls_trust_pool file \/etc\/caddy\/rem0te-mdm-ca-root\.crt/.test(caddy) && !/9451[\s\S]*9451/.test(caddy.replace(/reverse_proxy https:\/\/127\.0\.0\.1:9451/, '')),
+    acmeRoutes.join(' | '));
+
+  // 5. Closed commands.
+  const tsList = (name) => { const mm = proto.match(new RegExp(`export const ${name} = \\[([^\\]]*)\\] as const;`)); return mm ? [...mm[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null; };
+  const sqlList = (c, col) => { const mm = sql.match(new RegExp(`CONSTRAINT "${c}" CHECK \\("${col}" IN \\(([^)]*)\\)`)); return mm ? [...mm[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null; };
+  const lp = [['REQUEST_TYPES', 'AppleCommand_requestType_check', 'requestType'], ['APPLE_COMMAND_STATES', 'AppleCommand_state_check', 'state'],
+    ['APPLE_DEVICE_STATES', 'AppleDevice_state_check', 'state'], ['LINK_STATES', 'AppleEnrollmentLink_state_check', 'state']];
+  const lbad = lp.filter(([a, c, col]) => { const x = tsList(a), y = sqlList(c, col); return !x || !y || JSON.stringify(x) !== JSON.stringify(y); });
+  check('closed: the request types and the command, device and link states are 0101\'s CHECKs, word for word and in order', lbad.length === 0, lbad.map((b) => b[1]).join(', '));
+  check('closed: the request types are the five inventory commands, in order; no lost-device or destructive type exists anywhere in mdm/apple',
+    JSON.stringify(tsList('REQUEST_TYPES')) === JSON.stringify(['DeviceInformation', 'SecurityInfo', 'InstalledApplicationList', 'ProfileList', 'CertificateList'])
+      && !walk(D).some((f) => /EraseDevice|DeviceLock|EnableLostMode|DisableLostMode|ClearPasscode|RemoveProfile|InstallProfile|InstallApplication|RestartDevice|ShutDownDevice|DeviceConfigured|Settings'/.test(code(read(f)))),
+    JSON.stringify(tsList('REQUEST_TYPES')));
+  check('closed: AccessRights is one constant, 1+4+16+256+1024 (no erase, no profile install), named only by the profile',
+    /export const ACCESS_RIGHTS = 1 \+ 4 \+ 16 \+ 256 \+ 1024;/.test(proto) && JSON.stringify(all.filter((f) => /\bACCESS_RIGHTS\b/.test(code(read(f)))).sort()) === JSON.stringify([`${D}/profile.ts`, `${D}/protocol.ts`])
+      && /AccessRights: ACCESS_RIGHTS,/.test(prof), 'protocol.ts / profile.ts');
+  check('closed: every command body is built from its type alone (commandFor); the queue creates only REQUEST_TYPES',
+    /export function commandFor\(type: RequestType\): PlistDict \{\s*switch \(type\) \{/.test(proto) && /data: REQUEST_TYPES\.map\(\(t: RequestType\) => \(\{/.test(mdm)
+      && (code(mdm).match(/appleCommand\.(create|createMany)\(/g) ?? []).length === 1, 'protocol.ts / apple-mdm.service.ts');
+
+  // 6. Device messages verified first.
+  const fn = (src, name) => (src.match(new RegExp(`async ${name}\\([\\s\\S]*?\\n  \\}\\n`)) ?? [''])[0];
+  const ci = fn(mdm, 'checkin'), sv = fn(mdm, 'server'), vf = (mdm.match(/private async verified\([\s\S]*?\n  \}\n/) ?? [''])[0];
+  check('verified first: checkin and server call verified() first and refuse (401, no body) before parsing; verified() checks the CMS before anything reads the body',
+    [ci, sv].every((b) => /const signer = await this\.verified\(raw, signature, now\);\s*\n\s*if \(!signer\) return refuse\(\);\s*\n\s*const d = this\.parse\(raw as Buffer\);/.test(b))
+      && /const v = verifyDetachedCms\(Buffer\.from\(compact, 'base64'\), raw, trust, now\);/.test(vf) && !/parsePlist|readCheckin|readReport/.test(vf)
+      && /const refuse = \(status = 401\): DeviceAnswer => \(\{ status, body: null \}\);/.test(mdm)
+      && /if \(!a\.body\) \{ res\.status\(a\.status\)\.end\(\); return; \}/.test(ctl), 'apple-mdm.service.ts');
+  check('verified first: the signer is the enrolled certificate — every message after Authenticate is matched by UDID AND certificate SHA-256',
+    /findFirst\(\{ where: \{ udid: m\.udid, certSha256: signer\.sha256, state: \{ not: 'checked_out' \} \} \}\)/.test(ci)
+      && /findFirst\(\{ where: \{ udid: r\.udid, certSha256: signer\.sha256, state: 'enrolled' \} \}\)/.test(sv)
+      && /certSha256: signer\.sha256/.test(ci) && /if \(!ready\.ready \|\| m\.topic !== ready\.topic\) return refuse\(\);/.test(ci), 'checkin / server');
+  check('verified first: device routes are @Public with a rate limit; the raw body is bounded (64 KB check-in, 2 MB server) and applied only to AppleDeviceController',
+    (ctl.match(/@Public\(\)\s*\n\s*@(Put|Get)\('(checkin|server|enroll\/:token)'\)\s*\n\s*@RateLimit\(\d+\)/g) ?? []).length === 3
+      && /@Controller\('mdm\/apple'\)\s*\n@UseGuards\(PlatformAdminGuard\)\s*\nexport class AppleAdminController/.test(ctl)
+      && /export const CHECKIN_MAX_BYTES = 64 \* 1024;/.test(mw) && /export const SERVER_MAX_BYTES = 2 \* 1024 \* 1024;/.test(mw)
+      && /consumer\.apply\(AppleRawBodyMiddleware\)\.forRoutes\(AppleDeviceController\);/.test(mod) && (code(ctl).match(/@Public\(\)/g) ?? []).length === 3,
+    'apple.controller.ts / middleware');
+  check('verified first: Authenticate needs iOS/iPadOS 16 or later, and consumes a claimed link inside its transaction',
+    /if \(!platform \|\| !Number\.isInteger\(major\) \|\| major < MIN_OS_MAJOR\) return refuse\(403\);/.test(ci) && /export const MIN_OS_MAJOR = 16;/.test(mdm)
+      && /const link = await this\.enrollment\.consume\(tx, enroll, now\);\s*\n\s*if \(!link\) return null;/.test(ci), 'checkin');
+
+  // Links.
+  const lw = all.filter((f) => /appleEnrollmentLink\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/.test(read(f)));
+  check('links: a Platform Admin\'s, assertFresh naming mdm.enroll before the service; revoking never asks',
+    /assertFresh\([^;]*\{ action: 'mdm\.enroll', message: [^}]*\}\);\s*\n\s*return \{ success: true, data: await this\.enrollment\.create\(a, body\) \};/.test(ctl)
+      && !/fresh|assertFresh/.test((ctl.match(/async revoke\([^{]*\{[^}]*\}/) ?? [''])[0])
+      && /\{ key: 'mdm\.enroll', group: 'Integrations', label: '[^']+', default: 'off',/.test(read(`${SRC}/security-controls/confirm-catalog.ts`)), 'apple.controller.ts');
+  check('links: 32 random bytes shown once, only the SHA-256 stored; the claim and the consume are single conditional updates; only AppleEnrollmentService writes them',
+    JSON.stringify(lw) === JSON.stringify([`${D}/apple-enrollment.service.ts`]) && /const token = randomBytes\(32\)\.toString\('base64url'\);/.test(enr)
+      && /tokenSha256: tokenHash\(token\)/.test(enr) && !/\btoken\b[^\n]*(create|data):/.test(code(enr).replace(/tokenSha256: tokenHash\(token\)/, ''))
+      && /updateMany\(\{ where: \{ tokenSha256: hash, state: 'open', expiresAt: \{ gt: now \} \}, data: \{ state: 'claimed', claimedAt: now \} \}\);\s*\n\s*if \(claimed\.count !== 1\) return null;/.test(enr)
+      && /where: \{ id: linkId, state: 'claimed', claimedAt: \{ gt: new Date\(now\.getTime\(\) - AUTHENTICATE_WINDOW_MS\) \} \},\s*\n\s*data: \{ state: 'used', usedAt: now \},/.test(enr)
+      && /"expiresAt" <= "createdAt" \+ interval '24 hours'/.test(sql) && /CREATE TRIGGER "AppleEnrollmentLink_final_trg"/.test(sql), lw.join(', '));
+
+  // 9. No key in a profile.
+  check('profile: no PKCS#12 payload anywhere; a SCEP identity only through scepTestIdentity, which refuses outside NODE_ENV=test and off 127.0.0.1; production is ACME, hardware-bound and attested',
+    !all.some((f) => /com\.apple\.security\.pkcs12/.test(read(f))) && /if \(process\.env\.NODE_ENV !== 'test'\) throw new Error/.test(prof)
+      && /export function scepTestIdentity\(url: string, challenge: string\): Identity \{\s*\n\s*if \(process\.env\.NODE_ENV !== 'test'\)/.test(prof)
+      && JSON.stringify(all.filter((f) => /MDM_TEST_SCEP_URL/.test(code(read(f))))) === JSON.stringify([`${D}/apple-enrollment.service.ts`])
+      && /if \(process\.env\.NODE_ENV === 'test' && process\.env\.MDM_TEST_SCEP_URL\) \{/.test(enr)
+      && /HardwareBound: true, Attest: true,/.test(prof) && /SignMessage: true,/.test(prof) && /UseDevelopmentAPNS: false,/.test(prof), 'profile.ts');
+
+  // 10. Writers and what is kept.
+  const dw = all.filter((f) => /\.(appleDevice|appleCommand)\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/.test(read(f)));
+  check('writers: only AppleMdmService writes AppleDevice and AppleCommand; the Apple code writes no MobileDevice, MdmCommand or connector',
+    JSON.stringify(dw) === JSON.stringify([`${D}/apple-mdm.service.ts`]) && !walk(D).some((f) => /\.(mobileDevice|mdmCommand|mdmConnector)\.(create|update|upsert|delete)/.test(read(f))), dw.join(', '));
+  const devTable = (sql.match(/CREATE TABLE "AppleDevice" \(([\s\S]*?)\n\);/) ?? ['', ''])[1];
+  check('kept: no IMEI, MEID, phone number, MAC, user or UnlockToken column; the check-in never reads them; a link is corporate only',
+    devTable.length > 500 && !/imei|meid|phone|mac\b|wifi|bluetooth|"user|email|unlock/i.test(devTable)
+      && !/UnlockToken|IMEI|MEID|PhoneNumber|WiFiMAC|BluetoothMAC|UserID|UserShortName/.test(code(proto).replace("if (d.EnrollmentID !== undefined || d.UserID !== undefined) return { type: 'invalid', why: 'user_channel' };", '')) && /CHECK \("ownership" IN \('corporate'\)\)/.test(sql), 'protocol.ts / 0101');
+  check('kept: no push token or magic in an audit row, a log line or the admin view',
+    ![...code(mdm).matchAll(/this\.audit\.log(?:OrFail)?\(\{[\s\S]*?\}\);/g)].some((m) => /pushToken|pushMagic|PushMagic/.test(m[0]))
+      && !/this\.logger\.\w+\([^)]*push(Token|Magic)/.test(code(mdm)) && !/pushToken|pushMagic/.test((mdm.match(/async adminList[\s\S]*?\n  \}\n/) ?? [''])[0]), 'apple-mdm.service.ts');
+
+  // 8, 12. Containment and the sweep.
+  check('sweep: no new timer — AppleMdmService.pass runs only from MdmSyncService.sweep, so MDM_SWEEP=off stops pushes, re-queues and expiry',
+    JSON.stringify(all.filter((f) => /this\.apple\.pass\(/.test(code(read(f))))) === JSON.stringify([`${SRC}/mdm/mdm-sync.service.ts`]) && /await this\.apple\.pass\(now\);/.test(sync)
+      && !walk(D).some((f) => /setInterval|setTimeout\(|OnModuleInit|process\.env\.\w*SWEEP/.test(code(read(f)))), 'mdm/apple');
+  check('containment: check-ins are always answered and inventory is not gated (the design\'s table); no mdm/apple code consults a pause, so no destructive kind can hide behind one',
+    !walk(D).some((f) => /activePause|ContainmentService/.test(read(f))), 'mdm/apple');
+
+  // Suites.
+  check('suites: unit-mdm-apple.mjs in CI; e2e-mdm-apple in run-e2e.sh; CI builds mdmb at a pinned commit and step-ca at a pinned SHA-256',
+    /unit-mdm-apple\.mjs/.test(read('.github/workflows/ci.yml')) && /\bmdm-apple\b/.test(read('scripts/run-e2e.sh'))
+      && /jessepeterson\/mdmb\/cmd\/mdmb@[0-9a-f]{40}/.test(read('.github/workflows/ci.yml')) && /1726ee7b6a24c67abb8c9e96ad671623b29b3d34f6a712f7087495f31331e54b/.test(read('.github/workflows/ci.yml')),
+    'ci.yml / run-e2e.sh');
 }
 
 if (failures.length > 0) {

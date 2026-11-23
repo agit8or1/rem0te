@@ -496,6 +496,15 @@ jobs:
       - name: MDM setup tests
         run: node apps/api/scripts/unit-mdm-setup.mjs
 
+      # Rem0te's own Apple MDM (0.84): plist parsing and its refusals, the
+      # detached Mdm-Signature (openssl-made, every refusal, BER), the signed
+      # enrollment profile (AccessRights without erase, no PKCS#12, SCEP only
+      # under test), check-in and report reading (no UnlockToken, no IMEI), the
+      # APNs body and status mapping, and the driver's records through the
+      # sync's own parsers. Stand-in certificates made at run time.
+      - name: Own Apple MDM tests
+        run: node apps/api/scripts/unit-mdm-apple.mjs
+
       # Outbound email (0.34): the SMTP host rule (every address class, IPv4-
       # mapped IPv6, what SMTP_ALLOW_LOCAL_RELAY admits, every resolved address
       # checked), the report schedule maths across zones and both DST
@@ -606,6 +615,18 @@ jobs:
           echo "RELEASE_BIN=$RUNNER_TEMP/rem0te-release" >> "$GITHUB_ENV"
           echo "ACTION_SIM=$RUNNER_TEMP/rem0te-action-sim" >> "$GITHUB_ENV"
           echo "REMOTE_SIM=$RUNNER_TEMP/rem0te-remote-sim" >> "$GITHUB_ENV"
+      # The own Apple MDM suite (0.84): mdmb, a simulated iPhone (MIT), pinned
+      # by commit, and step-ca v0.30.2, pinned by the release tarball's SHA-256
+      # (the same pin as deploy/mdm-ca/rem0te-mdm-ca-setup.sh).
+      - name: Build mdmb and fetch step-ca
+        run: |
+          GOBIN="$RUNNER_TEMP/gobin" go install github.com/jessepeterson/mdmb/cmd/mdmb@7adfa11f66cf3a56cd89ba5a70677d37143be1b1
+          echo "MDMB_BIN=$RUNNER_TEMP/gobin/mdmb" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/step-ca"
+          curl -fsSL --proto =https -o "$RUNNER_TEMP/step-ca.tar.gz" https://github.com/smallstep/certificates/releases/download/v0.30.2/step-ca_linux_amd64.tar.gz
+          echo "1726ee7b6a24c67abb8c9e96ad671623b29b3d34f6a712f7087495f31331e54b  $RUNNER_TEMP/step-ca.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/step-ca.tar.gz" -C "$RUNNER_TEMP/step-ca"
+          echo "STEP_CA_BIN=$(find "$RUNNER_TEMP/step-ca" -type f -name step-ca | head -1)" >> "$GITHUB_ENV"
       # e2e-add-device downloads real .msi packages (0.65) and reads them
       # back with msiinfo; under CI it fails without msitools.
       - name: Install msitools

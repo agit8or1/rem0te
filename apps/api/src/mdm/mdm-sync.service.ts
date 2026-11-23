@@ -5,8 +5,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MdmSetupService } from './setup/mdm-setup.service';
 import { expireIfDue, observedCommand, reconcile, type CommandFacts } from './command-state';
 import { MdmDriverError } from './driver';
-import { DRIVERS } from './drivers';
-import { isOneOf, PROVIDERS, type CommandState, type SyncResult } from './model';
+import { AppleMdmService } from './apple/apple-mdm.service';
+import type { MdmDriver } from './driver';
+import { makeDrivers } from './drivers';
+import { isOneOf, PROVIDERS, type CommandState, type Provider, type SyncResult } from './model';
 import { parseCommand, parseDevice, type CommandRecord } from './schemas';
 
 /**
@@ -37,7 +39,11 @@ import { parseCommand, parseDevice, type CommandRecord } from './schemas';
  * provider never accepted is refused and counted.
  *
  * This is the only writer of MdmConnector (its sync fields), MobileDevice
- * and MdmCommand (§90). It creates no connector.
+ * and MdmCommand (§90). 0.84: it is also the only creator of a connector,
+ * and only of an `apple` one, for a business that has an Apple enrollment
+ * (ensureAppleConnectors, §93). The sweep also runs the own Apple server's
+ * pass (AppleMdmService.pass: link and command expiry, the daily inventory
+ * re-queue, the APNs push), so MDM_SWEEP=off stops that too.
  */
 export const CONNECTORS_PER_PASS = 20;
 export const DEVICE_PAGES = 20;
@@ -69,7 +75,11 @@ export class MdmSyncService implements OnModuleInit, OnModuleDestroy {
   private first: ReturnType<typeof setTimeout> | null = null;
   private busy = false;
 
-  constructor(private readonly prisma: PrismaService, private readonly setup: MdmSetupService) {}
+  private readonly drivers: Record<Provider, MdmDriver>;
+
+  constructor(private readonly prisma: PrismaService, private readonly setup: MdmSetupService, private readonly apple: AppleMdmService) {
+    this.drivers = makeDrivers({ apple });
+  }
 
   onModuleInit() {
     if (process.env.MDM_SWEEP === 'off') return;
@@ -84,6 +94,9 @@ export class MdmSyncService implements OnModuleInit, OnModuleDestroy {
     if (this.busy) return;
     this.busy = true;
     try {
+      // 0.84: the own Apple server first, so a device just enrolled is pushed and then read.
+      await this.apple.pass(now);
+      await this.ensureAppleConnectors();
       const due = new Date(now.getTime() - syncMinutes() * 60_000);
       const rows = await this.prisma.mdmConnector.findMany({
         where: { enabled: true, OR: [{ lastSyncAt: null }, { lastSyncAt: { lt: due } }] },
@@ -126,7 +139,7 @@ export class MdmSyncService implements OnModuleInit, OnModuleDestroy {
 
   private async read(row: MdmConnector, now: Date, out: SyncOutcome): Promise<SyncResult> {
     if (!isOneOf(PROVIDERS, row.provider)) return 'refused';
-    const drv = DRIVERS[row.provider];
+    const drv = this.drivers[row.provider];
     if (!drv.ready(row).ok) return 'not_ready';
     if (await activePause(this.prisma, 'integration', row.customerId)) return 'paused';
 
@@ -210,6 +223,21 @@ export class MdmSyncService implements OnModuleInit, OnModuleDestroy {
       await this.prisma.mdmCommand.updateMany({ where: { id: existing.id, state: existing.state }, data: fields });
     }
     return rec.refused ? 'refused' : 'ok';
+  }
+
+  /**
+   * One enabled `apple` connector for every business with an Apple
+   * enrollment (0.84, §93). The only place a connector is created; a unique
+   * (business, provider) makes a race a no-op.
+   */
+  async ensureAppleConnectors(): Promise<number> {
+    const need = await this.apple.businessesNeedingConnector();
+    if (!need.length) return 0;
+    const r = await this.prisma.mdmConnector.createMany({
+      data: need.map((b) => ({ tenantId: b.tenantId, customerId: b.customerId, provider: 'apple', externalTenantId: 'rem0te', enabled: true })),
+      skipDuplicates: true,
+    });
+    return r.count;
   }
 
   /** Expire unfinished commands whose deadline passed (bounded). */

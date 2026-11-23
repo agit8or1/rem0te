@@ -158,6 +158,12 @@ else printf '%-22s SKIPPED (REMOTE_SIM not set)\n' terminal; skipped+=(terminal)
 # File transfer (0.78) drives the same worker, with -files-root a temporary directory.
 if [[ -n "${REMOTE_SIM:-}" ]]; then run files node scripts/e2e-files.mjs
 else printf '%-22s SKIPPED (REMOTE_SIM not set)\n' files; skipped+=(files); fi
+# The own Apple MDM (0.84) enrolls mdmb (github.com/jessepeterson/mdmb, a
+# simulated iPhone) through a scratch step-ca, and pushes to a loopback HTTP/2
+# APNs stub. CI builds mdmb at a pinned commit and downloads step-ca at a
+# pinned SHA-256. Not a real device, not real APNs.
+if [[ -n "${MDMB_BIN:-}" && -n "${STEP_CA_BIN:-}" ]] && command -v openssl >/dev/null; then run mdm-apple node scripts/e2e-mdm-apple.mjs
+else printf '%-22s SKIPPED (MDMB_BIN / STEP_CA_BIN / openssl not available)\n' mdm-apple; skipped+=(mdm-apple); fi
 
 # Signed releases on one host (0.37) run deploy/release/ in a temporary prefix
 # and build the agent with Go themselves: they need Go (GO, go on PATH, or

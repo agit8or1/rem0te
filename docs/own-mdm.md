@@ -524,7 +524,7 @@ Apple devices need a public HTTPS URL; Android devices do not. **Nothing on the 
 | `/api/v1/mdm/apple/checkin`, `/api/v1/mdm/apple/server` | Nest API :3001 | Covered by `handle /api/*` | **None.** The API admits only `application/x-apple-aspen-mdm-checkin` and the MDM content type on these two routes, with a raw-body limit and its own rate limit |
 | `/api/v1/mdm/apple/enroll/<token>` | Nest API (the one-time profile download) | Covered | None |
 | `/api/v1/mdm/android/signup/callback` | Nest API (browser redirect from Google) | Covered | None |
-| `/mdm/acme/*` | step-ca on `127.0.0.1:<port>` | **Not routed** | **One new route**: `handle /mdm/acme/* { reverse_proxy 127.0.0.1:<port> }`, nothing else of step-ca exposed (no admin API, no other provisioner). Added to `deploy/caddy/Caddyfile` in the Apple enrollment PR, and to the host only at deploy, with the owner's approval |
+| `/acme/rem0te-mdm/*` (0.84; the plan said `/mdm/acme/*`, see [M2 as built](#m2-as-built-0840)) | step-ca on `127.0.0.1:9451` | **Not routed** | **One new route**, in `deploy/caddy/Caddyfile` commented out: `handle /acme/rem0te-mdm/* { reverse_proxy https://127.0.0.1:9451 { … tls_trust_pool file /etc/caddy/rem0te-mdm-ca-root.crt } }`, nothing else of step-ca exposed (no admin API, no other provisioner). On the host only at deploy, with the owner's approval |
 | `/.well-known/com.apple.remotemanagement` | — | — | Not on this host: account-driven enrollment discovers the server on the **user's e-mail domain**, so each customer serves it (later PR) |
 
 The public name `remote.agit8or.net` is in every enrolled device's profile for good (Apple's rule that
@@ -623,7 +623,7 @@ explicit approval.
 | # | Pull request | Scope | Tests | Blocked on (to be real, not to merge) |
 |---|---|---|---|---|
 | **M1** ✅ 0.83.0 | **Settings → Mobile devices: the wizard, and Apple push certificates** | The Settings page with both cards and the four states. Apple steps 0–5 and 7: push CSR generation (key sealed), signing with an uploaded vendor certificate (sealed), the mdmcert.download path, push-certificate upload and checks (key, issuer, topic, expiry), the recorded account, renewal reminders, the same-topic rule. Android steps 0–2 and 4: instructions, key upload and offline checks (sealed), quota recorded by hand. **No outbound call.** `mdm.setup` in §62 | Unit (CSR, signing with a test vendor certificate, certificate parsing); e2e on a scratch API; browser suite | Nothing to merge. A3 (or A4′) to produce a real certificate |
-| **M2** | **Apple enrollment, check-in and inventory: the first real driver** | `apple` in `PROVIDERS` and 0096's CHECK; one-time enrollment links and signed profiles; check-in and server endpoints with `Mdm-Signature` verification; the queue for the inventory commands (`DeviceInformation`, `SecurityInfo`, `InstalledApplicationList`, `ProfileList`, `CertificateList`); `safe-h2` and the APNs client; step-ca as `rem0te-mdm-ca` with its install script and the one Caddy route (documented); the `apple` driver feeding the existing sync; wizard step 6 | Unit; e2e with **mdmb** and a loopback APNs stub; step-ca ACME on loopback | A4 and A6 for a real device |
+| **M2** ✅ 0.84.0 | **Apple enrollment, check-in and inventory: the first real driver** | `apple` in `PROVIDERS` and 0096's CHECK; one-time enrollment links and signed profiles; check-in and server endpoints with `Mdm-Signature` verification; the queue for the inventory commands (`DeviceInformation`, `SecurityInfo`, `InstalledApplicationList`, `ProfileList`, `CertificateList`); `safe-h2` and the APNs client; step-ca as `rem0te-mdm-ca` with its install script and the one Caddy route (documented); the `apple` driver feeding the existing sync; wizard step 6 | Unit; e2e with **mdmb** and a loopback APNs stub; step-ca ACME on loopback | A4 and A6 for a real device |
 | **M3** | **Android: enterprise sign-up and read-only inventory** | `android` in `PROVIDERS`; wizard steps 3, 5 and 6: connection test, sign-up from inside Rem0te (one-time state), the default policy, one-time enrollment tokens with QR; the `android` driver (devices and Operations, polling in `MDM_SWEEP`); `safe-https` PATCH/DELETE | Unit; e2e against an AMAPI-shaped loopback stand-in | G1–G4 (and decision 21), G5 |
 | M4 | **Lost-device actions** (audit 3.3) | `send()` on the driver interface; `mobile:act`; Apple `DeviceLock`, `EnableLostMode`/`DisableLostMode` (supervised only; unsupported otherwise); Android `LOCK`, `START_LOST_MODE`/`STOP_LOST_MODE`; `actions` pause; accepted vs completed shown | e2e (mdmb, stand-in) | M2 or M3 |
 | M5 | **Destructive actions** (audit 3.4) | Apple `EraseDevice`, `RemoveProfile`; Android `WIPE` (device or work profile), `RELINQUISH_OWNERSHIP`, `RESET_PASSWORD`; second-person approval; `mdm.destructive` always asks; `byod` never wiped | e2e | M4 (decision 16 decided) |
@@ -678,3 +678,98 @@ with no secret in meta (`logOrFail` before a credential changes) and conditional
 credential never asks for a fresh confirmation, is audited, and the page warns that deleting the push certificate
 orphans every enrolled device. Migration 0100 holds one row (`MdmPlatformSetup`, never deleted) with CHECKs on
 every list, the sealed shape and the topic.
+
+## M2 as built (0.84.0)
+
+Rem0te is the MDM server for iPhones and iPads: one-time enrollment links, a signed enrollment profile, the
+check-in and command endpoints, an inventory-only command queue, the APNs push and the `apple` driver feeding the
+0.80 sync. §93 holds it. **Nothing has run on a real iPhone or iPad, and no call has been made to Apple's push
+service.** The proof is [mdmb](https://github.com/jessepeterson/mdmb) (a simulated device, MIT, pinned by commit),
+a scratch step-ca on loopback and a loopback HTTP/2 stub standing in for APNs. Where the build differs from the
+plan above, it says why.
+
+### What runs where
+
+| Piece | Built |
+|---|---|
+| Device CA | step-ca v0.30.2 as **`rem0te-mdm-ca`**, installed by `deploy/mdm-ca/rem0te-mdm-ca-setup.sh` (pinned by the release tarball's SHA-256). Its own system user; keys in `/var/lib/rem0te-mdm-ca` (0700), never readable by the portal. Listens on **`127.0.0.1:9451` only**, with one ACME provisioner, `rem0te-mdm`, offering only `device-attest-01` with Apple attestation. The script makes the root (EC P-384), the intermediate (RSA 3072, path length 0) and the profile-signing certificate (EC P-256), and never overwrites a key. **Not installed on this host** |
+| Caddy | One route, `/acme/rem0te-mdm/*`, to `https://127.0.0.1:9451`, verified against the device CA's root copied to `/etc/caddy/rem0te-mdm-ca-root.crt`. It is in `deploy/caddy/Caddyfile` **commented out**; nothing else of step-ca is reachable |
+| Wizard step 6 | Settings → Mobile devices: upload the device CA's root and intermediate (public certificates only, `checkDeviceCa`), upload the profile-signing certificate and key (`checkProfileSigner`; the key sealed under **`rem0te-mdm-profile-sign-v1`**), create and revoke one-time links, see enrolled devices. Renewal moved to step 7 and ABM to step 8, as in the design's table |
+| Links | `POST /mdm/apple/links` (Platform Admin, `assertFresh` naming **`mdm.enroll`**, a §62 key, default `off`); 32 random bytes shown once, only the SHA-256 stored; per business, corporate only, 15 minutes to 24 hours (an hour by default). Revoking never asks |
+| Profile | `GET /mdm/apple/enroll/<token>` claims the link with one conditional update (`open → claimed`) and returns a CMS-signed `.mobileconfig`: an ACME identity payload (`HardwareBound`, `Attest`, P-384) and the MDM payload with `SignMessage`, `CheckOutWhenRemoved`, production APNs and `AccessRights` 1301. Any link that cannot be claimed is the same 404 |
+| Check-in | `PUT /mdm/apple/checkin` (`Authenticate`, `TokenUpdate`, `CheckOut`). `Authenticate` must name a claimed link (`?enroll=`) within an hour of the claim, carry the push certificate's topic and run iOS/iPadOS 16 or later (decision 24); it consumes the link (`claimed → used`) in the same transaction that creates the device |
+| Commands | `PUT /mdm/apple/server`. The queue holds only the five inventory commands, in this order: `DeviceInformation`, `SecurityInfo`, `InstalledApplicationList`, `ProfileList`, `CertificateList`. They are queued at the first `TokenUpdate` and again every 24 hours; `NotNow` puts a command back in the queue |
+| Push | The MDM sweep pushes `{"mdm": PushMagic}` to every device with queued work (at most 100 a pass, not more often than hourly per device) through `common/safe-h2.ts`, one HTTP/2 connection per pass, with the push certificate as the TLS client certificate. `410` / `BadDeviceToken` stops pushing to that token; a refused certificate or topic stops the pass |
+| Driver | `apple` in `PROVIDERS` and in the provider CHECKs (0101). It reads Rem0te's own Apple tables, through a reader the sync hands it, and calls nothing. The sync creates one `apple` connector per business with an enrolled device (`ensureAppleConnectors`, the only place a connector is created) and writes `MobileDevice` and `MdmCommand` as for any provider |
+
+### Device authentication
+
+Every request to `checkin` and `server` is verified before its body is parsed. The `Mdm-Signature` header must be
+a detached CMS SignedData over the exact bytes, by one signer, whose certificate chains to the uploaded device CA,
+is unexpired, is not a CA and allows client authentication. Anything else gets **401 with no body**. The device's
+identity is the pair (UDID, certificate SHA-256), bound at `Authenticate`. Every later message must match both, so
+a certificate from the same CA cannot speak for another device. A device that checks out is final (a trigger
+refuses its return); it enrolls again with a new link. Bodies are bounded before they are read: 64 KB for a
+check-in, 2 MB for a command result.
+
+### Differences from the plan, and why
+
+- **The ACME path is `/acme/rem0te-mdm/*`, not `/mdm/acme/*`.** step-ca builds the links in its ACME directory
+  from the request's host and its own `/acme/<provisioner>/` prefix, which cannot be changed. Under `/mdm/acme/` a
+  device would follow links Caddy does not route. This was checked against step-ca v0.30.2 on loopback.
+- **The portal does not authorize each ACME order.** The plan said "the portal reaches it only on loopback for
+  one-time authorizations". step-ca's `device-attest-01` has no per-order hook that calls back to Rem0te, so any
+  genuine Apple device that reaches the route can get a certificate. That certificate does nothing by itself: a
+  device can enroll only by naming a claimed, unexpired link at `Authenticate`, and the certificate is bound
+  there. An owner decision (below).
+- **No PKCS#12, anywhere, not even in tests.** The plan allowed a PKCS#12 test identity because mdmb needed one.
+  mdmb also speaks SCEP, so the suite gives it a SCEP identity from the scratch step-ca. That path exists only
+  under `NODE_ENV=test` on `127.0.0.1` (`scepTestIdentity` refuses otherwise), and the install script refuses
+  the SCEP provisioner without `--prefix`.
+- **SHA-1 is accepted in `Mdm-Signature`**, with SHA-256/384/512. mdmb signs with SHA-1 (its CMS library's
+  default), and that every Apple device uses SHA-256 is not confirmed. The authority is the device's own key and
+  the chain to Rem0te's CA. An owner decision (below).
+- **`AccessRights` is 1301, without erase (8).** The plan above asked for 1 + 4 + 8 + 16 + 256 + 1024 on corporate
+  devices. M2 sends no destructive command, and a profile should not grant what nothing uses; but rights are fixed
+  at enrollment, so this is an owner decision (25, below).
+- **No new sweep.** Pushes, re-queues and expiry run inside `MDM_SWEEP` (`AppleMdmService.pass`, called only by
+  the sync), so `MDM_SWEEP=off` stops them and there is no new off switch.
+- **Containment.** As the design's table: check-ins are always answered and inventory is not held by any pause.
+  There is no lost-device or destructive command to hold (M4, M5).
+
+### What is kept
+
+0096's rule holds and 0101 adds to it. There is no IMEI, MEID, phone number, MAC address or signed-in user. A link
+and a device are corporate only. The serial is kept on corporate devices. The push token and `PushMagic` are kept;
+they can only wake a device, and only with the push certificate. They are in no audit row, log line or admin view.
+`UnlockToken` is never read. `DeviceInformation` asks only for the fields Rem0te keeps. The other four commands keep
+counts and two passcode booleans, never the lists themselves. Error results keep `apple:<domain>:<code>`, never
+Apple's description text.
+
+### Owner decisions this raises
+
+| # | Decision | What 0.84 does | Why it matters |
+|---|---|---|---|
+| 25 | **`AccessRights` without erase** | 1301 = inspect profiles (1) + device lock and passcode removal (4) + query device information (16) + inspect installed apps (256) + security queries (1024). No erase (8), no profile or app installation | Rights are fixed when the profile is installed. **Adding erase for M5 means every device enrolls again.** The alternative is to include 8 now and have the portal refuse to send it until M5 |
+| 26 | **ACME path** `/acme/rem0te-mdm/*` | As above | The path is in every enrolled device's profile for good |
+| 27 | **ACME with no per-order authorization** | Any attested Apple device reaching the route gets a certificate; enrollment still needs a claimed link | Closing it needs a step-ca webhook provisioner (a later change) or keeping the route off except while enrolling |
+| 28 | **SHA-1 in `Mdm-Signature`** | Accepted | Refusing it may refuse some devices; to be decided against a real device |
+
+### Host changes at deploy (none made)
+
+1. Run `deploy/mdm-ca/rem0te-mdm-ca-setup.sh --dns-name <portal name>` as root. It installs and starts step-ca as
+   `rem0te-mdm-ca` and writes the public certificates and the profile signer's handoff key.
+2. Copy the CA's `root_ca.crt` to `/etc/caddy/rem0te-mdm-ca-root.crt`, uncomment the one route in the Caddyfile,
+   and reload Caddy.
+3. In Settings → Mobile devices step 6, upload the root and intermediate, then the profile-signing certificate and
+   key, and delete the handoff key.
+4. Migration 0101 (`prisma migrate deploy`, then `prisma generate` at the target, as for any schema change).
+
+### What has been tested
+
+| Proof | What |
+|---|---|
+| Unit (`unit-mdm-apple.mjs`, in CI) | plist parsing and its refusals (DTD subset, entities, depth, size, duplicate keys, binary plists). Detached signatures made by openssl: accepted, and refused when the body changed, the CA differs, the certificate is expired, not yet valid or a CA, the signature is attached, there are two signers, or the input is not CMS; BER is converted. The signed profile verifies with openssl and has no PKCS#12. Check-in and report reading (no UnlockToken, no IMEI, no user channel). The APNs body and status mapping. The driver's records through the sync's own parsers. The step 6 certificate checks. 0101's lists |
+| API (`e2e-mdm-apple.mjs`, ports 4061–4064, in `run-e2e.sh`) | A scratch step-ca installed by the real setup script under `--prefix`. ACME on loopback: a directory whose links follow the host, and an order offering only `device-attest-01` (no attestation: only a real device makes one). Steps 1–6 through the API with stand-in Apple certificates. Links, the one-time profile, refusals (no signature, a wrong signer, a wrong topic, iOS 15, a used link). mdmb enrolling through SCEP, checking in and answering commands: `DeviceInformation` and `ProfileList` are answered; the other three are refused by mdmb (`12021`) and recorded as errors. The push to the HTTP/2 stub, with the exact body and headers. The sync writing `MobileDevice` and `MdmCommand`. `CheckOut`, revoke and an expired claim. No secret in any answer or audit row |
+| Browser (`e2e-ui.mjs`) | Step 6 asks for the device CA and the profile signer before any link, and says nothing is proven |
+| Not tested | **A real iPhone or iPad; real APNs; Apple attestation; OTA enrollment on a device.** The iOS Simulator is not known to enroll in MDM |

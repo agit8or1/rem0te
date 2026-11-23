@@ -1430,4 +1430,17 @@ export const mdmSetupApi = {
   deletePushCert: () => api.delete('/mdm/setup/apple/push-certificate'),
   androidKey: (keyFile: string) => api.put('/mdm/setup/android/service-account', { keyFile }),
   deleteAndroidKey: () => api.delete('/mdm/setup/android/service-account'),
+  // 0.84 Harbor (step 6): the device CA's public certificates and the profile signer.
+  deviceCa: (body: { root: string; intermediates?: string }) => api.put('/mdm/setup/apple/device-ca', body),
+  deleteDeviceCa: () => api.delete('/mdm/setup/apple/device-ca'),
+  profileSigner: (body: { certificate: string; privateKey: string; passphrase?: string; chain?: string }) => api.put('/mdm/setup/apple/profile-signer', body),
+  deleteProfileSigner: () => api.delete('/mdm/setup/apple/profile-signer'),
+};
+
+/** 0.84 Harbor: Rem0te's own Apple MDM — one-time enrollment links and enrolled devices (Platform Admin). */
+export const mdmAppleApi = {
+  links: () => api.get('/mdm/apple/links'),
+  createLink: (body: { businessId: string; expiresInMinutes?: number }) => api.post('/mdm/apple/links', body),
+  revokeLink: (id: string) => api.delete(`/mdm/apple/links/${encodeURIComponent(id)}`),
+  devices: () => api.get('/mdm/apple/devices'),
 };

@@ -458,6 +458,14 @@ enum ActivityAction {
   MDM_PUSH_REQUEST_SIGNED
   MDM_PUSH_CERT_INSTALLED
   MDM_PUSH_CERT_DELETED
+  MDM_APPLE_LINK_CREATED
+  MDM_APPLE_LINK_REVOKED
+  MDM_APPLE_LINK_CLAIMED
+  MDM_APPLE_DEVICE_AUTHENTICATED
+  MDM_APPLE_DEVICE_ENROLLED
+  MDM_APPLE_DEVICE_CHECKED_OUT
+  MDM_APPLE_COMMAND_RESULT
+  MDM_APPLE_PUSHED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -798,6 +806,8 @@ model Customer {
   remoteOpsSetting RemoteOpsSetting?
   /// 0.80: mobile-device providers connected for this business (read-only, §90).
   mdmConnectors    MdmConnector[]
+  appleEnrollmentLinks AppleEnrollmentLink[]
+  appleDevices     AppleDevice[]
 
   /// 0.81: backup providers, protected assets and what they reported (backups/, §91).
   backupConnections    BackupConnection[]
@@ -5399,6 +5409,19 @@ model MdmPlatformSetup {
   androidClientEmail  String?
   androidKeyIdLast4   String?
   androidKeySetAt     DateTime?
+  /// 0.84 (step 6): the device CA's public root and intermediates (step-ca, rem0te-mdm-ca). Never its key.
+  deviceCaRootPem     String?
+  deviceCaChainPem    String?
+  deviceCaRootSha256  String?
+  deviceCaNotAfter    DateTime?
+  deviceCaSetAt       DateTime?
+  /// 0.84: the profile-signing key, sealed (rem0te-mdm-profile-sign-v1); its certificate and chain are public.
+  profileSignKeyEnc   String?
+  profileSignCertPem  String?
+  profileSignChainPem String?
+  profileSignSha256   String?
+  profileSignNotAfter DateTime?
+  profileSignSetAt    DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 }
@@ -5558,4 +5581,108 @@ model RestoreDrill {
 
   @@unique([assetId, externalId])
   @@index([customerId])
+}
+
+/// 0.84 Harbor (docs/own-mdm.md M2, §93): a one-time Apple enrollment link. Stored as a SHA-256 only.
+model AppleEnrollmentLink {
+  id          String       @id @default(cuid())
+  tenantId    String
+  customerId  String
+  customer    Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tokenSha256 String       @unique
+  /// open | claimed | used | expired | revoked (0101 CHECK; protocol.ts LINK_STATES).
+  state       String       @default("open")
+  /// corporate only (profile-based device enrollment).
+  ownership   String       @default("corporate")
+  createdById String?
+  createdAt   DateTime     @default(now())
+  expiresAt   DateTime
+  claimedAt   DateTime?
+  usedAt      DateTime?
+  revokedAt   DateTime?
+  revokedById String?
+  updatedAt   DateTime     @updatedAt
+  device      AppleDevice?
+
+  @@index([customerId, createdAt])
+  @@index([state, expiresAt])
+}
+
+/// 0.84: an enrolled iPhone or iPad, as Rem0te's own MDM server knows it. Written only by mdm/apple/;
+/// MobileDevice is written from it only by the sync. No IMEI, MEID, phone number, MAC, user or UnlockToken.
+model AppleDevice {
+  id                    String              @id @default(cuid())
+  tenantId              String
+  customerId            String
+  customer              Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  linkId                String              @unique
+  link                  AppleEnrollmentLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  udid                  String
+  /// SHA-256 of the identity certificate that signs this device's messages.
+  certSha256            String              @unique
+  certNotAfter          DateTime
+  topic                 String
+  /// authenticated | enrolled | checked_out (0101 CHECK).
+  state                 String              @default("authenticated")
+  /// Hex. Only wakes the device, and only with the push key.
+  pushToken             String?
+  pushMagic             String?
+  pushTokenInvalidAt    DateTime?
+  authenticatedAt       DateTime
+  enrolledAt            DateTime?
+  checkedOutAt          DateTime?
+  /// checkout | superseded
+  checkoutReason        String?
+  lastSeenAt            DateTime?
+  lastPushAt            DateTime?
+  lastPushOkAt          DateTime?
+  lastPushResult        String?
+  lastInventoryQueuedAt DateTime?
+  lastInventoryAt       DateTime?
+  deviceName            String?
+  model                 String?
+  modelName             String?
+  productName           String?
+  /// ios | ipados
+  platform              String
+  osVersion             String?
+  buildVersion          String?
+  serialNumber          String?
+  storageTotalBytes     BigInt?
+  storageFreeBytes      BigInt?
+  supervised            Boolean?
+  passcodePresent       Boolean?
+  passcodeCompliant     Boolean?
+  appCount              Int?
+  profileCount          Int?
+  certificateCount      Int?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  commands              AppleCommand[]
+
+  @@index([customerId, id])
+}
+
+/// 0.84: Rem0te's own Apple command queue. Inventory request types only (protocol.ts REQUEST_TYPES).
+model AppleCommand {
+  id            String      @id @default(cuid())
+  tenantId      String
+  customerId    String
+  appleDeviceId String
+  device        AppleDevice @relation(fields: [appleDeviceId], references: [id], onDelete: Cascade)
+  commandUuid   String      @unique
+  requestType   String
+  /// queued | sent | acknowledged | error | cancelled | expired (0101 CHECK).
+  state         String      @default("queued")
+  queuedAt      DateTime    @default(now())
+  pushedAt      DateTime?
+  sentAt        DateTime?
+  respondedAt   DateTime?
+  errorCode     String?
+  notNowCount   Int         @default(0)
+  expiresAt     DateTime
+  updatedAt     DateTime    @updatedAt
+
+  @@index([appleDeviceId, queuedAt])
+  @@index([state, expiresAt])
 }

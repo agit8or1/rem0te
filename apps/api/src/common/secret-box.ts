@@ -22,7 +22,10 @@ export type SecretPurpose = 'rem0te-ai-key-v1' | 'rem0te-psa-webhook-secret-v1' 
   // 0.83: the own MDM's setup (mdm/setup/, §92) — the APNs push key, the MDM
   // vendor signing key, the APNs push certificate, and the Google
   // service-account key. Used only in mdm/setup/mdm-setup.service.ts.
-  | 'rem0te-apns-push-key-v1' | 'rem0te-mdm-vendor-key-v1' | 'rem0te-apns-push-cert-v1' | 'rem0te-amapi-sa-key-v1';
+  | 'rem0te-apns-push-key-v1' | 'rem0te-mdm-vendor-key-v1' | 'rem0te-apns-push-cert-v1' | 'rem0te-amapi-sa-key-v1'
+  // 0.84: the enrollment profile's signing key (§93). Sealed and opened only
+  // in mdm/setup/mdm-setup.service.ts, like the four above.
+  | 'rem0te-mdm-profile-sign-v1';
 
 function key(hex: string | undefined): Buffer {
   const k = Buffer.from(hex ?? '', 'hex');

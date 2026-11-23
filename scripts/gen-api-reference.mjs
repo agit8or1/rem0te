@@ -129,6 +129,8 @@ function parseFile(file) {
     return [{
       file: path.relative(ROOT, file),
       group: path.basename(file).replace('.controller.ts', '') + (starts.length > 1 ? `-${prefixes[0].replace(/[^a-z]/gi, '') || n}` : ''),
+      // 0.84: two controllers in one file may share a prefix (apple.controller.ts); the class name tells them apart.
+      cls: ((block.find((l) => /export class \w+/.test(l)) ?? '').match(/export class (\w+?)(?:Controller)?\b/) ?? [])[1]?.toLowerCase() ?? String(n),
       prefixes,
       routes,
     }];
@@ -136,6 +138,11 @@ function parseFile(file) {
 }
 
 const controllers = walk(SRC).flatMap(parseFile);
+{
+  const seen = new Map();
+  for (const c of controllers) seen.set(c.group, (seen.get(c.group) ?? 0) + 1);
+  for (const c of controllers) if (seen.get(c.group) > 1) c.group = `${c.group}-${c.cls}`;
+}
 controllers.sort((a, b) => a.group.localeCompare(b.group));
 const all = controllers.flatMap((c) => c.routes);
 
@@ -163,6 +170,8 @@ const TITLES = {
   // 0.35: two controllers in diagnostics-catalog.controller.ts.
   'diagnostics-catalog-endpointsiddiagnostics': 'Diagnostics catalog', 'diagnostics-catalog-adminsnapshotschedule': 'Automatic snapshot schedule',
   // 0.36: four controllers in tray.controller.ts.
+  // 0.84: two controllers in mdm/apple/apple.controller.ts.
+  'apple-mdmapple-appledevice': 'Apple MDM (device-authenticated)', 'apple-mdmapple-appleadmin': 'Apple MDM enrollment links and devices',
   'tray-tray': 'Tray (device-authenticated)', 'tray-endpointsidtray': 'Tray on a computer', 'tray-chatrecording': 'Chat recording', 'tray-assist': 'Tray chat page (/assist)',
   auth: 'Authentication', mfa: 'Multi-factor authentication', users: 'Users',
   businesses: 'Businesses', sites: 'Sites', endpoints: 'Computers',

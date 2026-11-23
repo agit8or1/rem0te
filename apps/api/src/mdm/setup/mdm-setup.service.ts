@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { MdmPlatformSetup, Prisma } from '@prisma/client';
+import { createPrivateKey, type KeyObject, type X509Certificate } from 'node:crypto';
 import { z } from 'zod';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../audit/audit.service';
@@ -10,7 +11,7 @@ import { activePause } from '../../containment/pause';
 import { SecurityAlertService } from '../../security-controls/alerts.service';
 import { ControlsStore } from '../../security-controls/controls.store';
 import {
-  attr, buildPushCertRequest, certFacts, checkPushCertificate, checkServiceAccountKey, checkVendor, nameText, readCertificate, readCertificates, readCsr, readPrivateKey,
+  attr, buildPushCertRequest, certFacts, checkDeviceCa, checkProfileSigner, checkPushCertificate, checkServiceAccountKey, checkVendor, nameText, readCertificate, readCertificates, readCsr, readPrivateKey,
   generatePushKey,
 } from './pki';
 import {
@@ -72,6 +73,14 @@ export class MdmSetupService {
 
   async view(now = new Date()) {
     const r = await this.row();
+    // 0.84: what the own MDM server has seen (AppleDevice is the Apple services' table; read only here).
+    const [enrolled, proven, lastSeen] = await Promise.all([
+      this.prisma.appleDevice.count({ where: { state: 'enrolled' } }),
+      // "Proven" only when APNs answered 200 AND that device connected afterwards.
+      this.prisma.appleDevice.findFirst({ where: { lastPushOkAt: { not: null }, state: 'enrolled' }, select: { lastPushOkAt: true, lastSeenAt: true }, orderBy: { lastPushOkAt: 'desc' } }),
+      this.prisma.appleDevice.findFirst({ where: { state: 'enrolled' }, select: { lastSeenAt: true }, orderBy: { lastSeenAt: { sort: 'desc', nulls: 'last' } } }),
+    ]);
+    const apple = { enrolled, pushProven: !!proven?.lastPushOkAt && !!proven.lastSeenAt && proven.lastSeenAt.getTime() >= proven.lastPushOkAt.getTime(), lastCheckInAt: lastSeen?.lastSeenAt ?? null };
     const vendorCert = r.vendorCertPem ? readCertificate(r.vendorCertPem) : null;
     const vf = vendorCert ? certFacts(vendorCert) : null;
     const vendorRoot = r.vendorChainPem ? readCertificates(r.vendorChainPem)?.[1] ?? null : null;
@@ -83,6 +92,10 @@ export class MdmSetupService {
       pushCert: r.pushCertNotAfter ? { notAfter: r.pushCertNotAfter } : null,
       appleAccount: r.appleAccount,
       androidKey: !!r.androidKeyEnc,
+      deviceCa: !!r.deviceCaRootPem,
+      profileSigner: r.profileSignNotAfter ? { notAfter: r.profileSignNotAfter } : null,
+      enrolledDevices: apple.enrolled,
+      pushProven: apple.pushProven,
     }, now);
     const paused = !!(await activePause(this.prisma, 'notifications', null));
     return {
@@ -101,13 +114,19 @@ export class MdmSetupService {
           present: true, topic: r.apnsTopic, serial: r.pushCertSerial, sha256: r.pushCertSha256, issuer: r.pushCertIssuer,
           notBefore: r.pushCertNotBefore, notAfter: r.pushCertNotAfter, installedAt: r.pushCertInstalledAt, renewedAt: r.pushCertRenewedAt,
           daysLeft: daysLeft(r.pushCertNotAfter!, now), expired: r.pushCertNotAfter!.getTime() <= now.getTime(),
-          /** Only a first push to a real device proves APNs accepts it (M2). */
-          proven: false,
+          /** 0.84: APNs answered 200 and that device connected afterwards. Under NODE_ENV=test that answer is the suite's stub. */
+          proven: apple.pushProven,
         } : { present: false },
         topic: r.apnsTopic,
         appleAccount: r.appleAccount,
         devicesOnTopic: r.apnsTopic ? await this.prisma.mobileDevice.count({ where: { connector: { externalTenantId: r.apnsTopic } } }) : 0,
         reminders: { days: [...REMINDER_DAYS], lastSent: r.pushRemindedDays, sweep: process.env.MDM_SWEEP !== 'off', heldByPause: paused },
+        deviceCa: r.deviceCaRootPem ? {
+          present: true, rootSha256: r.deviceCaRootSha256, notAfter: r.deviceCaNotAfter, setAt: r.deviceCaSetAt,
+          intermediates: r.deviceCaChainPem ? (readCertificates(r.deviceCaChainPem)?.length ?? 0) : 0,
+        } : { present: false },
+        profileSigner: r.profileSignKeyEnc ? { present: true, sha256: r.profileSignSha256, notAfter: r.profileSignNotAfter, setAt: r.profileSignSetAt } : { present: false },
+        enrollment: { devicesEnrolled: apple.enrolled, pushProven: apple.pushProven, lastCheckInAt: apple.lastCheckInAt },
       },
       android: {
         state: platformState(caps, 'android'),
@@ -330,6 +349,109 @@ export class MdmSetupService {
     await this.audit.logOrFail({ action: 'MDM_SETUP_CREDENTIAL_DELETED', ...this.auditBase(a), meta: { credential: 'amapi_service_account', projectId: r.androidProjectId, keyIdLast4: r.androidKeyIdLast4 } });
     await this.write(r, { androidKeyEnc: null, androidProjectId: null, androidClientEmail: null, androidKeyIdLast4: null, androidKeySetAt: null });
     return this.view();
+  }
+
+  // ── Apple step 6 (0.84, M2): the device CA and the profile signer ───────
+
+  /**
+   * The device CA's public root and intermediates, from the CA host's
+   * `rem0te-mdm-ca-setup.sh` output. Only certificates: the CA's key stays
+   * with the `rem0te-mdm-ca` user and never reaches the portal (§93).
+   * Replacing it means devices whose certificates chain only to the old CA
+   * stop being accepted, so the view names how many are enrolled.
+   */
+  async setDeviceCa(a: ActorContext, body: unknown) {
+    const p = z.object({ root: pemText, intermediates: z.string().max(MAX_PEM * 3).optional() }).strict().safeParse(body);
+    if (!p.success) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Give root (root_ca.crt) and intermediates (intermediate_ca.crt).' });
+    const now = new Date();
+    const c = checkDeviceCa(p.data, now);
+    if (!c.ok) throw new BadRequestException({ code: c.code, message: c.message });
+    const r = await this.row();
+    await this.audit.logOrFail({
+      action: 'MDM_SETUP_CREDENTIAL_SET', ...this.auditBase(a),
+      meta: { credential: 'mdm_device_ca', op: r.deviceCaRootPem ? 'replace' : 'create', rootSha256: c.rootFacts.sha256, previousRootSha256: r.deviceCaRootSha256, intermediates: c.intermediates.length, notAfter: c.notAfter.toISOString() },
+    });
+    await this.write(r, { deviceCaRootPem: c.rootPem, deviceCaChainPem: c.chainPem, deviceCaRootSha256: c.rootFacts.sha256, deviceCaNotAfter: c.notAfter, deviceCaSetAt: now });
+    return this.view();
+  }
+
+  async deleteDeviceCa(a: ActorContext) {
+    const r = await this.row();
+    if (!r.deviceCaRootPem) throw new NotFoundException({ code: 'NO_DEVICE_CA', message: 'There is no device CA.' });
+    await this.audit.logOrFail({ action: 'MDM_SETUP_CREDENTIAL_DELETED', ...this.auditBase(a), meta: { credential: 'mdm_device_ca', rootSha256: r.deviceCaRootSha256 } });
+    await this.write(r, { deviceCaRootPem: null, deviceCaChainPem: null, deviceCaRootSha256: null, deviceCaNotAfter: null, deviceCaSetAt: null });
+    return this.view();
+  }
+
+  /** The profile-signing identity: the key sealed (rem0te-mdm-profile-sign-v1) before anything is written. */
+  async setProfileSigner(a: ActorContext, body: unknown) {
+    const p = z.object({ certificate: pemText, privateKey: pemText, passphrase: z.string().max(200).optional(), chain: z.string().max(MAX_PEM * 3).optional() }).strict().safeParse(body);
+    if (!p.success) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Give certificate and privateKey (and chain, and passphrase if the key is encrypted).' });
+    const now = new Date();
+    const s = checkProfileSigner(p.data, now);
+    if (!s.ok) throw new BadRequestException({ code: s.code, message: s.message });
+    const r = await this.row();
+    const sealed = sealSecret(this.encKey, 'rem0te-mdm-profile-sign-v1', s.keyPem);
+    await this.audit.logOrFail({
+      action: 'MDM_SETUP_CREDENTIAL_SET', ...this.auditBase(a),
+      meta: { credential: 'mdm_profile_signer', op: r.profileSignKeyEnc ? 'replace' : 'create', subject: nameText(s.facts.subject).slice(0, 200), certSha256: s.facts.sha256, notAfter: s.facts.notAfter.toISOString() },
+    });
+    await this.write(r, { profileSignKeyEnc: sealed, profileSignCertPem: s.cert.toString(), profileSignChainPem: s.chainPem, profileSignSha256: s.facts.sha256, profileSignNotAfter: s.facts.notAfter, profileSignSetAt: now });
+    return this.view();
+  }
+
+  async deleteProfileSigner(a: ActorContext) {
+    const r = await this.row();
+    if (!r.profileSignKeyEnc) throw new NotFoundException({ code: 'NO_PROFILE_SIGNER', message: 'There is no profile-signing certificate.' });
+    await this.audit.logOrFail({ action: 'MDM_SETUP_CREDENTIAL_DELETED', ...this.auditBase(a), meta: { credential: 'mdm_profile_signer', certSha256: r.profileSignSha256 } });
+    await this.write(r, { profileSignKeyEnc: null, profileSignCertPem: null, profileSignChainPem: null, profileSignSha256: null, profileSignNotAfter: null, profileSignSetAt: null });
+    return this.view();
+  }
+
+  // ── Opened in memory for M2's two callers (§93) ─────────────────────────
+
+  /** The device CA's public certificates, for verifying Mdm-Signature. Public data; null when not set. */
+  async deviceTrust(): Promise<{ roots: X509Certificate[]; intermediates: X509Certificate[] } | null> {
+    const r = await this.prisma.mdmPlatformSetup.findUnique({ where: { id: ID }, select: { deviceCaRootPem: true, deviceCaChainPem: true } });
+    if (!r?.deviceCaRootPem) return null;
+    const root = readCertificate(r.deviceCaRootPem);
+    const mids = r.deviceCaChainPem ? readCertificates(r.deviceCaChainPem) : [];
+    return root && mids ? { roots: [root], intermediates: mids } : null;
+  }
+
+  /**
+   * The push key and certificate, opened from secret-box in memory for one
+   * APNs session. Only AppleMdmService.pushPass calls this; nothing returned
+   * here is stored, logged or sent anywhere but into safe-h2's TLS context.
+   */
+  async openPushIdentity(now = new Date()): Promise<{ key: KeyObject; certPem: string; topic: string } | null> {
+    const r = await this.row();
+    if (!r.pushKeyEnc || !r.pushCertEnc || !r.apnsTopic || !r.pushCertNotAfter || r.pushCertNotAfter.getTime() <= now.getTime()) return null;
+    const k = readPrivateKey(openSecret(this.encKey, 'rem0te-apns-push-key-v1', r.pushKeyEnc));
+    if (!k.ok) return null;
+    return { key: k.key, certPem: openSecret(this.encKey, 'rem0te-apns-push-cert-v1', r.pushCertEnc), topic: r.apnsTopic };
+  }
+
+  /** The profile-signing identity, opened in memory for one profile. Only AppleEnrollmentService.claim calls this. */
+  async openProfileSigner(now = new Date()): Promise<{ cert: X509Certificate; key: KeyObject; chain: X509Certificate[] } | null> {
+    const r = await this.row();
+    if (!r.profileSignKeyEnc || !r.profileSignCertPem || !r.profileSignNotAfter || r.profileSignNotAfter.getTime() <= now.getTime()) return null;
+    const cert = readCertificate(r.profileSignCertPem);
+    const chain = r.profileSignChainPem ? readCertificates(r.profileSignChainPem) : [];
+    if (!cert || !chain) return null;
+    let key: KeyObject;
+    try { key = createPrivateKey(openSecret(this.encKey, 'rem0te-mdm-profile-sign-v1', r.profileSignKeyEnc)); } catch { return null; }
+    return { cert, key, chain };
+  }
+
+  /** What an enrollment link needs before it can make a profile: public facts only. */
+  async enrollmentReadiness(now = new Date()): Promise<{ ready: true; topic: string } | { ready: false; code: string; message: string }> {
+    const r = await this.row();
+    if (!r.pushCertEnc || !r.apnsTopic || !r.pushCertNotAfter) return { ready: false, code: 'APNS_CERT_MISSING', message: 'Install the Apple push certificate first (step 5).' };
+    if (r.pushCertNotAfter.getTime() <= now.getTime()) return { ready: false, code: 'APNS_CERT_EXPIRED', message: 'The Apple push certificate has expired: renew it with the same Apple Account.' };
+    if (!r.deviceCaRootPem) return { ready: false, code: 'NO_DEVICE_CA', message: 'Upload the device CA\'s certificates first (step 6).' };
+    if (!r.profileSignKeyEnc || !r.profileSignNotAfter || r.profileSignNotAfter.getTime() <= now.getTime()) return { ready: false, code: 'NO_PROFILE_SIGNER', message: 'Upload a valid profile-signing certificate first (step 6).' };
+    return { ready: true, topic: r.apnsTopic };
   }
 
   // ── Renewal reminders ───────────────────────────────────────────────────
