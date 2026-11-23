@@ -5,6 +5,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.83.1] — 2026-11-23 · *Beacon*
+
+Dependency release: Dependabot's production group (#199), plus the
+development group (#200) that landed on `main` without a release of its own.
+No code changes and no new surface.
+
+### Upgrade notes
+
+- **Production dependencies changed — the target manifest must be regenerated.**
+  `pnpm deploy:manifest -o /tmp/prod-package.json`, confirm
+  `npm install --omit=dev --package-lock-only` exits 0 against it (it does for
+  this set), copy it to `/opt/reboot-remote/api/package.json` and run
+  `npm install --omit=dev` there *before* restarting the API. Rsyncing `dist`
+  alone puts code compiled against these versions onto the old libraries, and
+  that only shows on the next restart.
+
+### Dependencies
+
+Production group (#199), all patch or minor moves within the ranges already
+in use:
+
+- **API:** `@nestjs/common`, `@nestjs/core` and `@nestjs/platform-express`
+  11.2.10 → 11.2.11; `@nestjs/throttler` 6.7.1 → 6.8.0; `maxmind` 5.0.9 →
+  5.1.0; `nodemailer` 10.5.0 → 10.6.1; `openid-client` 6.8.9 → 6.9.0.
+  - The throttler is what every `@RateLimit` decorator names (§1 of the
+    invariants checks the throttler names, not the library version). The full
+    e2e run, which exercises the login, enrolment and MSA poll limits, passed
+    on this set.
+  - `nodemailer` and `openid-client` are pinned exactly, as before. The
+    email (§42) and SSO (§72) suites passed against loopback servers. No real
+    relay or identity provider was called.
+  - `maxmind` reads the GeoIP database. The browser suite reads its own
+    fixture database (§54), not production's file.
+- **Web:** `@tanstack/react-query` 5.106.1 → 5.108.1, `lucide-react` 1.72.0 →
+  1.77.0, `tailwind-merge` 3.7.0 → 3.7.1.
+- **Launcher:** `@tauri-apps/api` 2.12.4 → 2.12.5.
+
+Development group (#200), which cannot reach production: `typescript-eslint`
+8.72.2 → 8.73.0, `@tauri-apps/cli` 2.12.4 → 2.12.6, `@playwright/test` and
+`playwright` 1.65.0 → 1.65.1, `autoprefixer` 10.6.2 → 10.7.0, `marked` 18.2.0
+→ 18.2.1.
+
 ## [0.83.0] — 2026-11-21 · *Beacon*
 
 **Settings → Mobile devices: step M1 of Rem0te as its own MDM ([own-mdm.md](docs/own-mdm.md)).** A Platform Admin
