@@ -2151,6 +2151,44 @@ Behavioural proof: `e2e-backups.mjs` (ports 4051–4053, a loopback stand-in,
 `MONITOR_SWEEP` on, in `run-e2e.sh`). Unit: `unit-backups.mjs` (in CI).
 Browser: `e2e-ui.mjs`. **No real St0r push or Comet server has been seen.**
 
+§92 (0.83) is Settings → Mobile devices: M1 of `docs/own-mdm.md`, the Apple
+push certificate and the Google service-account key, **offline**. Nothing
+enrolls and nothing calls Apple, Google or mdmcert.download.
+
+- **Sealed.** Four purposes, each used only in `MdmSetupService`:
+  `rem0te-apns-push-key-v1`, `rem0te-apns-push-cert-v1`,
+  `rem0te-mdm-vendor-key-v1` and `rem0te-amapi-sa-key-v1`. The view names a
+  sealed column only as a presence test. No return, audit meta or log line
+  carries a key, a certificate body, a CSR or a sealed value. The CSR leaves
+  only through `pushCsr()`, and the signed request only through
+  `signPushRequest()`.
+- **Offline.** No Apple or Google host and no HTTP client anywhere in
+  `mdm/setup/`; the only URL is the plist DTD identifier in `pki.ts`. Links
+  to Apple and Google live in the web page only.
+- **Pure.** `setup/pki.ts` imports only `node:crypto`, and `setup-model.ts`
+  imports nothing. Neither reads a clock. Both are tested in CI
+  (`unit-mdm-setup.mjs`) with stand-ins made at run time
+  (`scripts/lib/test-pki.mjs`); no key or certificate file is committed.
+- **Who.** `PlatformAdminGuard` on the controller. The eight writes call
+  `assertFresh` naming `mdm.setup` (§62, default `off`) first; the four
+  deletes never ask. Only `MdmSetupService` writes `MdmPlatformSetup`, never
+  creating or deleting it, and every write is conditional on the revision
+  read (`409 MDM_SETUP_CHANGED`). Every credential change is `logOrFail`
+  before its write.
+- **The topic.** A certificate is matched to the sealed key, then to the
+  topic rule: a renewal keeps the topic, a different one goes only through
+  `replace` naming the current topic, and no new key is made while a
+  certificate is installed.
+- **Reminders** (30, 14, 3 days, and expiry) run only from the MDM sweep
+  (`MDM_SWEEP=off` stops them), are held by a global `notifications` pause,
+  and are claimed by a conditional write before the security alert.
+- **0100** holds one row, never deleted, with the model's lists, sealed
+  shapes, all-or-nothing credentials and the topic's form.
+
+Behavioural proof: `e2e-mdm-setup.mjs` (ports 4071–4072, in `run-e2e.sh`).
+Unit: `unit-mdm-setup.mjs` (in CI). Browser: `e2e-ui.mjs`
+(`mdmSettingsUi`). **No real Apple or Google credential has been used.**
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

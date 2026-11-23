@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **676** of them across
-**104** controllers.
+integration, under `/api/integration/v1`). There are **690** of them across
+**105** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -598,6 +598,27 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/mobile-devices/:id` | signed in | `MOBILE_VIEW` |
 | `GET` | `/api/v1/mobile-devices/:id/commands` | signed in | `MOBILE_VIEW` |
 | `GET` | `/api/v1/mobile-devices/setup` | signed in | `MOBILE_VIEW` |
+
+## Mdm setup
+
+`apps/api/src/mdm/setup/mdm-setup.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/mdm/setup` | Platform Admin | — |
+| `PUT` | `/api/v1/mdm/setup/android/service-account` | Platform Admin, throttled | — |
+| `DELETE` | `/api/v1/mdm/setup/android/service-account` | Platform Admin | — |
+| `PUT` | `/api/v1/mdm/setup/apple/push-certificate` | Platform Admin, throttled | — |
+| `DELETE` | `/api/v1/mdm/setup/apple/push-certificate` | Platform Admin | — |
+| `POST` | `/api/v1/mdm/setup/apple/push-certificate/replace` | Platform Admin, throttled | — |
+| `GET` | `/api/v1/mdm/setup/apple/push-csr` | Platform Admin | — |
+| `POST` | `/api/v1/mdm/setup/apple/push-key` | Platform Admin, throttled | — |
+| `DELETE` | `/api/v1/mdm/setup/apple/push-key` | Platform Admin | — |
+| `POST` | `/api/v1/mdm/setup/apple/push-request` | Platform Admin, throttled | — |
+| `PUT` | `/api/v1/mdm/setup/apple/signing-route` | Platform Admin, throttled | — |
+| `PUT` | `/api/v1/mdm/setup/apple/vendor` | Platform Admin, throttled | — |
+| `DELETE` | `/api/v1/mdm/setup/apple/vendor` | Platform Admin | — |
+| `PUT` | `/api/v1/mdm/setup/checklist` | Platform Admin, throttled | — |
 
 ## Metrics
 

@@ -1,6 +1,9 @@
-# Rem0te as its own MDM (design, 0.81.1)
+# Rem0te as its own MDM (design, 0.81.1; M1 built in 0.83.0)
 
-*Design only. Nothing on this page is built.* On **2026-11-21** the owner decided: *"I don't have an MDM, I want
+*Mostly design.* **M1, Settings → Mobile devices, is built in 0.83.0 *Beacon*** ([below](#m1-as-built-0830)):
+the wizard, the Apple push key, CSR, vendor signing and push certificate, and the Google service-account key,
+all offline. Everything else on this page is still a plan. Decisions 21–24 were **decided** by the owner on
+2026-11-21 ([below](#owner-decisions-this-raises)). On **2026-11-21** the owner decided: *"I don't have an MDM, I want
 our OWN."* Rem0te itself becomes the mobile-device-management server for iPhones and iPads and the EMM for
 Android, instead of a reader of a third-party MDM. That **supersedes decision 18** of the
 [session, maintenance, MDM and backup audit](session-maintenance-mdm-backup-audit.md#owner-decisions), which had
@@ -619,7 +622,7 @@ explicit approval.
 
 | # | Pull request | Scope | Tests | Blocked on (to be real, not to merge) |
 |---|---|---|---|---|
-| **M1** | **Settings → Mobile devices: the wizard, and Apple push certificates** | The Settings page with both cards and the four states. Apple steps 0–5 and 7: push CSR generation (key sealed), signing with an uploaded vendor certificate (sealed), the mdmcert.download path, push-certificate upload and checks (key, issuer, topic, expiry), the recorded account, renewal reminders, the same-topic rule. Android steps 0–2 and 4: instructions, key upload and offline checks (sealed), quota recorded by hand. **No outbound call.** `mdm.setup` in §62 | Unit (CSR, signing with a test vendor certificate, certificate parsing); e2e on a scratch API; browser suite | Nothing to merge. A3 (or A4′) to produce a real certificate |
+| **M1** ✅ 0.83.0 | **Settings → Mobile devices: the wizard, and Apple push certificates** | The Settings page with both cards and the four states. Apple steps 0–5 and 7: push CSR generation (key sealed), signing with an uploaded vendor certificate (sealed), the mdmcert.download path, push-certificate upload and checks (key, issuer, topic, expiry), the recorded account, renewal reminders, the same-topic rule. Android steps 0–2 and 4: instructions, key upload and offline checks (sealed), quota recorded by hand. **No outbound call.** `mdm.setup` in §62 | Unit (CSR, signing with a test vendor certificate, certificate parsing); e2e on a scratch API; browser suite | Nothing to merge. A3 (or A4′) to produce a real certificate |
 | **M2** | **Apple enrollment, check-in and inventory: the first real driver** | `apple` in `PROVIDERS` and 0096's CHECK; one-time enrollment links and signed profiles; check-in and server endpoints with `Mdm-Signature` verification; the queue for the inventory commands (`DeviceInformation`, `SecurityInfo`, `InstalledApplicationList`, `ProfileList`, `CertificateList`); `safe-h2` and the APNs client; step-ca as `rem0te-mdm-ca` with its install script and the one Caddy route (documented); the `apple` driver feeding the existing sync; wizard step 6 | Unit; e2e with **mdmb** and a loopback APNs stub; step-ca ACME on loopback | A4 and A6 for a real device |
 | **M3** | **Android: enterprise sign-up and read-only inventory** | `android` in `PROVIDERS`; wizard steps 3, 5 and 6: connection test, sign-up from inside Rem0te (one-time state), the default policy, one-time enrollment tokens with QR; the `android` driver (devices and Operations, polling in `MDM_SWEEP`); `safe-https` PATCH/DELETE | Unit; e2e against an AMAPI-shaped loopback stand-in | G1–G4 (and decision 21), G5 |
 | M4 | **Lost-device actions** (audit 3.3) | `send()` on the driver interface; `mobile:act`; Apple `DeviceLock`, `EnableLostMode`/`DisableLostMode` (supervised only; unsupported otherwise); Android `LOCK`, `START_LOST_MODE`/`STOP_LOST_MODE`; `actions` pause; accepted vs completed shown | e2e (mdmb, stand-in) | M2 or M3 |
@@ -635,9 +638,43 @@ quota only to enroll a real phone.
 
 ## Owner decisions this raises
 
-| # | Decision | Options | Recommendation |
+**All four decided on 2026-11-21** ("accept recs"): the owner accepted every recommendation.
+
+| # | Decision | Options | Decided (2026-11-21) |
 |---|---|---|---|
-| 21 | **Android permitted use** | (a) apply for quota describing Rem0te as an MSP platform for its customers; (b) Apple only for now | (a), worded exactly as it is. If Google refuses, (b), and an own DPC only as a separate design |
-| 22 | **Push signing route** | (a) own MDM vendor certificate; (b) mdmcert.download for the fleet | (a). mdmcert.download only for the first test device while A3 is pending |
-| 23 | **One push certificate or one per business** | (a) one per install, owned by the MSP; (b) one per business | (a) first (M2); (b) as M9 if a customer asks |
-| 24 | **Minimum Apple OS** | (a) iOS/iPadOS 16 (ACME); (b) also older, with SCEP | (a). The fleet's devices are expected to be recent; revisit if one is not |
+| 21 | **Android permitted use** | (a) apply for quota describing Rem0te as an MSP platform for its customers; (b) Apple only for now | **(a): Android is for customers' devices (the MSP model)**, described to Google exactly as it is. If Google refuses, (b), and an own DPC only as a separate design |
+| 22 | **Push signing route** | (a) own MDM vendor certificate; (b) mdmcert.download for the fleet | **(a): the owner's own Apple Developer organization with the MDM CSR permission.** mdmcert.download only for a first test device while the permission is pending |
+| 23 | **One push certificate or one per business** | (a) one per install, owned by the MSP; (b) one per business | **(a): one APNs certificate per install.** (b) stays M9, if a customer asks |
+| 24 | **Minimum Apple OS** | (a) iOS/iPadOS 16 (ACME); (b) also older, with SCEP | **(a): iOS/iPadOS 16 minimum.** Revisit if a fleet device cannot run it |
+
+## M1 as built (0.83.0)
+
+Settings → Mobile devices (`/settings/mobile-devices`), Platform Admin only, one card per platform, every step with
+what Rem0te checks and what it cannot, and every capability in the four states. **No outbound call to Apple, Google
+or mdmcert.download** (§92). Where the build differs from the plan above, it says why.
+
+| Step | What is built |
+|---|---|
+| Prerequisites | Apple A1–A4 and Google G1–G4 with cost, lead time and links. The owner's ticks are stored (`appleChecklist`, `androidChecklist`) so the page is resumable; **they are never treated as verification** |
+| Signing route | `own_vendor` (decision 22), `mdmcert` (test device only, with the trust caveats above) or `other_vendor` |
+| Push request | RSA 2048 key made in the API and sealed (`rem0te-apns-push-key-v1`) before anything is shown; the CSR (PKCS#10, SHA256withRSA) is self-verified and downloadable; the key is never returned. A new key is refused while a certificate is installed, so renewal keeps the key and the topic |
+| Vendor signing | The vendor certificate (Apple's DER `.cer` or PEM), its RSA key (sealed, `rem0te-mdm-vendor-key-v1`; an encrypted key's passphrase is used once) and the chain (WWDR intermediate, Apple root) **uploaded by the owner** — Rem0te downloads nothing. Checked: key match, expiry, the chain connects. The root's SHA-256 is shown to compare with Apple's, **not pinned**. Rem0te builds the Base64 `PushCertRequest` plist |
+| mdmcert.download | Shown only as a test-device path with its caveats; the owner submits Rem0te's CSR and decrypts the reply on their own computer. **Rem0te does not decrypt it** (the design's step 3b decryption is not built) |
+| Push certificate | Checked offline: one certificate; subject UID `com.apple.mgmt.External.<uuid>`; its public key is the sealed key's; unexpired and already valid. Sealed (`rem0te-apns-push-cert-v1`); topic, expiry, serial and issuer plain. "Issued by Apple" is shown, never decided on. Always "not yet proven" until M2's first push. The Apple Account is typed and recorded, never verified |
+| Same topic | A renewal must keep the topic (`APNS_TOPIC_CHANGED` otherwise, naming the devices that would re-enroll). A different topic only through `POST …/push-certificate/replace`, naming the current topic and acknowledging re-enrollment. Deleting the certificate keeps the topic, so the next one must match it |
+| Renewal reminders | **30, 14 and 3 days** and once on expiry (the owner's M1 brief; the plan above said 30, 14, 7 and 1). Raised as **security alerts** through `SecurityAlertService`, from the MDM sweep, held by a global `notifications` pause, claimed once per certificate |
+| ABM | Planned (M6) |
+| Google key | Validated offline (type, project id, that project's service-account e-mail, key id, an RSA private key), rebuilt from those fields only and sealed (`rem0te-amapi-sa-key-v1`). Only the project, e-mail and key id's last four are shown |
+| Google calls, quota, enterprise | **Planned (M3)**: the connection test, recording the granted quota (the plan put this in M1; it needs the M3 connection to mean anything) and enterprise sign-up |
+
+**Why security alerts for reminders.** The monitoring alerts (`MonitorRule` / `MonitorAlert`) are per computer
+and per business; the push certificate is one per install and belongs to no business. `SecurityAlert` is the
+platform-level alert a Platform Admin already watches: recorded, audited, delivered to the configured alert
+destinations unless suppressed, and already used for the same kind of platform fact (an SSO provider that cannot
+be reached). The Settings page shows the expiry and the next reminder as well.
+
+Every write is Platform Admin, `assertFresh` naming **`mdm.setup`** (§62, default `off` like the others), audited
+with no secret in meta (`logOrFail` before a credential changes) and conditional on the row's revision. Deleting a
+credential never asks for a fresh confirmation, is audited, and the page warns that deleting the push certificate
+orphans every enrolled device. Migration 0100 holds one row (`MdmPlatformSetup`, never deleted) with CHECKs on
+every list, the sealed shape and the topic.

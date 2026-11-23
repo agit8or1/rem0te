@@ -588,6 +588,10 @@ says what was decided. 11, 14 and 14a had been decided earlier the same day.
 | 18 | **First MDM implementation** | Native Apple, Android Management API, or a third-party provider's API | ~~The interface and a stand-in first, then the owner's existing provider, read-only~~. **Superseded (owner, 2026-11-21): own MDM.** Rem0te is the Apple MDM server and the Android EMM; setup in Settings. The interface and stand-in (0.80) stay and become its drivers. See [own-mdm.md](own-mdm.md), which raises decisions 21–24. Request Android quota early |
 | 19 | **First backup provider** | St0r (needs a read-only token added to St0r) or Comet (read-only token methods exist) | **Decided (owner, 2026-11-21): St0r**, if the token is added; else Comet |
 | 20 | **Failover and failback** | (a) readiness only; (b) Rem0te orchestrates through Depl0y/Proxmox | **Decided (owner, 2026-11-21): (a)** |
+| 21 | **Android permitted use** ([own-mdm.md](own-mdm.md#owner-decisions-this-raises)) | (a) apply for quota as an MSP platform for customers; (b) Apple only | **Decided (owner, 2026-11-21, "accept recs"): (a)**: Android is for customers' devices (the MSP model) |
+| 22 | **Push signing route** | (a) own MDM vendor certificate; (b) mdmcert.download for the fleet | **Decided (owner, 2026-11-21): (a)**: the owner's own Apple Developer organization with the MDM CSR permission; mdmcert.download only for a first test device while the permission is pending |
+| 23 | **One push certificate or one per business** | (a) one per install; (b) one per business | **Decided (owner, 2026-11-21): (a)**: one APNs certificate per install (0.83's migration 0100 holds one row) |
+| 24 | **Minimum Apple OS** | (a) iOS/iPadOS 16; (b) also older, with SCEP | **Decided (owner, 2026-11-21): (a)**: iOS/iPadOS 16 minimum |
 
 ## Roadmap
 

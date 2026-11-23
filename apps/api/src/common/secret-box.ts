@@ -18,7 +18,11 @@ export type SecretPurpose = 'rem0te-ai-key-v1' | 'rem0te-psa-webhook-secret-v1' 
   | 'rem0te-msa-grant-key-v1' | 'rem0te-msa-grant-pw-v1' | 'rem0te-msa-grant-envelope-v1'
   // 0.81: a pull backup provider's credential (backups/, §91). Sealed in
   // BackupsService, opened only by a driver in backups/drivers/.
-  | 'rem0te-backup-credential-v1';
+  | 'rem0te-backup-credential-v1'
+  // 0.83: the own MDM's setup (mdm/setup/, §92) — the APNs push key, the MDM
+  // vendor signing key, the APNs push certificate, and the Google
+  // service-account key. Used only in mdm/setup/mdm-setup.service.ts.
+  | 'rem0te-apns-push-key-v1' | 'rem0te-mdm-vendor-key-v1' | 'rem0te-apns-push-cert-v1' | 'rem0te-amapi-sa-key-v1';
 
 function key(hex: string | undefined): Buffer {
   const k = Buffer.from(hex ?? '', 'hex');
