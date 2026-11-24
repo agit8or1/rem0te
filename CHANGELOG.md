@@ -5,6 +5,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.84.1] — 2026-11-24 · *Harbor*
+
+Fix to 0.84.0's Caddy route for the device CA. Config and docs only; no code
+changes.
+
+### Fixed
+
+- **step-ca's ACME directory named `127.0.0.1:9451` instead of the portal.**
+  Found while deploying 0.84.0: with the route exactly as
+  `deploy/caddy/Caddyfile` had it, `GET https://<portal>/acme/rem0te-mdm/directory`
+  answered with `newNonce`, `newAccount` and `newOrder` links all naming
+  `https://127.0.0.1:9451/…`. A device would fetch the directory, then follow a
+  link to its own loopback address and fail to get a certificate, so it could
+  never enroll.
+  - **Cause.** For an `https://` upstream, Caddy sends the upstream's own
+    address as `Host`. step-ca builds every ACME link from `Host`. The 0.84.0
+    e2e suite talks to step-ca directly with a `host` header it sets itself, so
+    it never went through Caddy and could not see this.
+  - **Fix.** The route now carries `header_up Host {host}`, so step-ca sees the
+    public name. TLS to step-ca is still verified against the device CA root.
+  - **The invariant now checks for it.** The Caddy check in
+    `check-security-invariants.mjs` requires `header_up Host {host}` inside the
+    step-ca route. Removing the line fails CI.
+
+### Upgrade notes
+
+- **A host that installed 0.84.0's route needs the `header_up Host {host}`
+  line added.** Add it inside the `reverse_proxy https://127.0.0.1:9451 { … }`
+  block, then `caddy validate` and `systemctl reload caddy`. Check with
+  `curl https://<portal>/acme/rem0te-mdm/directory`: every link must name the
+  portal. This server already has it; it was fixed by hand during the 0.84.0
+  deploy.
+
 ## [0.84.0] — 2026-11-23 · *Harbor*
 
 **Rem0te is the MDM server for iPhones and iPads: step M2 of [own-mdm.md](docs/own-mdm.md), enrollment, check-in
