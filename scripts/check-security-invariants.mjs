@@ -8373,9 +8373,9 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /if \[\[ \$have -eq 0 \]\]; then/.test(caSh), 'rem0te-mdm-ca-setup.sh');
   const caddy = read('deploy/caddy/Caddyfile');
   const acmeRoutes = caddy.match(/^\s*#?\s*handle \/acme[^\n]*/gm) ?? [];
-  check('Caddy: exactly one step-ca route, /acme/rem0te-mdm/*, to https://127.0.0.1:9451 verified against the device CA root; nothing else of step-ca',
+  check('Caddy: exactly one step-ca route, /acme/rem0te-mdm/*, to https://127.0.0.1:9451 with the original Host (0.84.1) verified against the device CA root; nothing else of step-ca',
     acmeRoutes.length === 1 && /#?handle \/acme\/rem0te-mdm\/\* \{/.test(acmeRoutes[0]) && /reverse_proxy https:\/\/127\.0\.0\.1:9451 \{/.test(caddy)
-      && /tls_trust_pool file \/etc\/caddy\/rem0te-mdm-ca-root\.crt/.test(caddy) && !/9451[\s\S]*9451/.test(caddy.replace(/reverse_proxy https:\/\/127\.0\.0\.1:9451/, '')),
+      && /tls_trust_pool file \/etc\/caddy\/rem0te-mdm-ca-root\.crt/.test(caddy) && /reverse_proxy https:\/\/127\.0\.0\.1:9451 \{\s*(#[^\n]*\s*)*#?\s*header_up Host \{host\}/.test(caddy) && !/9451[\s\S]*9451/.test(caddy.replace(/reverse_proxy https:\/\/127\.0\.0\.1:9451/, '')),
     acmeRoutes.join(' | '));
 
   // 5. Closed commands.

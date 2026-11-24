@@ -39,6 +39,9 @@ your-domain.example.com {
     # instructions). Leave commented until the CA is installed.
     #handle /acme/rem0te-mdm/* {
     #    reverse_proxy https://127.0.0.1:9451 {
+    #        # Caddy sends an https upstream its own address as Host, and
+    #        # step-ca would then hand devices links to that loopback address.
+    #        header_up Host {host}
     #        transport http {
     #            tls_trust_pool file /etc/caddy/rem0te-mdm-ca-root.crt
     #        }

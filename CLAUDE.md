@@ -2222,7 +2222,9 @@ iPad, and no real APNs call has been made.** (§92 is 0.83's.)
   - keys never overwritten.
 
   The Caddyfile has exactly one step-ca route, `/acme/rem0te-mdm/*`, verified
-  against the CA root, commented out until deploy.
+  against the CA root, commented out until deploy. From 0.84.1 it must carry
+  `header_up Host {host}`: Caddy sends an https upstream its own address as
+  Host, and step-ca's directory then named `127.0.0.1:9451`.
 - **Closed commands.** The request types (the five inventory commands, in
   order) and the command, device and link states are 0101's CHECKs, word for
   word. No lock, erase or other request type exists in `mdm/apple`.
