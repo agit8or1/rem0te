@@ -24,8 +24,9 @@ suites can reach.
 
 A Platform Admin sets the own MDM up in **Settings → Mobile devices**. It is
 platform-wide: one Apple push certificate for the whole install (decision 23).
-Nothing on the page calls Apple or Google; their pages open in a new tab and
-you upload what they give you. Each step says what Rem0te checks and what it
+The Apple steps call nothing; Apple's pages open in a new tab and you upload
+what they give you. From 0.85, Android's steps 3, 5 and 6 call Google's
+Android Management API from the server (never from the browser). Each step says what Rem0te checks and what it
 cannot, and shows one of the four capability states.
 
 **Apple** (iPhone and iPad, iOS/iPadOS 16 or later, decision 24):
@@ -69,11 +70,33 @@ cannot, and shows one of the four capability states.
    expiry, and once on expiry (held by a global `notifications` pause).
 8. **Apple Business Manager** — planned (M6).
 
-**Android:** the prerequisites, with Google's permitted-use rule (decision
-21: Rem0te is an MSP platform for customers' devices), then the
-service-account key file. Rem0te checks its shape offline, seals it, and shows
-only the project, the service-account e-mail and the key id's last four.
-Testing it against Google, enterprise sign-up and quota are planned (M3).
+**Android** (0.85 *Mooring*, [own-mdm.md M3](own-mdm.md#m3-as-built-0850)):
+
+1. **Before you start**: the prerequisites, with Google's permitted-use rule
+   (decision 21: Rem0te is an MSP platform for customers' devices).
+2. **The service-account key file.** Rem0te checks its shape offline, seals
+   it, and shows only the project, the service-account e-mail and the key
+   id's last four.
+3. **Test the connection.** Rem0te signs a token request with the key,
+   exchanges it at Google, and makes one read call. A refused key or a
+   missing role is named. Quota cannot be checked.
+4. **Record the device quota** Google granted. Rem0te cannot read it.
+5. **Bind a business** to its own Android enterprise. Rem0te gets a one-time
+   sign-up link from Google (30 minutes, for that business), which you open
+   or send to the business's admin; they sign in, ideally with a managed
+   Google domain. Google sends the browser back to Rem0te, which creates the
+   enterprise.
+6. **The default policy and enrollment tokens.** The policy turns on only the
+   software and app reports, never network info (IMEI, MAC addresses). A
+   one-time token, an hour by default, is shown once as a QR code and a link,
+   for a **work profile** on a personal phone (kept as BYOD, never with its
+   serial) or a **fully managed** company phone.
+
+The MDM sweep then lists each enterprise's devices (model, Android version,
+ownership, compliance) and any Operations, here and under Mobile devices.
+Rem0te sends no command to an Android device. **No real Google API has been
+called, no enterprise has been created and no device has enrolled**: it is
+proven against a loopback stand-in in the shape of Google's API.
 
 Every change asks you to confirm it is you when **Mobile device management
 setup** (`mdm.setup`) asks in Settings → Confirm it is you (off by default).
@@ -242,7 +265,8 @@ The order is now [own-mdm.md](own-mdm.md#roadmap)'s (2026-11-21):
   certificates. **Built in 0.83.0**, above.
 - **M2** — Apple enrollment, check-in and inventory, the first real driver.
   **Built in 0.84.0**, against a simulated device only.
-- **M3** — Android enterprise sign-up and read-only inventory.
+- **M3** — Android enterprise sign-up and read-only inventory. **Built in
+  0.85.0**, against a stand-in for Google's API only.
 - **M4** (was 3.3) — lock, lost mode and locate, with their own permission,
   audited, accepted and completed shown separately.
 - **M5** (was 3.4) — wipe, retire and work-data removal, approved by a second

@@ -16,8 +16,11 @@
  * 0.84: `apple`, Rem0te's own MDM server for iPhones and iPads
  * (docs/own-mdm.md M2): the first real driver, which reads Rem0te's own
  * Apple tables and calls no provider.
+ * 0.85: `android`, Rem0te as its own EMM on Google's Android Management API
+ * (docs/own-mdm.md M3): the driver lists devices and their Operations through
+ * safe-https, read-only.
  */
-export const PROVIDERS = ['standin', 'apple'] as const;
+export const PROVIDERS = ['standin', 'apple', 'android'] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
 export const PLATFORMS = ['ios', 'ipados', 'android'] as const;
@@ -74,7 +77,7 @@ export type CommandOrigin = (typeof COMMAND_ORIGINS)[number];
 export const SYNC_RESULTS = ['ok', 'partial', 'not_ready', 'paused', 'unreachable', 'bad_response', 'refused'] as const;
 export type SyncResult = (typeof SYNC_RESULTS)[number];
 
-export const PROVIDER_LABEL: Record<Provider, string> = { standin: 'Stand-in (tests only)', apple: 'Rem0te (Apple)' };
+export const PROVIDER_LABEL: Record<Provider, string> = { standin: 'Stand-in (tests only)', apple: 'Rem0te (Apple)', android: 'Rem0te (Android)' };
 export const PLATFORM_LABEL: Record<Platform, string> = { ios: 'iOS', ipados: 'iPadOS', android: 'Android' };
 export const OWNERSHIP_LABEL: Record<Ownership, string> = { corporate: 'Corporate', byod: 'Personal (BYOD)' };
 export const SCOPE_LABEL: Record<ManagementScope, string> = {

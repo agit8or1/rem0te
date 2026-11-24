@@ -626,7 +626,7 @@ explicit approval.
 |---|---|---|---|---|
 | **M1** ✅ 0.83.0 | **Settings → Mobile devices: the wizard, and Apple push certificates** | The Settings page with both cards and the four states. Apple steps 0–5 and 7: push CSR generation (key sealed), signing with an uploaded vendor certificate (sealed), the mdmcert.download path, push-certificate upload and checks (key, issuer, topic, expiry), the recorded account, renewal reminders, the same-topic rule. Android steps 0–2 and 4: instructions, key upload and offline checks (sealed), quota recorded by hand. **No outbound call.** `mdm.setup` in §62 | Unit (CSR, signing with a test vendor certificate, certificate parsing); e2e on a scratch API; browser suite | Nothing to merge. A3 (or A4′) to produce a real certificate |
 | **M2** ✅ 0.84.0 | **Apple enrollment, check-in and inventory: the first real driver** | `apple` in `PROVIDERS` and 0096's CHECK; one-time enrollment links and signed profiles; check-in and server endpoints with `Mdm-Signature` verification; the queue for the inventory commands (`DeviceInformation`, `SecurityInfo`, `InstalledApplicationList`, `ProfileList`, `CertificateList`); `safe-h2` and the APNs client; step-ca as `rem0te-mdm-ca` with its install script and the one Caddy route (documented); the `apple` driver feeding the existing sync; wizard step 6 | Unit; e2e with **mdmb** and a loopback APNs stub; step-ca ACME on loopback | A4 and A6 for a real device |
-| **M3** | **Android: enterprise sign-up and read-only inventory** | `android` in `PROVIDERS`; wizard steps 3, 5 and 6: connection test, sign-up from inside Rem0te (one-time state), the default policy, one-time enrollment tokens with QR; the `android` driver (devices and Operations, polling in `MDM_SWEEP`); `safe-https` PATCH/DELETE | Unit; e2e against an AMAPI-shaped loopback stand-in | G1–G4 (and decision 21), G5 |
+| **M3** ✅ 0.85.0 | **Android: enterprise sign-up and read-only inventory** | `android` in `PROVIDERS`; wizard steps 3, 5 and 6: connection test, sign-up from inside Rem0te (one-time state), the default policy, one-time enrollment tokens with QR; the `android` driver (devices and Operations, polling in `MDM_SWEEP`); `safe-https` PATCH/DELETE | Unit; e2e against an AMAPI-shaped loopback stand-in | G1–G4 (and decision 21), G5 |
 | M4 | **Lost-device actions** (audit 3.3) | `send()` on the driver interface; `mobile:act`; Apple `DeviceLock`, `EnableLostMode`/`DisableLostMode` (supervised only; unsupported otherwise); Android `LOCK`, `START_LOST_MODE`/`STOP_LOST_MODE`; `actions` pause; accepted vs completed shown | e2e (mdmb, stand-in) | M2 or M3 |
 | M5 | **Destructive actions** (audit 3.4) | Apple `EraseDevice`, `RemoveProfile`; Android `WIPE` (device or work profile), `RELINQUISH_OWNERSHIP`, `RESET_PASSWORD`; second-person approval; `mdm.destructive` always asks; `byod` never wiped | e2e | M4 (decision 16 decided) |
 | M6 | **Apple Business Manager and Automated Device Enrollment** | Wizard step 8; ADE token (sealed); the session, device sync and profile assignment through `safe-https`; supervised devices, so lost mode | e2e against an ADE-shaped stand-in | A5 |
@@ -779,3 +779,117 @@ Apple's description text.
 | API (`e2e-mdm-apple.mjs`, ports 4061–4064, in `run-e2e.sh`) | A scratch step-ca installed by the real setup script under `--prefix`. ACME on loopback: a directory whose links follow the host, and an order offering only `device-attest-01` (no attestation: only a real device makes one). Steps 1–6 through the API with stand-in Apple certificates. Links, the one-time profile, refusals (no signature, a wrong signer, a wrong topic, iOS 15, a used link). mdmb enrolling through SCEP, checking in and answering commands: `DeviceInformation` and `ProfileList` are answered; the other three are refused by mdmb (`12021`) and recorded as errors. The push to the HTTP/2 stub, with the exact body and headers. The sync writing `MobileDevice` and `MdmCommand`. `CheckOut`, revoke and an expired claim. No secret in any answer or audit row |
 | Browser (`e2e-ui.mjs`) | Step 6 asks for the device CA and the profile signer before any link, and says nothing is proven |
 | Not tested | **A real iPhone or iPad; real APNs; Apple attestation; OTA enrollment on a device.** The iOS Simulator is not known to enroll in MDM |
+
+## M3 as built (0.85.0)
+
+Rem0te is the EMM for Android on Google's Android Management API (AMAPI). M3 adds:
+
+- the connection test;
+- each business's enterprise sign-up, started from inside Rem0te;
+- the default policy;
+- one-time enrollment tokens;
+- the `android` driver, which feeds the 0.80 sync.
+
+§94 holds it. **No real Google API has been called from this server, no enterprise has been created and no device
+has enrolled.** The proof is a loopback stand-in in AMAPI's shape. It serves the token endpoint, `signupUrls`,
+`enterprises`, `policies`, `enrollmentTokens`, a paged `devices.list` and `operations`. The API reaches it only
+under `NODE_ENV=test`, through `AMAPI_TEST_BASE_URL` on `127.0.0.1`. Where the build differs from the plan above,
+it says why.
+
+### What runs where
+
+| Piece | Built |
+|---|---|
+| Client | `mdm/drivers/android/amapi.ts` is the only place Google's hosts appear. They are two constants, `GOOGLE_TOKEN_URL` (`oauth2.googleapis.com/token`) and `AMAPI_ORIGIN` (`androidmanagement.googleapis.com`), plus the scope identifier, each once (§90's allowed list). Every call goes through `safe-https`: `safeGet`, `safePost` and the new `safePatch`. `safeDelete` also exists, but nothing calls it. Each call is bounded at 20 s and 4 MB. Errors are short codes, never Google's text |
+| Token | Rem0te signs an RS256 JWT with the sealed service-account key, which `MdmSetupService.openAndroidCredential` opens in memory. The JWT asks for one scope and lives an hour; it is exchanged at the token endpoint. The access token lives **only in memory**, in one unexported map keyed by a SHA-256 of the credential. It is kept until five minutes before it expires; a 401 drops it and retries once |
+| Step 3: test | `POST /mdm/android/test` gets a token, then makes one read: `enterprises.list` for the key's project, one item. The outcome is recorded for the key tested: `ok`, `bad_key`, `permission_denied`, `quota`, `unreachable` or `bad_response` (0102 CHECK). It is reset whenever the key changes. The test cannot check quota |
+| Step 4: quota | `PUT /mdm/setup/android/quota` records the number Google granted, as the Platform Admin types it. It is never read from Google, and Rem0te does not enforce it: Google does |
+| Step 5: sign-up | `POST /mdm/android/signup {businessId}`, allowed only after a passed test. Rem0te makes 32 random bytes of state and stores only their SHA-256 in `AndroidSignup`. The row is bound to the business and the Platform Admin and lasts 30 minutes (0102 caps it at an hour). `signupUrls.create` gets the callback `https://<public API>/api/v1/mdm/android/signup/callback?state=…`. The page shows Google's link, to open or to send to the business's admin |
+| Callback | `GET /mdm/android/signup/callback`, `@Public`, `@RateLimit(10)`. The session cookie is `SameSite=Strict`, so Google's cross-site redirect carries none, and the state is the only credential. In order: (1) **one conditional update** claims the state (`open → claimed`, unexpired) before anything is read; (2) the Platform Admin must still be one, the business unbound, no `integration` pause in effect, and the `enterpriseToken` well formed; (3) `enterprises.create`; (4) `MDM_ANDROID_ENTERPRISE_BOUND` with `logOrFail`; (5) the enterprise row and `claimed → bound`, in one transaction. Every outcome is a 303 to the settings page with a code, never Google's text |
+| Step 6: policy | `rem0te-default` is patched as exactly `{statusReportingSettings: {softwareInfoEnabled: true, applicationReportsEnabled: true}}`. There is no update mask, so nothing else is on. **It never enables network info**, which carries the IMEI and MAC addresses. It is applied after binding, and again on request |
+| Step 6: tokens | `POST /mdm/android/enrollment-tokens` makes a one-time token for 15–60 minutes (an hour by default). Each token is *work profile* (`PERSONAL_USAGE_ALLOWED`) or *fully managed* (`PERSONAL_USAGE_DISALLOWED`). The value and a QR code are returned once and never stored; the QR is a PNG data URL the API makes from Google's `qrCode`. The audit row (`logOrFail`, before the answer) carries ids. Only the web page builds the link `https://enterprise.google.com/android/enroll?et=…` |
+| Driver | `android` is in `PROVIDERS` and in both provider CHECKs (0102). `devices.list` is paged at 100 and asks, through `fields=`, only for the fields Rem0te keeps. Operations are read per device: 25 devices a command page, at most 250 a pass. A `404` or `501` is read as no Operations. The sync creates one enabled `android` connector per bound enterprise (`ensureAndroidConnectors`, named by its enterprise id). It remains the only writer of `MobileDevice` and `MdmCommand` |
+
+### Differences from the plan, and why
+
+- **Sign-up is on Settings → Mobile devices, not on the business's page.** Every Android step is Platform Admin
+  only, and one page keeps the order visible: test, then sign-up, then policy.
+- **The link can be sent.** The plan had the Platform Admin's own browser go to Google. The callback needs no
+  session, so the business's own admin may open the link instead (decision 29). Either way, the enterprise is
+  bound in the name of the Platform Admin who asked for the link.
+- **Operations are bounded at 250 devices a pass.** Each device's Operations are a separate call. An enterprise
+  with more devices syncs as `partial`: every device is read, but Operations only for the first 250 by id
+  (decision 30). In M3 Rem0te issues no command, and Operations come only from commands an EMM issued, so a real
+  enterprise will list none.
+- **`policyCompliant` is the compliance state.** The default policy requires nothing, so a device reports
+  compliant. A non-compliance reason is kept as Google's reason code, in words.
+- **A personal device is `byod`.** Only `COMPANY_OWNED` is corporate. `PERSONALLY_OWNED` and unspecified ownership
+  are both `byod`, so the stricter keep-rule applies.
+- **A WIPE depends on the scope.** On a work profile it is shown as `remove_managed_data`, because it removes only
+  the work data. On a fully managed device it is shown as `wipe`. Nothing sends either.
+
+### What is kept
+
+0096's rule holds:
+
+- **No IMEI, MEID, phone number, MAC address or user.** `networkInfo`, telephony and `userName` are never asked
+  for, and never read if a server sends them.
+- **The serial only on corporate devices.**
+- **Kept:** the state (as its SHA-256), the enterprise id, the policy version, the test result and the recorded
+  quota.
+- **Never kept:** Google's `enterpriseToken` (used once, in memory), an enrollment token's value, any access token.
+
+There is no new secret-box purpose. The only secret is the 0.83 service-account key (`rem0te-amapi-sa-key-v1`).
+
+### Containment, who and the record
+
+- **Containment.** Every outbound call checks the `integration` pause first:
+  - the connection test checks the global pause;
+  - sign-up, the callback, the policy and tokens check the business's;
+  - the sync checks per connector (0.80), before `devices.list`.
+- **Who.** Every write is Platform Admin (class guard) with `assertFresh`. The test, the quota, a sign-up and the
+  policy name **`mdm.setup`**. A token names **`mdm.enroll`**, now labelled *Mobile enrollment links and tokens*.
+  Both default to `off`.
+- **The record.** Six audit actions: `MDM_ANDROID_TESTED`, `_SIGNUP_STARTED`, `_SIGNUP_FAILED`,
+  `_ENTERPRISE_BOUND`, `_POLICY_SET` and `_TOKEN_CREATED`. They carry ids, kinds and codes, never a key, a state, a
+  token or a URL.
+- **No command.** There is no `issueCommand`, no `devices.delete` and no enterprise deletion. Those are M4 and M5.
+- **No new sweep.** `AndroidEmmService.pass` (sign-up expiry) and `ensureAndroidConnectors` run inside
+  `MDM_SWEEP`. `MDM_SWEEP=off` stops them, as it stops the sync.
+
+Migration 0102:
+
+- adds `android` to the provider CHECKs;
+- adds the test and quota columns;
+- adds `AndroidSignup`: closed states, the state as a SHA-256, at most an hour, a shape per state. A finished
+  sign-up stays final and is never reopened;
+- adds `AndroidEnterprise`: one per business, one business per enterprise, the one policy id;
+- adds same-business triggers on both tables.
+
+### Owner decisions this raises
+
+| # | Decision | Options | Recommendation | What 0.85 does |
+|---|---|---|---|---|
+| 29 | **Who opens Google's sign-up page** | (a) the Platform Admin, signing in with the customer's work account; (b) the customer's own admin, sent the link | **(b)**: the customer's admin holds the managed Google domain, and the link is one-time, lasts 30 minutes and is bound to that business | Both: *Open at Google* and *Copy link* |
+| 30 | **Operations on large enterprises** | (a) keep the 250-device bound; (b) at M4, read Operations only for commands Rem0te issued | **(b)**: Operations only come from EMM-issued commands. Reading each by the command's own name bounds the calls by the number of open commands | (a), documented; a sync above 250 devices is `partial` |
+| 31 | **Unbinding a business** | (a) none until M5; (b) a Rem0te-side unbind that leaves the enterprise at Google | **(a)**: deleting an enterprise unenrolls every device, so it belongs with M5's second person and always-ask check | Nothing unbinds. Deleting a business removes only Rem0te's rows; the enterprise stays at Google |
+
+### Host changes at deploy (none made)
+
+1. Migration 0102: `prisma migrate deploy`, then `prisma generate` at the target.
+2. The server's public address (Settings → General) must be https, because it is Google's callback.
+3. Nothing else. Caddy already sends `/api/*` to the API. There is no unit, sudoers or dependency change.
+
+Before a real enterprise:
+
+1. Google grants quota (G3) and accepts the permitted-use review (decision 21).
+2. Then one test phone (G5).
+
+### What has been tested
+
+| Proof | What |
+|---|---|
+| Unit (`unit-mdm-android.mjs`, in CI) | **The policy and token body**: both exactly as specified. **The JWT**: RS256, one scope, an hour, verifying under the key. **Device mapping**: states, ownership, scope and compliance; a personal device's serial dropped by `parseDevice`; IMEI, network info and users never read; unknown states skipped. **Operation mapping**: accepted at creation; completed only when `done` without an error; a work-profile WIPE as `remove_managed_data`. **Also**: query escaping, 0102's lists and the capability states. **The client**, against an in-process loopback stand-in: the token exchange, caching keyed by the credential, a 401 retried once, `fields`, error codes. Under `NODE_ENV=test` without a stand-in, `not_ready` and no request |
+| API (`e2e-mdm-android.mjs`, ports 4081–4083, in `run-e2e.sh`) | **Access**: Platform Admin only, and every step's fresh confirmation. **The test**: a refused key, the JWT checked against the uploaded key, exactly one read, a global pause. **The quota.** **Sign-up**: the stored SHA-256 and the callback URL. Google's redirect, simulated without a cookie, then refused for a replay, for four of five racing callbacks (one enterprise is bound), for an unknown, expired or malformed state, with no token, for an admin who is no longer one, and under a pause. **0102** refuses a reopen and a two-hour sign-up. **The policy body.** **Tokens**: work profile and fully managed, the QR, the value stored nowhere. **The sync**, with `MDM_SWEEP` on: one connector per enterprise; 130 devices over two pages; a personal device's serial dropped; an unknown state skipped; Operations as commands; a missing device marked not reported; a business pause making no call; an unfinished sign-up expired. **Secrets**: none in an answer, an audit row or the log |
+| Browser (`e2e-ui.mjs`) | Steps 3–6 shown from seeded rows, with no call made: the per-token choice, the "nothing proven" note, and the note after Google's redirect |
+| Not tested | **Google's real API, a real enterprise sign-up, a managed Google domain, quota, and a real Android device.** Whether `devices.operations.list` is served for AMAPI is unconfirmed; a `501` is read as no Operations |

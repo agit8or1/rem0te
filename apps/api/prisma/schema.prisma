@@ -466,6 +466,12 @@ enum ActivityAction {
   MDM_APPLE_DEVICE_CHECKED_OUT
   MDM_APPLE_COMMAND_RESULT
   MDM_APPLE_PUSHED
+  MDM_ANDROID_TESTED
+  MDM_ANDROID_SIGNUP_STARTED
+  MDM_ANDROID_SIGNUP_FAILED
+  MDM_ANDROID_ENTERPRISE_BOUND
+  MDM_ANDROID_POLICY_SET
+  MDM_ANDROID_TOKEN_CREATED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -807,6 +813,8 @@ model Customer {
   /// 0.80: mobile-device providers connected for this business (read-only, §90).
   mdmConnectors    MdmConnector[]
   appleEnrollmentLinks AppleEnrollmentLink[]
+  androidSignups       AndroidSignup[]
+  androidEnterprise    AndroidEnterprise?
   appleDevices     AppleDevice[]
 
   /// 0.81: backup providers, protected assets and what they reported (backups/, §91).
@@ -5422,6 +5430,13 @@ model MdmPlatformSetup {
   profileSignSha256   String?
   profileSignNotAfter DateTime?
   profileSignSetAt    DateTime?
+  /// 0.85 (Android step 3): the connection test's last result, reset whenever the key changes (0102 CHECK).
+  androidTestedAt     DateTime?
+  /// ok | bad_key | permission_denied | quota | unreachable | bad_response (setup-model.ts ANDROID_TEST_RESULTS).
+  androidTestResult   String?
+  /// 0.85 (Android step 4): the device quota Google granted, as recorded by hand. Never read from Google.
+  androidQuotaDevices Int?
+  androidQuotaSetAt   DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 }
@@ -5606,6 +5621,54 @@ model AppleEnrollmentLink {
 
   @@index([customerId, createdAt])
   @@index([state, expiresAt])
+}
+
+/// 0.85 Mooring: a one-time Android enterprise sign-up (docs/own-mdm.md M3, §94). The state is kept
+/// only as its SHA-256 and claimed by one conditional update at Google's redirect. Written only by
+/// AndroidEmmService. Google's enterpriseToken is never stored.
+model AndroidSignup {
+  id            String    @id @default(cuid())
+  tenantId      String
+  customerId    String
+  customer      Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  stateSha256   String    @unique
+  /// signupUrls/<id>, from signupUrls.create.
+  signupUrlName String
+  /// open | claimed | bound | failed | expired (0102 CHECK; shape.ts SIGNUP_STATES).
+  state         String    @default("open")
+  /// The Platform Admin who started it; the enterprise is bound in their name.
+  createdById   String
+  createdAt     DateTime  @default(now())
+  /// At most an hour after createdAt (0102 CHECK).
+  expiresAt     DateTime
+  claimedAt     DateTime?
+  finishedAt    DateTime?
+  enterpriseId  String?
+  failureCode   String?
+  updatedAt     DateTime  @updatedAt
+
+  @@index([customerId, createdAt])
+  @@index([state, expiresAt])
+}
+
+/// 0.85 Mooring: a business's Android enterprise (one each). Written only by AndroidEmmService;
+/// its `android` MdmConnector is created by the sync (ensureAndroidConnectors).
+model AndroidEnterprise {
+  id            String    @id @default(cuid())
+  tenantId      String
+  customerId    String    @unique
+  customer      Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// The id in Google's `enterprises/<id>` ([A-Za-z0-9_-]{1,64}).
+  enterpriseId  String    @unique
+  signupId      String    @unique
+  boundById     String
+  boundAt       DateTime
+  /// Always rem0te-default (0102 CHECK): software and app reports only, never network info.
+  policyId      String    @default("rem0te-default")
+  /// Google's policy version (int64, as text) once the default policy is applied.
+  policyVersion String?
+  policySetAt   DateTime?
+  updatedAt     DateTime  @updatedAt
 }
 
 /// 0.84: an enrolled iPhone or iPad, as Rem0te's own MDM server knows it. Written only by mdm/apple/;

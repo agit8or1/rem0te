@@ -2261,9 +2261,15 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('safe-https: redirects are refused, never followed; the response is capped',
     /if \(status >= 300 && status < 400\) \{ res\.destroy\(\); return done\(\(\) => reject\(new OutboundError\('REDIRECT_REFUSED'/.test(post) && /if \(total > opts\.maxBytes\)/.test(post), 'a 3xx must reject; the body must be capped');
   check('safe-https: plain http only to 127.0.0.1 and only under NODE_ENV=test; https, public DNS names otherwise',
-    /return process\.env\.NODE_ENV === 'test' && TEST_LOOPBACK\.test\(base\) && \(q < 0 \|\| TEST_QUERY\.test\(raw\.slice\(q \+ 1\)\)\);/.test(sh) && /const TEST_QUERY = \/\^\[A-Za-z0-9\._~=&-\]\{0,200\}\$\/;/.test(sh) && /const TEST_LOOPBACK = \/\^http:\\\/\\\/127\\\.0\\\.0\\\.1:\[0-9\]\{2,5\}/.test(sh)
+    /return process\.env\.NODE_ENV === 'test' && TEST_LOOPBACK\.test\(base\) && \(q < 0 \|\| TEST_QUERY\.test\(raw\.slice\(q \+ 1\)\)\);/.test(sh) && /const TEST_QUERY = \/\^\[A-Za-z0-9\._~=&%-\]\{0,800\}\$\/;/.test(sh) && /const TEST_LOOPBACK = \/\^http:\\\/\\\/127\\\.0\\\.0\\\.1:\[0-9\]\{2,5\}/.test(sh)
       && /if \(u\.protocol !== 'https:'\) return \{ ok: false/.test(sh) && /if \(isIP\(h\)\) return \{ ok: false/.test(sh) && /INTERNAL_SUFFIX\.test\(h\)\) \{\s*\n\s*return \{ ok: false/.test(sh),
     'checkPublicHttpsUrl must refuse http, IP literals, localhost and internal names; the loopback exception must stay test-only');
+  // 0.85 (§94): PATCH and DELETE for the Android Management API go through the same one request path.
+  check('safe-https: safePatch and safeDelete are safeRequest with their method, nothing else; safeRequest knows exactly four methods',
+    /export async function safePatch\([^)]*\): Promise<SafeResponse> \{\s*return safeRequest\('PATCH', rawUrl, headers, body, opts\);\s*\}/.test(sh)
+      && /export async function safeDelete\([^)]*\): Promise<SafeResponse> \{\s*return safeRequest\('DELETE', rawUrl, headers, null, opts\);\s*\}/.test(sh)
+      && /async function safeRequest\(method: 'GET' \| 'POST' \| 'PATCH' \| 'DELETE',/.test(sh) && (sh.match(/safeRequest\(/g) ?? []).length === 5,
+    'safe-https.ts');
   check('AI: AI_TEST_BASE_URL is honoured only through testLoopbackAllowed',
     /const v = process\.env\.AI_TEST_BASE_URL;\s*\n\s*return v && testLoopbackAllowed\(v\)/.test(A('providers.ts')) && (A('providers.ts').match(/AI_TEST_BASE_URL/g) ?? []).length <= 3,
     'providers.ts testBase()');
@@ -4580,6 +4586,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'backups/backups.controller.ts': ['backup.connection'],
     'mdm/setup/mdm-setup.controller.ts': ['mdm.setup'],
     'mdm/apple/apple.controller.ts': ['mdm.enroll'],
+    // 0.85 (§94): the Android connection test, sign-up and policy (mdm.setup); an enrollment token (mdm.enroll).
+    'mdm/android/android.controller.ts': ['mdm.enroll', 'mdm.setup'],
     'msa/msa-grant.controller.ts': ['msa.grant'],
     'msa/msa-managed.controller.ts': ['msa.cutover', 'msa.reveal'],
     'msa/msa-cutover-runs.controller.ts': ['msa.cutover'],
@@ -7847,12 +7855,20 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const DIR = `${SRC}/mdm`;
   const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   const mdmFiles = walk(DIR);
-  const HOSTS = /graph\.microsoft\.com|manage\.microsoft\.com|intune\.microsoft|androidmanagement\.googleapis|play\.google\.com\/work|mdmenrollment\.apple\.com|push\.apple\.com|deviceenrollment\.apple|identity\.apple\.com|business\.apple\.com\/.*mdm|workspaceone|jamfcloud|kandji\.io|meraki\.com\/.*sm/i;
+  const HOSTS = /graph\.microsoft\.com|manage\.microsoft\.com|intune\.microsoft|androidmanagement\.googleapis|googleapis\.com|enterprise\.google\.com|play\.google\.com\/work|mdmenrollment\.apple\.com|push\.apple\.com|deviceenrollment\.apple|identity\.apple\.com|business\.apple\.com\/.*mdm|workspaceone|jamfcloud|kandji\.io|meraki\.com\/.*sm/i;
   // 0.84 (§93): the exact list of allowed hosts — Apple's push host, once, as a constant in mdm/apple/apns.ts.
-  const ALLOWED_HOSTS = { [`${DIR}/apple/apns.ts`]: ["export const APNS_ORIGIN = 'https://api.push.apple.com';"] };
+  // 0.85 (§94): and Google's two hosts (and the OAuth scope identifier, never fetched), once each, as constants in mdm/drivers/android/amapi.ts.
+  const ALLOWED_HOSTS = {
+    [`${DIR}/apple/apns.ts`]: ["export const APNS_ORIGIN = 'https://api.push.apple.com';"],
+    [`${DIR}/drivers/android/amapi.ts`]: [
+      "export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';",
+      "export const AMAPI_ORIGIN = 'https://androidmanagement.googleapis.com';",
+      "export const AMAPI_SCOPE = 'https://www.googleapis.com/auth/androidmanagement';",
+    ],
+  };
   const stripAllowed = (f) => (ALLOWED_HOSTS[f] ?? []).reduce((t, line) => t.split(line).join(''), read(f));
   const hostHits = walk(SRC).filter((f) => HOSTS.test(stripAllowed(f)) || (ALLOWED_HOSTS[f] ?? []).some((line) => read(f).split(line).length !== 2));
-  check('mdm: no MDM provider host appears anywhere in apps/api/src, except the allowed list (api.push.apple.com once, as APNS_ORIGIN in mdm/apple/apns.ts)', hostHits.length === 0, hostHits.join(', '));
+  check('mdm: no MDM provider host appears anywhere in apps/api/src, except the allowed list (api.push.apple.com once, as APNS_ORIGIN in mdm/apple/apns.ts; oauth2.googleapis.com and androidmanagement.googleapis.com once each, as constants in mdm/drivers/android/amapi.ts)', hostHits.length === 0, hostHits.join(', '));
   // 0.83: the plist DTD identifier a PushCertRequest names (never fetched), in setup/pki.ts only (§92).
   const DTD = 'http://www.apple.com/DTDs/PropertyList-1.0.dtd';
   // 0.84: and in apple/plist.ts (the same DTD line), and APNS_ORIGIN (above).
@@ -7870,7 +7886,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('mdm: MdmDriver reads only — provider, label, ready, listDevices, listCommands; no send, cancel or wipe',
     JSON.stringify(members) === JSON.stringify(['provider', 'label', 'ready', 'listDevices', 'listCommands']), JSON.stringify(members));
   const outbound = walk(SRC).filter((f) => !f.startsWith(DIR) ? false : /from 'https?'|from 'node:https?'|from '(node:)?http2'|require\('https?'\)|\bfetch\(|axios|undici/.test(read(f)));
-  check('mdm: no HTTP client in the module except common/safe-https (and, for APNs only, common/safe-h2: §93)', outbound.length === 0 && mdmFiles.filter((f) => /safeGet|safePost/.test(read(f))).every((f) => /from '\.\.\/\.\.\/common\/safe-https'/.test(read(f))), outbound.join(', '));
+  check('mdm: no HTTP client in the module except common/safe-https (and, for APNs only, common/safe-h2: §93)', outbound.length === 0 && mdmFiles.filter((f) => /safeGet|safePost|safePatch|safeDelete/.test(read(f))).every((f) => (f.startsWith(`${DIR}/drivers/android/`) ? /from '\.\.\/\.\.\/\.\.\/common\/safe-https'/ : /from '\.\.\/\.\.\/common\/safe-https'/).test(read(f)))
+      // 0.85 (§94): Android's calls are made in one file, drivers/android/amapi.ts.
+      && JSON.stringify(mdmFiles.filter((f) => /\bsafe(Get|Post|Patch|Delete)\(/.test(code(read(f))) && !f.endsWith('/drivers/standin.ts'))) === JSON.stringify([`${DIR}/drivers/android/amapi.ts`]),
+    outbound.join(', '));
 
   const si = read(`${DIR}/drivers/standin.ts`);
   const envReaders = walk(SRC).filter((f) => /MDM_TEST_BASE_URL/.test(code(read(f))));
@@ -7883,9 +7902,11 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const model = read(`${DIR}/model.ts`);
   // 0.84 (§93): two drivers — the stand-in and `apple`, which reads Rem0te's own Apple tables through the reader the sync hands it, and calls nothing.
   const apd = read(`${DIR}/drivers/apple.ts`);
-  check('mdm: the drivers are exactly the stand-in and `apple`; the apple driver makes no call (no HTTP, no safe-https, no Prisma of its own)',
-    /export const PROVIDERS = \['standin', 'apple'\] as const;/.test(model) && /standin: standinDriver,\n\s*apple: appleDriver\(deps\.apple\),\n\s*\};/.test(idx)
-      && readdirSync(join(ROOT, `${DIR}/drivers`)).sort().join() === 'apple.ts,index.ts,standin.ts'
+  // 0.85 (§94): and `android` (drivers/android/: the client, the pure shapes and the driver), which calls Google read-only.
+  check('mdm: the drivers are exactly the stand-in, `apple` and `android`; the apple driver makes no call (no HTTP, no safe-https, no Prisma of its own)',
+    /export const PROVIDERS = \['standin', 'apple', 'android'\] as const;/.test(model) && /standin: standinDriver,\n\s*apple: appleDriver\(deps\.apple\),\n\s*android: androidDriver\(deps\.android\),\n\s*\};/.test(idx)
+      && readdirSync(join(ROOT, `${DIR}/drivers`)).sort().join() === 'android,apple.ts,index.ts,standin.ts'
+      && readdirSync(join(ROOT, `${DIR}/drivers/android`)).sort().join() === 'amapi.ts,index.ts,shape.ts'
       && !/safe-https|safe-h2|fetch\(|PrismaService|prisma\./.test(code(apd)) && /ready: \(\) => \(\{ ok: true \}\)/.test(apd),
     'model.ts PROVIDERS / drivers/');
 
@@ -7906,8 +7927,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 
   const sql = read('apps/api/prisma/migrations/0096_mobile_devices/migration.sql');
   const listOf = (name) => { const m = model.match(new RegExp(`export const ${name} = \\[([^\\]]*)\\] as const;`)); return m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null; };
-  const sql101 = read('apps/api/prisma/migrations/0101_mdm_apple/migration.sql');
-  // 0.84: the provider CHECKs are re-made by 0101 with `apple`; the others are still 0096's.
+  // 0.84: the provider CHECKs were re-made by 0101 with `apple`; 0.85: by 0102 with `android`. The others are still 0096's.
+  const sql101 = read('apps/api/prisma/migrations/0102_mdm_android/migration.sql');
   const checkOf = (c, col) => { const src = /_provider_check$/.test(c) ? sql101 : sql; const m = src.match(new RegExp(`CONSTRAINT "${c}" CHECK \\("${col}" (?:IS NULL OR "${col}" )?IN \\(([^)]*)\\)`)); return m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null; };
   const pairs = [
     ['PROVIDERS', 'MdmConnector_provider_check', 'provider'], ['PROVIDERS', 'MobileDevice_provider_check', 'provider'],
@@ -7955,10 +7976,14 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const writers = walk(SRC).filter((f) => f !== `${DIR}/mdm-sync.service.ts`)
     .filter((f) => /\.(mdmConnector|mobileDevice|mdmCommand)\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/.test(read(f)));
   // 0.84 (§93): the sync creates connectors in one place, ensureAppleConnectors, and only `apple` ones.
+  // 0.85 (§94): and in a second, ensureAndroidConnectors: an enabled `android` one per bound enterprise, named by its id.
   const ensure = (sync.match(/async ensureAppleConnectors\([\s\S]*?\n  \}\n/) ?? [''])[0];
-  check('mdm: only MdmSyncService writes the MDM tables; the only connector it creates is an enabled `apple` one, in ensureAppleConnectors',
-    writers.length === 0 && (sync.match(/mdmConnector\.(create|createMany|upsert)\(/g) ?? []).length === 1 && /this\.prisma\.mdmConnector\.createMany\(\{/.test(ensure)
-      && /provider: 'apple', externalTenantId: 'rem0te', enabled: true/.test(ensure) && /skipDuplicates: true/.test(ensure), writers.join(', '));
+  const ensureA = (sync.match(/async ensureAndroidConnectors\([\s\S]*?\n  \}\n/) ?? [''])[0];
+  check('mdm: only MdmSyncService writes the MDM tables; it creates connectors in two places only: an enabled `apple` one (ensureAppleConnectors) and an enabled `android` one per bound enterprise (ensureAndroidConnectors)',
+    writers.length === 0 && (sync.match(/mdmConnector\.(create|createMany|upsert)\(/g) ?? []).length === 2 && /this\.prisma\.mdmConnector\.createMany\(\{/.test(ensure)
+      && /provider: 'apple', externalTenantId: 'rem0te', enabled: true/.test(ensure) && /skipDuplicates: true/.test(ensure)
+      && /this\.prisma\.androidEnterprise\.findMany\(\{/.test(ensureA) && /provider: 'android', externalTenantId: e\.enterpriseId, enabled: true/.test(ensureA) && /skipDuplicates: true/.test(ensureA),
+    writers.join(', '));
   check('mdm: 0096 keeps connector, device and command in one business and tenant (three triggers)',
     ['MdmConnector_business_trg', 'MobileDevice_business_trg', 'MdmCommand_business_trg'].every((n) => new RegExp(`CREATE TRIGGER "${n}" BEFORE INSERT OR UPDATE`).test(sql)),
     '0096');
@@ -8236,7 +8261,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     (code(svc).match(/this\.logger\.\w+\(/g) ?? []).length === 1 && /this\.logger\.warn\(`push certificate reminder: \$\{\(e as Error\)\.name\}`\)/.test(svc)
       && !/logger|console\./.test(code(pki) + code(model) + code(ctl)), 'mdm-setup.service.ts');
   // 0.84: the two in-memory openers (openPushIdentity, openProfileSigner) return keys by design; §93 holds their callers.
-  const OPENERS = /async (openPushIdentity|openProfileSigner)\([\s\S]*?\n  \}\n/g;
+  // 0.85: and a third, openAndroidCredential, for Google's token exchange; §94 holds its one caller (AndroidEmmService).
+  const OPENERS = /async (openPushIdentity|openProfileSigner|openAndroidCredential)\([\s\S]*?\n  \}\n/g;
   const returns = [...code(svc).replace(OPENERS, '').matchAll(/return \{[^;]*\};/g)].map((m) => m[0]);
   check('keys never returned: no return names a private key or a sealed value; the CSR only from pushCsr(), the signed request only from signPushRequest()',
     returns.every((x) => !/keyPem|privateKey|\w+Enc\b|sealed\b/.test(presence(x))) && /return \{ filename: 'rem0te-push\.csr', csr: r\.pushCsrPem/.test(svc)
@@ -8255,10 +8281,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && !readdirSync(join(ROOT, 'apps/api/scripts')).some((f) => /\.(pem|cer|crt|p12|key|der)$/.test(f)), 'ci.yml / scripts');
   const writeRoutes = [...ctl.matchAll(/@(Put|Post)\([^)]*\)[^{]*?\{\n\s*(.*)\n/g)].map((m) => m[2].trim());
   const deleteBodies = [...ctl.matchAll(/@Delete\([^)]*\)[\s\S]*?\{([^}]*)\}/g)].map((m) => m[1]);
-  // 0.84: step 6 adds two writes (the device CA, the profile signer) and their two deletes.
-  check('controller: Platform Admin by class guard; no @Public; all ten writes call this.fresh() first; the six deletes never ask',
+  // 0.84: step 6 adds two writes (the device CA, the profile signer) and their two deletes. 0.85: the Android quota, one write.
+  check('controller: Platform Admin by class guard; no @Public; all eleven writes call this.fresh() first; the six deletes never ask',
     /@Controller\('mdm\/setup'\)\s*\n@UseGuards\(PlatformAdminGuard\)/.test(ctl) && !/@Public\(\)/.test(ctl)
-      && writeRoutes.length === 10 && writeRoutes.every((l) => /^this\.fresh\(req, /.test(l))
+      && writeRoutes.length === 11 && writeRoutes.every((l) => /^this\.fresh\(req, /.test(l))
       && deleteBodies.length === 6 && deleteBodies.every((b) => !/fresh/.test(b)) && /action: 'mdm\.setup'/.test(ctl), JSON.stringify(writeRoutes));
   const cat = read(`${SRC}/security-controls/confirm-catalog.ts`);
   check('confirm: mdm.setup is a catalog key, default off like the others', /\{ key: 'mdm\.setup', group: 'Integrations', label: '[^']+', default: 'off',/.test(cat), 'confirm-catalog.ts');
@@ -8469,6 +8495,154 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /unit-mdm-apple\.mjs/.test(read('.github/workflows/ci.yml')) && /\bmdm-apple\b/.test(read('scripts/run-e2e.sh'))
       && /jessepeterson\/mdmb\/cmd\/mdmb@[0-9a-f]{40}/.test(read('.github/workflows/ci.yml')) && /1726ee7b6a24c67abb8c9e96ad671623b29b3d34f6a712f7087495f31331e54b/.test(read('.github/workflows/ci.yml')),
     'ci.yml / run-e2e.sh');
+}
+
+// ── §94 (0.85 Mooring): Rem0te as the EMM for Android — sign-up, read-only inventory ──
+//     docs/own-mdm.md M3. One enterprise per business, signed up from inside
+//     Rem0te; a default policy that turns on only software and app reports;
+//     one-time enrollment tokens; devices and Operations read in MDM_SWEEP.
+//       - Google's hosts are constants in drivers/android/amapi.ts only (§90
+//         holds the list); the stand-in is test-only and loopback-only, and
+//         NODE_ENV=test without one never reaches Google;
+//       - no command at all: no issueCommand, no devices.delete, no DELETE;
+//       - the default policy is exact; network info is never asked for;
+//       - the sign-up state is 32 random bytes, kept as a SHA-256, claimed by
+//         one conditional update before anything is read;
+//       - every outbound call consults the `integration` pause first;
+//       - Platform Admin, fresh authentication naming mdm.setup or mdm.enroll;
+//       - access tokens in memory only; a token value is never stored or
+//         audited; audit rows carry ids;
+//       - only AndroidEmmService writes the two tables; 0102's CHECKs and
+//         triggers are the model's.
+{
+  console.log('\n§94 Android EMM (0.85): sign-up, default policy, one-time tokens, read-only inventory');
+  const SRC = 'apps/api/src';
+  const D = `${SRC}/mdm/android`, V = `${SRC}/mdm/drivers/android`;
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const all = walk(SRC);
+  const amapi = read(`${V}/amapi.ts`), shape = read(`${V}/shape.ts`), drvA = read(`${V}/index.ts`);
+  const svc = read(`${D}/android-emm.service.ts`), ctl = read(`${D}/android.controller.ts`);
+  const sync = read(`${SRC}/mdm/mdm-sync.service.ts`), setup = read(`${SRC}/mdm/setup/mdm-setup.service.ts`);
+  const sql = read('apps/api/prisma/migrations/0102_mdm_android/migration.sql');
+  const imp = (s) => [...s.matchAll(/^import [^;]*? from '([^']+)';/gm)].map((m) => m[1]);
+  const fnBody = (src, name) => (src.match(new RegExp(`async ${name}\\([\\s\\S]*?\\n  \\}\\n`)) ?? [''])[0];
+
+  // The stand-in, and never Google from a test process.
+  const envReaders = all.filter((f) => /AMAPI_TEST_BASE_URL/.test(code(read(f))));
+  check('stand-in: AMAPI_TEST_BASE_URL is read once, in amapiTestBase(), through testLoopbackAllowed; under NODE_ENV=test without it every call is not_ready',
+    JSON.stringify(envReaders) === JSON.stringify([`${V}/amapi.ts`]) && (code(amapi).match(/process\.env\.AMAPI_TEST_BASE_URL/g) ?? []).length === 1
+      && /return raw && testLoopbackAllowed\(raw\) \? raw : null;/.test(amapi)
+      && /if \(process\.env\.NODE_ENV === 'test'\) throw new AmapiError\('not_ready', null\);\s*\n\s*return \{ token: GOOGLE_TOKEN_URL, api: AMAPI_ORIGIN \};/.test(amapi),
+    envReaders.join(', '));
+  check('client: every call goes through safe-https (safeGet, safePost, safePatch); no fetch, http or Prisma in drivers/android',
+    /from '\.\.\/\.\.\/\.\.\/common\/safe-https'/.test(amapi) && !walk(V).some((f) => /\bfetch\(|from '(node:)?https?'|PrismaService|prisma\./.test(code(read(f))))
+      && !/safeDelete/.test(code(amapi)), 'drivers/android');
+
+  // No command at all in M3.
+  const cmdHits = all.filter((f) => /issueCommand|:issueCommand|devices\.delete|safeDelete\(/.test(code(read(f))) && f !== `${SRC}/common/safe-https.ts`);
+  check('no command: nothing in apps/api/src issues a device command, deletes a device or calls safeDelete (M4/M5)',
+    cmdHits.length === 0 && !/'DELETE'/.test(code(amapi)) && !/'(POST|PATCH)', `\/v1\/enterprises\/\$\{[^}]*\}\/devices/.test(code(amapi)), cmdHits.join(', '));
+  check('no command: the driver reads only (listDevices, listCommands, ready); the client\'s writes are exactly sign-up, enterprise, the default policy and a token',
+    (code(amapi).match(/call\(c, '(POST|PATCH)'/g) ?? []).length === 4
+      && /call\(c, 'POST', '\/v1\/signupUrls'/.test(amapi) && /call\(c, 'POST', '\/v1\/enterprises', \{ projectId: c\.projectId, signupUrlName, enterpriseToken \}, \{\}\)/.test(amapi)
+      && /call\(c, 'PATCH', `\/v1\/enterprises\/\$\{eid\(enterpriseId\)\}\/policies\/\$\{POLICY_ID\}`, \{\}, DEFAULT_POLICY\)/.test(amapi)
+      && /call\(c, 'POST', `\/v1\/enterprises\/\$\{eid\(enterpriseId\)\}\/enrollmentTokens`/.test(amapi),
+    'amapi.ts');
+
+  // The policy and what is read.
+  check('policy: the default policy is exactly softwareInfoEnabled and applicationReportsEnabled; networkInfoEnabled appears nowhere in apps/api/src',
+    /export const DEFAULT_POLICY = \{ statusReportingSettings: \{ softwareInfoEnabled: true, applicationReportsEnabled: true \} \} as const;/.test(shape)
+      && !all.some((f) => /networkInfoEnabled|memoryInfoEnabled|hardwareStatusEnabled|powerManagementEventsEnabled|systemPropertiesEnabled/.test(code(read(f)))),
+    'shape.ts');
+  const fields = (shape.match(/export const DEVICE_FIELDS = ([\s\S]*?);\n/) ?? ['', ''])[1];
+  check('kept: devices.list asks only DEVICE_FIELDS (no network info, IMEI, telephony or user); deviceRecord reads none of them; only COMPANY_OWNED is corporate',
+    fields.length > 100 && !/network|imei|meid|telephony|user|mac|wifi|memory/i.test(fields) && /fields: DEVICE_FIELDS/.test(amapi)
+      && !/networkInfo|imei|meid|telephony|phoneNumber|macAddress|userName|\.user\b/i.test(code((shape.match(/export function deviceRecord[\s\S]*?\n\}\n/) ?? [''])[0]))
+      && /ownership: d\.ownership === 'COMPANY_OWNED' \? 'corporate' : 'byod',/.test(shape),
+    'shape.ts');
+  check('pure: shape.ts imports only node:crypto and ../../model, and reads no clock',
+    JSON.stringify(imp(shape).sort()) === JSON.stringify(['../../model', 'node:crypto']) && !/Date\.now\(\)|new Date\(\)/.test(code(shape)), JSON.stringify(imp(shape)));
+  check('tokens: Google\'s access tokens live in one unexported in-memory map keyed by a SHA-256 of the credential; nothing in drivers/android logs',
+    /^const tokens = new Map<string, \{ token: string; until: number \}>\(\);$/m.test(amapi) && !/export const tokens/.test(amapi)
+      && /createHash\('sha256'\)\s*\n?\s*\.update\(`\$\{c\.clientEmail\}\\n\$\{c\.privateKeyId\}\\n`\)/.test(amapi)
+      && !walk(V).some((f) => /logger|console\./.test(code(read(f)))), 'amapi.ts');
+
+  // Sign-up: one-time state, claimed once.
+  const cb = fnBody(svc, 'callback');
+  check('sign-up: the state is 32 random bytes; only its SHA-256 is stored; the callback URL is the API\'s public https address (or the test loopback)',
+    /const state = randomBytes\(32\)\.toString\('base64url'\);/.test(svc) && /stateSha256: stateHash\(state\)/.test(svc) && !/state[,:] state\b|stateRaw,/.test(code(fnBody(svc, 'startSignup')).replace('const state = ', ''))
+      && /const base = callbackBase\(this\.urls\.api\(\)\);/.test(svc) && /export const CALLBACK_PATH = '\/api\/v1\/mdm\/android\/signup\/callback';/.test(svc),
+    'android-emm.service.ts');
+  const claimAt = cb.indexOf('this.prisma.androidSignup.updateMany({ where: { stateSha256: hash, state: \'open\', expiresAt: { gt: now } }, data: { state: \'claimed\', claimedAt: now } })');
+  check('sign-up: the callback claims the state by ONE conditional update (open, unexpired) before reading anything; then the admin, the business, the pause and the token, before Google is asked',
+    claimAt > 0 && cb.indexOf('findUnique') > claimAt && cb.indexOf('if (claimed.count !== 1)') > claimAt
+      && [/admin\?\.isPlatformAdmin \|\| admin\.status !== 'ACTIVE'/, /androidEnterprise\.findUnique\(\{ where: \{ customerId: s\.customerId \}/, /activePause\(this\.prisma, 'integration', s\.customerId\)/, /ENTERPRISE_TOKEN_RE\.test\(tokenRaw\)/]
+        .every((re) => { const i = cb.search(re); return i > claimAt && i < cb.indexOf('createEnterprise('); }),
+    'callback()');
+  check('sign-up: the enterprise is audited with logOrFail before it is written, and written with the sign-up\'s claimed → bound in one transaction',
+    cb.indexOf("action: 'MDM_ANDROID_ENTERPRISE_BOUND'") > cb.indexOf('createEnterprise(') && cb.indexOf('this.audit.logOrFail({') < cb.indexOf('this.prisma.$transaction(')
+      && /tx\.androidSignup\.updateMany\(\{ where: \{ id: s\.id, state: 'claimed' \}, data: \{ state: 'bound'/.test(cb) && /if \(w\.count !== 1\) throw/.test(cb),
+    'callback()');
+  check('sign-up: the callback route is @Public (the session cookie is SameSite=Strict), rate-limited, and answers only a 303',
+    /@Controller\('mdm\/android\/signup'\)\s*\nexport class AndroidSignupCallbackController/.test(ctl) && /@Public\(\)\s*\n\s*@Get\('callback'\)\s*\n\s*@RateLimit\(10\)/.test(ctl)
+      && /res\.redirect\(303, to\);/.test(ctl) && (ctl.match(/@Public\(\)/g) ?? []).length === 1, 'android.controller.ts');
+
+  // Who, containment, and the record.
+  const writes = [...ctl.matchAll(/@(Put|Post)\([^)]*\)[\s\S]*?\{\n\s*(.*)\n/g)].map((m) => m[2].trim()).filter((l) => !/this\.svc\.callback/.test(l));
+  check('who: the admin controller is Platform Admin by class guard; its four writes each ask first (mdm.setup ×3, mdm.enroll for a token)',
+    /@Controller\('mdm\/android'\)\s*\n@UseGuards\(PlatformAdminGuard\)\s*\nexport class AndroidAdminController/.test(ctl) && writes.length === 4
+      && writes.filter((l) => /^this\.freshSetup\(req, /.test(l)).length === 3 && writes.filter((l) => /^this\.freshEnroll\(req, /.test(l)).length === 1
+      && /assertFresh\(this\.method\(req\), \{ action: 'mdm\.setup', message \}\)/.test(ctl) && /assertFresh\(this\.method\(req\), \{ action: 'mdm\.enroll', message \}\)/.test(ctl),
+    JSON.stringify(writes));
+  const outbound = [['test', 'probe('], ['startSignup', 'createSignupUrl('], ['policy', 'patchDefaultPolicy('], ['createToken', 'createEnrollmentToken(']];
+  check('containment: every outbound call is preceded by its `integration` pause check (global for the test; the business\'s otherwise), and the callback\'s too',
+    outbound.every(([fn, call]) => { const b = fnBody(svc, fn); const p = b.search(/activePause\(this\.prisma, 'integration', /); return p >= 0 && b.indexOf(call) > p; })
+      && /activePause\(this\.prisma, 'integration', null\)/.test(fnBody(svc, 'test')),
+    outbound.map(([f]) => f).join(', '));
+  const metas = [...code(svc).matchAll(/this\.audit\.log(?:OrFail)?\(\{[\s\S]*?\}\);/g)].map((m) => m[0]);
+  check('record: audit rows carry ids, kinds and codes — never a key, a state, an enterprise token, a URL or a token value',
+    metas.length >= 6 && metas.every((m) => !/\bstate\b(?!:)|stateSha256|enterpriseToken|tokenRaw|\burl\b|callbackUrl|t\.value|qrCode|private|\bkey\b/.test(m.replace(/meta: \{ code \}/, '')))
+      && /action: 'MDM_ANDROID_TOKEN_CREATED'/.test(svc) && fnBody(svc, 'createToken').indexOf('this.audit.logOrFail(') < fnBody(svc, 'createToken').indexOf('value: t.value'),
+    `${metas.length} audit calls`);
+  check('record: an enrollment token\'s value is never written to the database (shown once, from the answer)',
+    !/androidEnterprise\.(create|update)[^;]*value|enrollmentValue|tokenValue/.test(code(svc)) && !/value String/.test((read('apps/api/prisma/schema.prisma').match(/model AndroidEnterprise \{[\s\S]*?\n\}/) ?? [''])[0]),
+    'android-emm.service.ts / schema.prisma');
+
+  // Writers and openers.
+  const writers = all.filter((f) => /\.(androidSignup|androidEnterprise)\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/.test(read(f)));
+  check('writers: only AndroidEmmService writes AndroidSignup and AndroidEnterprise; the sync only reads AndroidEnterprise to create connectors',
+    JSON.stringify(writers) === JSON.stringify([`${D}/android-emm.service.ts`]) && /this\.prisma\.androidEnterprise\.findMany\(/.test(sync), writers.join(', '));
+  const openers = all.filter((f) => /openAndroidCredential\(/.test(code(read(f))));
+  check('key: the sealed service-account key is opened only by MdmSetupService.openAndroidCredential, called only by AndroidEmmService (and the driver\'s reader there)',
+    JSON.stringify(openers.sort()) === JSON.stringify([`${D}/android-emm.service.ts`, `${SRC}/mdm/setup/mdm-setup.service.ts`].sort())
+      && (code(setup).match(/sealSecret\(this\.encKey, 'rem0te-amapi-sa-key-v1'/g) ?? []).length === 1 && (code(setup).match(/openSecret\(this\.encKey, 'rem0te-amapi-sa-key-v1'/g) ?? []).length === 1
+      && /async openAndroidCredential\(\)[\s\S]*?openSecret\(this\.encKey, 'rem0te-amapi-sa-key-v1'/.test(setup),
+    openers.join(', '));
+  check('sweep: no new timer — AndroidEmmService.pass and ensureAndroidConnectors run only from MdmSyncService.sweep, so MDM_SWEEP=off stops them',
+    JSON.stringify(all.filter((f) => /this\.android\.pass\(/.test(code(read(f))))) === JSON.stringify([`${SRC}/mdm/mdm-sync.service.ts`])
+      && /await this\.android\.pass\(now\);\s*\n\s*await this\.ensureAndroidConnectors\(\);/.test(sync)
+      && ![...walk(D), ...walk(V)].some((f) => /setInterval|setTimeout\(|OnModuleInit|process\.env\.\w*SWEEP/.test(code(read(f)))), 'mdm/android');
+
+  // 0102.
+  const list = (re) => [...((sql.match(re) ?? ['', ''])[1]).matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  const tsList = (src, name) => [...((src.match(new RegExp(`export const ${name} = \\[([^\\]]*)\\] as const;`)) ?? ['', ''])[1]).matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  check('0102: the sign-up states and test results are the model\'s, in order; a sign-up lives at most an hour, as a SHA-256; one enterprise per business; four triggers',
+    JSON.stringify(list(/"AndroidSignup_state_check" CHECK \("state" IN \(([^)]*)\)\)/)) === JSON.stringify(tsList(shape, 'SIGNUP_STATES'))
+      && JSON.stringify(list(/"androidTestResult" IN \(([^)]*)\)\)\);/)) === JSON.stringify(tsList(read(`${SRC}/mdm/setup/setup-model.ts`), 'ANDROID_TEST_RESULTS'))
+      && /"expiresAt" <= "createdAt" \+ interval '1 hour'/.test(sql) && /"stateSha256" ~ '\^\[0-9a-f\]\{64\}\$'/.test(sql)
+      && /CREATE UNIQUE INDEX "AndroidEnterprise_customerId_key"/.test(sql) && /CREATE UNIQUE INDEX "AndroidEnterprise_enterpriseId_key"/.test(sql)
+      && ['AndroidSignup_business_trg', 'AndroidEnterprise_business_trg', 'AndroidSignup_final_trg', 'AndroidEnterprise_fixed_trg'].every((n) => sql.includes(`CREATE TRIGGER "${n}"`)),
+    '0102');
+
+  // The web and the suites.
+  const webHits = walk('apps/web').filter((f) => !/node_modules|\.next|generated/.test(f) && /enterprise\.google\.com\/android\/enroll/.test(read(f)));
+  check('web: the enrollment link is built in one place (android-emm-steps.tsx) from the value shown once; the browser never calls Google',
+    JSON.stringify(webHits) === JSON.stringify(['apps/web/components/mobile/android-emm-steps.tsx']) && !/googleapis/.test(read('apps/web/components/mobile/android-emm-steps.tsx')),
+    webHits.join(', '));
+  check('suites: unit-mdm-android.mjs in CI; e2e-mdm-android in run-e2e.sh (a loopback stand-in in AMAPI\'s shape); e2e-ui drives the Android steps',
+    /unit-mdm-android\.mjs/.test(read('.github/workflows/ci.yml')) && /\bmdm-android\b/.test(read('scripts/run-e2e.sh'))
+      && /AMAPI_TEST_BASE_URL/.test(read('apps/api/scripts/e2e-mdm-android.mjs')) && /mdm-android-step-test/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    'ci.yml / run-e2e.sh / e2e-ui.mjs');
 }
 
 if (failures.length > 0) {

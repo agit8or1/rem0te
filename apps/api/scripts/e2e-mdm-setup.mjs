@@ -114,7 +114,7 @@ const resetRow = () => prisma.$executeRawUnsafe(`UPDATE "MdmPlatformSetup" SET "
   "vendorKeyEnc" = NULL, "vendorCertPem" = NULL, "vendorChainPem" = NULL, "vendorNotAfter" = NULL, "vendorSetAt" = NULL,
   "pushCertEnc" = NULL, "pushCertSerial" = NULL, "pushCertSha256" = NULL, "pushCertIssuer" = NULL, "pushCertNotBefore" = NULL, "pushCertNotAfter" = NULL,
   "pushCertInstalledAt" = NULL, "pushCertRenewedAt" = NULL, "apnsTopic" = NULL, "appleAccount" = NULL, "pushRemindedDays" = NULL,
-  "androidKeyEnc" = NULL, "androidProjectId" = NULL, "androidClientEmail" = NULL, "androidKeyIdLast4" = NULL, "androidKeySetAt" = NULL, "updatedAt" = now()
+  "androidKeyEnc" = NULL, "androidProjectId" = NULL, "androidClientEmail" = NULL, "androidKeyIdLast4" = NULL, "androidKeySetAt" = NULL, "androidTestedAt" = NULL, "androidTestResult" = NULL, "androidQuotaDevices" = NULL, "androidQuotaSetAt" = NULL, "updatedAt" = now()
   WHERE id = 'platform'`);
 
 let api, api2;
@@ -150,8 +150,8 @@ async function all() {
   let r = await req('GET', '/mdm/setup', { s: S.admin });
   const st = (v) => Object.fromEntries((v?.capabilities ?? []).map((c) => [c.key, c.state]));
   check(r.status === 200 && r.data.apple.state.state === 'requires_setup' && r.data.android.state.state === 'requires_setup' && st(r.data)['apple.enrollment'] === 'requires_setup'
-    && st(r.data)['android.connection_test'] === 'planned' && st(r.data)['apple.abm'] === 'planned' && r.data.outboundCalls === false,
-  'a fresh install: both cards require setup (enrollment too, from 0.84); ABM and the Google calls are planned; no outbound call', msg(r));
+    && st(r.data)['android.connection_test'] === 'requires_setup' && st(r.data)['apple.abm'] === 'planned' && r.data.outboundCalls?.setup === false,
+  'a fresh install: both cards require setup (enrollment too, from 0.84; the Google connection test from 0.85); ABM is planned; the setup service calls out to nothing', msg(r));
 
   section('Fresh authentication on `ask` (mdm.setup)');
   r = await req('POST', '/mdm/setup/apple/push-key', { s: S.admin, body: {} });
@@ -263,8 +263,8 @@ async function all() {
   r = await req('PUT', '/mdm/setup/android/service-account', { s: F, body: { keyFile: sa } });
   const sv = r.data?.android?.serviceAccount;
   check(r.status === 200 && sv?.projectId === 'rem0te-beacon-test' && sv.clientEmail === 'amapi-test@rem0te-beacon-test.iam.gserviceaccount.com' && sv.keyIdLast4 === JSON.parse(sa).private_key_id.slice(-4)
-    && st(r.data)['android.service_account'] === 'available' && st(r.data)['android.enterprise'] === 'planned' && !SECRET_RE.test(r.text) && !r.text.includes(JSON.parse(sa).private_key_id),
-  'accepted and sealed: only the project, the e-mail and the key id\'s last four are shown; enterprise sign-up stays planned', msg(r));
+    && st(r.data)['android.service_account'] === 'available' && st(r.data)['android.enterprise'] === 'requires_setup' && st(r.data)['android.connection_test'] === 'requires_setup' && !SECRET_RE.test(r.text) && !r.text.includes(JSON.parse(sa).private_key_id),
+  'accepted and sealed: only the project, the e-mail and the key id\'s last four are shown; the connection test and sign-up still need setup (0.85)', msg(r));
 
   section('Deletes never ask, and are audited');
   r = await req('DELETE', '/mdm/setup/android/service-account', { s: S.admin });

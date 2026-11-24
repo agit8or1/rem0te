@@ -1435,6 +1435,8 @@ export const mdmSetupApi = {
   deleteDeviceCa: () => api.delete('/mdm/setup/apple/device-ca'),
   profileSigner: (body: { certificate: string; privateKey: string; passphrase?: string; chain?: string }) => api.put('/mdm/setup/apple/profile-signer', body),
   deleteProfileSigner: () => api.delete('/mdm/setup/apple/profile-signer'),
+  // 0.85 Mooring (step 4): the device quota Google granted, recorded by hand.
+  androidQuota: (devices: number | null) => api.put('/mdm/setup/android/quota', { devices }),
 };
 
 /** 0.84 Harbor: Rem0te's own Apple MDM — one-time enrollment links and enrolled devices (Platform Admin). */
@@ -1443,4 +1445,17 @@ export const mdmAppleApi = {
   createLink: (body: { businessId: string; expiresInMinutes?: number }) => api.post('/mdm/apple/links', body),
   revokeLink: (id: string) => api.delete(`/mdm/apple/links/${encodeURIComponent(id)}`),
   devices: () => api.get('/mdm/apple/devices'),
+};
+
+/**
+ * 0.85 Mooring: Rem0te as the EMM for Android (Platform Admin) — the
+ * connection test, a business's enterprise sign-up, the default policy and
+ * one-time enrollment tokens. The server calls Google; the browser never does.
+ */
+export const mdmAndroidApi = {
+  view: () => api.get('/mdm/android'),
+  test: () => api.post('/mdm/android/test', {}),
+  signup: (businessId: string) => api.post('/mdm/android/signup', { businessId }),
+  policy: (businessId: string) => api.post(`/mdm/android/enterprises/${encodeURIComponent(businessId)}/policy`, {}),
+  token: (body: { businessId: string; personalUsage: 'allowed' | 'disallowed'; expiresInMinutes?: number }) => api.post('/mdm/android/enrollment-tokens', body),
 };

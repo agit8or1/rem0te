@@ -132,4 +132,11 @@ export class MdmSetupController {
   @Delete('android/service-account')
   @HttpCode(HttpStatus.OK)
   async deleteAndroidKey(@Actor() a: ActorContext) { return { success: true, data: await this.svc.deleteAndroidKey(a) }; }
+
+  /** 0.85 (step 4): the quota Google granted, recorded by hand. */
+  @Put('android/quota')
+  async androidQuota(@Actor() a: ActorContext, @Body() body: unknown, @Req() req: Request) {
+    this.fresh(req, 'Confirm it is you to record the Android device quota.');
+    return { success: true, data: await this.svc.setAndroidQuota(a, body) };
+  }
 }

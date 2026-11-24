@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowLeft, Download, ExternalLink } from 'lucide-react';
@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/label';
 import { apiError } from '@/components/security-controls/shared';
 import { confirmSentence, reauthSuffix, useAsks } from '@/lib/confirm-policy';
 import { AppleEnrollmentStep, type AppleStep6View } from '@/components/mobile/apple-enrollment-step';
+import { AndroidEnterpriseSteps, AndroidQuotaStep, AndroidTestStep, useAndroidReturnNote, type AndroidStepsView } from '@/components/mobile/android-emm-steps';
 
 /**
  * Settings → Mobile devices (0.83 Beacon; docs/own-mdm.md M1, docs/mobile-devices.md).
@@ -26,11 +27,16 @@ import { AppleEnrollmentStep, type AppleStep6View } from '@/components/mobile/ap
  * the push certificate's checks (key, topic, expiry), renewal with the same
  * topic. Android: the prerequisites and the service-account key. Every step
  * says what Rem0te checks and what it cannot, and every capability is in one
- * of the four states. Nothing on this page calls Apple or Google: the links
- * open their pages in a new tab.
+ * of the four states. The links open Apple's and Google's pages in a new tab.
  *
  * 0.84 Harbor adds step 6 (docs/own-mdm.md M2): the device CA, the profile
  * signer, one-time enrollment links and the enrolled devices.
+ *
+ * 0.85 Mooring adds Android steps 3 to 6 (docs/own-mdm.md M3): the
+ * connection test, the recorded quota, each business's enterprise sign-up,
+ * the default policy and one-time enrollment tokens. Those steps call
+ * Google from the server (components/mobile/android-emm-steps.tsx); the
+ * Apple steps still call nothing.
  */
 type State = 'available' | 'requires_setup' | 'unsupported' | 'planned';
 interface Cap { key: string; platform: 'apple' | 'android'; label: string; state: State; reason: string }
@@ -52,7 +58,7 @@ interface View {
     state: { state: State; reason: string };
     checklist: string[];
     serviceAccount: { present: boolean; projectId?: string; clientEmail?: string; keyIdLast4?: string; setAt?: string };
-  };
+  } & Omit<AndroidStepsView, 'serviceAccount'>;
   capabilities: Cap[];
 }
 
@@ -142,6 +148,8 @@ export default function MobileDeviceSettingsPage() {
   const qc = useQueryClient();
   const ask = useAsks('mdm.setup');
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  // 0.85: the note after Google's redirect back from an Android enterprise sign-up.
+  useAndroidReturnNote(useCallback((n: { ok: boolean; text: string }) => setNote(n), []));
   const [appleTicks, setAppleTicks] = useState<string[] | null>(null);
   const [androidTicks, setAndroidTicks] = useState<string[] | null>(null);
   const [vendor, setVendor] = useState<{ cert?: File; key?: File; mid?: File; root?: File; passphrase: string }>({ passphrase: '' });
@@ -159,6 +167,7 @@ export default function MobileDeviceSettingsPage() {
     onSuccess: ({ r, ok }) => done(ok)(r),
     onError,
   });
+  const setView = (v: unknown) => { qc.setQueryData(['mdm-setup'], v); void qc.invalidateQueries({ queryKey: ['mobile-setup'] }); };
   const run = (fn: () => Promise<unknown>, ok: string) => { setNote(null); m.mutate({ run: fn as () => Promise<{ data: { data: View } }>, ok }); };
 
   const csr = useMutation({
@@ -203,7 +212,7 @@ export default function MobileDeviceSettingsPage() {
   return (
     <div className="max-w-4xl space-y-4 p-4 md:p-6" data-testid="mdm-settings">
       <Link href="/settings" className="inline-flex items-center text-sm text-muted-foreground hover:underline"><ArrowLeft className="mr-1 h-4 w-4" />Settings</Link>
-      <PageHeader title="Mobile devices" description="Set up Rem0te as the MDM for iPhones and iPads, and the EMM for Android. This page prepares the credentials Apple and Google require. It never contacts Apple or Google: the links open their pages, and you upload what they give you." />
+      <PageHeader title="Mobile devices" description="Set up Rem0te as the MDM for iPhones and iPads, and the EMM for Android. This page prepares the credentials Apple and Google require. Apple's steps never contact Apple: the links open its pages, and you upload what it gives you. From step 3 on, Android's steps call Google's Android Management API from this server." />
 
       {note && <div className={`rounded-md border p-3 text-sm ${note.ok ? 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100' : 'border-destructive/40 bg-destructive/10 text-destructive'}`} data-testid="mdm-settings-note" role="status">{note.text}</div>}
       {q.error ? <p className="text-sm text-destructive">{apiError(q.error).message}</p> : null}
@@ -418,7 +427,7 @@ export default function MobileDeviceSettingsPage() {
                 </Step>
 
                 <Step n={2} title="Upload the service-account key" state={capState('android.service_account')} testId="mdm-android-key">
-                  <Checks auto={'It is a service-account key ("type": "service_account"), names a project and that project\'s service-account e-mail, has a key id, and its private key loads. Only those fields are kept, sealed; afterwards only the project, the e-mail and the key id\'s last four are shown.'} cannot="That the account has the Android Management User role, or that the project has quota: that needs a call to Google (the connection test, M3)." />
+                  <Checks auto={'It is a service-account key ("type": "service_account"), names a project and that project\'s service-account e-mail, has a key id, and its private key loads. Only those fields are kept, sealed; afterwards only the project, the e-mail and the key id\'s last four are shown.'} cannot="That the account has the Android Management User role, or that the project has quota: the connection test (step 3) checks the role; nothing can check quota." />
                   {d.android.serviceAccount.present ? (
                     <div className="space-y-1 rounded-md border p-3" data-testid="mdm-android-sa">
                       <Fact k="Project" v={d.android.serviceAccount.projectId} mono />
@@ -436,10 +445,24 @@ export default function MobileDeviceSettingsPage() {
                   )}
                 </Step>
 
-                <Step n={3} title="Connection test, enterprise sign-up and quota" state="planned" testId="mdm-android-planned">
-                  <p className="text-muted-foreground">Testing the key against Google, each business&apos;s enterprise sign-up, recording the granted quota and enrolling devices arrive in M3. This release makes no call to Google.</p>
+                <Step n={3} title="Test the connection to Google" state={capState('android.connection_test')} testId="mdm-android-step-test">
+                  <AndroidTestStep view={d.android} ask={ask} onNote={setNote} onView={setView} />
                 </Step>
+
+                <Step n={4} title="Record the device quota" state={capState('android.quota')} testId="mdm-android-step-quota">
+                  <AndroidQuotaStep view={d.android} ask={ask} onNote={setNote} onView={setView} />
+                </Step>
+
+                <Step n={5} title="Bind a business to its Android enterprise" state={capState('android.enterprise')} testId="mdm-android-step-signup">
+                  <AndroidEnterpriseSteps part="signup" view={d.android} ask={ask} onNote={setNote} />
+                </Step>
+
+                <Step n={6} title="Default policy and enrollment tokens" state={capState('android.enrollment')} testId="mdm-android-step-enroll">
+                  <AndroidEnterpriseSteps part="enroll" view={d.android} ask={ask} onNote={setNote} />
+                </Step>
+
               </ol>
+              <p className="mt-4 text-xs text-muted-foreground" data-testid="mdm-android-not-proven">Tested only against a stand-in for Google&apos;s Android Management API: no real Google API has been called from this server, no enterprise has been created and no device has enrolled.</p>
             </CardContent>
           </Card>
 

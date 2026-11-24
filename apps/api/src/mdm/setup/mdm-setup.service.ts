@@ -15,7 +15,8 @@ import {
   generatePushKey,
 } from './pki';
 import {
-  ANDROID_CHECKLIST, APPLE_ACCOUNT_RE, APPLE_CHECKLIST, REMINDER_DAYS, SIGNING_ROUTES, capabilities, daysLeft, dueReminder, platformState, topicDecision,
+  ANDROID_CHECKLIST, ANDROID_QUOTA_MAX, ANDROID_TEST_RESULTS, APPLE_ACCOUNT_RE, APPLE_CHECKLIST, REMINDER_DAYS, SIGNING_ROUTES, capabilities, daysLeft, dueReminder, isAndroidTestResult, platformState, topicDecision,
+  type AndroidTestResult,
 } from './setup-model';
 
 /** The one row (decision 23: one push certificate per install). */
@@ -80,6 +81,12 @@ export class MdmSetupService {
       this.prisma.appleDevice.findFirst({ where: { lastPushOkAt: { not: null }, state: 'enrolled' }, select: { lastPushOkAt: true, lastSeenAt: true }, orderBy: { lastPushOkAt: 'desc' } }),
       this.prisma.appleDevice.findFirst({ where: { state: 'enrolled' }, select: { lastSeenAt: true }, orderBy: { lastSeenAt: { sort: 'desc', nulls: 'last' } } }),
     ]);
+    // 0.85: what the Android side has (AndroidEnterprise is AndroidEmmService's table; MobileDevice the sync's; both read only here).
+    const [androidEnterprises, androidPolicies, androidDevices] = await Promise.all([
+      this.prisma.androidEnterprise.count(),
+      this.prisma.androidEnterprise.count({ where: { policySetAt: { not: null } } }),
+      this.prisma.mobileDevice.count({ where: { provider: 'android', enrollmentState: 'enrolled' } }),
+    ]);
     const apple = { enrolled, pushProven: !!proven?.lastPushOkAt && !!proven.lastSeenAt && proven.lastSeenAt.getTime() >= proven.lastPushOkAt.getTime(), lastCheckInAt: lastSeen?.lastSeenAt ?? null };
     const vendorCert = r.vendorCertPem ? readCertificate(r.vendorCertPem) : null;
     const vf = vendorCert ? certFacts(vendorCert) : null;
@@ -96,6 +103,9 @@ export class MdmSetupService {
       profileSigner: r.profileSignNotAfter ? { notAfter: r.profileSignNotAfter } : null,
       enrolledDevices: apple.enrolled,
       pushProven: apple.pushProven,
+      androidTest: r.androidTestResult && r.androidTestedAt && isAndroidTestResult(r.androidTestResult) ? { result: r.androidTestResult, at: r.androidTestedAt } : null,
+      androidQuota: r.androidQuotaDevices,
+      androidEnterprises, androidPolicies, androidDevices,
     }, now);
     const paused = !!(await activePause(this.prisma, 'notifications', null));
     return {
@@ -134,9 +144,16 @@ export class MdmSetupService {
         serviceAccount: r.androidKeyEnc ? {
           present: true, projectId: r.androidProjectId, clientEmail: r.androidClientEmail, keyIdLast4: r.androidKeyIdLast4, setAt: r.androidKeySetAt,
         } : { present: false },
+        /** 0.85 (step 3): the last connection test against Google (under NODE_ENV=test, the suite's stand-in). */
+        connectionTest: r.androidTestResult ? { result: r.androidTestResult, testedAt: r.androidTestedAt } : null,
+        /** 0.85 (step 4): recorded by hand, never read from Google. */
+        quota: r.androidQuotaDevices === null ? null : { devices: r.androidQuotaDevices, setAt: r.androidQuotaSetAt },
+        enterprises: androidEnterprises,
+        devicesEnrolled: androidDevices,
       },
       capabilities: caps,
-      outboundCalls: false,
+      /** 0.85: this service still calls nothing; Android's calls are AndroidEmmService's, through drivers/android. */
+      outboundCalls: { setup: false, android: 'drivers/android' },
     };
   }
 
@@ -339,7 +356,8 @@ export class MdmSetupService {
       action: 'MDM_SETUP_CREDENTIAL_SET', ...this.auditBase(a),
       meta: { credential: 'amapi_service_account', op: r.androidKeyEnc ? 'replace' : 'create', projectId: k.projectId, clientEmail: k.clientEmail, keyIdLast4: k.keyIdLast4 },
     });
-    await this.write(r, { androidKeyEnc: sealed, androidProjectId: k.projectId, androidClientEmail: k.clientEmail, androidKeyIdLast4: k.keyIdLast4, androidKeySetAt: new Date() });
+    // 0.85: a new key has not been tested.
+    await this.write(r, { androidKeyEnc: sealed, androidProjectId: k.projectId, androidClientEmail: k.clientEmail, androidKeyIdLast4: k.keyIdLast4, androidKeySetAt: new Date(), androidTestedAt: null, androidTestResult: null });
     return this.view();
   }
 
@@ -347,8 +365,35 @@ export class MdmSetupService {
     const r = await this.row();
     if (!r.androidKeyEnc) throw new NotFoundException({ code: 'NO_ANDROID_KEY', message: 'There is no service-account key.' });
     await this.audit.logOrFail({ action: 'MDM_SETUP_CREDENTIAL_DELETED', ...this.auditBase(a), meta: { credential: 'amapi_service_account', projectId: r.androidProjectId, keyIdLast4: r.androidKeyIdLast4 } });
-    await this.write(r, { androidKeyEnc: null, androidProjectId: null, androidClientEmail: null, androidKeyIdLast4: null, androidKeySetAt: null });
+    await this.write(r, { androidKeyEnc: null, androidProjectId: null, androidClientEmail: null, androidKeyIdLast4: null, androidKeySetAt: null, androidTestedAt: null, androidTestResult: null });
     return this.view();
+  }
+
+  /**
+   * 0.85 (step 4): the device quota Google granted, as the Platform Admin
+   * read it in Google's answer. Recorded, never verified: no quota read was
+   * found in the API (docs/own-mdm.md). null clears it.
+   */
+  async setAndroidQuota(a: ActorContext, body: unknown) {
+    const p = z.object({ devices: z.number().int().min(0).max(ANDROID_QUOTA_MAX).nullable() }).strict().safeParse(body);
+    if (!p.success) throw new BadRequestException({ code: 'INVALID_REQUEST', message: `Give devices: the number Google granted (0 to ${ANDROID_QUOTA_MAX}), or null to clear it.` });
+    const r = await this.row();
+    await this.write(r, { androidQuotaDevices: p.data.devices, androidQuotaSetAt: p.data.devices === null ? null : new Date() });
+    await this.audit.log({ action: 'MDM_SETUP_CHANGED', ...this.auditBase(a), meta: { op: 'android_quota', before: r.androidQuotaDevices, after: p.data.devices } });
+    return this.view();
+  }
+
+  /**
+   * 0.85 (step 3): the connection test's outcome, recorded for the key that
+   * was tested. AndroidEmmService.test is the only caller; it runs the test
+   * and audits it. Conditional on the revision and on the key still being
+   * the one tested, so a key replaced meanwhile is never marked tested.
+   */
+  async recordAndroidTest(keyIdLast4: string, result: AndroidTestResult, at = new Date()) {
+    if (!(ANDROID_TEST_RESULTS as readonly string[]).includes(result)) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Unknown test result.' });
+    const r = await this.row();
+    if (!r.androidKeyEnc || r.androidKeyIdLast4 !== keyIdLast4) throw new ConflictException({ code: 'MDM_SETUP_CHANGED', message: 'The service-account key changed while it was being tested. Test again.' });
+    await this.write(r, { androidTestedAt: at, androidTestResult: result });
   }
 
   // ── Apple step 6 (0.84, M2): the device CA and the profile signer ───────
@@ -430,6 +475,24 @@ export class MdmSetupService {
     const k = readPrivateKey(openSecret(this.encKey, 'rem0te-apns-push-key-v1', r.pushKeyEnc));
     if (!k.ok) return null;
     return { key: k.key, certPem: openSecret(this.encKey, 'rem0te-apns-push-cert-v1', r.pushCertEnc), topic: r.apnsTopic };
+  }
+
+  /**
+   * 0.85: the Google service-account key, opened from secret-box in memory
+   * for one Android Management API call (a token exchange). Only
+   * AndroidEmmService calls this (its connection test, sign-up, policy and
+   * token calls, and the driver's reader); nothing returned here is stored,
+   * logged or sent anywhere but into the JWT's signature.
+   */
+  async openAndroidCredential(): Promise<{ projectId: string; clientEmail: string; privateKeyId: string; keyIdLast4: string; key: KeyObject } | null> {
+    const r = await this.prisma.mdmPlatformSetup.findUnique({ where: { id: ID }, select: { androidKeyEnc: true } });
+    if (!r?.androidKeyEnc) return null;
+    try {
+      const j = JSON.parse(openSecret(this.encKey, 'rem0te-amapi-sa-key-v1', r.androidKeyEnc)) as Record<string, unknown>;
+      const k = checkServiceAccountKey(JSON.stringify(j));
+      if (!k.ok) return null;
+      return { projectId: k.projectId, clientEmail: k.clientEmail, privateKeyId: k.privateKeyId, keyIdLast4: k.keyIdLast4, key: createPrivateKey(j.private_key as string) };
+    } catch { return null; }
   }
 
   /** The profile-signing identity, opened in memory for one profile. Only AppleEnrollmentService.claim calls this. */
