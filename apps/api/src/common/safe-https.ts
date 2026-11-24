@@ -28,7 +28,8 @@ import { isIP } from 'net';
 import { checkResolved, classifyAddress, isHostName } from '../email/smtp-host';
 
 const INTERNAL_SUFFIX = /\.(local|internal|lan|home|corp|localdomain|localhost|intranet|private|arpa)$/;
-const TEST_LOOPBACK = /^http:\/\/127\.0\.0\.1:[0-9]{2,5}(?:$|\/[A-Za-z0-9._~/-]{0,200}$)/;
+// 0.86: a path may hold ':' too, for Google's custom methods (devices/<id>:issueCommand) on the AMAPI stand-in.
+const TEST_LOOPBACK = /^http:\/\/127\.0\.0\.1:[0-9]{2,5}(?:$|\/[A-Za-z0-9._~/:-]{0,200}$)/;
 /**
  * 0.56: an optional query in a narrow charset (the warranty stubs take ?servicetags= / ?Serial=).
  * 0.85: and up to 800 characters, with only the percent-escapes Google's own query parameters

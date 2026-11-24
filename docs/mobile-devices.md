@@ -156,6 +156,43 @@ Everyone is held to their own business. Naming another business is refused
 (403), and asking for a device or its commands by the id of one in another
 business, or another tenant, is "not found" (404).
 
+## Locking a lost device (0.86)
+
+From 0.86.0 *Lighthouse* a phone or tablet enrolled in Rem0te's own MDM can be
+sent three commands from its page, under **Lost or stolen**:
+
+| Command | iPhone and iPad | Android |
+|---|---|---|
+| **Lock** | Every enrolled device. Shows an optional message and phone number on the lock screen | Every enrolled device. On a personal phone with a work profile it locks the work profile when that has its own passcode, and the whole phone when it does not. No message |
+| **Start lost mode** | **Supervised devices only.** A device that has not reported whether it is supervised is treated as unsupervised. Needs a message or a phone number | **Company-owned devices only.** Refused on a personal device. Needs a message or a phone number |
+| **Stop lost mode** | Supervised devices only | Company-owned devices only |
+
+Nothing can be erased, wiped or retired from Rem0te. Those come later, behind a
+second person ([own-mdm.md](own-mdm.md#roadmap), M5).
+
+Sending needs a second permission, **Lock mobile devices and use lost mode**
+(`mobile:act`):
+
+| | May send |
+|---|---|
+| Platform Admin | To any business's device |
+| Business Owner | To their business's devices |
+| Business User | Only if the Business Owner grants it. Off by default |
+| MSP technician | Only with it on an assignment covering the **whole** business. No preset grants it |
+
+*Settings → Confirm it is you* can ask for re-authentication first, under
+**Mobile device lock and lost mode** (`mdm.act`). Like every function, it is off
+until turned on. An **approved actions** containment pause refuses every
+command, and on an iPhone or iPad it also holds one already waiting. An
+**integration** pause also refuses an Android command, because sending is a
+call to Google.
+
+A button the device cannot take is shown disabled, with the reason. The
+message and phone number go to the device and nowhere else: they are in no
+audit entry or log, and Rem0te keeps them only while an iPhone or iPad has
+still to fetch the command. Every command is audited when it is asked for and
+when it is sent, with who asked.
+
 ## What is kept
 
 | Kept | Why |
@@ -184,9 +221,9 @@ Every command moves through six states:
 
 | State | Means |
 |---|---|
-| Queued | Rem0te has it and has not sent it (from 3.3; nothing is queued in 0.80) |
+| Queued | Rem0te has it and has not sent it (0.86: only for the moment before a lock or lost mode is handed over) |
 | Sent to provider | Sent, or issued in the provider's own console |
-| **Accepted by provider** | The provider took it. **The device has not necessarily done anything** |
+| **Accepted by provider** | The provider took it. **The device has not necessarily done anything**. For Rem0te's own Apple MDM, this is the device fetching the command; for Android, Google accepting it |
 | **Completed on device** | The device itself reported it done |
 | Failed | The provider refused it, or the device reported a failure (with the code) |
 | Expired | Not finished by its deadline (the provider's, or seven days) |
@@ -207,7 +244,10 @@ migration 0096):
 - Completed, failed and expired are final. A later report never moves them,
   and the database refuses to.
 
-In 0.80 every command shown came from the provider's own console. *Wipe*,
+Until 0.86 every command shown came from the provider. From 0.86 a lock or
+lost mode sent from Rem0te shows who asked; for Android, Rem0te reads only the
+results of the commands it issued (each by its own name), so commands made
+elsewhere are not shown. *Wipe*,
 *Retire* and *Remove work data* are marked **Destructive**; when they can be
 sent from Rem0te (3.4) they will need a second person to approve (decision
 16).
@@ -256,6 +296,7 @@ Rem0te's own tables and calls nothing.
 | A real provider, a real phone or tablet | **None.** No provider has been called from this server |
 | Settings → Mobile devices (0.83): the CSR, vendor signing, certificate checks, the topic rule, the Google key, reminders | Unit (`unit-mdm-setup.mjs`, in CI) and API (`e2e-mdm-setup.mjs`), with stand-in keys and certificates made at run time; Browser (`e2e-ui.mjs`). **No real Apple or Google credential, and no call to either** |
 | Rem0te as the Apple MDM server (0.84): links, the signed profile, signed check-ins, the inventory queue, the push, the `apple` driver | Unit (`unit-mdm-apple.mjs`, in CI); API (`e2e-mdm-apple.mjs`): **mdmb**, a simulated device, enrolling through a scratch step-ca, and a loopback HTTP/2 stand-in for APNs; Browser (`e2e-ui.mjs`). **No real iPhone or iPad, and no call to Apple's push service** |
+| Lock and lost mode (0.86): who may send, the request's checks, which device can take what, the pauses, accepted then completed, nothing kept | Unit (`unit-mdm-lost-device.mjs`, in CI); API (`e2e-mdm-apple.mjs` with mdmb and hand-signed device messages; `e2e-mdm-android.mjs` against the AMAPI stand-in); Browser (`e2e-ui.mjs`, the dialog opened and cancelled). **No real device has received a command** |
 
 ## Planned
 
@@ -267,7 +308,9 @@ The order is now [own-mdm.md](own-mdm.md#roadmap)'s (2026-11-21):
   **Built in 0.84.0**, against a simulated device only.
 - **M3** — Android enterprise sign-up and read-only inventory. **Built in
   0.85.0**, against a stand-in for Google's API only.
-- **M4** (was 3.3) — lock, lost mode and locate, with their own permission,
-  audited, accepted and completed shown separately.
+- **M4** (was 3.3) — lock and lost mode, with their own permission, audited,
+  accepted and completed shown separately. **Built in 0.86.0**, against a
+  simulated device and a stand-in only. Locate is not built (it needs lost mode
+  and a decision about keeping a location).
 - **M5** (was 3.4) — wipe, retire and work-data removal, approved by a second
   person.

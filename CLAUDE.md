@@ -2341,10 +2341,11 @@ created and no device has enrolled.** (§93 is 0.84's.)
   characters and only nine escapes (`: / ? = & , ( ) +`, for AMAPI's
   escaped queries); `%3C` and every other escape stay refused. `shape.ts` is pure: it imports
   `node:crypto` and `../../model`, and reads no clock.
-- **No command.** Nothing issues a command, deletes a device or calls
-  `safeDelete`. The client's four writes are `signupUrls.create`,
-  `enterprises.create`, the default policy's `policies.patch` and
-  `enrollmentTokens.create`.
+- **No destructive command.** Nothing deletes a device or calls
+  `safeDelete`. The client's writes are `signupUrls.create`,
+  `enterprises.create`, the default policy's `policies.patch`,
+  `enrollmentTokens.create` and, from 0.86, `devices.issueCommand` for the
+  three lost-device commands only (§95).
 - **The policy** is exactly `softwareInfoEnabled` and
   `applicationReportsEnabled`, and `networkInfoEnabled` appears nowhere.
   `devices.list` asks only `DEVICE_FIELDS`. Only `COMPANY_OWNED` is
@@ -2375,14 +2376,80 @@ created and no device has enrolled.** (§93 is 0.84's.)
   which makes one `android` connector per bound enterprise, named by its id.
 - **No new sweep.** `AndroidEmmService.pass` and `ensureAndroidConnectors`
   run only from `MdmSyncService.sweep`.
-- **Operations** are read for at most 250 devices a pass. A larger
-  enterprise syncs as `partial` (decision 30).
+- **Operations** were read for at most 250 devices a pass in 0.85. From
+  0.86 (decision 30) none is listed: only the Operations of open commands
+  Rem0te issued, each by its own name (§95).
 
 Behavioural proof: `e2e-mdm-android.mjs` (ports 4081–4083, in `run-e2e.sh`).
 It runs against an AMAPI-shaped loopback stand-in and simulates Google's
 redirect without a cookie, including five racing callbacks. Unit:
 `unit-mdm-android.mjs` (in CI). Browser: `e2e-ui.mjs` (`mdmSettingsUi`,
 steps 3–6 from seeded rows).
+
+§95 (0.86) is lost-device commands, M4 of `docs/own-mdm.md`: lock, start
+lost mode and stop lost mode, on Rem0te's own Apple MDM and Android EMM.
+It is the first time Rem0te sends anything to a phone or tablet. **No real
+device has received a command, and nothing has called Apple or Google.**
+(§94 is 0.85's.)
+
+- **Three kinds, never more.** `mdm/lost-device.ts` is pure (it imports
+  only `./model`, no clock) and holds `LOST_DEVICE_KINDS` (`lock`,
+  `lost_mode_start`, `lost_mode_stop`), the request's checks (at most 160
+  printable characters, no controls or bidi overrides, `PHONE_RE`; refused,
+  never trimmed) and the device's refusals:
+  - Apple lost mode only when the device reported `supervised === true`
+    (unknown is not supervised), and only under device enrollment;
+  - Android lost mode only on a `corporate` device;
+  - a lock on every enrolled device;
+  - no message where the platform shows none (an Android lock).
+
+  The console's buttons are that function's answer (`actions`). Erase,
+  wipe and retire are in no list, CHECK or command table (M5).
+- **One sender.** `MdmActionService` is the only caller of a driver's
+  `send()`. In order:
+  1. `visibleForAct`: scope with `mobile:view`, then `mobile:act`
+     (`MOBILE_ACT_REQUIRED`), then the scoped read (another business's
+     device is a 404);
+  2. the request;
+  3. `assertFresh` naming `mdm.act`;
+  4. the device's refusals;
+  5. the `actions` pause, and for Android `integration`;
+  6. `MDM_COMMAND_REQUESTED` with `logOrFail`;
+  7. the `MdmCommand` row (`origin: portal`, queued, Rem0te's own id);
+  8. `send()`;
+  9. one conditional move from `queued` through the state machine.
+- **Who.** `mobile:act` is a business capability. It is named only by
+  `capabilities.ts`, the controller and `MdmService`. It is never a Business
+  User default, a legacy role's or a preset's. `POST
+  /mobile-devices/:id/commands` is the one write on the controller.
+  `mdm.act` is a §62 key, default `off`.
+- **Nothing kept.** The message and phone number reach only the driver. Audit
+  meta says `hasMessage` / `hasPhoneNumber`. Nothing in the service logs, and
+  `MdmCommand` has no column for them. Apple's queue holds them only on an
+  open `DeviceLock` or `EnableLostMode`, and 0103's trigger clears them when
+  the command is final.
+- **Apple.** Only `queueLostDevice` queues the three lost types. It
+  re-checks that the device is enrolled in that business and supervised for
+  lost mode, and pushes at once. The device fetching the command is the
+  acceptance; `Acknowledged` is completion. Under an `actions` pause,
+  `next()` hands out only inventory and the push skips a device whose only
+  work is held. This is the one pause the Apple code consults (§93 amended).
+- **Android.** `devices.issueCommand` bodies are built only for `LOCK`,
+  `START_LOST_MODE` and `STOP_LOST_MODE` (`commandBody`; anything else is no
+  body and no request), and only the driver's `send()` calls it. The
+  Operation is the acceptance, and its name is the command's id. Decision
+  30: no Operations listing anywhere; the sync reads only the Operations of
+  open commands Rem0te issued, each by name. `TEST_LOOPBACK` admits `:` in a
+  path, for Google's custom methods on the stand-in.
+- **0103** re-makes the Apple request-type CHECK with the three lost types
+  (still no `EraseDevice`), CHECKs a portal command's kind, requester and
+  id, holds one open portal command of a kind per device (partial unique
+  index), and bounds and clears the lock-screen text.
+
+Behavioural proof: `e2e-mdm-android.mjs` (the sends, the pauses, Operations
+by name) and `e2e-mdm-apple.mjs` (the queue, held under a pause, mdmb's
+`Error`), both in `run-e2e.sh`. Unit: `unit-mdm-lost-device.mjs` (in CI).
+Browser: `e2e-ui.mjs` opens and cancels the lock dialog.
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 

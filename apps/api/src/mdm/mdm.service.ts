@@ -5,6 +5,7 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { CAP } from '../rbac/capabilities';
 import { commandProgress, type CommandFacts } from './command-state';
 import { READINESS } from './drivers';
+import { lostDeviceOptions, type DeviceFacts } from './lost-device';
 import {
   COMMAND_KIND_LABEL, COMMAND_STATE_LABEL, COMPLIANCE_LABEL, COMPLIANCE_STATES, DESTRUCTIVE_KINDS, ENROLLMENT_LABEL, ENROLLMENT_STATES,
   OWNERSHIP_LABEL, OWNERSHIPS, PLATFORM_LABEL, PLATFORMS, PROVIDER_LABEL, SCOPE_LABEL, isOneOf,
@@ -25,7 +26,9 @@ import {
  *     an id from another tenant tells the caller nothing.
  *
  * This service writes nothing (§90: only MdmSyncService writes the MDM
- * tables).
+ * tables; 0.86, §95: and MdmActionService creates the commands a person
+ * sends). actScope() is the send path's gate: scope() first, then
+ * `mobile:act` the same way (a technician on a whole-business assignment).
  */
 export const LIST_MAX_PAGE_SIZE = 100;
 export const COMMANDS_MAX = 100;
@@ -55,6 +58,44 @@ export class MdmService {
     const business = this.acl.requireScope(actor, requested);
     if (!this.acl.can(actor, CAP.MOBILE_VIEW)) throw new ForbiddenException({ code: 'MOBILE_VIEW_REQUIRED', message: 'Viewing mobile devices needs the View mobile devices permission.' });
     return { customerId: business };
+  }
+
+  /** Whether this caller holds mobile:act where scope() put them (0.86). Never throws. */
+  mayAct(actor: ActorContext): boolean {
+    if (actor.isPlatformAdmin) return true;
+    if (actor.technician) {
+      return actor.technician.businessId === actor.businessId
+        && actor.technician.sources.some((s) => s.endpointIds === null && (s.capabilities as string[]).includes(CAP.MOBILE_ACT));
+    }
+    return this.acl.can(actor, CAP.MOBILE_ACT);
+  }
+
+  /** The send path's scope (0.86, §95): scope() (mobile:view), then mobile:act, or a 403. */
+  actScope(actor: ActorContext, requestedBusinessId?: unknown): { customerId?: string } {
+    const where = this.scope(actor, requestedBusinessId);
+    if (!this.mayAct(actor)) {
+      throw new ForbiddenException({
+        code: 'MOBILE_ACT_REQUIRED',
+        message: actor.technician
+          ? 'Locking a mobile device needs the Lock mobile devices permission on an assignment covering the whole business.'
+          : 'Locking a mobile device needs the Lock mobile devices permission.',
+      });
+    }
+    return where;
+  }
+
+  /** What the lost-device rules need to know about one device (lost-device.ts). Reads only. */
+  async facts(d: MobileDevice): Promise<DeviceFacts> {
+    const [connector, apple] = await Promise.all([
+      this.prisma.mdmConnector.findUnique({ where: { id: d.connectorId }, select: { enabled: true, provider: true } }),
+      d.provider === 'apple'
+        ? this.prisma.appleDevice.findFirst({ where: { id: d.providerDeviceId, customerId: d.customerId }, select: { supervised: true } })
+        : Promise.resolve(null),
+    ]);
+    return {
+      provider: d.provider, platform: d.platform, ownership: d.ownership, managementScope: d.managementScope, enrollmentState: d.enrollmentState,
+      supervised: apple?.supervised ?? null, connectorEnabled: !!connector?.enabled && connector.provider === d.provider,
+    };
   }
 
   // ── Setup state ───────────────────────────────────────────────────────────
@@ -153,6 +194,12 @@ export class MdmService {
 
   // ── One device and its commands ───────────────────────────────────────────
 
+  /** The send path's device (0.86): actScope() first (mobile:view, then mobile:act), then the same visibility as a read. */
+  async visibleForAct(actor: ActorContext, id: string, q: Query) {
+    this.actScope(actor, q.businessId);
+    return this.visible(actor, id, q);
+  }
+
   private async visible(actor: ActorContext, id: string, q: Query) {
     const scope = this.scope(actor, q.businessId);
     if (!ID_RE.test(id)) throw new NotFoundException({ code: 'MOBILE_DEVICE_NOT_FOUND', message: 'No such mobile device.' });
@@ -171,7 +218,15 @@ export class MdmService {
     const rows = await this.prisma.mdmCommand.findMany({
       where: { mobileDeviceId: d.id, customerId: d.customerId }, orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }], take: COMMANDS_MAX,
     });
-    return { deviceId: d.id, commands: rows.map(commandView), max: COMMANDS_MAX, canSend: false };
+    const askers = [...new Set(rows.map((r) => r.requestedById).filter((x): x is string => !!x))];
+    const users = askers.length ? await this.prisma.user.findMany({ where: { id: { in: askers } }, select: { id: true, email: true } }) : [];
+    const emails = new Map(users.map((u) => [u.id, u.email]));
+    // 0.86 (§95): the lost-device commands this caller may send to this device, with each one's reason when not.
+    const canSend = this.mayAct(actor);
+    return {
+      deviceId: d.id, commands: rows.map((r) => ({ ...commandView(r), requestedBy: r.requestedById ? emails.get(r.requestedById) ?? null : null })), max: COMMANDS_MAX,
+      canSend, actions: canSend ? lostDeviceOptions(await this.facts(d)) : [],
+    };
   }
 }
 

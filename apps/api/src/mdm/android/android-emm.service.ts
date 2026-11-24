@@ -84,11 +84,17 @@ export class AndroidEmmService implements AndroidReader {
 
   credential(): Promise<AndroidCredential | null> { return this.setup.openAndroidCredential(); }
 
-  async deviceIds(connectorId: string, after: string | null, take: number) {
-    return this.prisma.mobileDevice.findMany({
-      where: { connectorId, provider: 'android', enrollmentState: { not: 'not_reported' }, ...(after ? { providerDeviceId: { gt: after } } : {}) },
-      orderBy: { providerDeviceId: 'asc' }, take, select: { providerDeviceId: true, managementScope: true },
+  /**
+   * The open commands Rem0te issued on this connector (0.86, decision 30):
+   * the driver reads each one's Operation by name. Read-only; the sync
+   * records what comes back.
+   */
+  async openCommands(connectorId: string, after: string | null, take: number) {
+    const rows = await this.prisma.mdmCommand.findMany({
+      where: { connectorId, origin: 'portal', state: { in: ['sent', 'acknowledged'] }, providerCommandId: { not: null, ...(after ? { gt: after } : {}) } },
+      orderBy: { providerCommandId: 'asc' }, take, select: { providerCommandId: true, mobileDevice: { select: { managementScope: true } } },
     });
+    return rows.map((r) => ({ providerCommandId: r.providerCommandId as string, managementScope: r.mobileDevice.managementScope }));
   }
 
   // ── The admin's view ────────────────────────────────────────────────────

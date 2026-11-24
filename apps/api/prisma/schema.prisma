@@ -472,6 +472,9 @@ enum ActivityAction {
   MDM_ANDROID_ENTERPRISE_BOUND
   MDM_ANDROID_POLICY_SET
   MDM_ANDROID_TOKEN_CREATED
+  MDM_COMMAND_REQUESTED
+  MDM_COMMAND_SENT
+  MDM_COMMAND_SEND_FAILED
 }
 
 // ─── Tenant ───────────────────────────────────────────────────────────────────
@@ -5728,7 +5731,7 @@ model AppleDevice {
   @@index([customerId, id])
 }
 
-/// 0.84: Rem0te's own Apple command queue. Inventory request types only (protocol.ts REQUEST_TYPES).
+/// 0.84: Rem0te's own Apple command queue. Inventory request types, and from 0.86 the three lost-device ones (protocol.ts REQUEST_TYPES, 0103).
 model AppleCommand {
   id            String      @id @default(cuid())
   tenantId      String
@@ -5746,6 +5749,9 @@ model AppleCommand {
   errorCode     String?
   notNowCount   Int         @default(0)
   expiresAt     DateTime
+  /// 0.86: the lock-screen message and contact number of a DeviceLock or EnableLostMode, kept only while the command is open (0103's trigger clears them when it is final). Never audited or logged.
+  lockMessage   String?
+  lockPhone     String?
   updatedAt     DateTime    @updatedAt
 
   @@index([appleDeviceId, queuedAt])

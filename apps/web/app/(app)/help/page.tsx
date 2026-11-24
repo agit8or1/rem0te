@@ -1093,8 +1093,8 @@ const SECTIONS: Section[] = [
           iPhones, iPads and Android devices as a mobile-device-management (MDM) provider reports them: model, OS, whether the
           device is the company&apos;s or the person&apos;s own, what is managed (the whole device, an Android work profile, or
           Apple&apos;s managed apps and data), whether the provider finds it compliant and why not, and the commands the provider
-          has run. Rem0te installs nothing on a phone or tablet, and it is <strong className="text-foreground">read-only</strong>:
-          nothing can be sent to a device from here yet.
+          has run. Rem0te installs nothing on a phone or tablet. From 0.86 it can lock a device or put it in lost mode (below);
+          nothing can be erased or wiped from here.
         </p>
         <p>
           <strong className="text-foreground">Requires setup.</strong> Rem0te is becoming its own MDM: the MDM server for iPhones and
@@ -1117,7 +1117,7 @@ const SECTIONS: Section[] = [
           its public certificates and the profile-signing certificate; then create a <strong className="text-foreground">one-time
           enrollment link</strong> for a business (an hour by default) and open it in Safari on the device. Every message the device
           sends is checked against its own certificate before Rem0te reads it. Rem0te asks enrolled devices only for inventory
-          (model, storage, security state, and how many apps, profiles and certificates), once a day; it sends no lock or wipe.
+          (model, storage, security state, and how many apps, profiles and certificates), once a day; it sends no wipe (from 0.86, a lock or lost mode only when someone asks, below).
           Creating a link asks you to confirm it is you when <em>Mobile enrollment links and tokens</em> asks. This has been tested only
           against a simulated device: no real iPhone or iPad has enrolled from this server yet.
         </p>
@@ -1130,8 +1130,18 @@ const SECTIONS: Section[] = [
           never network info, and make a <strong className="text-foreground">one-time enrollment token</strong> (an hour by
           default), shown once as a QR code and a link: a work profile on a personal phone, which Rem0te keeps as personal and never
           with its serial number, or a fully managed company phone. Devices then appear under Mobile devices after the next sync.
-          Rem0te sends no command to an Android device. This has been tested only against a stand-in for Google: no real Google API
+          Until 0.86 Rem0te sent no command to an Android device. This has been tested only against a stand-in for Google: no real Google API
           has been called, no enterprise has been created and no device has enrolled.
+        </p>
+        <p>
+          <strong className="text-foreground">Lost or stolen (0.86).</strong> On an enrolled device&apos;s page, someone with the{' '}
+          <strong className="text-foreground">Lock mobile devices and use lost mode</strong> permission can <em>Lock</em> it, or{' '}
+          <em>Start</em> and <em>Stop lost mode</em>. An iPhone or iPad lock can show a message and a phone number on the lock screen.
+          Lost mode shows them until it is stopped; it needs a supervised iPhone or iPad, or a company-owned Android device, and is
+          refused on a personal phone. A button the device cannot take is shown disabled with the reason. An <em>approved
+          actions</em> pause refuses every command. Each one is audited with who asked; the message and phone number are not kept.
+          Re-authentication is asked when <em>Mobile device lock and lost mode</em> asks. This has been tested only against a
+          simulated device and a stand-in for Google: no real device has received a command.
         </p>
         <p>
           <strong className="text-foreground">Accepted is not completed.</strong> On a device&apos;s page each command shows two

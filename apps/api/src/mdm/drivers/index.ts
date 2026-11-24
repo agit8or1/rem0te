@@ -11,6 +11,9 @@ import { standinDriver } from './standin';
  * Rem0te's own Apple tables through the reader the sync hands it. 0.85: the
  * `android` driver (drivers/android/) reads Google's Android Management API,
  * with the sealed key and the connector's device ids from its reader.
+ * 0.86: every driver also has send() (lost-device commands only, §95); the
+ * readers below carry the Apple queue's one entry and Android's open
+ * commands. Only MdmActionService calls send().
  */
 export function makeDrivers(deps: { apple: AppleReader; android: AndroidReader }): Record<Provider, MdmDriver> {
   return {
@@ -24,9 +27,10 @@ export function makeDrivers(deps: { apple: AppleReader; android: AndroidReader }
 const NO_READER: AppleReader = {
   devices: () => Promise.reject(new Error('readiness only')),
   commands: () => Promise.reject(new Error('readiness only')),
+  queueLostDevice: () => Promise.reject(new Error('readiness only')),
 };
 const NO_ANDROID: AndroidReader = {
   credential: () => Promise.reject(new Error('readiness only')),
-  deviceIds: () => Promise.reject(new Error('readiness only')),
+  openCommands: () => Promise.reject(new Error('readiness only')),
 };
 export const READINESS: Record<Provider, Pick<MdmDriver, 'ready' | 'label'>> = makeDrivers({ apple: NO_READER, android: NO_ANDROID });

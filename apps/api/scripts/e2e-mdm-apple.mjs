@@ -230,7 +230,7 @@ const resetRow = () => prisma.$executeRawUnsafe(`UPDATE "MdmPlatformSetup" SET "
   "profileSignKeyEnc" = NULL, "profileSignCertPem" = NULL, "profileSignChainPem" = NULL, "profileSignSha256" = NULL, "profileSignNotAfter" = NULL, "profileSignSetAt" = NULL,
   "updatedAt" = now() WHERE id = 'platform'`);
 let api, apns, ca;
-const created = { businesses: [], users: [] };
+const created = { businesses: [], users: [], pauses: [] };
 
 async function all() {
   const tenant = await prisma.tenant.findFirst({ orderBy: { createdAt: 'asc' } });
@@ -517,6 +517,98 @@ async function all() {
   r = await req('GET', '/mdm/apple/devices', { s: F });
   check(r.status === 200 && r.data.length >= 2 && !/pushToken|pushMagic|fakePushMagic/.test(r.text), 'the Platform Admin device list never shows a push token or magic', msg(r).slice(0, 200));
 
+  section('Lost-device commands (0.86, §95): DeviceLock and lost mode through Rem0te\'s own queue');
+  {
+    const mobA = await prisma.mobileDevice.findFirst({ where: { connectorId: conn.id, providerDeviceId: dA.id } });
+    const FO = await stepUp(S.owner);
+    const post = (id, body, s = FO) => req('POST', `/mobile-devices/${id}/commands`, { s, body });
+    const lostQueued = () => prisma.appleCommand.count({ where: { appleDeviceId: dA.id, requestType: { in: ['DeviceLock', 'EnableLostMode', 'DisableLostMode'] } } });
+    /** One signed report from the hand-made device A; the answer's command, if any. */
+    const report = async (d) => {
+      const b = Buffer.from(plistXml({ UDID: udidA, ...d }));
+      const x = await dev('/mdm/apple/server', b, mdmSign(b, devA), null);
+      return { status: x.status, text: x.text, uuid: x.text.match(/<key>CommandUUID<\/key>\s*<string>([^<]+)<\/string>/)?.[1] ?? null, type: x.text.match(/<key>RequestType<\/key>\s*<string>([^<]+)<\/string>/)?.[1] ?? null };
+    };
+    const waitCmd = async (id, pred) => { let c; for (let i = 0; i < 40; i++) { c = await prisma.mdmCommand.findUnique({ where: { id } }); if (pred(c)) break; await sleep(500); } return c; };
+
+    let r = await post(mobA.id, { kind: 'lock' }, S.owner);
+    check(r.status === 403 && code(r) === 'STEP_UP_REQUIRED' && r.body?.action === 'mdm.act', 'a lock without a fresh confirmation: 403 naming mdm.act', msg(r));
+    r = await post(mobA.id, { kind: 'lost_mode_start', message: 'Please return' });
+    check(r.status === 409 && code(r) === 'LOST_MODE_NEEDS_SUPERVISION' && (await lostQueued()) === 0, 'lost mode on a device that never said it is supervised: refused, nothing queued', msg(r));
+    r = await req('GET', `/mobile-devices/${mobA.id}/commands`, { s: S.owner });
+    const opts = Object.fromEntries((r.data?.actions ?? []).map((a) => [a.kind, a]));
+    check(opts.lock?.available === true && opts.lock.takesMessage === true && opts.lost_mode_start?.available === false && opts.lost_mode_start.code === 'LOST_MODE_NEEDS_SUPERVISION',
+      'the console is offered lock (with a lock-screen message) and told why lost mode is not available', JSON.stringify(r.data?.actions));
+    const pz = await prisma.containmentPause.create({ data: { scope: 'BUSINESS', customerId: A.id, kinds: ['actions'], reason: `e2e-mdm-apple ${sfx}`, setById: admin.id, setBy: 'msp' } });
+    created.pauses.push(pz.id);
+    r = await post(mobA.id, { kind: 'lock' });
+    check(r.status === 409 && code(r) === 'MDM_ACTIONS_PAUSED' && (await lostQueued()) === 0, 'the business\'s `actions` pause refuses a lock', msg(r));
+    await prisma.containmentPause.update({ where: { id: pz.id }, data: { clearedAt: new Date() } });
+
+    const LMSG = `Return to Harbor ${sfx}`, LPH = '+1 555 0100 200';
+    r = await post(mobA.id, { kind: 'lock', message: LMSG, phoneNumber: LPH });
+    const lockId = r.data?.command?.id;
+    const lockMc = lockId ? await prisma.mdmCommand.findUnique({ where: { id: lockId } }) : null;
+    const lockAc = await prisma.appleCommand.findFirst({ where: { appleDeviceId: dA.id, requestType: 'DeviceLock' } });
+    check(r.status === 200 && r.data.command.state === 'sent' && r.data.command.waitingFor === 'provider' && !r.data.command.providerAccepted.done,
+      'a lock: queued for the device, not yet accepted (Apple accepts when the device fetches it)', msg(r));
+    check(lockAc?.state === 'queued' && lockAc.id === lockMc?.providerCommandId && lockAc.lockMessage === LMSG && lockAc.lockPhone === LPH && lockMc.origin === 'portal' && lockMc.requestedById === owner.id,
+      'the Apple queue holds it under Rem0te\'s own id, with the message and phone number until it is final', JSON.stringify({ ac: lockAc?.state }));
+    r = await post(mobA.id, { kind: 'lock' });
+    check(r.status === 409 && code(r) === 'MOBILE_COMMAND_OPEN', 'a second lock while the first waits: 409 (0103\'s one open command of a kind)', msg(r));
+
+    // Under an `actions` pause the device is handed its inventory and never the lock.
+    const pz2 = await prisma.containmentPause.create({ data: { scope: 'BUSINESS', customerId: A.id, kinds: ['actions'], reason: `e2e-mdm-apple ${sfx}`, setById: admin.id, setBy: 'msp' } });
+    created.pauses.push(pz2.id);
+    const handed = [];
+    let x = await report({ Status: 'Idle' });
+    for (let i = 0; i < 10 && x.uuid; i++) { handed.push(x.type); x = await report({ Status: 'Error', CommandUUID: x.uuid }); }
+    check(x.status === 200 && !x.uuid && handed.length === 5 && !handed.includes('DeviceLock') && (await prisma.appleCommand.findUnique({ where: { id: lockAc.id } })).state === 'queued',
+      'under an `actions` pause the device is handed its five inventory commands and the lock stays queued', handed.join(','));
+    await prisma.containmentPause.update({ where: { id: pz2.id }, data: { clearedAt: new Date() } });
+    x = await report({ Status: 'Idle' });
+    check(x.type === 'DeviceLock' && new RegExp(`<key>Message</key>\\s*<string>${LMSG}</string>`).test(x.text) && new RegExp(`<key>PhoneNumber</key>\\s*<string>\\${LPH}</string>`).test(x.text),
+      'with the pause lifted the device fetches DeviceLock with its Message and PhoneNumber', x.text.slice(0, 500));
+    let mc = await waitCmd(lockId, (c) => c.state === 'acknowledged');
+    check(mc.state === 'acknowledged' && mc.providerAcceptedAt && !mc.deviceCompletedAt, 'fetched: accepted, not completed', JSON.stringify(mc));
+    await report({ Status: 'Acknowledged', CommandUUID: x.uuid });
+    const acDone = await prisma.appleCommand.findUnique({ where: { id: lockAc.id } });
+    check(acDone.state === 'acknowledged' && acDone.lockMessage === null && acDone.lockPhone === null, 'the device acknowledged it; 0103\'s trigger cleared the message and phone number', JSON.stringify({ s: acDone.state, m: acDone.lockMessage }));
+    mc = await waitCmd(lockId, (c) => c.state === 'completed');
+    check(mc.state === 'completed' && mc.deviceCompletedAt && mc.providerAcceptedAt <= mc.deviceCompletedAt, 'and the sync shows it completed on the device, as a separate fact', JSON.stringify(mc));
+
+    // Lost mode once the device reports itself supervised.
+    await prisma.appleDevice.update({ where: { id: dA.id }, data: { supervised: true } });
+    r = await post(mobA.id, { kind: 'lost_mode_start', phoneNumber: LPH });
+    const lostId = r.data?.command?.id;
+    check(r.status === 200 && r.data.command.state === 'sent', 'a supervised device: lost mode is queued', msg(r));
+    x = await report({ Status: 'Idle' });
+    check(x.type === 'EnableLostMode' && new RegExp(`<key>PhoneNumber</key>\\s*<string>\\${LPH}</string>`).test(x.text) && !x.text.includes('<key>Message</key>'), 'the device fetches EnableLostMode with only what was given', x.text.slice(0, 400));
+    await report({ Status: 'Error', CommandUUID: x.uuid });
+    mc = await waitCmd(lostId, (c) => c.state === 'failed');
+    check(mc.state === 'failed' && /^device:apple:/.test(mc.failureCode ?? '') && mc.providerAcceptedAt && !mc.deviceCompletedAt, 'the device refusing it: failed with Apple\'s code, accepted but never completed', JSON.stringify(mc));
+    let raised = '';
+    try { await prisma.$executeRawUnsafe(`INSERT INTO "AppleCommand" ("id","tenantId","customerId","appleDeviceId","commandUuid","requestType","expiresAt","updatedAt") VALUES ('x${sfx}','${dA.tenantId}','${A.id}','${dA.id}','${randomBytes(16).toString('hex')}','EraseDevice', now() + interval '1 hour', now())`); } catch (e) { raised = String(e.message); }
+    check(/AppleCommand_requestType_check/.test(raised), '0103 refuses EraseDevice in the queue', raised.slice(0, 160));
+
+    // mdmb answers DeviceLock as an unknown request (Error 12021).
+    r = await post(mobB.id, { kind: 'lock' });
+    const mdmbId = r.data?.command?.id;
+    check(r.status === 200, 'a lock for the mdmb device is queued', msg(r));
+    try { sh(MDMB, ['-db', mdb, '-uuids', udidB, 'devices-connect']); } catch { /* mdmb exits non-zero on an Error answer */ }
+    mc = await waitCmd(mdmbId, (c) => c.state === 'failed');
+    check(mc?.state === 'failed' && mc.failureCode === 'device:apple:mcmdmerrordomain:12021', 'mdmb (which implements no lock) answers Error: failed with a code', JSON.stringify(mc));
+
+    r = await req('GET', `/mobile-devices/${mobA.id}/commands`, { s: S.owner });
+    const portal = (r.data?.commands ?? []).filter((c) => c.origin === 'portal');
+    check(portal.length === 2 && portal.every((c) => c.requestedBy === owner.email) && portal.some((c) => c.kind === 'lock' && c.deviceCompleted.done) && portal.some((c) => c.kind === 'lost_mode_start' && c.state === 'failed'),
+      'the history shows who asked and, apart, acceptance and completion', msg(r).slice(0, 300));
+    const la = await prisma.activityLog.findMany({ where: { createdAt: { gte: started }, action: { in: ['MDM_COMMAND_REQUESTED', 'MDM_COMMAND_SENT', 'MDM_COMMAND_SEND_FAILED'] } } });
+    check(la.filter((a) => a.action === 'MDM_COMMAND_REQUESTED').length === 3 && la.filter((a) => a.action === 'MDM_COMMAND_SENT').length === 3
+      && !JSON.stringify(la.map((a) => a.metadata)).includes(LMSG) && !JSON.stringify(la.map((a) => a.metadata)).includes(LPH) && !api.log.includes(LMSG) && !api.log.includes(LPH),
+      'each audited before and after sending; no message or phone number in an audit row or the API\'s output', JSON.stringify(la.map((a) => a.action)));
+  }
+
   section('CheckOut (signed by mdmb\'s own identity) is final');
   const coB = Buffer.from(plistXml({ MessageType: 'CheckOut', UDID: udidB, Topic: topic }));
   fs.writeFileSync(path.join(tmp, 'co.plist'), coB);
@@ -569,6 +661,7 @@ try {
   for (const p of procs) await stop(p);
   if (apns) apns.close();
   await resetRow().catch(() => {});
+  await prisma.containmentPause.updateMany({ where: { id: { in: created.pauses }, clearedAt: null }, data: { clearedAt: new Date() } }).catch(() => {});
   await prisma.membership.deleteMany({ where: { userId: { in: created.users } } }).catch(() => {});
   await prisma.user.deleteMany({ where: { id: { in: created.users } } }).catch(() => {});
   await prisma.customer.deleteMany({ where: { id: { in: created.businesses } } }).catch(() => {});

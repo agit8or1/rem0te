@@ -37,6 +37,8 @@ export const CAP = {
   SCRIPTS_REVIEW: 'scripts:review',
   // 0.80: read mobile devices from an MDM provider (off for a Business User by default).
   MOBILE_VIEW: 'mobile:view',
+  // 0.86: lock a mobile device, start or stop lost mode (off for a Business User by default).
+  MOBILE_ACT: 'mobile:act',
   // 0.81: see a business's backup status (assets, jobs, recovery points, drills).
   BACKUPS_VIEW: 'backups:view',
   // 0.77: platform-only (a Platform Admin holds it; no business can grant it).

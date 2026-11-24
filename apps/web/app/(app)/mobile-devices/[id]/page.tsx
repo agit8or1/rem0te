@@ -13,10 +13,14 @@ import {
   CommandStateBadge, ComplianceBadge, READ_ONLY_NOTE, formatBytes,
   type MobileCommand, type MobileDevice,
 } from '@/components/mobile/mobile-ui';
+import { LostDeviceActions, type LostOption } from '@/components/mobile/lost-device-actions';
 
 /**
  * One mobile device (0.80 Tablet): what it is, who owns it, whether the
- * provider finds it compliant, and its command history. Read-only.
+ * provider finds it compliant, and its command history.
+ *
+ * 0.86 Lighthouse (§95): with mobile:act, lock it or start and stop lost
+ * mode. The server says which of those this device can take and why not.
  *
  * The command history keeps "accepted by the provider" and "completed on the
  * device" apart. A provider accepting a lock means it queued it for the
@@ -49,11 +53,12 @@ export default function MobileDevicePage() {
     enabled: allowed && !!id,
     retry: false,
   });
-  const cmds = useQuery<{ commands: MobileCommand[]; max: number }>({
+  const cmds = useQuery<{ commands: MobileCommand[]; max: number; canSend: boolean; actions: LostOption[] }>({
     queryKey: ['mobile-device-commands', id],
     queryFn: () => mobileApi.commands(id).then((r) => r.data?.data),
     enabled: allowed && !!id && !!dev.data,
-    refetchInterval: 60_000,
+    // Faster while a command from Rem0te is still on its way.
+    refetchInterval: (q) => (q.state.data?.commands.some((c) => c.origin === 'portal' && (c.state === 'queued' || c.state === 'sent' || c.state === 'acknowledged')) ? 10_000 : 60_000),
   });
   const d = dev.data?.device;
 
@@ -102,13 +107,22 @@ export default function MobileDevicePage() {
                 </Card>
               </div>
 
+              {cmds.data?.canSend && (
+                <Card data-testid="mdm-lost-card">
+                  <CardHeader className="pb-2"><CardTitle className="text-base">Lost or stolen</CardTitle></CardHeader>
+                  <CardContent>
+                    <LostDeviceActions deviceId={d.id} provider={d.provider} ownership={d.ownership} actions={cmds.data.actions} canSend={cmds.data.canSend} />
+                  </CardContent>
+                </Card>
+              )}
+
               <Card>
                 <CardHeader className="pb-2"><CardTitle className="text-base">Command history</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
                   <p className="text-xs text-muted-foreground">
                     <strong className="text-foreground">Accepted by the provider</strong> and <strong className="text-foreground">completed on the device</strong> are
                     separate. A provider accepting a command only means it queued it; the device has done it when the device reports so.
-                    Commands come from the provider&apos;s own console; none can be sent from Rem0te yet.
+                    Rem0te can send a lock and lost mode; nothing can be erased from here.
                   </p>
                   {cmds.isError && <p className="text-sm text-destructive">Command history could not be loaded.</p>}
                   {cmds.data && cmds.data.commands.length === 0 && <p className="text-sm text-muted-foreground" data-testid="mdm-no-commands">No commands reported for this device.</p>}
@@ -120,7 +134,7 @@ export default function MobileDevicePage() {
                             <span className="text-sm font-medium">{c.kindLabel}</span>
                             {c.destructive && <span className="rounded-full border border-destructive/50 px-2 py-0.5 text-[11px] text-destructive">Destructive</span>}
                             <CommandStateBadge state={c.state} label={c.stateLabel} />
-                            <span className="text-muted-foreground">Requested {formatDate(c.requestedAt)}{c.origin === 'provider' ? ' in the provider' : ''}</span>
+                            <span className="text-muted-foreground">Requested {formatDate(c.requestedAt)}{c.origin === 'provider' ? ' in the provider' : c.requestedBy ? ` by ${c.requestedBy}` : ''}</span>
                           </div>
                           <dl className="grid gap-2 sm:grid-cols-2">
                             <div data-testid="mdm-cmd-accepted" data-done={c.providerAccepted.done ? 'yes' : 'no'}>

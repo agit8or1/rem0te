@@ -11,12 +11,17 @@
  *              access token is kept ONLY in memory, keyed by a SHA-256 of the
  *              credential, until five minutes before it expires.
  *   reads      enterprises.list (the connection test), devices.list (paged,
- *              asking only DEVICE_FIELDS), devices.operations.list.
+ *              asking only DEVICE_FIELDS), and (0.86) operations.get for
+ *              one Operation Rem0te issued, by its own name (decision 30:
+ *              no Operations listing).
  *   writes     signupUrls.create, enterprises.create, policies.patch (the
- *              default policy only), enrollmentTokens.create (one-time).
+ *              default policy only), enrollmentTokens.create (one-time),
+ *              and (0.86, M4, §95) devices.issueCommand for LOCK,
+ *              START_LOST_MODE and STOP_LOST_MODE only (shape.ts
+ *              commandBody).
  *
- * There is no issueCommand and no devices.delete: Rem0te sends nothing to a
- * device in M3 (M4 and M5 add the lost-device and destructive commands).
+ * There is no devices.delete and no WIPE, RELINQUISH_OWNERSHIP or
+ * RESET_PASSWORD: M5 adds the destructive commands behind a second person.
  *
  * The stand-in: under NODE_ENV=test only, AMAPI_TEST_BASE_URL (exactly
  * http://127.0.0.1:<port>, through testLoopbackAllowed) replaces both hosts:
@@ -29,7 +34,8 @@ import { createHash, type KeyObject } from 'node:crypto';
 import { checkPublicHttpsUrl, OutboundError, safeGet, safePatch, safePost, testLoopbackAllowed, type SafeResponse } from '../../../common/safe-https';
 import {
   DEFAULT_POLICY, DEVICE_FIELDS, ENTERPRISE_ID_RE, ENTERPRISE_TOKEN_RE, PAGE_TOKEN_RE, POLICY_ID, SIGNUP_NAME_RE,
-  enrollmentTokenBody, enterpriseIdOf, enrollmentTokenAnswer, googleStatus, policyVersionOf, query, signJwt, signupAnswer, type PersonalUsage,
+  commandBody, enrollmentTokenBody, enterpriseIdOf, enrollmentTokenAnswer, googleStatus, issuedOperation, policyVersionOf, query, signJwt, signupAnswer,
+  type PersonalUsage,
 } from './shape';
 
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -174,24 +180,37 @@ export async function listDevices(c: AndroidCredential, enterpriseId: string, pa
   return { devices, next };
 }
 
+const DEVICE_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+const OPERATION_ID_RE = /^[A-Za-z0-9._-]{1,100}$/;
+
 /**
- * devices.operations.list for one device, one page. Whether Google serves
- * this listing for AMAPI is unconfirmed: a 404 or 501 (UNIMPLEMENTED) is
- * read as "no operations", never as a failure.
+ * devices.issueCommand for one lost-device command (0.86, §95): LOCK,
+ * START_LOST_MODE or STOP_LOST_MODE, the body from shape.ts commandBody and
+ * nothing else. The Operation Google returns is its acceptance; its name is
+ * how Rem0te reads the result later.
  */
-export async function listOperations(c: AndroidCredential, enterpriseId: string, deviceId: string): Promise<unknown[]> {
-  if (!/^[A-Za-z0-9._:-]{1,128}$/.test(deviceId)) throw new AmapiError('bad_response', null);
-  let j: unknown;
+export async function issueCommand(c: AndroidCredential, enterpriseId: string, deviceId: string, kind: string, text: { message: string | null; phoneNumber: string | null }, ttlSeconds: number) {
+  if (!DEVICE_ID_RE.test(deviceId)) throw new AmapiError('bad_response', null);
+  const body = commandBody(kind, text, ttlSeconds);
+  if (!body) throw new AmapiError('bad_response', null);
+  const op = issuedOperation(await call(c, 'POST', `/v1/enterprises/${eid(enterpriseId)}/devices/${deviceId}:issueCommand`, {}, body), deviceId);
+  if (!op) throw new AmapiError('bad_response', 200);
+  return op;
+}
+
+/**
+ * operations.get for one Operation Rem0te issued (decision 30: each by its
+ * own name, so the calls are bounded by the open commands, not the devices).
+ * A 404 is an Operation Google no longer has: null, and the command expires.
+ */
+export async function getOperation(c: AndroidCredential, enterpriseId: string, deviceId: string, operationId: string): Promise<unknown | null> {
+  if (!DEVICE_ID_RE.test(deviceId) || !OPERATION_ID_RE.test(operationId)) throw new AmapiError('bad_response', null);
   try {
-    j = await call(c, 'GET', `/v1/enterprises/${eid(enterpriseId)}/devices/${deviceId}/operations`, { pageSize: 100 }, undefined);
+    return await call(c, 'GET', `/v1/enterprises/${eid(enterpriseId)}/devices/${deviceId}/operations/${operationId}`, {}, undefined);
   } catch (e) {
-    if (e instanceof AmapiError && (e.code === 'not_found' || e.httpStatus === 501)) return [];
+    if (e instanceof AmapiError && e.code === 'not_found') return null;
     throw e;
   }
-  const ops = (j as { operations?: unknown })?.operations;
-  if (ops === undefined) return [];
-  if (!Array.isArray(ops) || ops.length > 100) throw new AmapiError('bad_response', 200);
-  return ops;
 }
 
 /** The public base Google redirects the admin's browser back to: https, or the loopback test API. */

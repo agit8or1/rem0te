@@ -147,7 +147,7 @@ try {
     && idp.KeyType === 'ECSECPrimeRandom' && Number(idp.KeySize) === 384 && mdmp.PayloadType === 'com.apple.mdm');
   ok(`AccessRights is ${PR.ACCESS_RIGHTS} = 1+4+8+16+256+1024: erase granted (decision 25), no profile install (2), no app install (4096)`,
     Number(mdmp.AccessRights) === 1309 && PR.ACCESS_RIGHTS === 1309 && (1309 & 8) === 8 && (1309 & 2) === 0 && (1309 & 4096) === 0);
-  ok('erase is granted but unsendable: no erase or wipe request type', !PR.REQUEST_TYPES.some((t) => /Erase|Wipe|Lock|Clear/i.test(t)) && !PR.isRequestType('EraseDevice'));
+  ok('erase is granted but unsendable: no erase or wipe request type', !PR.REQUEST_TYPES.some((t) => /Erase|Wipe|Clear|RemoveProfile/i.test(t)) && !PR.isRequestType('EraseDevice'));
   ok('SignMessage, CheckOutWhenRemoved, production APNs, the identity named by UUID, the check-in URL carries the link id',
     mdmp.SignMessage === true && mdmp.CheckOutWhenRemoved === true && mdmp.UseDevelopmentAPNS === false && mdmp.IdentityCertificateUUID === idp.PayloadUUID
       && mdmp.CheckInURL === `https://portal.example.com/api/v1/mdm/apple/checkin?enroll=${linkId}` && mdmp.ServerURL === 'https://portal.example.com/api/v1/mdm/apple/server');
@@ -191,10 +191,11 @@ try {
     PR.readReport({ UDID, Status: 'Idle' }).status === 'Idle' && PR.readReport({ UDID, Status: 'Acknowledged', CommandUUID: CU }).commandUuid === CU
       && PR.readReport({ UDID, Status: 'Error', CommandUUID: CU, ErrorChain: [{ ErrorCode: 12021, ErrorDomain: 'MCMDMErrorDomain', LocalizedDescription: 'secret text' }] }).errorCode === 'apple:mcmdmerrordomain:12021'
       && PR.readReport({ UDID, Status: 'Bogus' }).status === 'invalid' && PR.readReport({ UDID, Status: 'Acknowledged' }).why === 'command_uuid');
-  ok('the command bodies are fixed per type, in the closed order', JSON.stringify(PR.REQUEST_TYPES) === JSON.stringify(['DeviceInformation', 'SecurityInfo', 'InstalledApplicationList', 'ProfileList', 'CertificateList'])
+  ok('the command bodies are fixed per type, in the closed order', JSON.stringify(PR.INVENTORY_TYPES) === JSON.stringify(['DeviceInformation', 'SecurityInfo', 'InstalledApplicationList', 'ProfileList', 'CertificateList'])
+    && JSON.stringify(PR.REQUEST_TYPES) === JSON.stringify([...PR.INVENTORY_TYPES, 'DeviceLock', 'EnableLostMode', 'DisableLostMode'])
     && PR.REQUEST_TYPES.every((t) => PR.commandFor(t).RequestType === t) && PR.commandFor('DeviceInformation').Queries.length === PR.DEVICE_INFO_QUERIES.length
     && !PR.DEVICE_INFO_QUERIES.some((q) => /IMEI|MEID|Phone|MAC|ICCID|UDID|EASDeviceIdentifier|Bluetooth/i.test(q)), JSON.stringify(PR.DEVICE_INFO_QUERIES));
-  ok('isRequestType accepts exactly the five', PR.REQUEST_TYPES.every(PR.isRequestType) && !PR.isRequestType('EraseDevice') && !PR.isRequestType('DeviceLock'));
+  ok('isRequestType accepts exactly the eight (0.86: with the three lost-device commands)', PR.REQUEST_TYPES.every(PR.isRequestType) && !PR.isRequestType('EraseDevice') && PR.isRequestType('DeviceLock') && !PR.isInventoryType('DeviceLock'));
   const inv = PR.inventoryFrom('DeviceInformation', { QueryResponses: { DeviceName: 'Front desk', ModelName: 'iPhone', ProductName: 'iPhone15,2', OSVersion: '17.5.1', DeviceCapacity: 128, AvailableDeviceCapacity: '64.5', IsSupervised: false, IMEI: 'x' } });
   ok('DeviceInformation keeps the named facts; capacity in decimal GB; free above total is dropped',
     inv.deviceName === 'Front desk' && inv.storageTotalBytes === 128_000_000_000n && inv.storageFreeBytes === 64_500_000_000n && inv.supervised === false && !('imei' in inv)
@@ -265,7 +266,7 @@ try {
   const sql = readFileSync(path.join(root, 'apps/api/prisma/migrations/0101_mdm_apple/migration.sql'), 'utf8');
   const chk = (c, col) => { const m = sql.match(new RegExp(`CONSTRAINT "${c}" CHECK \\("${col}" IN \\(([^)]*)\\)`)); return m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null; };
   ok('request types, command, device and link states are the module\'s lists, in order',
-    JSON.stringify(chk('AppleCommand_requestType_check', 'requestType')) === JSON.stringify(PR.REQUEST_TYPES)
+    JSON.stringify(chk('AppleCommand_requestType_check', 'requestType')) === JSON.stringify(PR.INVENTORY_TYPES)
       && JSON.stringify(chk('AppleCommand_state_check', 'state')) === JSON.stringify(PR.APPLE_COMMAND_STATES)
       && JSON.stringify(chk('AppleDevice_state_check', 'state')) === JSON.stringify(PR.APPLE_DEVICE_STATES)
       && JSON.stringify(chk('AppleEnrollmentLink_state_check', 'state')) === JSON.stringify(PR.LINK_STATES));
