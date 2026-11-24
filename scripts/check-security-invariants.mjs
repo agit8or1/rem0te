@@ -2261,7 +2261,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('safe-https: redirects are refused, never followed; the response is capped',
     /if \(status >= 300 && status < 400\) \{ res\.destroy\(\); return done\(\(\) => reject\(new OutboundError\('REDIRECT_REFUSED'/.test(post) && /if \(total > opts\.maxBytes\)/.test(post), 'a 3xx must reject; the body must be capped');
   check('safe-https: plain http only to 127.0.0.1 and only under NODE_ENV=test; https, public DNS names otherwise',
-    /return process\.env\.NODE_ENV === 'test' && TEST_LOOPBACK\.test\(base\) && \(q < 0 \|\| TEST_QUERY\.test\(raw\.slice\(q \+ 1\)\)\);/.test(sh) && /const TEST_QUERY = \/\^\[A-Za-z0-9\._~=&%-\]\{0,800\}\$\/;/.test(sh) && /const TEST_LOOPBACK = \/\^http:\\\/\\\/127\\\.0\\\.0\\\.1:\[0-9\]\{2,5\}/.test(sh)
+    sh.includes("return process.env.NODE_ENV === 'test' && TEST_LOOPBACK.test(base) && (q < 0 || (raw.length - q - 1 <= TEST_QUERY_MAX && TEST_QUERY.test(raw.slice(q + 1))));") && sh.includes('const TEST_QUERY = /^(?:[A-Za-z0-9._~=&-]|%(?:3A|2F|3F|3D|26|2C|28|29|2B))*$/;') && sh.includes('const TEST_QUERY_MAX = 800;') && /const TEST_LOOPBACK = \/\^http:\\\/\\\/127\\\.0\\\.0\\\.1:\[0-9\]\{2,5\}/.test(sh)
       && /if \(u\.protocol !== 'https:'\) return \{ ok: false/.test(sh) && /if \(isIP\(h\)\) return \{ ok: false/.test(sh) && /INTERNAL_SUFFIX\.test\(h\)\) \{\s*\n\s*return \{ ok: false/.test(sh),
     'checkPublicHttpsUrl must refuse http, IP literals, localhost and internal names; the loopback exception must stay test-only');
   // 0.85 (§94): PATCH and DELETE for the Android Management API go through the same one request path.

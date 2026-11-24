@@ -45,8 +45,10 @@ new secret-box purpose, no new sweep or off switch, and no agent, signer, sudoer
     without it, every call is refused before any request, so a test stack cannot reach Google by accident.
 - **`safePatch` and `safeDelete`** in `common/safe-https.ts`. They are the same request path with another method.
   Nothing calls `safeDelete`.
-  - `testLoopbackAllowed`'s query charset now admits `%` and up to 800 characters. AMAPI's queries are fully
-    percent-escaped: the callback URL and the `fields` list.
+  - `testLoopbackAllowed`'s query now admits up to 800 characters and exactly nine percent-escapes
+    (`: / ? = & , ( ) +`). AMAPI's queries are fully percent-escaped: the callback URL, the page token and the
+    `fields` list. Any other escape is still refused (`unit-ai-psa.mjs`'s `%3C` check). The first push admitted
+    any `%` and failed it.
 - **Step 3, the connection test** (`POST /mdm/android/test`). It gets a token, then makes one read call
   (`enterprises.list` for the key's project).
   - The outcome is recorded for the key tested: `ok`, `bad_key`, `permission_denied`, `quota`, `unreachable` or

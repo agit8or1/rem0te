@@ -2292,8 +2292,9 @@ created and no device has enrolled.** (§93 is 0.84's.)
   `safe-https`: `safeGet`, `safePost` and `safePatch`, which is new. The
   stand-in is `AMAPI_TEST_BASE_URL`, read once in `amapiTestBase()` through
   `testLoopbackAllowed`. Under `NODE_ENV=test` without one, every call is
-  `not_ready` before any request. `TEST_QUERY` widened to `%` and 800
-  characters for AMAPI's escaped queries. `shape.ts` is pure: it imports
+  `not_ready` before any request. `TEST_QUERY` admits up to 800
+  characters and only nine escapes (`: / ? = & , ( ) +`, for AMAPI's
+  escaped queries); `%3C` and every other escape stay refused. `shape.ts` is pure: it imports
   `node:crypto` and `../../model`, and reads no clock.
 - **No command.** Nothing issues a command, deletes a device or calls
   `safeDelete`. The client's four writes are `signupUrls.create`,
