@@ -866,13 +866,13 @@ Migration 0102:
 - adds `AndroidEnterprise`: one per business, one business per enterprise, the one policy id;
 - adds same-business triggers on both tables.
 
-### Owner decisions this raises
+### Owner decisions (decided 2026-11-24, "accept recs")
 
-| # | Decision | Options | Recommendation | What 0.85 does |
-|---|---|---|---|---|
-| 29 | **Who opens Google's sign-up page** | (a) the Platform Admin, signing in with the customer's work account; (b) the customer's own admin, sent the link | **(b)**: the customer's admin holds the managed Google domain, and the link is one-time, lasts 30 minutes and is bound to that business | Both: *Open at Google* and *Copy link* |
-| 30 | **Operations on large enterprises** | (a) keep the 250-device bound; (b) at M4, read Operations only for commands Rem0te issued | **(b)**: Operations only come from EMM-issued commands. Reading each by the command's own name bounds the calls by the number of open commands | (a), documented; a sync above 250 devices is `partial` |
-| 31 | **Unbinding a business** | (a) none until M5; (b) a Rem0te-side unbind that leaves the enterprise at Google | **(a)**: deleting an enterprise unenrolls every device, so it belongs with M5's second person and always-ask check | Nothing unbinds. Deleting a business removes only Rem0te's rows; the enterprise stays at Google |
+| # | Decision | Decided | What 0.85 does |
+|---|---|---|---|
+| 29 | **Who opens Google's sign-up page** | **The customer's own admin, sent the link**: they hold the managed Google domain, and the link is one-time, lasts 30 minutes and is bound to that business | Both: *Open at Google* and *Copy link* |
+| 30 | **Operations on large enterprises** | **At M4, read Operations only for commands Rem0te issued**: Operations only come from EMM-issued commands, so reading each by the command's own name bounds the calls by the number of open commands | Until M4, the 250-device bound, documented; a sync above 250 devices is `partial` |
+| 31 | **Unbinding a business** | **None until M5**: deleting an enterprise unenrolls every device, so it belongs with M5's second person and always-ask check | Nothing unbinds. Deleting a business removes only Rem0te's rows; the enterprise stays at Google |
 
 ### Host changes at deploy (none made)
 
