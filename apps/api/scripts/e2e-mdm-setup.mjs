@@ -149,9 +149,9 @@ async function all() {
   check(ownerCodes.every((c) => c === 403), 'a Business Owner (even with a fresh confirmation) gets 403 on every route', JSON.stringify(ownerCodes));
   let r = await req('GET', '/mdm/setup', { s: S.admin });
   const st = (v) => Object.fromEntries((v?.capabilities ?? []).map((c) => [c.key, c.state]));
-  check(r.status === 200 && r.data.apple.state.state === 'requires_setup' && r.data.android.state.state === 'requires_setup' && st(r.data)['apple.enrollment'] === 'planned'
+  check(r.status === 200 && r.data.apple.state.state === 'requires_setup' && r.data.android.state.state === 'requires_setup' && st(r.data)['apple.enrollment'] === 'requires_setup'
     && st(r.data)['android.connection_test'] === 'planned' && st(r.data)['apple.abm'] === 'planned' && r.data.outboundCalls === false,
-  'a fresh install: both cards require setup; enrollment, ABM and the Google calls are planned; no outbound call', msg(r));
+  'a fresh install: both cards require setup (enrollment too, from 0.84); ABM and the Google calls are planned; no outbound call', msg(r));
 
   section('Fresh authentication on `ask` (mdm.setup)');
   r = await req('POST', '/mdm/setup/apple/push-key', { s: S.admin, body: {} });

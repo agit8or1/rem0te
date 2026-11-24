@@ -394,3 +394,62 @@ export function checkServiceAccountKey(text: string): ServiceAccountCheck {
   const sealedJson = JSON.stringify({ type: 'service_account', project_id: projectId, private_key_id: keyId, private_key: pk, client_email: email, ...(clientId ? { client_id: clientId } : {}) });
   return { ok: true, projectId, clientEmail: email as string, privateKeyId: keyId, keyIdLast4: keyId.slice(-4), sealedJson };
 }
+
+// ── 0.84 (M2, step 6): the device CA and the profile signer ───────────────
+
+export type DeviceCaRefusal = 'CA_UNREADABLE' | 'CA_NOT_ROOT' | 'CA_EXPIRED' | 'CA_CHAIN_BROKEN' | 'CA_TOO_LONG';
+export type DeviceCaCheck =
+  | { ok: true; root: X509Certificate; rootFacts: CertFacts; intermediates: X509Certificate[]; rootPem: string; chainPem: string | null; notAfter: Date }
+  | { ok: false; code: DeviceCaRefusal; message: string };
+
+/**
+ * The device CA's public certificates (rem0te-mdm-ca: step-ca's root and
+ * intermediate, from `rem0te-mdm-ca-setup.sh`). The root must be a
+ * self-signed CA; every intermediate a CA issued by the root or by another
+ * listed intermediate; all valid now. Only public certificates: the CA's key
+ * never reaches the portal.
+ */
+export function checkDeviceCa(input: { root: string; intermediates?: string }, now: Date): DeviceCaCheck {
+  const root = readCertificate(input.root);
+  if (!root) return { ok: false, code: 'CA_UNREADABLE', message: 'The root is not one certificate (PEM).' };
+  const rootFacts = certFacts(root);
+  if (!root.ca || !rootFacts.selfSigned) return { ok: false, code: 'CA_NOT_ROOT', message: 'The root must be a self-signed CA certificate (the device CA\'s root_ca.crt).' };
+  const valid = (c: X509Certificate) => new Date(c.validFrom).getTime() <= now.getTime() + NOT_BEFORE_SKEW_MS && now.getTime() < new Date(c.validTo).getTime();
+  if (!valid(root)) return { ok: false, code: 'CA_EXPIRED', message: 'The root is expired or not yet valid.' };
+  const mids = input.intermediates?.trim() ? readCertificates(input.intermediates) : [];
+  if (!mids) return { ok: false, code: 'CA_UNREADABLE', message: 'The intermediates are not PEM certificates.' };
+  if (mids.length > 3) return { ok: false, code: 'CA_TOO_LONG', message: 'At most three intermediates.' };
+  for (const m of mids) {
+    if (!m.ca || !valid(m)) return { ok: false, code: 'CA_CHAIN_BROKEN', message: 'Every intermediate must be a valid CA certificate.' };
+    if (!issuedBy(m, root) && !mids.some((o) => o !== m && issuedBy(m, o))) return { ok: false, code: 'CA_CHAIN_BROKEN', message: 'An intermediate was not issued by the root (or by another intermediate given).' };
+  }
+  const notAfter = [root, ...mids].map((c) => new Date(c.validTo)).sort((a, b) => a.getTime() - b.getTime())[0];
+  return { ok: true, root, rootFacts, intermediates: mids, rootPem: certPem(root), chainPem: mids.length ? mids.map(certPem).join('') : null, notAfter };
+}
+
+export type SignerRefusal = 'SIGNER_CERT_UNREADABLE' | 'SIGNER_KEY_UNREADABLE' | 'SIGNER_KEY_ENCRYPTED' | 'SIGNER_KEY_TYPE' | 'SIGNER_KEY_MISMATCH' | 'SIGNER_EXPIRED' | 'SIGNER_IS_CA' | 'SIGNER_CHAIN';
+export type SignerCheck =
+  | { ok: true; cert: X509Certificate; facts: CertFacts; keyPem: string; chain: X509Certificate[]; chainPem: string | null }
+  | { ok: false; code: SignerRefusal; message: string };
+
+/**
+ * The profile-signing certificate and key (`rem0te-mdm-ca-setup.sh` issues
+ * one from the device CA). RSA or EC; the key the certificate's; valid now;
+ * not a CA. The optional chain is public and goes in the signed profile.
+ */
+export function checkProfileSigner(input: { certificate: string; privateKey: string; passphrase?: string; chain?: string }, now: Date): SignerCheck {
+  const cert = readCertificate(input.certificate);
+  if (!cert) return { ok: false, code: 'SIGNER_CERT_UNREADABLE', message: 'The signing certificate is not one certificate (PEM).' };
+  if (typeof input.privateKey !== 'string' || !/-----BEGIN (RSA |EC |ENCRYPTED )?PRIVATE KEY-----/.test(input.privateKey)) return { ok: false, code: 'SIGNER_KEY_UNREADABLE', message: 'The key is not a PEM private key.' };
+  let key: KeyObject;
+  try { key = createPrivateKey(input.passphrase ? { key: input.privateKey, format: 'pem', passphrase: input.passphrase } : { key: input.privateKey, format: 'pem' }); }
+  catch { return /ENCRYPTED/.test(input.privateKey) && !input.passphrase ? { ok: false, code: 'SIGNER_KEY_ENCRYPTED', message: 'The key is encrypted: give its passphrase too (used once, not kept).' } : { ok: false, code: 'SIGNER_KEY_UNREADABLE', message: 'The key could not be read (or the passphrase is wrong).' }; }
+  if (key.asymmetricKeyType !== 'rsa' && key.asymmetricKeyType !== 'ec') return { ok: false, code: 'SIGNER_KEY_TYPE', message: 'The signing key must be RSA or EC.' };
+  if (!keyMatches(cert, key)) return { ok: false, code: 'SIGNER_KEY_MISMATCH', message: 'That key is not the signing certificate\'s.' };
+  const facts = certFacts(cert);
+  if (facts.notAfter.getTime() <= now.getTime() || facts.notBefore.getTime() > now.getTime() + NOT_BEFORE_SKEW_MS) return { ok: false, code: 'SIGNER_EXPIRED', message: 'The signing certificate is expired or not yet valid.' };
+  if (cert.ca) return { ok: false, code: 'SIGNER_IS_CA', message: 'Use a signing certificate, not a CA certificate: the CA\'s key stays with the CA.' };
+  const chain = input.chain?.trim() ? readCertificates(input.chain) : [];
+  if (!chain || chain.length > 3 || chain.some((c) => !c.ca)) return { ok: false, code: 'SIGNER_CHAIN', message: 'The chain must be up to three CA certificates (PEM).' };
+  return { ok: true, cert, facts, keyPem: key.export({ type: 'pkcs8', format: 'pem' }) as string, chain, chainPem: chain.length ? chain.map(certPem).join('') : null };
+}

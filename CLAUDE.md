@@ -2189,6 +2189,87 @@ Behavioural proof: `e2e-mdm-setup.mjs` (ports 4071–4072, in `run-e2e.sh`).
 Unit: `unit-mdm-setup.mjs` (in CI). Browser: `e2e-ui.mjs`
 (`mdmSettingsUi`). **No real Apple or Google credential has been used.**
 
+0.84 extended §92 for step 6. There are now five purposes
+(`rem0te-mdm-profile-sign-v1` joins them), ten writes and six deletes. The two
+in-memory openers, `openPushIdentity` and `openProfileSigner`, are the only
+returns that carry a key, and §93 holds their callers.
+
+§93 (0.84) is Rem0te as the Apple MDM server: M2 of `docs/own-mdm.md`,
+enrollment, check-in and inventory. **Nothing has run on a real iPhone or
+iPad, and no real APNs call has been made.** (§92 is 0.83's.)
+
+- **Hosts.** §90's provider-host check is now an exact allowed list:
+  `api.push.apple.com` once, as `APNS_ORIGIN` in `mdm/apple/apns.ts`, and
+  nowhere else (no sandbox host).
+- **One push site.** `apns.ts` is the only importer and caller of
+  `common/safe-h2.ts`. safe-h2 is the only module that presents a client
+  certificate, and it keeps every safe-https rule: a public name resolved and
+  judged on connect, the checked address with SNI, TLS 1.2+, verified, h2
+  only, no redirects, bounded. The body is exactly `{"mdm": PushMagic}`. The
+  loopback stub is read only in `apns.ts`, through `testLoopbackH2Allowed`
+  (`NODE_ENV=test`, `https://127.0.0.1:<port>`).
+- **Sealed in memory.** The push identity is opened only by
+  `AppleMdmService.pushPass`, the profile signer only by
+  `AppleEnrollmentService.claim`. The profile key is sealed before the
+  `logOrFail` and the write.
+- **The CA is not the portal's.** Nothing in `apps/api/src` names step-ca,
+  its directories or keys, and nothing in `mdm/` spawns a process. The CA is
+  `deploy/mdm-ca/rem0te-mdm-ca-setup.sh`:
+  - a pinned SHA-256 and its own user;
+  - `127.0.0.1` only;
+  - ACME with `device-attest-01` and Apple attestation only;
+  - SCEP refused without `--prefix`;
+  - keys never overwritten.
+
+  The Caddyfile has exactly one step-ca route, `/acme/rem0te-mdm/*`, verified
+  against the CA root, commented out until deploy.
+- **Closed commands.** The request types (the five inventory commands, in
+  order) and the command, device and link states are 0101's CHECKs, word for
+  word. No lock, erase or other request type exists in `mdm/apple`.
+  `ACCESS_RIGHTS` is one constant, 1309: erase (8) is granted at enrollment
+  (decision 25) but never sendable, because no such request type exists. It is named only by
+  `protocol.ts` and `profile.ts`. Every command body comes from its type
+  (`commandFor`).
+- **Verified first.** `checkin` and `server` call `verified()` (the detached
+  CMS against the uploaded device CA) before parsing. A refusal is a 401
+  with no body. Every message after `Authenticate` must match the UDID and
+  the certificate SHA-256. `Authenticate` needs the push topic and iOS 16,
+  and consumes a claimed link inside its transaction. The three device routes
+  are `@Public` and rate-limited. The raw body is bounded (64 KB / 2 MB) and
+  applied only to `AppleDeviceController`.
+- **Links.** Creating one is Platform Admin, then `assertFresh` naming
+  `mdm.enroll` (§62, default `off`); revoking never asks. The token is 32
+  random bytes shown once, and only its SHA-256 is stored. The claim and the
+  consume are single conditional updates, and only `AppleEnrollmentService`
+  writes links. 0101 caps a link at 24 hours and makes its final states
+  final.
+- **No PKCS#12** anywhere. A SCEP identity comes only from
+  `scepTestIdentity` (`NODE_ENV=test`, `127.0.0.1`), and production is ACME,
+  hardware-bound and attested.
+- **Writers.** Only `AppleMdmService` writes `AppleDevice` and
+  `AppleCommand`. The Apple code writes no `MobileDevice`, `MdmCommand` or
+  connector; the sync does. The only connector it creates is an enabled
+  `apple` one, in `ensureAppleConnectors`.
+- **Digest.** SHA-1 is accepted in `Mdm-Signature` for now (decision 28).
+  Every verified message records its digest in `AppleDevice.signatureDigest`,
+  and `SIGNATURE_DIGESTS` is 0101's CHECK. Revisit once real devices have
+  checked in.
+- **Kept.** No IMEI, MEID, phone number, MAC, user or UnlockToken column, and
+  the check-in reads none of them. Links are corporate only. No push token or
+  magic in an audit row, a log line or the admin view.
+- **No new sweep.** `AppleMdmService.pass` runs only from
+  `MdmSyncService.sweep`, so `MDM_SWEEP=off` stops pushes, re-queues and
+  expiry. No Apple code consults a pause: check-ins are always answered and
+  inventory is not held, as in the design's containment table.
+
+Behavioural proof: `e2e-mdm-apple.mjs` (ports 4061–4064, in `run-e2e.sh`).
+It needs `MDMB_BIN` (mdmb built at a pinned commit) and `STEP_CA_BIN`
+(step-ca v0.30.2, SHA-256 pinned), which CI's e2e job provides. It runs a
+scratch step-ca from the real setup script under `--prefix`, ACME on loopback
+without attestation, mdmb through SCEP, and a loopback HTTP/2 APNs stand-in.
+Unit: `unit-mdm-apple.mjs` (in CI). Browser: `e2e-ui.mjs`
+(`mdmSettingsUi`).
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

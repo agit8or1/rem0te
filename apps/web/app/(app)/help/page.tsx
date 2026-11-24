@@ -1113,6 +1113,15 @@ const SECTIONS: Section[] = [
           when <em>Mobile device management setup</em> asks; deleting never does.
         </p>
         <p>
+          From 0.84, step 6 enrolls iPhones and iPads with Rem0te as the MDM server. Install the device CA on the server and upload
+          its public certificates and the profile-signing certificate; then create a <strong className="text-foreground">one-time
+          enrollment link</strong> for a business (an hour by default) and open it in Safari on the device. Every message the device
+          sends is checked against its own certificate before Rem0te reads it. Rem0te asks enrolled devices only for inventory
+          (model, storage, security state, and how many apps, profiles and certificates), once a day; it sends no lock or wipe.
+          Creating a link asks you to confirm it is you when <em>Apple enrollment links</em> asks. This has been tested only
+          against a simulated device: no real iPhone or iPad has enrolled from this server yet.
+        </p>
+        <p>
           <strong className="text-foreground">Accepted is not completed.</strong> On a device&apos;s page each command shows two
           separate facts: when the provider <em>accepted</em> it, and when the device reported it <em>completed</em>. A lock the
           provider accepted has not locked anything until the phone says so.

@@ -4,7 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { CAP } from '../rbac/capabilities';
 import { commandProgress, type CommandFacts } from './command-state';
-import { DRIVERS } from './drivers';
+import { READINESS } from './drivers';
 import {
   COMMAND_KIND_LABEL, COMMAND_STATE_LABEL, COMPLIANCE_LABEL, COMPLIANCE_STATES, DESTRUCTIVE_KINDS, ENROLLMENT_LABEL, ENROLLMENT_STATES,
   OWNERSHIP_LABEL, OWNERSHIPS, PLATFORM_LABEL, PLATFORMS, PROVIDER_LABEL, SCOPE_LABEL, isOneOf,
@@ -81,7 +81,7 @@ export class MdmService {
   }
 
   private connectorView(r: MdmConnector & { customer?: { id: string; name: string } }, devices: number) {
-    const drv = isOneOf(Object.keys(DRIVERS) as Provider[], r.provider) ? DRIVERS[r.provider as Provider] : null;
+    const drv = isOneOf(Object.keys(READINESS) as Provider[], r.provider) ? READINESS[r.provider as Provider] : null;
     const ready = drv ? drv.ready(r) : { ok: false as const, reason: 'Unknown provider.' };
     return {
       id: r.id,

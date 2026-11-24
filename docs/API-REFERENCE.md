@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **690** of them across
-**105** controllers.
+integration, under `/api/integration/v1`). There are **701** of them across
+**107** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -164,6 +164,27 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/apikeys` | signed in | — |
 | `POST` | `/api/v1/apikeys` | signed in | — |
 | `DELETE` | `/api/v1/apikeys/:id` | signed in | — |
+
+## Apple MDM enrollment links and devices
+
+`apps/api/src/mdm/apple/apple.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/mdm/apple/devices` | Platform Admin | — |
+| `GET` | `/api/v1/mdm/apple/links` | Platform Admin | — |
+| `POST` | `/api/v1/mdm/apple/links` | Platform Admin, throttled | — |
+| `DELETE` | `/api/v1/mdm/apple/links/:id` | Platform Admin | — |
+
+## Apple MDM (device-authenticated)
+
+`apps/api/src/mdm/apple/apple.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `PUT` | `/api/v1/mdm/apple/checkin` | public, throttled | — |
+| `GET` | `/api/v1/mdm/apple/enroll/:token` | public, throttled | — |
+| `PUT` | `/api/v1/mdm/apple/server` | public, throttled | — |
 
 ## Audit log
 
@@ -548,7 +569,7 @@ Admins and Business Owners are not confined by it; see
 | `DELETE` | `/api/v1/admin/integration/mappings/technicians/:id` | Platform Admin | — |
 | `GET` | `/api/v1/admin/integration/peers` | Platform Admin | — |
 
-## Integration apiintegrationv
+## Integration apiintegrationv integration
 
 `apps/api/src/integration/integration.controller.ts`
 
@@ -559,7 +580,7 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/integration/v1/jobs/:job_id` | signed peer (ticket-rmm-v1) | — |
 | `GET` | `/api/integration/v1/jobs/:job_id/events` | signed peer (ticket-rmm-v1) | — |
 
-## Integration apiintegrationv
+## Integration apiintegrationv integrationactions
 
 `apps/api/src/integration/integration.controller.ts`
 
@@ -608,6 +629,10 @@ Admins and Business Owners are not confined by it; see
 | `GET` | `/api/v1/mdm/setup` | Platform Admin | — |
 | `PUT` | `/api/v1/mdm/setup/android/service-account` | Platform Admin, throttled | — |
 | `DELETE` | `/api/v1/mdm/setup/android/service-account` | Platform Admin | — |
+| `PUT` | `/api/v1/mdm/setup/apple/device-ca` | Platform Admin, throttled | — |
+| `DELETE` | `/api/v1/mdm/setup/apple/device-ca` | Platform Admin | — |
+| `PUT` | `/api/v1/mdm/setup/apple/profile-signer` | Platform Admin, throttled | — |
+| `DELETE` | `/api/v1/mdm/setup/apple/profile-signer` | Platform Admin | — |
 | `PUT` | `/api/v1/mdm/setup/apple/push-certificate` | Platform Admin, throttled | — |
 | `DELETE` | `/api/v1/mdm/setup/apple/push-certificate` | Platform Admin | — |
 | `POST` | `/api/v1/mdm/setup/apple/push-certificate/replace` | Platform Admin, throttled | — |

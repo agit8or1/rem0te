@@ -160,14 +160,30 @@ check(T(topic, testTopic(), null).code === 'APNS_TOPIC_CHANGED', 'a different to
 const t2 = testTopic();
 check(T(topic, t2, { currentTopic: topic }).op === 'replace' && T(topic, t2, { currentTopic: t2 }).code === 'APNS_REPLACE_STALE'
   && T(topic, topic, { currentTopic: topic }).code === 'APNS_TOPIC_SAME' && T(null, t2, { currentTopic: topic }).code === 'APNS_NOTHING_TO_REPLACE', 'replacing must name the current topic and bring a new one');
-const F0 = { pushKey: false, vendor: null, signingRoute: null, pushCert: null, appleAccount: null, androidKey: false };
+const F0 = { pushKey: false, vendor: null, signingRoute: null, pushCert: null, appleAccount: null, androidKey: false, deviceCa: false, profileSigner: null, enrolledDevices: 0, pushProven: false };
 let caps = M.capabilities(F0, now);
 const st = (cs) => Object.fromEntries(cs.map((x) => [x.key, x.state]));
-check(caps.every((x) => M.STATES.includes(x.state)) && st(caps)['apple.push_request'] === 'requires_setup' && st(caps)['apple.enrollment'] === 'planned' && st(caps)['apple.abm'] === 'planned'
-  && st(caps)['android.connection_test'] === 'planned' && st(caps)['android.enterprise'] === 'planned' && st(caps)['apple.ios15'] === 'unsupported', 'nothing done: requires setup, with enrollment, ABM and the Android calls planned and iOS 15 unsupported', JSON.stringify(st(caps)));
+check(caps.every((x) => M.STATES.includes(x.state)) && st(caps)['apple.push_request'] === 'requires_setup' && st(caps)['apple.enrollment'] === 'requires_setup' && st(caps)['apple.abm'] === 'planned'
+  && st(caps)['android.connection_test'] === 'planned' && st(caps)['android.enterprise'] === 'planned' && st(caps)['apple.ios15'] === 'unsupported', 'nothing done: requires setup (enrollment too, from 0.84), with ABM and the Android calls planned and iOS 15 unsupported', JSON.stringify(st(caps)));
 caps = M.capabilities({ ...F0, pushKey: true, vendor: { notAfter: new Date(now.getTime() + DAY) }, signingRoute: 'own_vendor', pushCert: { notAfter: new Date(now.getTime() + 200 * DAY) }, appleAccount: 'mdm@example.test', androidKey: true }, now);
 check(['apple.push_request', 'apple.vendor_signing', 'apple.push_certificate', 'apple.renewal', 'android.service_account'].every((k) => st(caps)[k] === 'available')
-  && M.platformState(caps, 'apple').state === 'planned' && M.platformState(caps, 'android').state === 'planned', 'every M1 step done: available, and each card\'s next step is planned (M2, M3)', JSON.stringify(st(caps)));
+  && M.platformState(caps, 'apple').state === 'requires_setup' && /step 6/.test(M.platformState(caps, 'apple').reason) && M.platformState(caps, 'android').state === 'planned',
+  'every M1 step done: available; Apple\'s next step is step 6 (0.84), Android\'s is planned (M3)', JSON.stringify(st(caps)));
+{
+  const M1 = { ...F0, pushKey: true, vendor: { notAfter: new Date(now.getTime() + DAY) }, signingRoute: 'own_vendor', pushCert: { notAfter: new Date(now.getTime() + 200 * DAY) }, appleAccount: 'mdm@example.test' };
+  const signer = { notAfter: new Date(now.getTime() + 300 * DAY) };
+  let c = M.capabilities({ ...M1, deviceCa: true, profileSigner: signer }, now);
+  check(st(c)['apple.device_ca'] === 'available' && st(c)['apple.profile_signer'] === 'available' && st(c)['apple.enrollment'] === 'requires_setup' && /Ready: create a one-time enrollment link/.test(c.find((x) => x.key === 'apple.enrollment').reason),
+    'step 6 done: the device CA and signer available; enrollment is ready but requires a first device', JSON.stringify(st(c)));
+  c = M.capabilities({ ...M1, deviceCa: true, profileSigner: signer, enrolledDevices: 1 }, now);
+  check(st(c)['apple.enrollment'] === 'requires_setup' && /waiting for a push/.test(c.find((x) => x.key === 'apple.enrollment').reason), 'one device enrolled but no proven push: still requires setup');
+  c = M.capabilities({ ...M1, deviceCa: true, profileSigner: signer, enrolledDevices: 1, pushProven: true }, now);
+  check(st(c)['apple.enrollment'] === 'available' && /A push was answered/.test(c.find((x) => x.key === 'apple.push_certificate').reason), 'enrolled and a push answered then a check-in: available, and the certificate is proven');
+  c = M.capabilities({ ...M1, deviceCa: true, profileSigner: { notAfter: new Date(now.getTime() - DAY) } }, now);
+  check(st(c)['apple.profile_signer'] === 'requires_setup' && /expired/.test(c.find((x) => x.key === 'apple.profile_signer').reason) && st(c)['apple.enrollment'] === 'requires_setup', 'an expired profile signer stops enrollment');
+  c = M.capabilities({ ...M1, deviceCa: true, profileSigner: signer, pushCert: { notAfter: new Date(now.getTime() - DAY) } }, now);
+  check(st(c)['apple.enrollment'] === 'requires_setup' && /Needs the push certificate/.test(c.find((x) => x.key === 'apple.enrollment').reason), 'an expired push certificate stops enrollment');
+}
 check(/Not yet proven/.test(caps.find((x) => x.key === 'apple.push_certificate').reason), 'an installed certificate says it is not yet proven');
 caps = M.capabilities({ ...F0, pushKey: true, pushCert: { notAfter: new Date(now.getTime() - DAY) } }, now);
 check(st(caps)['apple.push_certificate'] === 'requires_setup' && /expired/.test(caps.find((x) => x.key === 'apple.push_certificate').reason), 'an expired certificate is requires setup, with the reason');

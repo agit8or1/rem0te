@@ -11,8 +11,13 @@
  * here reaches a phone: in 0.80 the portal only reads what a provider reports.
  */
 
-/** Providers a connector may name. 0.80 has one: the loopback stand-in (test only). */
-export const PROVIDERS = ['standin'] as const;
+/**
+ * Providers a connector may name. 0.80: the loopback stand-in (test only).
+ * 0.84: `apple`, Rem0te's own MDM server for iPhones and iPads
+ * (docs/own-mdm.md M2): the first real driver, which reads Rem0te's own
+ * Apple tables and calls no provider.
+ */
+export const PROVIDERS = ['standin', 'apple'] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
 export const PLATFORMS = ['ios', 'ipados', 'android'] as const;
@@ -69,7 +74,7 @@ export type CommandOrigin = (typeof COMMAND_ORIGINS)[number];
 export const SYNC_RESULTS = ['ok', 'partial', 'not_ready', 'paused', 'unreachable', 'bad_response', 'refused'] as const;
 export type SyncResult = (typeof SYNC_RESULTS)[number];
 
-export const PROVIDER_LABEL: Record<Provider, string> = { standin: 'Stand-in (tests only)' };
+export const PROVIDER_LABEL: Record<Provider, string> = { standin: 'Stand-in (tests only)', apple: 'Rem0te (Apple)' };
 export const PLATFORM_LABEL: Record<Platform, string> = { ios: 'iOS', ipados: 'iPadOS', android: 'Android' };
 export const OWNERSHIP_LABEL: Record<Ownership, string> = { corporate: 'Corporate', byod: 'Personal (BYOD)' };
 export const SCOPE_LABEL: Record<ManagementScope, string> = {

@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiError } from '@/components/security-controls/shared';
 import { confirmSentence, reauthSuffix, useAsks } from '@/lib/confirm-policy';
+import { AppleEnrollmentStep, type AppleStep6View } from '@/components/mobile/apple-enrollment-step';
 
 /**
  * Settings → Mobile devices (0.83 Beacon; docs/own-mdm.md M1, docs/mobile-devices.md).
@@ -27,6 +28,9 @@ import { confirmSentence, reauthSuffix, useAsks } from '@/lib/confirm-policy';
  * says what Rem0te checks and what it cannot, and every capability is in one
  * of the four states. Nothing on this page calls Apple or Google: the links
  * open their pages in a new tab.
+ *
+ * 0.84 Harbor adds step 6 (docs/own-mdm.md M2): the device CA, the profile
+ * signer, one-time enrollment links and the enrolled devices.
  */
 type State = 'available' | 'requires_setup' | 'unsupported' | 'planned';
 interface Cap { key: string; platform: 'apple' | 'android'; label: string; state: State; reason: string }
@@ -43,7 +47,7 @@ interface View {
     appleAccount: string | null;
     devicesOnTopic: number;
     reminders: { days: number[]; lastSent: number | null; sweep: boolean; heldByPause: boolean };
-  };
+  } & AppleStep6View;
   android: {
     state: { state: State; reason: string };
     checklist: string[];
@@ -327,7 +331,7 @@ export default function MobileDeviceSettingsPage() {
                 </Step>
 
                 <Step n={5} title="Upload the push certificate" state={capState('apple.push_certificate')} testId="mdm-apple-pushcert">
-                  <Checks auto="Its public key is Rem0te's sealed push key; its topic starts com.apple.mgmt.External.; it is unexpired and already valid; a renewal keeps the same topic. The certificate is sealed; the topic is shown." cannot="That APNs accepts it: only a first push to a real device proves that (M2). Until then it is shown as not yet proven." />
+                  <Checks auto="Its public key is Rem0te's sealed push key; its topic starts com.apple.mgmt.External.; it is unexpired and already valid; a renewal keeps the same topic. The certificate is sealed; the topic is shown." cannot="That APNs accepts it: only a first push answered by APNs, followed by the device connecting (step 6), proves that. Until then it is shown as not yet proven." />
                   {pc?.present && (
                     <div className="space-y-1 rounded-md border p-3" data-testid="mdm-pushcert">
                       <Fact k="Topic" v={pc.topic} mono />
@@ -335,7 +339,7 @@ export default function MobileDeviceSettingsPage() {
                       <Fact k="Apple Account" v={d.apple.appleAccount ?? '—'} />
                       <Fact k="Issuer" v={pc.issuer} />
                       <Fact k="Serial" v={pc.serial} mono />
-                      <Fact k="Proven with a device" v={pc.proven ? 'Yes' : 'Not yet (M2)'} />
+                      <Fact k="Proven with a device" v={pc.proven ? 'Yes' : 'Not yet (step 6)'} />
                       <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setConfirm('pushCert')} data-testid="mdm-pushcert-delete">Delete push certificate</Button>
                     </div>
                   )}
@@ -362,7 +366,12 @@ export default function MobileDeviceSettingsPage() {
                   )}
                 </Step>
 
-                <Step n={6} title="Renew every year — with the same Apple Account" state={capState('apple.renewal')} testId="mdm-apple-renewal">
+                <Step n={6} title="Enroll a test iPhone or iPad" state={capState('apple.enrollment')} testId="mdm-apple-enroll">
+                  <AppleEnrollmentStep view={d.apple} ask={ask} onNote={setNote}
+                    onView={(v) => { qc.setQueryData(['mdm-setup'], v); void qc.invalidateQueries({ queryKey: ['mobile-setup'] }); }} />
+                </Step>
+
+                <Step n={7} title="Renew every year — with the same Apple Account" state={capState('apple.renewal')} testId="mdm-apple-renewal">
                   <div className="flex items-start gap-2 rounded-md border-2 border-amber-500 bg-amber-500/10 p-3 text-amber-950 dark:text-amber-100" data-testid="mdm-renewal-warning">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <p><strong>Renew with the same Apple Account{d.apple.appleAccount ? ` (${d.apple.appleAccount})` : ''}.</strong> A certificate made with a different account has a different topic, and every enrolled iPhone and iPad would stop being managed until it enrolls again. Rem0te refuses such a certificate on renewal. At identity.apple.com, choose Renew next to the existing certificate and upload the same signed request (or a fresh one from step 3: it uses the same key).</p>
@@ -376,7 +385,7 @@ export default function MobileDeviceSettingsPage() {
                   {d.apple.reminders.heldByPause && <p className="text-xs text-amber-800 dark:text-amber-200">A notifications pause is in effect: reminders are held until it is lifted.</p>}
                 </Step>
 
-                <Step n={7} title="Apple Business Manager (optional)" state="planned" testId="mdm-apple-abm">
+                <Step n={8} title="Apple Business Manager (optional)" state="planned" testId="mdm-apple-abm">
                   <p className="text-muted-foreground">For supervised, automated enrollment of devices a business buys. Uploading the ABM server token arrives in M6.</p>
                 </Step>
               </ol>

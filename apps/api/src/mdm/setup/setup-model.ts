@@ -72,6 +72,11 @@ export interface SetupFacts {
   pushCert: { notAfter: Date } | null;
   appleAccount: string | null;
   androidKey: boolean;
+  /** 0.84 (M2): the device CA's certificates, the profile signer, and what the MDM server has seen. */
+  deviceCa: boolean;
+  profileSigner: { notAfter: Date } | null;
+  enrolledDevices: number;
+  pushProven: boolean;
 }
 export interface Capability { key: string; platform: 'apple' | 'android'; label: string; state: CapabilityState; reason: string }
 
@@ -101,11 +106,22 @@ export function capabilities(f: SetupFacts, now: Date): Capability[] {
     const left = daysLeft(f.pushCert.notAfter, now);
     a('apple.push_certificate', 'APNs push certificate', left <= 0 ? 'requires_setup' : 'available',
       left <= 0 ? 'The push certificate has expired: renew it with the same Apple Account.'
-        : `Installed; expires in ${left} day${left === 1 ? '' : 's'}. Not yet proven: only a first push to a real device proves APNs accepts it (M2).`);
+        : `Installed; expires in ${left} day${left === 1 ? '' : 's'}. ${f.pushProven ? 'A push was answered and the device connected afterwards.' : 'Not yet proven: only a first push answered by APNs, followed by the device connecting, proves it.'}`);
   }
   a('apple.renewal', 'Renewal reminders', f.pushCert ? 'available' : 'requires_setup',
     f.pushCert ? `Reminders at ${REMINDER_DAYS.join(', ')} days before expiry${f.appleAccount ? '' : '; record which Apple Account owns the certificate'}.` : 'Starts once a push certificate is installed.');
-  a('apple.enrollment', 'Enrolling iPhones and iPads (iOS/iPadOS 16+)', 'planned', 'Enrollment links, check-in and inventory arrive in M2.');
+  const signerOk = !!f.profileSigner && f.profileSigner.notAfter.getTime() > now.getTime();
+  a('apple.device_ca', 'Device identity CA (step-ca)', f.deviceCa ? 'available' : 'requires_setup',
+    f.deviceCa ? 'The device CA\'s public certificates are uploaded; every device message is verified against them.' : 'Install the device CA on the server and upload its root and intermediate (step 6).');
+  a('apple.profile_signer', 'Enrollment profile signing', signerOk ? 'available' : 'requires_setup',
+    signerOk ? 'Enrollment profiles are signed.' : f.profileSigner ? 'The profile-signing certificate has expired: issue a new one from the device CA.' : 'Upload the profile-signing certificate the device CA issued (step 6).');
+  const enrollReady = !!f.pushCert && daysLeft(f.pushCert.notAfter, now) > 0 && f.deviceCa && signerOk;
+  a('apple.enrollment', 'Enrolling iPhones and iPads (iOS/iPadOS 16+)',
+    enrollReady && f.enrolledDevices > 0 && f.pushProven ? 'available' : 'requires_setup',
+    !enrollReady ? 'Needs the push certificate, the device CA and the profile signer (steps 5 and 6).'
+      : f.enrolledDevices === 0 ? 'Ready: create a one-time enrollment link for a business and open it on a test iPhone or iPad (step 6).'
+        : !f.pushProven ? `${f.enrolledDevices} enrolled; waiting for a push answered by APNs and the device connecting afterwards.`
+          : `${f.enrolledDevices} enrolled; check-in, push and inventory seen.`);
   a('apple.abm', 'Apple Business Manager (automated enrollment)', 'planned', 'The ABM server token arrives in M6.');
   a('apple.ios15', 'iPhones and iPads below iOS/iPadOS 16', 'unsupported', 'Decision 24: iOS/iPadOS 16 is the minimum (device identity through ACME).');
 

@@ -3575,7 +3575,7 @@ async function mdmSettingsUi(page, f, vp, theme, label) {
   await page.getByTestId('mdm-apple').waitFor({ timeout: 15_000 }).catch(() => {});
   await page.getByTestId('mdm-pushcert').waitFor({ timeout: 15_000 }).catch(() => {});
   const pc = await page.getByTestId('mdm-pushcert').innerText().catch(() => '');
-  check(pc.includes(f.mdmSetup.topic) && /mdm-push@example\.test/.test(pc) && /Not yet \(M2\)/.test(pc) && /days\)/.test(pc),
+  check(pc.includes(f.mdmSetup.topic) && /mdm-push@example\.test/.test(pc) && /Not yet \(step 6\)/.test(pc) && /days\)/.test(pc),
     `${label}: Settings → Mobile devices shows the push certificate's topic, expiry, account, and "not yet proven"`, pc.slice(0, 300));
   const warn = await page.getByTestId('mdm-renewal-warning').innerText().catch(() => '');
   check(/same Apple Account/.test(warn) && /every enrolled iPhone and iPad/.test(warn), `${label}: renewal warns loudly to use the same Apple Account`, warn.slice(0, 200));
@@ -3594,9 +3594,15 @@ async function mdmSettingsUi(page, f, vp, theme, label) {
   check(/commercial EMM/.test(perm) && /customers/.test(perm), `${label}: the Android card carries Google's permitted-use note (decision 21)`, perm.slice(0, 200));
   const states = await page.locator('[data-testid="mdm-capabilities"] [data-capability]').evaluateAll((els) => els.map((e) => [e.getAttribute('data-capability'), e.getAttribute('data-state')]));
   const st = Object.fromEntries(states);
-  check(st['apple.push_certificate'] === 'available' && st['apple.enrollment'] === 'planned' && st['apple.abm'] === 'planned' && st['android.service_account'] === 'requires_setup'
+  check(st['apple.push_certificate'] === 'available' && st['apple.enrollment'] === 'requires_setup' && st['apple.device_ca'] === 'requires_setup' && st['apple.profile_signer'] === 'requires_setup' && st['apple.abm'] === 'planned' && st['android.service_account'] === 'requires_setup'
     && st['android.enterprise'] === 'planned' && st['apple.ios15'] === 'unsupported' && states.every(([, v]) => ['available', 'requires_setup', 'unsupported', 'planned'].includes(v)),
   `${label}: every capability in one of the four states`, JSON.stringify(st));
+  // 0.84 Harbor: step 6 — the device CA and the signer are asked for first; no link can be made before both.
+  const enroll = await page.getByTestId('mdm-apple-enroll').innerText().catch(() => '');
+  check(/Device CA \(public certificates\)/.test(enroll) && /The CA.s key stays with the CA/.test(enroll) && /Upload the device CA and the profile signer first/.test(enroll)
+    && /Not yet proven/.test(enroll) && /sends no lock, wipe/.test(enroll) && await page.getByTestId('mdm-deviceca-upload').isDisabled().catch(() => false)
+    && await page.getByTestId('mdm-link-create').count() === 0,
+  `${label}: step 6 asks for the device CA and the profile signer before any enrollment link, says nothing is proven yet and that only inventory is asked`, enroll.slice(0, 300));
   await page.getByTestId('mdm-pushcert-delete').click().catch(() => {});
   const dlg = page.getByRole('alertdialog').or(page.getByRole('dialog')).first();
   await dlg.waitFor({ timeout: 10_000 }).catch(() => {});

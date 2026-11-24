@@ -29,6 +29,22 @@ your-domain.example.com {
         reverse_proxy localhost:21119
     }
 
+    # The own MDM's device identity CA (0.84, docs/own-mdm.md M2, §93): step-ca,
+    # `rem0te-mdm-ca`, on loopback only. iPhones and iPads fetch their
+    # certificate here over ACME (device-attest-01, Apple attestation). Only
+    # the one provisioner's path is proxied: no admin API, no other
+    # provisioner, no /roots, no /sign. step-ca builds its ACME links from the
+    # Host header, so they name this site. Its TLS is verified against the
+    # device CA's root (copied here by deploy/mdm-ca/rem0te-mdm-ca-setup.sh's
+    # instructions). Leave commented until the CA is installed.
+    #handle /acme/rem0te-mdm/* {
+    #    reverse_proxy https://127.0.0.1:9451 {
+    #        transport http {
+    #            tls_trust_pool file /etc/caddy/rem0te-mdm-ca-root.crt
+    #        }
+    #    }
+    #}
+
     # Web frontend
     handle /* {
         reverse_proxy localhost:3000

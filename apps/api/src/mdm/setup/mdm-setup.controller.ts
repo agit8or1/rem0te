@@ -98,6 +98,30 @@ export class MdmSetupController {
   @HttpCode(HttpStatus.OK)
   async deletePushCert(@Actor() a: ActorContext) { return { success: true, data: await this.svc.deletePushCert(a) }; }
 
+  /** 0.84 (step 6): the device CA's public root and intermediates. Never its key. */
+  @Put('apple/device-ca')
+  @RateLimit(10)
+  async deviceCa(@Actor() a: ActorContext, @Body() body: unknown, @Req() req: Request) {
+    this.fresh(req, 'Confirm it is you to change the device CA that enrolled devices are checked against.');
+    return { success: true, data: await this.svc.setDeviceCa(a, body) };
+  }
+
+  @Delete('apple/device-ca')
+  @HttpCode(HttpStatus.OK)
+  async deleteDeviceCa(@Actor() a: ActorContext) { return { success: true, data: await this.svc.deleteDeviceCa(a) }; }
+
+  /** 0.84 (step 6): the enrollment profile's signing certificate and key (sealed). */
+  @Put('apple/profile-signer')
+  @RateLimit(10)
+  async profileSigner(@Actor() a: ActorContext, @Body() body: unknown, @Req() req: Request) {
+    this.fresh(req, 'Confirm it is you to upload the enrollment profile signing certificate.');
+    return { success: true, data: await this.svc.setProfileSigner(a, body) };
+  }
+
+  @Delete('apple/profile-signer')
+  @HttpCode(HttpStatus.OK)
+  async deleteProfileSigner(@Actor() a: ActorContext) { return { success: true, data: await this.svc.deleteProfileSigner(a) }; }
+
   @Put('android/service-account')
   @RateLimit(10)
   async androidKey(@Actor() a: ActorContext, @Body() body: unknown, @Req() req: Request) {
