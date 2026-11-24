@@ -2194,6 +2194,12 @@ Unit: `unit-mdm-setup.mjs` (in CI). Browser: `e2e-ui.mjs`
 in-memory openers, `openPushIdentity` and `openProfileSigner`, are the only
 returns that carry a key, and §93 holds their callers.
 
+0.85 extended §92 for Android. There are now eleven writes (the recorded
+quota, `PUT android/quota`) and still six deletes. A third opener,
+`openAndroidCredential`, returns the service-account key in memory for
+Google's token exchange, and §94 holds its one caller. `mdm/setup/` still
+calls nothing: Android's calls are `drivers/android/amapi.ts`'s.
+
 §93 (0.84) is Rem0te as the Apple MDM server: M2 of `docs/own-mdm.md`,
 enrollment, check-in and inventory. **Nothing has run on a real iPhone or
 iPad, and no real APNs call has been made.** (§92 is 0.83's.)
@@ -2250,8 +2256,8 @@ iPad, and no real APNs call has been made.** (§92 is 0.83's.)
   hardware-bound and attested.
 - **Writers.** Only `AppleMdmService` writes `AppleDevice` and
   `AppleCommand`. The Apple code writes no `MobileDevice`, `MdmCommand` or
-  connector; the sync does. The only connector it creates is an enabled
-  `apple` one, in `ensureAppleConnectors`.
+  connector; the sync does. The only Apple connector it creates is an
+  enabled `apple` one, in `ensureAppleConnectors` (0.85 adds `android`, §94).
 - **Digest.** SHA-1 is accepted in `Mdm-Signature` for now (decision 28).
   Every verified message records its digest in `AppleDevice.signatureDigest`,
   and `SIGNATURE_DIGESTS` is 0101's CHECK. Revisit once real devices have
@@ -2271,6 +2277,67 @@ scratch step-ca from the real setup script under `--prefix`, ACME on loopback
 without attestation, mdmb through SCEP, and a loopback HTTP/2 APNs stand-in.
 Unit: `unit-mdm-apple.mjs` (in CI). Browser: `e2e-ui.mjs`
 (`mdmSettingsUi`).
+
+§94 (0.85) is Rem0te as the EMM for Android, M3 of `docs/own-mdm.md`. It
+covers enterprise sign-up and a read-only inventory through Google's Android
+Management API. **No real Google API has been called, no enterprise has been
+created and no device has enrolled.** (§93 is 0.84's.)
+
+- **Hosts.** §90's allowed list adds `oauth2.googleapis.com` and
+  `androidmanagement.googleapis.com` (and the scope identifier), each once,
+  as constants in `mdm/drivers/android/amapi.ts`. §90's host pattern also
+  catches any other `googleapis.com` or `enterprise.google.com`. The web
+  builds the enrollment link, in `android-emm-steps.tsx` only.
+- **One client.** `amapi.ts` is the only Google call site, and it uses only
+  `safe-https`: `safeGet`, `safePost` and `safePatch`, which is new. The
+  stand-in is `AMAPI_TEST_BASE_URL`, read once in `amapiTestBase()` through
+  `testLoopbackAllowed`. Under `NODE_ENV=test` without one, every call is
+  `not_ready` before any request. `TEST_QUERY` admits up to 800
+  characters and only nine escapes (`: / ? = & , ( ) +`, for AMAPI's
+  escaped queries); `%3C` and every other escape stay refused. `shape.ts` is pure: it imports
+  `node:crypto` and `../../model`, and reads no clock.
+- **No command.** Nothing issues a command, deletes a device or calls
+  `safeDelete`. The client's four writes are `signupUrls.create`,
+  `enterprises.create`, the default policy's `policies.patch` and
+  `enrollmentTokens.create`.
+- **The policy** is exactly `softwareInfoEnabled` and
+  `applicationReportsEnabled`, and `networkInfoEnabled` appears nowhere.
+  `devices.list` asks only `DEVICE_FIELDS`. Only `COMPANY_OWNED` is
+  corporate, so a personal device is `byod` and its serial is dropped.
+- **Sign-up.** The state is 32 random bytes, and only its SHA-256 is stored,
+  for at most an hour (0102). The callback is `@Public` and rate-limited,
+  because the session cookie is `SameSite=Strict`. It works in this order:
+  1. it claims the state with **one conditional update**
+     (`open → claimed`, unexpired), before reading anything;
+  2. it re-checks the Platform Admin, the unbound business, the pause and
+     the token, all before `enterprises.create`;
+  3. it writes `logOrFail`;
+  4. it writes `claimed → bound` and the enterprise in one transaction.
+
+  It answers only a 303.
+- **Who.** Every Platform Admin write calls `assertFresh` with a literal
+  key. The test, the quota, a sign-up and the policy name `mdm.setup`. A
+  token names `mdm.enroll`, now *Mobile enrollment links and tokens*.
+- **Containment.** Every outbound call follows its `integration` pause
+  check. The test checks the global pause; the rest check the business's.
+- **Tokens.** Google's access tokens live in one unexported in-memory map,
+  keyed by a SHA-256 of the credential. An enrollment token's value is shown
+  once, after its `logOrFail`, and never stored. Audit rows carry ids.
+- **Writers and openers.** Only `AndroidEmmService` writes `AndroidSignup`
+  and `AndroidEnterprise`. `openAndroidCredential` is the third opener (§92),
+  and only `AndroidEmmService` calls it. The sync creates connectors in
+  exactly two places: `ensureAppleConnectors` and `ensureAndroidConnectors`,
+  which makes one `android` connector per bound enterprise, named by its id.
+- **No new sweep.** `AndroidEmmService.pass` and `ensureAndroidConnectors`
+  run only from `MdmSyncService.sweep`.
+- **Operations** are read for at most 250 devices a pass. A larger
+  enterprise syncs as `partial` (decision 30).
+
+Behavioural proof: `e2e-mdm-android.mjs` (ports 4081–4083, in `run-e2e.sh`).
+It runs against an AMAPI-shaped loopback stand-in and simulates Google's
+redirect without a cookie, including five racing callbacks. Unit:
+`unit-mdm-android.mjs` (in CI). Browser: `e2e-ui.mjs` (`mdmSettingsUi`,
+steps 3–6 from seeded rows).
 
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 

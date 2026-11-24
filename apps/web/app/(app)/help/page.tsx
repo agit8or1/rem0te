@@ -1109,7 +1109,7 @@ const SECTIONS: Section[] = [
           certificate; uploading the push certificate Apple gives you, which Rem0te checks against its key and shows with its topic
           and expiry; and renewing it every year <strong className="text-foreground">with the same Apple Account</strong>, with
           reminders 30, 14 and 3 days before. For Android: Google&apos;s rules for who may use it, and the service-account key, whose
-          project and e-mail are shown. Nothing on that page contacts Apple or Google. Each change asks you to confirm it is you
+          project and e-mail are shown. The Apple steps never contact Apple. Each change asks you to confirm it is you
           when <em>Mobile device management setup</em> asks; deleting never does.
         </p>
         <p>
@@ -1118,8 +1118,20 @@ const SECTIONS: Section[] = [
           enrollment link</strong> for a business (an hour by default) and open it in Safari on the device. Every message the device
           sends is checked against its own certificate before Rem0te reads it. Rem0te asks enrolled devices only for inventory
           (model, storage, security state, and how many apps, profiles and certificates), once a day; it sends no lock or wipe.
-          Creating a link asks you to confirm it is you when <em>Apple enrollment links</em> asks. This has been tested only
+          Creating a link asks you to confirm it is you when <em>Mobile enrollment links and tokens</em> asks. This has been tested only
           against a simulated device: no real iPhone or iPad has enrolled from this server yet.
+        </p>
+        <p>
+          From 0.85, Android steps 3 to 6 make Rem0te the EMM for Android through Google&apos;s Android Management API, called from
+          the server. Test the connection (Rem0te signs a token request with the key and makes one read call), record the device
+          quota Google granted, then <strong className="text-foreground">bind each business to its own Android enterprise</strong>:
+          Rem0te gets a one-time sign-up link from Google, which you open or send to the business&apos;s admin to sign in, ideally
+          with a work account (a managed Google domain). Apply the default policy, which turns on only software and app reports and
+          never network info, and make a <strong className="text-foreground">one-time enrollment token</strong> (an hour by
+          default), shown once as a QR code and a link: a work profile on a personal phone, which Rem0te keeps as personal and never
+          with its serial number, or a fully managed company phone. Devices then appear under Mobile devices after the next sync.
+          Rem0te sends no command to an Android device. This has been tested only against a stand-in for Google: no real Google API
+          has been called, no enterprise has been created and no device has enrolled.
         </p>
         <p>
           <strong className="text-foreground">Accepted is not completed.</strong> On a device&apos;s page each command shows two

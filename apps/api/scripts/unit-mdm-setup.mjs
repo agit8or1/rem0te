@@ -164,11 +164,11 @@ const F0 = { pushKey: false, vendor: null, signingRoute: null, pushCert: null, a
 let caps = M.capabilities(F0, now);
 const st = (cs) => Object.fromEntries(cs.map((x) => [x.key, x.state]));
 check(caps.every((x) => M.STATES.includes(x.state)) && st(caps)['apple.push_request'] === 'requires_setup' && st(caps)['apple.enrollment'] === 'requires_setup' && st(caps)['apple.abm'] === 'planned'
-  && st(caps)['android.connection_test'] === 'planned' && st(caps)['android.enterprise'] === 'planned' && st(caps)['apple.ios15'] === 'unsupported', 'nothing done: requires setup (enrollment too, from 0.84), with ABM and the Android calls planned and iOS 15 unsupported', JSON.stringify(st(caps)));
+  && st(caps)['android.connection_test'] === 'requires_setup' && st(caps)['android.enterprise'] === 'requires_setup' && st(caps)['apple.ios15'] === 'unsupported', 'nothing done: requires setup (enrollment too, from 0.84; the Android steps too, from 0.85), with ABM planned and iOS 15 unsupported', JSON.stringify(st(caps)));
 caps = M.capabilities({ ...F0, pushKey: true, vendor: { notAfter: new Date(now.getTime() + DAY) }, signingRoute: 'own_vendor', pushCert: { notAfter: new Date(now.getTime() + 200 * DAY) }, appleAccount: 'mdm@example.test', androidKey: true }, now);
 check(['apple.push_request', 'apple.vendor_signing', 'apple.push_certificate', 'apple.renewal', 'android.service_account'].every((k) => st(caps)[k] === 'available')
-  && M.platformState(caps, 'apple').state === 'requires_setup' && /step 6/.test(M.platformState(caps, 'apple').reason) && M.platformState(caps, 'android').state === 'planned',
-  'every M1 step done: available; Apple\'s next step is step 6 (0.84), Android\'s is planned (M3)', JSON.stringify(st(caps)));
+  && M.platformState(caps, 'apple').state === 'requires_setup' && /step 6/.test(M.platformState(caps, 'apple').reason) && M.platformState(caps, 'android').state === 'requires_setup' && /connection test/.test(M.platformState(caps, 'android').reason),
+  'every M1 step done: available; Apple\'s next step is step 6 (0.84), Android\'s the connection test (0.85)', JSON.stringify(st(caps)));
 {
   const M1 = { ...F0, pushKey: true, vendor: { notAfter: new Date(now.getTime() + DAY) }, signingRoute: 'own_vendor', pushCert: { notAfter: new Date(now.getTime() + 200 * DAY) }, appleAccount: 'mdm@example.test' };
   const signer = { notAfter: new Date(now.getTime() + 300 * DAY) };

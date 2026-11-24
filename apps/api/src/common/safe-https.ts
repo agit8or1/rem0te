@@ -29,14 +29,20 @@ import { checkResolved, classifyAddress, isHostName } from '../email/smtp-host';
 
 const INTERNAL_SUFFIX = /\.(local|internal|lan|home|corp|localdomain|localhost|intranet|private|arpa)$/;
 const TEST_LOOPBACK = /^http:\/\/127\.0\.0\.1:[0-9]{2,5}(?:$|\/[A-Za-z0-9._~/-]{0,200}$)/;
-/** 0.56: an optional query in a narrow charset (the warranty stubs take ?servicetags= / ?Serial=). */
-const TEST_QUERY = /^[A-Za-z0-9._~=&-]{0,200}$/;
+/**
+ * 0.56: an optional query in a narrow charset (the warranty stubs take ?servicetags= / ?Serial=).
+ * 0.85: and up to 800 characters, with only the percent-escapes Google's own query parameters
+ * need (a percent-encoded callbackUrl, signupUrlName, page token and `fields` list):
+ * : / ? = & , ( ) +. Any other escape (`%3C`, `%25`, `%40`…) is still refused.
+ */
+const TEST_QUERY = /^(?:[A-Za-z0-9._~=&-]|%(?:3A|2F|3F|3D|26|2C|28|29|2B))*$/;
+const TEST_QUERY_MAX = 800;
 
 /** Only the e2e suites: NODE_ENV=test and http://127.0.0.1:<port>/… exactly. */
 export function testLoopbackAllowed(raw: string): boolean {
   const q = raw.indexOf('?');
   const base = q < 0 ? raw : raw.slice(0, q);
-  return process.env.NODE_ENV === 'test' && TEST_LOOPBACK.test(base) && (q < 0 || TEST_QUERY.test(raw.slice(q + 1)));
+  return process.env.NODE_ENV === 'test' && TEST_LOOPBACK.test(base) && (q < 0 || (raw.length - q - 1 <= TEST_QUERY_MAX && TEST_QUERY.test(raw.slice(q + 1))));
 }
 
 export type UrlCheck = { ok: true; url: URL } | { ok: false; reason: string };
@@ -82,7 +88,20 @@ export async function safeGet(rawUrl: string, headers: Record<string, string>, o
   return safeRequest('GET', rawUrl, headers, null, opts);
 }
 
-async function safeRequest(method: 'GET' | 'POST', rawUrl: string, headers: Record<string, string>, body: string | null, opts: { timeoutMs: number; maxBytes: number }): Promise<SafeResponse> {
+/**
+ * PATCH and DELETE (0.85, docs/own-mdm.md M3) under the same rules: the
+ * Android Management API updates a policy with PATCH. DELETE exists for the
+ * same client and has no caller yet (no `devices.delete`: §94).
+ */
+export async function safePatch(rawUrl: string, headers: Record<string, string>, body: string, opts: { timeoutMs: number; maxBytes: number }): Promise<SafeResponse> {
+  return safeRequest('PATCH', rawUrl, headers, body, opts);
+}
+
+export async function safeDelete(rawUrl: string, headers: Record<string, string>, opts: { timeoutMs: number; maxBytes: number }): Promise<SafeResponse> {
+  return safeRequest('DELETE', rawUrl, headers, null, opts);
+}
+
+async function safeRequest(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', rawUrl: string, headers: Record<string, string>, body: string | null, opts: { timeoutMs: number; maxBytes: number }): Promise<SafeResponse> {
   const chk = checkPublicHttpsUrl(rawUrl);
   if (!chk.ok) throw new OutboundError('URL_REFUSED', chk.reason);
   const u = chk.url;

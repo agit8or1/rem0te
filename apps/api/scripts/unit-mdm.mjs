@@ -165,8 +165,8 @@ check('a page holds at most 100 records and a charset-checked cursor',
 // ── 0096 agrees ───────────────────────────────────────────────────────────
 console.log('\nMigration 0096 agrees with model.ts');
 const sql = read('apps/api/prisma/migrations/0096_mobile_devices/migration.sql');
-// 0.84: 0101 re-makes the two provider CHECKs with `apple`; the newest definition is the one in force.
-const sql101 = read('apps/api/prisma/migrations/0101_mdm_apple/migration.sql');
+// 0.84: 0101 re-makes the two provider CHECKs with `apple`; 0.85: 0102 again with `android`. The newest definition is the one in force.
+const sql101 = read('apps/api/prisma/migrations/0102_mdm_android/migration.sql');
 const inList = (name, col) => {
   const m = (/_provider_check$/.test(name) ? sql101 : sql).match(new RegExp(`CONSTRAINT "${name}" CHECK \\("${col}" (?:IS NULL OR "${col}" )?IN \\(([^)]*)\\)`));
   return m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null;

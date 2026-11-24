@@ -22,6 +22,24 @@ export type SigningRoute = (typeof SIGNING_ROUTES)[number];
 export const REMINDER_DAYS = [30, 14, 3] as const;
 export const REMINDER_VALUES = [30, 14, 3, 0] as const;
 
+/**
+ * 0.85 (M3, step 3): the connection test's outcome (0102 CHECK, in order).
+ * `ok` is a token from Google and one read call; anything else names why.
+ */
+export const ANDROID_TEST_RESULTS = ['ok', 'bad_key', 'permission_denied', 'quota', 'unreachable', 'bad_response'] as const;
+export type AndroidTestResult = (typeof ANDROID_TEST_RESULTS)[number];
+export const ANDROID_TEST_REASON: Record<AndroidTestResult, string> = {
+  ok: 'Google issued a token for the key and answered a read call.',
+  bad_key: 'Google refused the key itself (deleted, disabled or not this account\'s): make a new key and upload it again.',
+  permission_denied: 'Google refused the call: give the service account the Android Management User role (roles/androidmanagement.user) and enable the Android Management API in its project.',
+  quota: 'Google answered "too many requests" (quota). Try again later.',
+  unreachable: 'Google could not be reached (network, DNS or a server error). Try again.',
+  bad_response: 'Google answered something Rem0te did not expect.',
+};
+export const isAndroidTestResult = (v: unknown): v is AndroidTestResult => typeof v === 'string' && (ANDROID_TEST_RESULTS as readonly string[]).includes(v);
+/** The device quota a Platform Admin may record (0102 CHECK). */
+export const ANDROID_QUOTA_MAX = 1_000_000;
+
 /** The four capability states (docs/capabilities.md). */
 export const STATES = ['available', 'requires_setup', 'unsupported', 'planned'] as const;
 export type CapabilityState = (typeof STATES)[number];
@@ -77,6 +95,12 @@ export interface SetupFacts {
   profileSigner: { notAfter: Date } | null;
   enrolledDevices: number;
   pushProven: boolean;
+  /** 0.85 (M3): the connection test, the quota recorded by hand, bound enterprises, and what the sync has seen. */
+  androidTest?: { result: AndroidTestResult; at: Date } | null;
+  androidQuota?: number | null;
+  androidEnterprises?: number;
+  androidPolicies?: number;
+  androidDevices?: number;
 }
 export interface Capability { key: string; platform: 'apple' | 'android'; label: string; state: CapabilityState; reason: string }
 
@@ -126,11 +150,23 @@ export function capabilities(f: SetupFacts, now: Date): Capability[] {
   a('apple.ios15', 'iPhones and iPads below iOS/iPadOS 16', 'unsupported', 'Decision 24: iOS/iPadOS 16 is the minimum (device identity through ACME).');
 
   g('android.service_account', 'Service-account key', f.androidKey ? 'available' : 'requires_setup',
-    f.androidKey ? 'The key is sealed. Whether its role and quota are right is checked by the connection test (M3).' : 'Upload the service-account key file (step 2).');
-  g('android.connection_test', 'Connection test', 'planned', 'Calling Google arrives in M3; this release makes no call.');
-  g('android.enterprise', 'Enterprise sign-up per business', 'planned', 'Arrives in M3.');
-  g('android.quota', 'Device quota', 'planned', 'Request it from Google early (weeks reported); recording it arrives in M3.');
-  g('android.enrollment', 'Enrolling Android devices', 'planned', 'Arrives in M3.');
+    f.androidKey ? 'The key is sealed. Whether its role is right is checked by the connection test (step 3).' : 'Upload the service-account key file (step 2).');
+  const t = f.androidTest ?? null;
+  g('android.connection_test', 'Connection test', f.androidKey && t?.result === 'ok' ? 'available' : 'requires_setup',
+    !f.androidKey ? 'Upload the key first (step 2).' : !t ? 'Run the connection test (step 3): a token from Google and one read call.'
+      : t.result === 'ok' ? 'Passed: Google issued a token and answered a read call. It does not check quota.' : ANDROID_TEST_REASON[t.result]);
+  const q = f.androidQuota ?? null;
+  g('android.quota', 'Device quota', q !== null && q > 0 ? 'available' : 'requires_setup',
+    q === null ? 'Record the quota Google granted (step 4). Ask early: reviews are reported to take weeks.'
+      : q === 0 ? 'Recorded as none granted yet. Nothing can enroll until Google grants quota.'
+        : `Recorded by you: ${q} device${q === 1 ? '' : 's'}. Rem0te cannot read the quota from Google.`);
+  const ents = f.androidEnterprises ?? 0, pols = f.androidPolicies ?? 0, devs = f.androidDevices ?? 0;
+  g('android.enterprise', 'Enterprise sign-up per business', ents > 0 ? 'available' : 'requires_setup',
+    ents > 0 ? `${ents} business${ents === 1 ? '' : 'es'} bound to an Android enterprise.` : t?.result === 'ok' ? 'Bind a business (step 5): its admin signs up at Google from a link Rem0te makes.' : 'Needs a passed connection test first (step 3).');
+  g('android.enrollment', 'Enrolling Android devices', pols > 0 && devs > 0 ? 'available' : 'requires_setup',
+    pols === 0 ? 'Needs a bound business with the default policy applied (steps 5 and 6).'
+      : devs === 0 ? 'Ready: make a one-time enrollment token (step 6). No device has enrolled from this server yet.'
+        : `${devs} enrolled, as Google reports them.`);
   return out;
 }
 

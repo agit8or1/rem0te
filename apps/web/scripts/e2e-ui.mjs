@@ -3537,7 +3537,7 @@ let copyDir = null;
  * test-pki helper; the sealed columns hold sealed-shaped placeholders, which
  * the page never opens. Nothing here is a real Apple or Google credential.
  */
-async function seedMdmSetup() {
+async function seedMdmSetup(f) {
   const T = await import(path.join(API_DIR, 'scripts/lib/test-pki.mjs'));
   const g = T.P.generatePushKey();
   const topic = T.testTopic();
@@ -3554,10 +3554,21 @@ async function seedMdmSetup() {
       pushCertEnc: sealedLike(), pushCertSerial: facts.serial, pushCertSha256: facts.sha256, pushCertIssuer: T.P.nameText(facts.issuer).slice(0, 300),
       pushCertNotBefore: facts.notBefore, pushCertNotAfter: facts.notAfter, pushCertInstalledAt: now, pushCertRenewedAt: null,
       apnsTopic: topic, appleAccount: 'mdm-push@example.test', pushRemindedDays: null,
-      androidKeyEnc: null, androidProjectId: null, androidClientEmail: null, androidKeyIdLast4: null, androidKeySetAt: null,
+      // 0.85 Mooring: a sealed-shaped key that passed the connection test, and a recorded quota.
+      androidKeyEnc: sealedLike(), androidProjectId: 'rem0te-ui-test', androidClientEmail: 'amapi-ui@rem0te-ui-test.iam.gserviceaccount.com', androidKeyIdLast4: 'a1b2', androidKeySetAt: now,
+      androidTestedAt: now, androidTestResult: 'ok', androidQuotaDevices: 250, androidQuotaSetAt: now,
     },
   });
-  return { topic };
+  // 0.85: business B bound to a (stand-in) Android enterprise with the default policy applied. Written
+  // directly; the browser suite never reaches Google (its API has no AMAPI_TEST_BASE_URL, so it refuses).
+  const signup = await prisma.androidSignup.create({ data: {
+    tenantId: f.tenant.id, customerId: f.B.id, stateSha256: createHash('sha256').update(randomBytes(32)).digest('hex'), signupUrlName: `signupUrls/Cui${sfx}`,
+    state: 'bound', createdById: f.admin.id, createdAt: now, expiresAt: new Date(now.getTime() + 30 * 60_000), claimedAt: now, finishedAt: now, enterpriseId: `LCui${sfx}`,
+  } });
+  await prisma.androidEnterprise.create({ data: {
+    tenantId: f.tenant.id, customerId: f.B.id, enterpriseId: `LCui${sfx}`, signupId: signup.id, boundById: f.admin.id, boundAt: now, policyVersion: '1', policySetAt: now,
+  } });
+  return { topic, enterpriseId: `LCui${sfx}` };
 }
 
 /**
@@ -3594,8 +3605,8 @@ async function mdmSettingsUi(page, f, vp, theme, label) {
   check(/commercial EMM/.test(perm) && /customers/.test(perm), `${label}: the Android card carries Google's permitted-use note (decision 21)`, perm.slice(0, 200));
   const states = await page.locator('[data-testid="mdm-capabilities"] [data-capability]').evaluateAll((els) => els.map((e) => [e.getAttribute('data-capability'), e.getAttribute('data-state')]));
   const st = Object.fromEntries(states);
-  check(st['apple.push_certificate'] === 'available' && st['apple.enrollment'] === 'requires_setup' && st['apple.device_ca'] === 'requires_setup' && st['apple.profile_signer'] === 'requires_setup' && st['apple.abm'] === 'planned' && st['android.service_account'] === 'requires_setup'
-    && st['android.enterprise'] === 'planned' && st['apple.ios15'] === 'unsupported' && states.every(([, v]) => ['available', 'requires_setup', 'unsupported', 'planned'].includes(v)),
+  check(st['apple.push_certificate'] === 'available' && st['apple.enrollment'] === 'requires_setup' && st['apple.device_ca'] === 'requires_setup' && st['apple.profile_signer'] === 'requires_setup' && st['apple.abm'] === 'planned' && st['android.service_account'] === 'available'
+    && st['android.connection_test'] === 'available' && st['android.quota'] === 'available' && st['android.enterprise'] === 'available' && st['android.enrollment'] === 'requires_setup' && st['apple.ios15'] === 'unsupported' && states.every(([, v]) => ['available', 'requires_setup', 'unsupported', 'planned'].includes(v)),
   `${label}: every capability in one of the four states`, JSON.stringify(st));
   // 0.84 Harbor: step 6 — the device CA and the signer are asked for first; no link can be made before both.
   const enroll = await page.getByTestId('mdm-apple-enroll').innerText().catch(() => '');
@@ -3603,6 +3614,23 @@ async function mdmSettingsUi(page, f, vp, theme, label) {
     && /Not yet proven/.test(enroll) && /sends no lock, wipe/.test(enroll) && await page.getByTestId('mdm-deviceca-upload').isDisabled().catch(() => false)
     && await page.getByTestId('mdm-link-create').count() === 0,
   `${label}: step 6 asks for the device CA and the profile signer before any enrollment link, says nothing is proven yet and that only inventory is asked`, enroll.slice(0, 300));
+  // 0.85 Mooring: Android steps 3–6, read-only here (the suite's API cannot reach Google, or a stand-in).
+  const aTest = await page.getByTestId('mdm-android-step-test').innerText().catch(() => '');
+  const aTestState = await page.getByTestId('mdm-android-step-test').getAttribute('data-state').catch(() => null);
+  const aResult = await page.getByTestId('mdm-android-test-result').getAttribute('data-result').catch(() => null);
+  check(aTestState === 'available' && aResult === 'ok' && /passed/.test(aTest) && /cannot check quota/.test(aTest), `${label}: Android step 3 shows the passed connection test, and that quota cannot be checked`, aTest.slice(0, 200));
+  const aQuota = await page.getByTestId('mdm-android-quota-facts').innerText().catch(() => '');
+  check(/Recorded 250/.test(aQuota), `${label}: Android step 4 shows the recorded quota`, aQuota);
+  const aSign = await page.getByTestId('mdm-android-step-signup').innerText().catch(() => '');
+  check(aSign.includes(`enterprises/${f.mdmSetup.enterpriseId}`) && aSign.includes(f.B.name) && /managed Google domain/.test(aSign) && /policy version 1/.test(aSign),
+    `${label}: Android step 5 lists the bound business with its enterprise and policy, and recommends a managed Google domain`, aSign.slice(0, 300));
+  const aEnroll = await page.getByTestId('mdm-android-step-enroll').innerText().catch(() => '');
+  const usages = await page.getByTestId('mdm-android-token-usage').locator('option').allInnerTexts().catch(() => []);
+  check(/never turns on network info/.test(aEnroll) && /BYOD/.test(aEnroll) && /never keeps its serial/.test(aEnroll) && /no real Android device has enrolled/.test(aEnroll)
+    && usages.join('|') === 'Work profile (personal phone)|Fully managed (company phone)' && await page.getByTestId('mdm-android-token-create').isDisabled().catch(() => false),
+  `${label}: Android step 6 says the policy never turns on network info, offers work profile or fully managed per token, and that no real device has enrolled`, aEnroll.slice(0, 300));
+  const notProven = await page.getByTestId('mdm-android-not-proven').innerText().catch(() => '');
+  check(/no real Google API has been called/.test(notProven) && /no enterprise has been created/.test(notProven), `${label}: the Android card says plainly nothing was proven against Google`, notProven);
   await page.getByTestId('mdm-pushcert-delete').click().catch(() => {});
   const dlg = page.getByRole('alertdialog').or(page.getByRole('dialog')).first();
   await dlg.waitFor({ timeout: 10_000 }).catch(() => {});
@@ -3613,6 +3641,11 @@ async function mdmSettingsUi(page, f, vp, theme, label) {
   if (vp === 'phone') await noSideScroll(page, `${label} Settings → Mobile devices`);
   await shot(page, `${label}-settings-mobile-devices`);
   await cleanCheck(page, `${label} Settings → Mobile devices`);
+  // Google's redirect back after a sign-up: the page reads ?android=… once, says what happened, and clears it.
+  await go(page, '/settings/mobile-devices?android=failed&code=bad_token&business=x');
+  await page.getByTestId('mdm-settings-note').waitFor({ timeout: 15_000 }).catch(() => {});
+  const note = await page.getByTestId('mdm-settings-note').innerText().catch(() => '');
+  check(/did not finish/.test(note) && /enterprise token/.test(note) && !/android=/.test(page.url()), `${label}: after Google's redirect the page says why the sign-up failed, and clears the address`, `${note} ${page.url()}`);
 }
 
 async function seedMobile(f) {
@@ -3745,7 +3778,7 @@ async function main() {
   f.rollbackJob = await seedRollbackJob(f);
   f.mobile = await seedMobile(f);
   f.backups = await seedBackups(f);
-  f.mdmSetup = await seedMdmSetup();
+  f.mdmSetup = await seedMdmSetup(f);
   if (process.env.UI_HOLD === '1') {
     // Debugging only: leave the stack and fixtures up until interrupted.
     console.log(`  holding: ${WEB}  admin ${f.admin.email} / owner ${f.owner.email}  password in UI_HOLD_PW_FILE`);

@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MdmSetupService } from './setup/mdm-setup.service';
 import { expireIfDue, observedCommand, reconcile, type CommandFacts } from './command-state';
 import { MdmDriverError } from './driver';
+import { AndroidEmmService } from './android/android-emm.service';
 import { AppleMdmService } from './apple/apple-mdm.service';
 import type { MdmDriver } from './driver';
 import { makeDrivers } from './drivers';
@@ -44,6 +45,12 @@ import { parseCommand, parseDevice, type CommandRecord } from './schemas';
  * (ensureAppleConnectors, §93). The sweep also runs the own Apple server's
  * pass (AppleMdmService.pass: link and command expiry, the daily inventory
  * re-queue, the APNs push), so MDM_SWEEP=off stops that too.
+ *
+ * 0.85 (§94): it also creates one enabled `android` connector per business
+ * bound to an Android enterprise (ensureAndroidConnectors), its
+ * externalTenantId the enterprise id, and runs AndroidEmmService.pass
+ * (sign-up expiry). The `android` driver calls Google's Android Management
+ * API, read-only, after the connector's `integration` pause check below.
  */
 export const CONNECTORS_PER_PASS = 20;
 export const DEVICE_PAGES = 20;
@@ -77,8 +84,8 @@ export class MdmSyncService implements OnModuleInit, OnModuleDestroy {
 
   private readonly drivers: Record<Provider, MdmDriver>;
 
-  constructor(private readonly prisma: PrismaService, private readonly setup: MdmSetupService, private readonly apple: AppleMdmService) {
-    this.drivers = makeDrivers({ apple });
+  constructor(private readonly prisma: PrismaService, private readonly setup: MdmSetupService, private readonly apple: AppleMdmService, private readonly android: AndroidEmmService) {
+    this.drivers = makeDrivers({ apple, android });
   }
 
   onModuleInit() {
@@ -97,6 +104,9 @@ export class MdmSyncService implements OnModuleInit, OnModuleDestroy {
       // 0.84: the own Apple server first, so a device just enrolled is pushed and then read.
       await this.apple.pass(now);
       await this.ensureAppleConnectors();
+      // 0.85: expire unfinished Android sign-ups; one `android` connector per bound enterprise.
+      await this.android.pass(now);
+      await this.ensureAndroidConnectors();
       const due = new Date(now.getTime() - syncMinutes() * 60_000);
       const rows = await this.prisma.mdmConnector.findMany({
         where: { enabled: true, OR: [{ lastSyncAt: null }, { lastSyncAt: { lt: due } }] },
@@ -235,6 +245,25 @@ export class MdmSyncService implements OnModuleInit, OnModuleDestroy {
     if (!need.length) return 0;
     const r = await this.prisma.mdmConnector.createMany({
       data: need.map((b) => ({ tenantId: b.tenantId, customerId: b.customerId, provider: 'apple', externalTenantId: 'rem0te', enabled: true })),
+      skipDuplicates: true,
+    });
+    return r.count;
+  }
+
+  /**
+   * One enabled `android` connector for every business bound to an Android
+   * enterprise (0.85, §94), named by its enterprise id. The second and last
+   * place a connector is created; the unique (business, provider) makes a
+   * race a no-op. An enterprise never changes (0102 trigger).
+   */
+  async ensureAndroidConnectors(): Promise<number> {
+    const need = await this.prisma.androidEnterprise.findMany({
+      where: { customer: { mdmConnectors: { none: { provider: 'android' } } } },
+      select: { tenantId: true, customerId: true, enterpriseId: true }, take: 200,
+    });
+    if (!need.length) return 0;
+    const r = await this.prisma.mdmConnector.createMany({
+      data: need.map((e) => ({ tenantId: e.tenantId, customerId: e.customerId, provider: 'android', externalTenantId: e.enterpriseId, enabled: true })),
       skipDuplicates: true,
     });
     return r.count;

@@ -5,6 +5,190 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.85.0] — 2026-11-24 · *Mooring*
+
+**Rem0te is the EMM for Android: step M3 of [own-mdm.md](docs/own-mdm.md), enterprise sign-up and a read-only
+inventory through Google's Android Management API (AMAPI).** A Platform Admin can now, in order:
+
+1. test the sealed service-account key against Google (wizard step 3);
+2. record the device quota Google granted (step 4);
+3. bind a business to its own Android enterprise through a sign-up started from inside Rem0te (step 5);
+4. apply the default policy, which turns on software and app reports only (step 6);
+5. make one-time enrollment tokens, shown once as a QR code and a link, each for a work profile or a fully managed
+   phone (step 6).
+
+The MDM sweep then lists each enterprise's devices and their Operations into Devices → Mobile devices through the
+0.80 sync. The new driver, `android`, is the second real one.
+
+**No real Google API has been called from this server, no enterprise has been created and no device has
+enrolled.** The proof is a loopback stand-in in AMAPI's shape, reached only under `NODE_ENV=test`. It serves the
+token endpoint, `signupUrls`, `enterprises`, `policies`, `enrollmentTokens`, a paged `devices.list` and
+`operations`.
+
+Migration 0102 is included. No new confirm key: `mdm.setup` and `mdm.enroll` cover it. Nothing else changes: no
+new secret-box purpose, no new sweep or off switch, and no agent, signer, sudoers, Caddy or dependency change.
+
+### Added
+
+- **The AMAPI client**, `mdm/drivers/android/amapi.ts`. It is the only place Google's two hosts appear, as
+  constants:
+  - `GOOGLE_TOKEN_URL`, `https://oauth2.googleapis.com/token`;
+  - `AMAPI_ORIGIN`, `https://androidmanagement.googleapis.com`.
+
+  How it calls:
+  - **Through safe-https only**: `safeGet`, `safePost` and the new `safePatch`, at 20 s and 4 MB per call.
+  - **The token.** An RS256 JWT signed with the sealed key, for one scope and an hour, exchanged for an access
+    token. The access token is held **in memory only**, keyed by a SHA-256 of the credential, and a 401 retries
+    once with a new one.
+  - **Errors** are short codes, never Google's text.
+  - **The stand-in.** `AMAPI_TEST_BASE_URL` is honoured only through `testLoopbackAllowed`. Under `NODE_ENV=test`
+    without it, every call is refused before any request, so a test stack cannot reach Google by accident.
+- **`safePatch` and `safeDelete`** in `common/safe-https.ts`. They are the same request path with another method.
+  Nothing calls `safeDelete`.
+  - `testLoopbackAllowed`'s query now admits up to 800 characters and exactly nine percent-escapes
+    (`: / ? = & , ( ) +`). AMAPI's queries are fully percent-escaped: the callback URL, the page token and the
+    `fields` list. Any other escape is still refused (`unit-ai-psa.mjs`'s `%3C` check). The first push admitted
+    any `%` and failed it.
+- **Step 3, the connection test** (`POST /mdm/android/test`). It gets a token, then makes one read call
+  (`enterprises.list` for the key's project).
+  - The outcome is recorded for the key tested: `ok`, `bad_key`, `permission_denied`, `quota`, `unreachable` or
+    `bad_response`.
+  - A new key resets it, and a key replaced mid-test is never marked tested.
+  - It cannot check quota.
+- **Step 4, the quota** (`PUT /mdm/setup/android/quota`), recorded by hand. Rem0te cannot read it, and Google
+  enforces it.
+- **Step 5, enterprise sign-up** (`POST /mdm/android/signup`).
+  - **The state.** 32 random bytes; only the SHA-256 is stored, in `AndroidSignup`. It is bound to the business
+    and the Platform Admin and lasts 30 minutes (0102 caps it at an hour).
+  - **The link.** `signupUrls.create` names the callback `/api/v1/mdm/android/signup/callback?state=…`. The page
+    shows Google's link, to open or to copy to the business's admin.
+  - **The callback** is `@Public` and rate-limited. The session cookie is `SameSite=Strict`, so Google's
+    cross-site redirect carries none; the state is the only credential. In order, it:
+    1. claims the state with **one conditional update** (`open → claimed`, unexpired), before reading anything;
+    2. checks that the Platform Admin is still one, the business is unbound, no `integration` pause is in effect
+       and the `enterpriseToken` is well formed;
+    3. calls `enterprises.create`;
+    4. writes `logOrFail`;
+    5. writes the enterprise and `claimed → bound` in one transaction;
+    6. applies the default policy.
+
+    It always answers with a 303 to the settings page, carrying `android=bound` or a failure code.
+- **Step 6, the default policy and tokens.**
+  - **The policy** is `rem0te-default`: exactly `softwareInfoEnabled` and `applicationReportsEnabled`, and
+    **never network info**, which carries the IMEI and MAC addresses.
+  - **Enrollment tokens** (`POST /mdm/android/enrollment-tokens`) are one-time and last 15–60 minutes, an hour by
+    default. Each is *work profile* (`PERSONAL_USAGE_ALLOWED`) or *fully managed* (`PERSONAL_USAGE_DISALLOWED`).
+  - **The value and the QR code** (a PNG data URL from Google's `qrCode`) are returned once. They are never
+    stored, and audited by id only (`logOrFail`, before the answer).
+  - **The link** `enterprise.google.com/android/enroll?et=…` is built in the web page only.
+- **The `android` driver** (`mdm/drivers/android/`):
+  - `index.ts` is the driver, `amapi.ts` the client, and `shape.ts` the pure shapes (node:crypto and the model
+    only).
+  - `android` is in `PROVIDERS` and both provider CHECKs.
+  - `devices.list` is paged at 100 and asks only for the fields Rem0te keeps, through `fields=`.
+  - Operations are read per device, at most 250 devices a pass. A `404` or `501` counts as no Operations.
+  - The sync creates one enabled `android` connector per bound enterprise, named by its enterprise id
+    (`ensureAndroidConnectors`), and is still the only writer of `MobileDevice` and `MdmCommand`.
+- **Migration 0102**:
+  - `android` in the provider CHECKs;
+  - the test and quota columns, all-or-nothing;
+  - `AndroidSignup`: closed states, the state kept as a SHA-256, at most an hour, a shape per state; a finished
+    sign-up stays final and is never reopened, and its token, business, admin, URL and expiry never change;
+  - `AndroidEnterprise`: one per business, one business per enterprise, the one policy id;
+  - same-business triggers;
+  - six audit actions (`MDM_ANDROID_TESTED`, `_SIGNUP_STARTED`, `_SIGNUP_FAILED`, `_ENTERPRISE_BOUND`,
+    `_POLICY_SET`, `_TOKEN_CREATED`). Their meta is ids, kinds and codes.
+- **Settings → Mobile devices** replaces the Android card's "planned" step 3 with steps 3–6, adds a note
+  that nothing has been proven against Google, and shows the outcome when Google sends the browser back.
+
+### Kept, and not kept
+
+0096's rule holds:
+- no IMEI, MEID, phone number, MAC address or user. `networkInfo`, telephony and `userName` are never asked for,
+  and never read if a server sends them;
+- the serial only on corporate devices. Only `COMPANY_OWNED` is corporate; a personal phone with a work profile,
+  or a device with no ownership given, is `byod`.
+
+Never stored: Google's `enterpriseToken` (used once in memory), an enrollment token's value, and any access token.
+The only secret is still the 0.83 service-account key.
+
+### Changed
+
+- **`mdm.enroll`** is now *Mobile enrollment links and tokens*, and covers Android tokens. **`mdm.setup`**'s
+  description adds the Android test, quota, sign-up and policy.
+- **The Android capability states** move from **planned** to **requires setup** (or **available** once done):
+  `android.connection_test`, `android.quota`, `android.enterprise`, `android.enrollment`.
+- **The setup view's `outboundCalls`** is now `{ setup: false, android: 'drivers/android' }`. The setup service
+  still calls nothing.
+- **Containment.** Every outbound call checks the `integration` pause first. The test checks the global pause;
+  sign-up, the callback, the policy and tokens check the business's; the sync checks per connector, as in 0.80.
+- **No command.** There is no `issueCommand`, no `devices.delete` and no enterprise deletion (M4, M5).
+- **Docs.** `docs/own-mdm.md` marks M3 built and adds "M3 as built": the differences, decisions 29–31 and the
+  deploy steps. `docs/mobile-devices.md`, `docs/capabilities.md` (Android enrollment: **planned** →
+  **requires setup**) and `/help` describe steps 3–6.
+
+### Owner decisions (recommendations in own-mdm.md)
+
+- **29: who opens Google's sign-up page.** Recommended: the customer's own admin, sent the link, because they hold
+  the managed Google domain. Both *Open* and *Copy* are built.
+- **30: Operations on enterprises above 250 devices.** Recommended: at M4, read Operations only for commands
+  Rem0te issued. Until then such a sync is `partial`, though every device is still read.
+- **31: unbinding a business.** Recommended: none until M5. Deleting an enterprise unenrolls every device, so it
+  belongs with the second person. Today nothing unbinds, and deleting a business leaves the enterprise at
+  Google.
+
+### Tests
+
+- **`apps/api/scripts/unit-mdm-android.mjs`** (51 checks, in CI):
+  - the policy and token body;
+  - the JWT, verifying under the key;
+  - Device and Operation mapping, including a personal device's serial dropped by the sync's own parser, and
+    network info, IMEI and users never read;
+  - escaping and 0102's lists;
+  - the capability states;
+  - the client against an in-process loopback stand-in: the token exchange, caching, the 401 retry, `fields` and
+    error codes, and `not_ready` with no request under `NODE_ENV=test` without a stand-in.
+- **`apps/api/scripts/e2e-mdm-android.mjs`** (59 checks, ports 4081–4083, in `run-e2e.sh`), on a scratch API and
+  database:
+  - every step's fresh confirmation;
+  - the test: a refused key, the JWT checked against the uploaded key, exactly one read, a global pause;
+  - sign-up: Google's redirect simulated without a cookie. It is refused for a replay, for four of five racing
+    callbacks (one enterprise is bound), for an unknown, expired or malformed state, without a token, for an
+    admin who is no longer one, and under a pause;
+  - 0102 refusing a reopen and a two-hour sign-up;
+  - the policy body;
+  - tokens of both kinds, with no value stored anywhere;
+  - with `MDM_SWEEP` on: one connector per enterprise; 130 devices over two pages; a personal device's serial
+    dropped; an unknown state skipped; Operations as commands, accepted apart from completed; a missing device
+    marked not reported; a business pause making no call; an unfinished sign-up expired;
+  - no secret in any answer, audit row or log.
+- **`e2e-ui.mjs`** shows steps 3–6 from seeded rows (no call is made): the per-token choice, the "nothing proven"
+  note, and the note after Google's redirect.
+- `unit-mdm-setup.mjs` (73), `e2e-mdm-setup.mjs` (52), `unit-mdm.mjs` (82), `unit-mdm-apple.mjs` (64) and
+  `e2e-mdm.mjs` (67) pass. They read the Android states as **requires setup** and the provider CHECKs from 0102.
+- **§94** (new) checks:
+  - the stand-in, and never Google from a test;
+  - no command;
+  - the policy and the fields asked for;
+  - the in-memory tokens;
+  - the state, the one conditional claim and its order;
+  - who, containment and the record;
+  - writers, the opener, the sweep and 0102;
+  - the web link and the suites.
+
+  §90's allowed hosts add Google's two, its host pattern catches any other `googleapis.com`, and the drivers are
+  the stand-in, `apple` and `android`. Connectors are created in two places. §92 counts eleven writes and three
+  openers. safe-https's check holds the new query charset and the two new methods.
+
+### Deploying
+
+This release has a schema change: `prisma migrate deploy`, then `prisma generate` at the target (CLAUDE.md).
+The public address must be https, because it is Google's callback. No host step is needed, and nothing happens
+until a Platform Admin runs the connection test.
+
+Before a real enterprise, Google must grant device quota and accept the permitted-use review (decision 21). Then
+the first test phone.
+
 ## [0.84.1] — 2026-11-24 · *Harbor*
 
 Fix to 0.84.0's Caddy route for the device CA. Config and docs only; no code

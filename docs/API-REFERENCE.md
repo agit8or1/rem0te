@@ -3,8 +3,8 @@
 _Generated from the controllers by `scripts/gen-api-reference.mjs`. Do not edit by hand._
 
 Every route is prefixed with `/api/v1` unless its path is shown in full (the ticket-rmm-v1
-integration, under `/api/integration/v1`). There are **701** of them across
-**107** controllers.
+integration, under `/api/integration/v1`). There are **708** of them across
+**109** controllers.
 
 For request and response shapes, worked examples and error codes, see
 [PUBLIC-API.md](PUBLIC-API.md) — this page is the complete surface, that one is the guide.
@@ -154,6 +154,26 @@ Admins and Business Owners are not confined by it; see
 | `POST` | `/api/v1/monitoring/quality/rules/:id/rollback` | signed in | — |
 | `POST` | `/api/v1/monitoring/quality/rules/:id/simulate` | signed in, throttled | — |
 | `GET` | `/api/v1/monitoring/quality/summary` | signed in | — |
+
+## Android mdmandroid
+
+`apps/api/src/mdm/android/android.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/mdm/android` | Platform Admin | — |
+| `POST` | `/api/v1/mdm/android/enrollment-tokens` | Platform Admin, throttled | — |
+| `POST` | `/api/v1/mdm/android/enterprises/:businessId/policy` | Platform Admin, throttled | — |
+| `POST` | `/api/v1/mdm/android/signup` | Platform Admin, throttled | — |
+| `POST` | `/api/v1/mdm/android/test` | Platform Admin, throttled | — |
+
+## Android mdmandroidsignup
+
+`apps/api/src/mdm/android/android.controller.ts`
+
+| Method | Path | Access | Capability |
+|---|---|---|---|
+| `GET` | `/api/v1/mdm/android/signup/callback` | public, throttled | — |
 
 ## API keys
 
@@ -627,6 +647,7 @@ Admins and Business Owners are not confined by it; see
 | Method | Path | Access | Capability |
 |---|---|---|---|
 | `GET` | `/api/v1/mdm/setup` | Platform Admin | — |
+| `PUT` | `/api/v1/mdm/setup/android/quota` | Platform Admin | — |
 | `PUT` | `/api/v1/mdm/setup/android/service-account` | Platform Admin, throttled | — |
 | `DELETE` | `/api/v1/mdm/setup/android/service-account` | Platform Admin | — |
 | `PUT` | `/api/v1/mdm/setup/apple/device-ca` | Platform Admin, throttled | — |

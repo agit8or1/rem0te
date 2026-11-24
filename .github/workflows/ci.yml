@@ -504,6 +504,12 @@ jobs:
       # sync's own parsers. Stand-in certificates made at run time.
       - name: Own Apple MDM tests
         run: node apps/api/scripts/unit-mdm-apple.mjs
+      # 0.85 (§94): Rem0te as the EMM for Android — the default policy, the
+      # service-account JWT, Device and Operation mapping (a personal device's
+      # serial dropped), escaping, 0102's CHECKs, and the client against an
+      # in-process loopback stand-in in AMAPI's shape. Never reaches Google.
+      - name: Android EMM tests
+        run: node apps/api/scripts/unit-mdm-android.mjs
 
       # Outbound email (0.34): the SMTP host rule (every address class, IPv4-
       # mapped IPv6, what SMTP_ALLOW_LOCAL_RELAY admits, every resolved address
