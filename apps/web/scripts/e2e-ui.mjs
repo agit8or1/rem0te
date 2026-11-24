@@ -3680,8 +3680,8 @@ async function mobileDevicesUi(page, f, vp, theme, label) {
   const setupState = await page.getByTestId('mdm-setup').getAttribute('data-state').catch(() => null);
   const rows = await page.locator('[data-testid="mdm-rows"] li').evaluateAll((els) => els.map((e) => ({ c: e.getAttribute('data-compliance'), t: e.textContent ?? '' })));
   const ours = rows.filter((r) => r.t.includes(TAG));
-  check(h1 === 'Mobile devices' && setupState === 'available' && ours.length === 2 && /nothing can be erased/.test(await page.getByTestId('mdm-readonly-note').innerText().catch(() => '')),
-    `${label}: Mobile devices lists the two devices, says nothing can be erased, and the provider is available`, JSON.stringify({ h1, setupState, ours: ours.length }));
+  check(h1 === 'Mobile devices' && setupState === 'available' && ours.length === 3 && /nothing can be erased/.test(await page.getByTestId('mdm-readonly-note').innerText().catch(() => '')),
+    `${label}: Mobile devices lists the three devices (0.86: an iPhone joins them), says nothing can be erased, and the provider is available`, JSON.stringify({ h1, setupState, ours: ours.length }));
   const cur = await page.locator('[data-section-tabs="devices"] a[aria-current="page"]').innerText().catch(() => null);
   check(cur === 'Mobile devices', `${label}: Mobile devices is the current Devices tab`, String(cur));
   await page.getByTestId('mdm-count-noncompliant').click();
