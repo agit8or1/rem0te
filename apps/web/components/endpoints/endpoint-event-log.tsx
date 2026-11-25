@@ -409,10 +409,10 @@ export function EndpointEventLog({
               </p>
             )}
 
-            {events.length > 0 && (aiStatus?.enabled === false || (ticketStatus?.canCreate && !ticketStatus.available)) && (
+            {events.length > 0 && (aiStatus?.enabled === false || (ticketStatus?.canCreate && ticketStatus.connector && !ticketStatus.available)) && (
               <div className="mb-3 space-y-1 text-xs text-muted-foreground">
                 {aiStatus?.enabled === false && <p>Ask AI: {NOT_CONFIGURED_AI}.</p>}
-                {ticketStatus?.canCreate && !ticketStatus.available && <p>Create ticket: {ticketStatus.reason}</p>}
+                {ticketStatus?.canCreate && ticketStatus.connector && !ticketStatus.available && <p>Create ticket: {ticketStatus.reason}</p>}
               </div>
             )}
             {events.length > 0 && (

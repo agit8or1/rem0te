@@ -297,7 +297,7 @@ function PolicyForm({ businessId, siteId, groupId = null, current, defaultTz, ca
           </fieldset>
           <div className="space-y-1"><Label>From</Label><Input type="time" className="w-32" value={w.start} disabled={disabled} onChange={(e) => setWin(i, { start: e.target.value })} /></div>
           <div className="space-y-1"><Label>Until</Label><Input type="time" className="w-32" value={w.end} disabled={disabled} onChange={(e) => setWin(i, { end: e.target.value })} /></div>
-          {windows.length > 1 && <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => setWindows(windows.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></Button>}
+          {windows.length > 1 && <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => setWindows(windows.filter((_, j) => j !== i))} aria-label={`Remove window ${i + 1}`}><Trash2 className="h-4 w-4" /></Button>}
         </div>
       ))}
       <p className="text-xs text-muted-foreground">An end earlier than the start runs past midnight (22:00–05:00 on Friday is Friday night into Saturday morning). At least 30 minutes; up to 7 windows.</p>

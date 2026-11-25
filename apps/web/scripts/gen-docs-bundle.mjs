@@ -106,6 +106,9 @@ if (badGroup) { console.error(`✗ ${badGroup[0]}: group "${badGroup[2]}" is not
 // deliberately NOT in the in-app bundle, and the unlisted-pages guard below must
 // not treat them as an omission. Keep this list short: if something here would
 // help a reader of the app, it belongs in ORDER instead.
+// docs/ux/ (0.85.1, the UI/UX initiative's audit, roadmap and cross-project
+// design notes) is maintainer material in a subdirectory, which this script
+// never reads; it needs no entry here. Bundled pages link to it by GitHub URL.
 const NOT_IN_APP = new Set([
   'github-about.md', // GitHub About panel copy + settings checklist, for maintainers
   'implementation-status.md', // 0.56: the expanded-RMM programme tracker, for maintainers

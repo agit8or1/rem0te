@@ -260,4 +260,8 @@ against. ClientSt0r changes are pull requests only.
 ### 10–12. Hardening, scale, technician experience
 
 A full attack-surface review; fleet benchmarks above 5,000 (measured only to
-5,000 on a synthetic fleet); the remaining UI work.
+5,000 on a synthetic fleet); the remaining UI work. The UI work is planned in
+the UI/UX initiative's
+[roadmap](https://github.com/agit8or1/rem0te/blob/main/docs/ux/UX_ROADMAP.md)
+(0.85.1), which changes presentation only: nothing in it counts as evidence on
+this page.

@@ -8,9 +8,11 @@ import { HydrationMarker } from '@/components/providers/hydration-marker';
 
 const inter = Inter({ subsets: ['latin'] });
 
+// 0.85.1: every tab used to say "Reboot Remote", the product's old name. A
+// page that sets its own title (Documentation) now reads "Documentation · Rem0te".
 export const metadata: Metadata = {
-  title: 'Reboot Remote',
-  description: 'Remote support management platform',
+  title: { default: 'Rem0te', template: '%s · Rem0te' },
+  description: 'Remote support and RMM for MSPs',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

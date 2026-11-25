@@ -376,7 +376,7 @@ function Monitors({ businessId, ok, fail }: Props) {
                     <>
                       <Button size="sm" variant="ghost" onClick={() => update.mutate({ id: r.id, data: { enabled: !r.enabled } })}>{r.enabled ? 'Switch off' : 'Switch on'}</Button>
                       <Button size="sm" variant="ghost" onClick={() => { setEditing(editing === r.id ? null : r.id); setEditParams(r.params); setEditPriority(r.priority != null ? String(r.priority) : ''); }}>Edit</Button>
-                      <Button size="sm" variant="ghost" onClick={() => { if (window.confirm(`Remove “${r.name}”?${r.scope === 'global' ? '' : ' The inherited monitor with this key, if any, applies again.'}`)) remove.mutate(r.id); }}><Trash2 className="h-4 w-4" /></Button>
+                      <Button size="sm" variant="ghost" onClick={() => { if (window.confirm(`Remove “${r.name}”?${r.scope === 'global' ? '' : ' The inherited monitor with this key, if any, applies again.'}`)) remove.mutate(r.id); }} aria-label={`Remove ${r.name}`}><Trash2 className="h-4 w-4" /></Button>
                     </>
                   )}
                   {businessId && r.scope === 'global' && !overridden.has(r.key) && data.may.business && (
@@ -504,7 +504,7 @@ function Notify({ businessId, ok, fail }: Props) {
               <div className="space-y-1"><Label>At least</Label>
                 <select className="rounded-md border bg-background p-2" disabled={!may} value={l.minSeverity} onChange={(e) => setLevels(edit.levels.map((x, j) => (j === i ? { ...x, minSeverity: e.target.value as Severity } : x)))}>{SEVERITIES.map((s) => <option key={s}>{s}</option>)}</select>
               </div>
-              {may && <Button size="sm" variant="ghost" onClick={() => setLevels(edit.levels.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></Button>}
+              {may && <Button size="sm" variant="ghost" onClick={() => setLevels(edit.levels.filter((_, j) => j !== i))} aria-label={`Remove escalation level ${i + 1}`}><Trash2 className="h-4 w-4" /></Button>}
             </div>
             {l.destinations.map((d, k) => (
               <div key={k} className="flex flex-wrap gap-2">

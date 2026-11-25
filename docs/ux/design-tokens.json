@@ -1,0 +1,106 @@
+{
+  "$schema": "https://design-tokens.github.io/community-group/format/",
+  "$description": "Rem0te design tokens, draft 0 (0.85.1). Planning values from the owner's UI/UX directive §5, with WCAG 2.2 AA variants worked out against them. NOT YET IN THE CODE: the console still uses the shadcn defaults in apps/web/app/globals.css. The shared MSPZero specification (github.com/agit8or1/clientst0r/tree/main/docs/ux) was not published when this was written (checked against clientst0r main 2d26c30, 2026-11-25); when it is, this file follows it and records the adopted commit in CLIENTST0R_HANDOFF.md. Every ratio below was computed, not estimated; see SHARED_DESIGN_SYSTEM.md#contrast.",
+  "meta": {
+    "version": "0.0.0-draft",
+    "source": "UI/UX directive §5 initial tokens",
+    "sharedSpec": { "adopted": null, "checkedAgainst": "agit8or1/clientst0r@2d26c30", "checkedOn": "2026-11-25", "status": "not yet published" }
+  },
+  "color": {
+    "brand": {
+      "navigation": { "$type": "color", "$value": "#14243A", "$description": "Sidebar and app-switcher background, both themes. White text 15.6:1; muted #A9B8CC 7.8:1." },
+      "navigation-fg": { "$type": "color", "$value": "#FFFFFF" },
+      "navigation-fg-muted": { "$type": "color", "$value": "#A9B8CC" }
+    },
+    "light": {
+      "background": { "$type": "color", "$value": "#F4F7FB" },
+      "surface": { "$type": "color", "$value": "#FFFFFF" },
+      "surface-sunken": { "$type": "color", "$value": "#EEF2F7" },
+      "text": { "$type": "color", "$value": "#172033", "$description": "16.3:1 on surface, 15.1:1 on background." },
+      "text-muted": { "$type": "color", "$value": "#5B6B82", "$description": "5.4:1 on surface, 5.05:1 on background. #64748B (shadcn's slate-500) is 4.43:1 on background and fails." },
+      "border": { "$type": "color", "$value": "#D8E0EA", "$description": "Decorative divider only (1.3:1)." },
+      "border-strong": { "$type": "color", "$value": "#8A9BB0", "$description": "Input and control outlines: 2.8:1 is under 3:1, so inputs also carry a background change; use control-outline for a lone boundary." },
+      "control-outline": { "$type": "color", "$value": "#64748B", "$description": "4.8:1, for a boundary that is the only cue (checkbox, radio, toggle off-state)." },
+      "primary": { "$type": "color", "$value": "#2563EB", "$description": "Buttons with white text 5.2:1; as text 4.8:1 on background." },
+      "primary-hover": { "$type": "color", "$value": "#1D4ED8" },
+      "primary-fg": { "$type": "color", "$value": "#FFFFFF" },
+      "accent": { "$type": "color", "$value": "#0D9488", "$description": "Fill and icon only (3.7:1). Text uses accent-text." },
+      "accent-text": { "$type": "color", "$value": "#0F766E", "$description": "5.5:1" },
+      "focus-ring": { "$type": "color", "$value": "#2563EB", "$description": "2px ring plus 2px offset; 5.2:1 against surface (non-text needs 3:1)." },
+      "disabled-fg": { "$type": "color", "$value": "#8A9BB0", "$description": "Disabled controls are exempt from contrast, but every disabled control must also say why (title or adjacent text)." },
+      "disabled-bg": { "$type": "color", "$value": "#EEF2F7" }
+    },
+    "dark": {
+      "background": { "$type": "color", "$value": "#0B1220" },
+      "surface": { "$type": "color", "$value": "#152033" },
+      "surface-raised": { "$type": "color", "$value": "#1C2A40" },
+      "text": { "$type": "color", "$value": "#E2E8F0", "$description": "13.2:1 on surface, 15.2:1 on background." },
+      "text-muted": { "$type": "color", "$value": "#94A3B8", "$description": "6.4:1 on surface." },
+      "border": { "$type": "color", "$value": "#2A3A52" },
+      "border-strong": { "$type": "color", "$value": "#56677F" },
+      "control-outline": { "$type": "color", "$value": "#8A9BB0" },
+      "primary": { "$type": "color", "$value": "#3B82F6", "$description": "Icons, selection and chart series only. White on #3B82F6 is 3.7:1 and fails, so a filled button in dark keeps primary-button (#2563EB, white 5.2:1), and primary as text or a link uses primary-text." },
+      "primary-button": { "$type": "color", "$value": "#2563EB" },
+      "primary-text": { "$type": "color", "$value": "#60A5FA", "$description": "6.4:1 on surface." },
+      "primary-fg": { "$type": "color", "$value": "#FFFFFF" },
+      "accent": { "$type": "color", "$value": "#0D9488" },
+      "accent-text": { "$type": "color", "$value": "#2DD4BF", "$description": "8.8:1" },
+      "focus-ring": { "$type": "color", "$value": "#60A5FA", "$description": "6.4:1 against surface." },
+      "disabled-fg": { "$type": "color", "$value": "#56677F" },
+      "disabled-bg": { "$type": "color", "$value": "#1C2A40" }
+    },
+    "status": {
+      "$description": "One hue per meaning, in both themes. `base` is the directive's value, for fills, icons, chart series and 3px status bars (non-text, 3:1). `text-light` / `text-dark` are for words in that colour. `soft-*` is a tinted background behind text-* words. A status is never colour alone: it always has a word or an icon with an accessible name.",
+      "info":     { "base": { "$type": "color", "$value": "#0284C7" }, "text-light": { "$type": "color", "$value": "#0369A1" }, "text-dark": { "$type": "color", "$value": "#38BDF8" }, "soft-light": { "$type": "color", "$value": "#E0F2FE" }, "soft-dark": { "$type": "color", "$value": "#0C2A3F" } },
+      "success":  { "base": { "$type": "color", "$value": "#16A34A" }, "text-light": { "$type": "color", "$value": "#15803D" }, "text-dark": { "$type": "color", "$value": "#4ADE80" }, "soft-light": { "$type": "color", "$value": "#DCFCE7" }, "soft-dark": { "$type": "color", "$value": "#0F2E1C" }, "button": { "$type": "color", "$value": "#15803D", "$description": "White on the base #16A34A is 3.3:1 and fails; a filled success button uses #15803D (5.0:1)." } },
+      "warning":  { "base": { "$type": "color", "$value": "#D97706" }, "text-light": { "$type": "color", "$value": "#B45309" }, "text-dark": { "$type": "color", "$value": "#FBBF24" }, "soft-light": { "$type": "color", "$value": "#FEF3C7" }, "soft-dark": { "$type": "color", "$value": "#33240A" }, "button-fg": { "$type": "color", "$value": "#172033", "$description": "A filled warning control takes dark text; white on #D97706 is 3.2:1." } },
+      "critical": { "base": { "$type": "color", "$value": "#DC2626" }, "text-light": { "$type": "color", "$value": "#B91C1C" }, "text-dark": { "$type": "color", "$value": "#F87171" }, "soft-light": { "$type": "color", "$value": "#FEE2E2" }, "soft-dark": { "$type": "color", "$value": "#3A1414" }, "button": { "$type": "color", "$value": "#DC2626", "$description": "White 4.8:1." } },
+      "pending":  { "base": { "$type": "color", "$value": "#7C3AED" }, "text-light": { "$type": "color", "$value": "#6D28D9" }, "text-dark": { "$type": "color", "$value": "#A78BFA" }, "soft-light": { "$type": "color", "$value": "#EDE9FE" }, "soft-dark": { "$type": "color", "$value": "#241645" } },
+      "unknown":  { "base": { "$type": "color", "$value": "#64748B" }, "text-light": { "$type": "color", "$value": "#5B6B82" }, "text-dark": { "$type": "color", "$value": "#94A3B8" }, "soft-light": { "$type": "color", "$value": "#EEF2F7" }, "soft-dark": { "$type": "color", "$value": "#1C2A40" }, "$description": "Unknown, stale, unsupported and unavailable: never green. The word distinguishes them (UX_ACCEPTANCE_CRITERIA.md U-3)." }
+    }
+  },
+  "font": {
+    "family": {
+      "sans": { "$type": "fontFamily", "$value": ["Inter", "ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"], "$description": "Inter, bundled with the app (no runtime request to another server). Today next/font/google fetches it at build time and serves it locally." },
+      "mono": { "$type": "fontFamily", "$value": ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"] }
+    },
+    "size": {
+      "xs": { "$type": "dimension", "$value": "12px", "$description": "Smallest text. Replaces the 97 text-[11px] and 45 text-[10px] uses found in the audit." },
+      "sm": { "$type": "dimension", "$value": "14px" },
+      "base": { "$type": "dimension", "$value": "16px" },
+      "lg": { "$type": "dimension", "$value": "18px" },
+      "xl": { "$type": "dimension", "$value": "20px", "$description": "Page title." },
+      "2xl": { "$type": "dimension", "$value": "24px", "$description": "Dashboard figures only; never a heading." }
+    },
+    "weight": { "regular": { "$type": "fontWeight", "$value": 400 }, "medium": { "$type": "fontWeight", "$value": 500 }, "semibold": { "$type": "fontWeight", "$value": 600 } },
+    "lineHeight": { "tight": { "$type": "number", "$value": 1.25 }, "normal": { "$type": "number", "$value": 1.5 } }
+  },
+  "space": {
+    "$description": "4px base; layouts use the 8px steps.",
+    "0": { "$type": "dimension", "$value": "0px" }, "1": { "$type": "dimension", "$value": "4px" }, "2": { "$type": "dimension", "$value": "8px" },
+    "3": { "$type": "dimension", "$value": "12px" }, "4": { "$type": "dimension", "$value": "16px" }, "6": { "$type": "dimension", "$value": "24px" },
+    "8": { "$type": "dimension", "$value": "32px" }, "12": { "$type": "dimension", "$value": "48px" }
+  },
+  "density": {
+    "comfortable": { "row": { "$type": "dimension", "$value": "40px" }, "control": { "$type": "dimension", "$value": "36px" }, "cellPaddingY": { "$type": "dimension", "$value": "8px" } },
+    "compact": { "row": { "$type": "dimension", "$value": "32px" }, "control": { "$type": "dimension", "$value": "28px" }, "cellPaddingY": { "$type": "dimension", "$value": "4px" } },
+    "$description": "Touch targets stay at least 24×24 CSS px in compact (WCAG 2.2 2.5.8) and 44px on coarse pointers."
+  },
+  "radius": {
+    "sm": { "$type": "dimension", "$value": "4px" }, "md": { "$type": "dimension", "$value": "6px" }, "lg": { "$type": "dimension", "$value": "8px", "$description": "Cards and dialogs. The console's --radius is 0.5rem (8px) today." }, "full": { "$type": "dimension", "$value": "9999px" }
+  },
+  "shadow": {
+    "none": { "$type": "shadow", "$value": "none" },
+    "raised": { "$type": "shadow", "$value": "0 1px 2px rgba(15, 23, 42, 0.06)", "$description": "Cards: a border plus at most this." },
+    "overlay": { "$type": "shadow", "$value": "0 8px 24px rgba(15, 23, 42, 0.18)", "$description": "Dialogs, menus, popovers." }
+  },
+  "motion": {
+    "duration": { "fast": { "$type": "duration", "$value": "120ms" }, "normal": { "$type": "duration", "$value": "200ms" } },
+    "$description": "Under prefers-reduced-motion every duration is 0 and spinners become a static icon with text."
+  },
+  "icon": {
+    "set": { "$type": "other", "$value": "lucide (lucide-react, ISC), bundled; already the console's only icon set" },
+    "size": { "sm": { "$type": "dimension", "$value": "16px" }, "md": { "$type": "dimension", "$value": "20px" } },
+    "stroke": { "$type": "number", "$value": 2 }
+  }
+}

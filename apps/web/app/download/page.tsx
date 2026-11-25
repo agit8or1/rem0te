@@ -17,6 +17,8 @@ interface RustdeskConfig {
   configString: string | null;
   configured: boolean;
   showDownloadPage?: boolean;
+  /** The operator's branding (Settings → Branding), the same object the sign-in page reads. */
+  branding?: { portalTitle?: string | null } | null;
 }
 
 interface DownloadItem {
@@ -173,7 +175,8 @@ export default function DownloadPage() {
       <header className="border-b bg-background">
         <div className="mx-auto max-w-4xl px-6 py-4 flex items-center gap-3">
           <Shield className="h-6 w-6 text-primary" />
-          <span className="font-semibold text-lg">Reboot Remote</span>
+          {/* 0.85.1: the operator's portal title, not the product's old name. */}
+          <span className="font-semibold text-lg">{config?.branding?.portalTitle || 'Rem0te'}</span>
         </div>
       </header>
 

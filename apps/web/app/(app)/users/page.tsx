@@ -202,7 +202,7 @@ export default function UsersPage() {
         </div>
         {isPlatformAdmin && (
           <Select value={businessFilter} onValueChange={setBusinessFilter}>
-            <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-56" aria-label="Filter by business"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All businesses</SelectItem>
               {businesses.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
@@ -268,7 +268,7 @@ export default function UsersPage() {
                       {canManage && (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" aria-label={`Actions for ${m.user.email}`}>
                               <MoreHorizontal className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>

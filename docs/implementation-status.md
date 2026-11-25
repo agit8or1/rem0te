@@ -7,6 +7,15 @@ is **Done** only with backend, UI, permissions, audit, automated tests and docs
 
 Legend: **E** exists · **P** partial · **M** missing · **F** in flight (branch)
 
+## UI/UX initiative — 0.85.1 (2026-11-25)
+
+The owner's *UI/UX, usability and unified MSP platform* directive (2026-11-25) runs alongside this programme and
+replaces none of it. Its audit, baselines, standalone requirements and phased plan are in [`docs/ux/`](ux/):
+[UX_AUDIT.md](ux/UX_AUDIT.md), [WORKFLOW_BENCHMARKS.md](ux/WORKFLOW_BENCHMARKS.md),
+[STANDALONE_REQUIREMENTS.md](ux/STANDALONE_REQUIREMENTS.md) and the plan, [UX_ROADMAP.md](ux/UX_ROADMAP.md)
+(P0-1 shipped as 0.85.1; P0-2, the design-token layer, is next). It is presentation, usability, accessibility and
+standalone work only: it implements no deferred feature, and no item removes a security step.
+
 ## Current audit — 0.73.2 (main 3554921, 0.73.0)
 
 The *Full RMM Functionality Expansion* directive (2026-11-20) is audited item by item in
