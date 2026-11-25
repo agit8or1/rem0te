@@ -1149,7 +1149,8 @@ async function serverSecurity(page, label, vp) {
     ['tls', '[data-testid="cert-remote.example.com"]'],
     ['os-updates', '[data-testid="os-updates-state"][data-state="ok"]'],
     ['dependencies', '[data-testid="deps-state"][data-state="ok"]'],
-    ['features', 'main table, main [role="table"], main li'],
+    // 0.87: not `main li`: the header's breadcrumb list is inside <main> and hidden on a phone, so .first() waited on it.
+    ['features', '[role="tabpanel"] table'],
   ];
   for (const [tab, sel] of tabs) {
     await page.locator(`[data-testid="security-tab-${tab}"]`).click();
