@@ -35,7 +35,8 @@ export function TaskWatcher() {
     queryKey: ['tasks', 'mine'],
     enabled,
     retry: false,
-    refetchIntervalInBackground: true,
+    // F-9 (0.87): a hidden tab does not poll; react-query refetches when it is shown again, and the toast comes then.
+    refetchIntervalInBackground: false,
     refetchInterval: (q) => (q.state.data as Mine | undefined)?.pollMs ?? 15_000,
     queryFn: async () => {
       const r = await tasksApi.mine(since.current ?? undefined);

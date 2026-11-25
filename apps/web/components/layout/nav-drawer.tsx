@@ -74,7 +74,7 @@ export function NavDrawer() {
           className="fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] shadow-xl outline-none md:hidden"
         >
           <DialogPrimitive.Title className="sr-only">Main menu</DialogPrimitive.Title>
-          <Sidebar className="h-full w-full" />
+          <Sidebar className="h-full w-full" inDrawer />
           {/* It sits on the sidebar's brand header. On a branding accent its
               ink is black or white by the accent's luminance (always at least
               4.5:1, WCAG AA); without one, the theme's foreground. It was

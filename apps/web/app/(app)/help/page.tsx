@@ -326,12 +326,13 @@ const SECTIONS: Section[] = [
         <p>
           On a screen narrower than 768 px the menu is not drawn beside the page. The{' '}
           <strong className="text-foreground">menu button</strong> at the left of the top bar opens it over the page,
-          with everything the sidebar holds: the business switcher, Help, the theme and Sign out. Choosing a page closes
+          with everything the sidebar holds. The business switcher, Help and your profile menu (theme, Sign out) stay in
+          the top bar. Choosing a page closes
           it, as do <strong className="text-foreground">Esc</strong>, tapping outside it and its close button.
         </p>
         <p>
           Wide tables — the device list, the reports, API keys — scroll sideways inside their own box instead of
-          widening the page, so swipe the table rather than the page. A device&apos;s tab row scrolls the same way.
+          widening the page, so swipe the table rather than the page. A device&apos;s tab groups and tabs scroll the same way.
         </p>
       </div>
     ),
@@ -344,8 +345,10 @@ const SECTIONS: Section[] = [
         <p>
           The <strong className="text-foreground">Search</strong> box at the top of every page — or{' '}
           <strong className="text-foreground">Ctrl+K</strong> (<strong className="text-foreground">⌘K</strong> on a
-          Mac) from anywhere — searches devices, businesses, sites, people and open alerts at once. Type at least two
-          characters; the arrow keys move through the results, Enter opens one, Esc closes the box.
+          Mac) from anywhere — searches devices, customers, sites, people, open alerts, scripts, patch policies and
+          automation schedules at once, and the console&apos;s pages by name. Before you type it offers your recent items
+          and quick actions. Type at least two characters; the arrow keys move through the results, Enter opens one, Esc
+          closes the box. Each group shows only what its own list page would show you.
         </p>
         <ul className="list-disc pl-5 space-y-1.5">
           <li>
@@ -1753,14 +1756,19 @@ const SECTIONS: Section[] = [
           <Link href="/docs/staged-patching#signed-results-034" className="underline text-foreground">Signed results</Link>.
         </p>
         <p>
-          From 0.31 the menu is organised by job: <strong className="text-foreground">Dashboard</strong>,{' '}
-          <strong className="text-foreground">Devices</strong> (all devices, your own, adding one),{' '}
-          <strong className="text-foreground">Alerts</strong>, <strong className="text-foreground">Automation</strong>,{' '}
-          <strong className="text-foreground">Patching</strong>,{' '}
-          <strong className="text-foreground">Remote Support</strong> (sessions, Quick Connect, support requests and the
-          technician client), <strong className="text-foreground">Reports</strong> (0.32) and{' '}
-          <strong className="text-foreground">Settings</strong>, which holds users, the audit log
-          and platform administration. Help and the documentation are at the bottom of the menu.
+          From 0.87 the menu is nine groups: <strong className="text-foreground">Dashboard</strong>,{' '}
+          <strong className="text-foreground">Devices</strong> (all devices, your own, customers, adding one),{' '}
+          <strong className="text-foreground">Remote support</strong>, <strong className="text-foreground">Monitoring</strong>{' '}
+          (alerts, monitoring policies, backups), <strong className="text-foreground">Patching</strong>,{' '}
+          <strong className="text-foreground">Automation</strong>, <strong className="text-foreground">Reports</strong>,{' '}
+          <strong className="text-foreground">Security</strong> (containment, the audit log, server security, access
+          control) and <strong className="text-foreground">Administration</strong> (settings, users, technicians,
+          integrations). <em>Standard</em> mode, the default, lists the everyday pages; the rest are tabs on those pages
+          and in Ctrl+K, and <em>Advanced</em> in your profile menu lists them all. The toggle at the top left collapses
+          the menu to icons. Help is the <strong className="text-foreground">?</strong> in the top bar; your theme
+          (Light, Dark or System), density, mode and Sign out are in the profile menu at the top right. Star a device or
+          customer to keep it under the star in the top bar. Nothing moved address:{' '}
+          <Link href="/docs/navigation_migration" className="underline text-foreground">where things moved</Link>.
         </p>
         <p>
           <Link href="/automation/scripts" className="underline text-foreground">Automation → Script library</Link> holds

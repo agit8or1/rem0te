@@ -4,6 +4,7 @@ import { randomBytes } from 'crypto';
 import { readFileSync } from 'fs';
 import { z } from 'zod';
 import { PrismaService } from '../prisma/prisma.service';
+import { likeEscape } from '../common/like';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { ActorResolverService } from '../rbac/actor-resolver.service';
@@ -715,6 +716,32 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     const doc = r.document as unknown as PolicyDoc;
     for (const c of doc.rings.flat()) await this.acl.assertEndpointInScope(actor, c.endpointId).catch(() => { throw new NotFoundException('Policy not found'); });
     return r;
+  }
+
+  /**
+   * 0.87 global search: current policies whose name matches, each read
+   * through scoped() — the detail page's own rule (every computer it names
+   * visible to the caller). The name filter is escaped; a non-admin's
+   * candidates are their own business's only, which narrows and never widens.
+   */
+  async findVisibleByName(actor: ActorContext, q: string, cap: number) {
+    const rows = await this.prisma.patchPolicy.findMany({
+      where: { AND: [
+        actor.isPlatformAdmin ? {} : { customerId: actor.businessId ?? '-' },
+        { supersededAt: null },
+        { name: { contains: likeEscape(q), mode: 'insensitive' } },
+      ] },
+      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], take: cap * 2, select: { id: true },
+    });
+    const out: { id: string; name: string; status: string; businessId: string; businessName: string | null }[] = [];
+    for (const r0 of rows) {
+      if (out.length > cap) break;
+      try {
+        const r = await this.scoped(actor, r0.id);
+        out.push({ id: r.id, name: r.name, status: r.status, businessId: r.customerId, businessName: (r.document as unknown as PolicyDoc).businessName ?? null });
+      } catch { /* not visible to this caller: absent, as on its page */ }
+    }
+    return out;
   }
 
   /**

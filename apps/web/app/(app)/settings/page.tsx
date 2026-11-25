@@ -205,14 +205,14 @@ export default function SettingsPage() {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="general">General</TabsTrigger>
-          <TabsTrigger value="security">Security</TabsTrigger>
+          <TabsTrigger value="security">Security pages</TabsTrigger>
           <TabsTrigger value="confirm">Confirm it is you</TabsTrigger>
           <TabsTrigger value="monitoring">Monitoring &amp; API</TabsTrigger>
           <TabsTrigger value="quick-connect">Quick Connect</TabsTrigger>
           <TabsTrigger value="rustdesk">RustDesk</TabsTrigger>
           <TabsTrigger value="branding">Branding</TabsTrigger>
           <TabsTrigger value="network">Network / Ports</TabsTrigger>
-          <TabsTrigger value="access" onClick={() => router.push('/admin/access')}>Access Control</TabsTrigger>
+          {/* F-13 (0.87): "Access Control" was a tab that left the page. It is Security → Access control in the menu now. */}
         </TabsList>
 
         <TabsContent value="general" className="mt-4 space-y-4">
@@ -382,6 +382,9 @@ export default function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="security" className="mt-4 space-y-4">
+          <p className="text-sm text-muted-foreground" data-testid="settings-security-moved">
+            These pages are also in the menu&apos;s <strong className="font-medium text-foreground">Security</strong> group, with containment, the audit log and access control.
+          </p>
           <Card>
             <CardHeader><CardTitle className="text-sm">Security Features</CardTitle></CardHeader>
             <CardContent className="flex flex-wrap items-center justify-between gap-3">

@@ -609,6 +609,8 @@ model User {
   ssoSessions            SsoSession[]
   ssoLinkSuggestions     SsoLinkSuggestion[]
   loginLockout           LoginLockout?
+  navPreference          UserNavPreference?
+  navItems               UserNavItem[]
 
   @@index([email])
 }
@@ -2007,6 +2009,41 @@ model SavedView {
   @@index([tenantId])
   @@index([userId, resource])
   @@index([customerId, resource])
+}
+
+// ─── Navigation (0.87) ────────────────────────────────────────────────────────
+
+// One person's menu preferences. Presentation only: Standard and Advanced
+// reach the same pages, and nothing here is a permission. The closed lists
+// are navigation/model.ts's (§96 compares them with 0104's CHECKs).
+// contextBusinessId is the customer the header names: a hint for the menu's
+// links, resolved through GET /businesses' own rule on every read, never a scope.
+model UserNavPreference {
+  userId            String   @id
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mode              String   @default("standard")
+  sidebarCollapsed  Boolean  @default(false)
+  pinnedGroups      String[] @default([])
+  density           String   @default("comfortable")
+  contextBusinessId String?
+  updatedAt         DateTime @updatedAt
+}
+
+// A favourite or a recent item: a kind and a reference (a record id or a
+// console path), never a name. Names are resolved on every read through the
+// record's own visibility rule, so losing access hides the row.
+model UserNavItem {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  list      String
+  kind      String
+  ref       String
+  createdAt DateTime @default(now())
+  usedAt    DateTime @default(now())
+
+  @@unique([userId, list, kind, ref])
+  @@index([userId, list, usedAt])
 }
 
 // ─── Platform Settings ───────────────────────────────────────────────────────

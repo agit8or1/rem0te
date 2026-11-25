@@ -270,7 +270,11 @@ async function businessId(page, name) {
     return l.find((c) => c.name === n)?.id ?? null;
   }, name);
 }
-const tab = (page, id) => press(page, `[data-testid="tab-${id}"]`, { hold: 700 });
+// 0.87: device tabs sit in groups; open the group that holds the tab first.
+const tab = async (page, id) => {
+  if (!(await page.locator(`[data-testid="tab-${id}"]`).isVisible().catch(() => false))) await press(page, `[data-testid="workspace-groups"] [data-tabs~="${id}"]`, { hold: 500 });
+  await press(page, `[data-testid="tab-${id}"]`, { hold: 700 });
+};
 async function cancelDialog(page) {
   const sel = '[role="dialog"] button:has-text("Cancel"), [role="alertdialog"] button:has-text("Cancel")';
   if (await page.locator(sel).first().isVisible().catch(() => false)) await press(page, sel, { hold: 700, timeout: 4000 });
@@ -349,7 +353,7 @@ async function walkthrough(page, ids) {
   await chapter(page, 'A computer');
   await go(page, `/endpoints/${ids.dispatch}`, 2200);
   await say(page, 'One computer\'s workspace: status, the actions you may take, and a tab per job');
-  await show(page, '[data-testid="workspace-tabs"]', { hold: 3200, pad: 3 });
+  await show(page, '[data-testid="workspace-groups"]', { hold: 3200, pad: 3 });
   await say(page, 'The header says what is wrong at a glance: alerts, pending updates, which agent');
   await show(page, '[data-testid="device-status"]', { hold: 2800 });
   await say(page, 'The <b>Tasks</b> panel: everything sent to this computer, and where each one is');

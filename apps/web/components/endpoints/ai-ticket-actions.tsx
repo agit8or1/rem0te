@@ -73,6 +73,10 @@ export function AskAiButton({ endpointId, source }: { endpointId: string; source
   const enabled = !!status?.enabled;
   const start = () => { setOpen(true); if (!ask.data && !ask.isPending) ask.mutate(undefined, { onSuccess: () => qc.invalidateQueries({ queryKey: ['psa-draft', endpointId, sourceRefOf(source)] }) }); };
   const removed = ask.data ? Object.values(ask.data.redactions).reduce((a, b) => a + b, 0) : 0;
+  // Owner decision 3 (0.87, STANDALONE_REQUIREMENTS.md S-1): with no AI
+  // provider configured there is nothing to ask, so there is no button. A
+  // provider that is set up but switched off keeps the disabled button and its reason.
+  if (!status || !status.provider) return null;
   return (
     <>
       <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={!enabled} title={enabled ? `Ask ${status?.providerLabel ?? 'the AI'} what this means` : NOT_CONFIGURED_AI} onClick={start}>

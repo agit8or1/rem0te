@@ -40,6 +40,7 @@ const GROUPS = [
 const ORDER = [
   ['README.md', 'Overview', 'Start here', 'Which page to read for what you are doing.'],
   ['technician-guide.md', 'Technician guide', 'Start here', 'Day to day: find a computer, connect, help someone unenrolled, review sessions.'],
+  ['NAVIGATION_MIGRATION.md', 'Where things moved (0.87)', 'Start here', 'The 0.87 menu: every old entry and where it is now, Standard and Advanced modes, favourites and the Ctrl+K palette. No URL changed.'],
   ['troubleshooting.md', 'Troubleshooting', 'Start here', 'Start here when something is broken — especially "the target device is offline".'],
   ['connecting.md', 'Connecting', 'Connecting and clients', 'What happens when you click Connect, and why the three connect paths differ.'],
   ['clients.md', 'Clients', 'Connecting and clients', 'Every RustDesk client Rem0te hands out, who it is for, and how it finds this server.'],
@@ -97,6 +98,8 @@ const ORDER = [
   ['server-sizing.md', 'Server sizing', 'Running the server', 'CPU, memory, disk and PostgreSQL for 50 to 5,000 computers, with measured heartbeat cost and database growth.'],
   ['data-retention.md', 'Data retention', 'Running the server', 'What ages out of the database, after how long, what is never removed (the audit log), and how to change it.'],
   ['architecture.md', 'Architecture', 'Running the server', 'How the pieces fit together.'],
+  ['NAVIGATION_ARCHITECTURE.md', 'Navigation architecture', 'Running the server', 'How the console\'s menu, header, palette, favourites and device tabs are built, what decides what is shown, and the rules that keep it presentation only.'],
+  ['UI_DESIGN_SYSTEM.md', 'UI design system', 'Running the server', 'The console\'s colour tokens, type, spacing, density, focus, motion and the shell\'s components, with the WCAG AA contrast of every text pair.'],
   ['compatibility.md', 'Compatibility testing', 'Running the server', 'How every release is tested against the older agents still installed, which versions are supported, and what a pass does and does not prove.'],
 ];
 const badGroup = ORDER.find(([, , g]) => !GROUPS.includes(g));

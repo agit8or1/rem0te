@@ -9,14 +9,21 @@
  * component only debounces the typing, draws the groups, and moves a
  * keyboard cursor through them. Every result is a link to the object's page,
  * which applies its own access rule again when it loads.
+ *
+ * 0.87 Compass added scripts and policies (server groups, each through its
+ * page's own rule), a Pages group (the menu's own pages this person may
+ * open, matched in the browser from nav-model.ts, so Standard mode never
+ * hides a page), and, before anything is typed, recent items and quick actions.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { connectivityFrom } from '@/lib/connectivity';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { Building2, Laptop, Loader2, MapPin, Search, Siren, User } from 'lucide-react';
+import { Building2, Clock, FileCode2, Laptop, LayoutGrid, Loader2, MapPin, Search, ShieldCheck, Siren, User, Zap } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { searchApi, type SearchComputerField, type SearchResults } from '@/lib/api-client';
+import { allPages, pageLabel } from '@/components/layout/nav-model';
+import { useNavCtx, useNavigation } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
 
 const MIN = 2;
@@ -28,24 +35,36 @@ const FIELD_LABEL: Record<SearchComputerField, string> = {
   ipAddress: 'IP address', privateIp: 'Adapter IP', alias: 'Alias',
 };
 
-type GroupKey = keyof SearchResults['groups'];
+type ServerKey = keyof SearchResults['groups'];
+type GroupKey = ServerKey | 'pages' | 'recent' | 'quick';
 interface Item {
   key: string; group: GroupKey; href: string;
   title: string; detail: string | null; tag?: { text: string; tone: 'ok' | 'muted' | 'warn' | 'bad' } | null;
 }
 const GROUP_META: Record<GroupKey, { label: string; icon: typeof Laptop }> = {
   computers: { label: 'Devices', icon: Laptop },
-  businesses: { label: 'Businesses', icon: Building2 },
+  businesses: { label: 'Customers', icon: Building2 },
   sites: { label: 'Sites', icon: MapPin },
   users: { label: 'People', icon: User },
   alerts: { label: 'Open alerts', icon: Siren },
+  scripts: { label: 'Scripts', icon: FileCode2 },
+  policies: { label: 'Policies and schedules', icon: ShieldCheck },
+  pages: { label: 'Pages and settings', icon: LayoutGrid },
+  recent: { label: 'Recent', icon: Clock },
+  quick: { label: 'Quick actions', icon: Zap },
 };
-const ORDER: GroupKey[] = ['computers', 'businesses', 'sites', 'users', 'alerts'];
+const ORDER: GroupKey[] = ['computers', 'businesses', 'sites', 'users', 'alerts', 'scripts', 'policies', 'pages'];
+const IDLE_ORDER: GroupKey[] = ['recent', 'quick'];
+const PAGE_CAP = 6;
+const QUICK: { href: string; label: string }[] = [
+  { href: '/endpoints/enroll', label: 'Add a device' }, { href: '/quick-connect', label: 'Start Quick Connect' },
+  { href: '/alerts', label: 'Open alerts' }, { href: '/patching', label: 'Deploy updates' }, { href: '/automation/scripts', label: 'Run or write a script' },
+];
 
 const join = (...parts: (string | null | undefined | false)[]) => parts.filter(Boolean).join(' · ') || null;
 
 /** The rows of every group the caller may see, in display order, each with the page it opens. */
-function toItems(r: SearchResults): Record<GroupKey, Item[] | null> {
+function toItems(r: SearchResults): Record<ServerKey, Item[] | null> {
   const g = r.groups;
   return {
     computers: g.computers?.items.map((c) => ({
@@ -76,7 +95,29 @@ function toItems(r: SearchResults): Record<GroupKey, Item[] | null> {
       title: a.title, detail: join(a.computer?.name ?? a.site?.name, a.business?.name, a.state === 'ACKNOWLEDGED' && 'acknowledged'),
       tag: { text: a.severity.toLowerCase(), tone: a.severity === 'CRITICAL' ? 'bad' : a.severity === 'WARNING' ? 'warn' : 'muted' },
     })) ?? null,
+    scripts: g.scripts?.items.map((x) => ({
+      key: `x:${x.id}`, group: 'scripts', href: `/automation/scripts/${x.id}`,
+      title: x.name, detail: join(x.scope === 'global' ? 'Global library' : x.business?.name), tag: x.approved ? null : { text: 'not approved', tone: 'muted' },
+    })) ?? null,
+    policies: g.policies?.items.map((x) => ({
+      key: `p:${x.kind}:${x.id}`, group: 'policies', href: x.kind === 'patch' ? `/patching/policies/${x.id}` : `/automation/schedules/${x.id}`,
+      title: x.name, detail: join(x.kind === 'patch' ? 'Patch policy' : 'Automation schedule', x.business?.name), tag: { text: x.status.toLowerCase().replace(/_/g, ' '), tone: 'muted' },
+    })) ?? null,
   };
+}
+
+/** The menu's pages this person may open, matched on label, group and keywords. Every word must match. */
+function matchPages(pages: ReturnType<typeof allPages>, q: string): Item[] {
+  const words = q.toLowerCase().split(' ').filter(Boolean);
+  const scored = pages.map((p) => {
+    const hay = `${p.label} ${p.group} ${p.keywords ?? ''}`.toLowerCase();
+    if (!words.every((w) => hay.includes(w))) return null;
+    const label = p.label.toLowerCase();
+    const score = label.startsWith(words[0]) ? 0 : label.includes(words[0]) ? 1 : 2;
+    return { p, score };
+  }).filter((x): x is NonNullable<typeof x> => !!x);
+  scored.sort((a, b) => a.score - b.score || a.p.label.localeCompare(b.p.label));
+  return scored.slice(0, PAGE_CAP).map(({ p }) => ({ key: `pg:${p.href}`, group: 'pages', href: p.href, title: p.label, detail: p.group }));
 }
 
 /** The first occurrence of the query, marked. Plain text otherwise. */
@@ -105,6 +146,9 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
   const [q, setQ] = useState('');
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const ctx = useNavCtx();
+  const pages = useMemo(() => allPages(ctx), [ctx]);
+  const { recent } = useNavigation();
 
   // Debounce: one request when typing pauses, not one per keystroke.
   useEffect(() => {
@@ -122,9 +166,27 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
     retry: false,
   });
   const shown = ready ? data : undefined;
-  const groups = useMemo(() => (shown && shown.query === q ? toItems(shown) : null), [shown, q]);
-  const flat = useMemo(() => (groups ? ORDER.flatMap((k) => groups[k] ?? []) : []), [groups]);
-  useEffect(() => { setActive(0); }, [groups]);
+  const groups = useMemo<Partial<Record<GroupKey, Item[] | null>> | null>(
+    () => (shown && shown.query === q ? { ...toItems(shown), pages: matchPages(pages, q) } : null), [shown, q, pages]);
+  // Before anything is typed: recent items (named by the server, only what this person can still open) and quick actions.
+  const idle = useMemo<Partial<Record<GroupKey, Item[] | null>> | null>(() => {
+    if (text.trim()) return null;
+    const rec: Item[] = recent.slice(0, 6).map((r) => ({
+      key: `r:${r.id}`, group: 'recent', href: r.href,
+      title: r.kind === 'page' ? (pageLabel(r.href)?.label ?? r.href) : (r.title ?? 'Untitled'),
+      detail: r.kind === 'page' ? (pageLabel(r.href)?.group ?? null) : r.detail,
+    }));
+    const quick: Item[] = QUICK.filter((x) => pages.some((p) => p.href === x.href)).map((x) => ({ key: `q:${x.href}`, group: 'quick', href: x.href, title: x.label, detail: null }));
+    return { recent: rec, quick };
+  }, [text, recent, pages]);
+  const order = groups ? ORDER : IDLE_ORDER;
+  const drawn = groups ?? idle;
+  const flat = useMemo(() => (drawn ? order.flatMap((k) => drawn[k] ?? []) : []), [drawn, order]);
+  // Back to the top only when the answer is for a new query (or the idle list), never because the
+  // groups were rebuilt for the same one: a navigation refetch rebuilds `pages`, and resetting on
+  // that undid an ArrowDown already pressed (the search palette suite caught it).
+  const answerKey = groups ? `q:${shown?.query ?? ''}` : 'idle';
+  useEffect(() => { setActive(0); }, [answerKey]);
   useEffect(() => {
     const el = listRef.current?.querySelector<HTMLElement>(`[data-index="${active}"]`);
     el?.scrollIntoView({ block: 'nearest' });
@@ -152,7 +214,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
     else if (e.key === 'Enter') { e.preventDefault(); go(flat[active]); }
   }
 
-  const visibleGroups = groups ? ORDER.filter((k) => groups[k] !== null) : [];
+  const visibleGroups = drawn ? order.filter((k) => drawn[k] != null) : [];
   const total = flat.length;
   const activeId = total ? `gs-opt-${active}` : undefined;
   let index = -1;
@@ -165,7 +227,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
       >
         <DialogTitle className="sr-only">Search</DialogTitle>
         <DialogDescription className="sr-only">
-          Search devices, businesses, sites, people and open alerts you have access to. Use the arrow keys to move and Enter to open.
+          Search devices, customers, sites, people, open alerts, scripts, policies and pages you have access to. Use the arrow keys to move and Enter to open.
         </DialogDescription>
         <div className="flex items-center gap-2 border-b px-3 pr-11">
           {isFetching ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" /> : <Search className="h-4 w-4 shrink-0 text-muted-foreground" />}
@@ -175,7 +237,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             maxLength={MAX}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Search devices, businesses, people…"
+            placeholder="Search devices, customers, scripts, pages…"
             aria-label="Search"
             role="combobox"
             aria-expanded={total > 0}
@@ -189,10 +251,10 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
 
         <div ref={listRef} id="gs-results" role="listbox" aria-label="Search results" className="min-h-0 flex-1 overflow-y-auto p-2 text-sm">
           {!ready && (
-            <p className="px-2 py-6 text-center text-muted-foreground" data-testid="global-search-hint">
+            <p className={cn('px-2 text-center text-muted-foreground', idle && flat.length ? 'pb-2 pt-1 text-xs' : 'py-6')} data-testid="global-search-hint">
               {text.trim().length > MAX ? `At most ${MAX} characters.` : `Type at least ${MIN} characters.`}
               <span className="mt-1 block text-xs">
-                Devices by name, hostname, RustDesk ID, serial, signed-in user or IP address; businesses, sites, people and open alerts — only those you can open.
+                Devices by name, hostname, RustDesk ID, serial, signed-in user or IP address; customers, sites, people, open alerts, scripts, policies and pages — only those you can open.
               </span>
             </p>
           )}
@@ -203,14 +265,14 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
               Nothing you can open matches <span className="font-medium text-foreground">“{q}”</span>.
             </p>
           )}
-          {groups && total > 0 && visibleGroups.map((k) => {
-            const items = groups[k] ?? [];
+          {(groups ? total > 0 : !!idle) && visibleGroups.map((k) => {
+            const items = drawn?.[k] ?? [];
             if (!items.length) return null;
             const { label, icon: Icon } = GROUP_META[k];
-            const more = shown?.groups[k]?.more;
+            const more = k in (shown?.groups ?? {}) ? shown?.groups[k as ServerKey]?.more : false;
             return (
               <div key={k} role="group" aria-labelledby={`gs-h-${k}`} className="mb-1" data-group={k}>
-                <div id={`gs-h-${k}`} className="flex items-center gap-2 px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <div id={`gs-h-${k}`} className="flex items-center gap-2 px-2 pb-1 pt-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   <Icon className="h-3.5 w-3.5" />{label}
                   {more && <span className="font-normal normal-case tracking-normal">· first {shown?.cap}</span>}
                 </div>
@@ -234,7 +296,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                         <div className="truncate font-medium"><Mark text={it.title} q={q} /></div>
                         {it.detail && <div className="truncate text-xs text-muted-foreground"><Mark text={it.detail} q={q} /></div>}
                       </div>
-                      {it.tag && <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium', TONE[it.tag.tone])}>{it.tag.text}</span>}
+                      {it.tag && <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-xs font-medium', TONE[it.tag.tone])}>{it.tag.text}</span>}
                     </a>
                   );
                 })}
@@ -249,7 +311,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
           })}
         </div>
 
-        <div className="hidden items-center gap-3 border-t px-3 py-2 text-[11px] text-muted-foreground sm:flex">
+        <div className="hidden items-center gap-3 border-t px-3 py-2 text-xs text-muted-foreground sm:flex">
           <span><kbd className="rounded border px-1">↑</kbd> <kbd className="rounded border px-1">↓</kbd> move</span>
           <span><kbd className="rounded border px-1">Enter</kbd> open</span>
           <span><kbd className="rounded border px-1">Esc</kbd> close</span>

@@ -25,7 +25,10 @@ Section numbers (§) are the directive's. Findings (F-n) are
 
 | Item | Release | State |
 |---|---|---|
-| P0-1 Audit, baselines, standalone requirements | 0.85.1 | **This release** (PR open, not merged) |
+| P0-1 Audit, baselines, standalone requirements | 0.85.1 | Done (#206) |
+| P0-2 Design tokens, Inter bundled | 0.87.0 | **Partly done**: the colour tokens are in `globals.css` (both themes, every text pair AA, [UI_DESIGN_SYSTEM.md](../UI_DESIGN_SYSTEM.md)), Inter is bundled. The Tailwind status classes, the showcase page and the drift check are not |
+| P0-4 Application shell | 0.87.0 | **Done** except the nav search box (the Ctrl+K palette searches pages instead) and the pending-approvals indicator. The app switcher renders nothing (S-4) |
+| P0-7 Critical navigation and labelling defects | 0.87.0 | **Partly done**: Access Control and the three Securities. Title Case strays and the *Full agent* chip remain |
 | Everything else | — | Planned |
 
 ## P0
@@ -210,3 +213,16 @@ reason to build the feature. Each stays on its own roadmap:
 8. **The public `/download` page asks `api.github.com`** from the customer's
    browser for RustDesk's latest version. (a) Keep, with its fallback; (b) have
    the server answer from the version it already tracks. *Recommend (b).*
+
+### Navigation redesign decisions (0.87, decided 2026-11-25, "accept recs")
+
+Numbered N1–N4 to keep them apart from the audit's eight.
+
+- **N1. Sidebar at tablet width (820 px).** Decided: collapse to the icon rail
+  by default below 1024 px (follow-up; 0.87 shows it at full width).
+- **N2. Density.** Decided: extend compact/comfortable from the menu to tables
+  and cards, in P1.
+- **N3. `e2e-navigation.mjs`.** Decided: give it a seeded fixture so CI runs it
+  (follow-up; manual against the docs stack in 0.87).
+- **N4. The 13 in-page "Settings → Security" strings.** Decided: fix them in the
+  P1-1 wording pass, not in 0.87.

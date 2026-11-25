@@ -1,4 +1,5 @@
 'use client';
+import { FavoriteButton } from '@/components/layout/record-bar';
 import { shownAgentVersion, type AgentVersionView } from '@/lib/agent-version';
 
 import Link from 'next/link';
@@ -169,12 +170,13 @@ export function DeviceHeader({
   const items = attentionItems(ep, mon, patches, inventory, agentAction);
 
   return (
-    <div className="space-y-3" data-testid="device-header">
+    <div className="space-y-2.5" data-testid="device-header">
       <div>
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-1">
-            <h1 className="text-2xl font-semibold text-foreground break-words">{ep.name as string}</h1>
+            <h1 className="text-xl font-semibold text-foreground break-words sm:text-2xl">{ep.name as string}</h1>
             <RenameDevice endpointId={ep.id as string} ep={ep} />
+            <span className="ml-1"><FavoriteButton kind="device" refId={ep.id as string} label={ep.name as string} /></span>
           </div>
           {typeof ep.description === 'string' && ep.description && (
             <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words" data-testid="device-description">{ep.description}</p>
@@ -185,7 +187,7 @@ export function DeviceHeader({
               <span className={cn('inline-block h-2.5 w-2.5 rounded-full shrink-0', STATUS_DOT[status.tone])} aria-hidden="true" />
               <dd className="text-foreground font-medium" title={status.detail ?? undefined}>{status.label}</dd>
             </div>
-            <div className="flex items-center gap-1"><dt>Business</dt><dd className="text-foreground">{customer?.name ?? '—'}</dd></div>
+            <div className="flex items-center gap-1"><dt>Customer</dt><dd className="text-foreground">{customer?.name ?? '—'}</dd></div>
             <div className="flex items-center gap-1"><dt>Site</dt><dd className="text-foreground">{site?.name ?? '—'}</dd></div>
             <div className="flex items-center gap-1">
               <dt>Last seen</dt>

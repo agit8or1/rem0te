@@ -31,7 +31,7 @@ import { useMsaManagedView } from '@/components/endpoints/msa-managed';
 import { useManagedConnect } from '@/components/endpoints/msa-sessions';
 import { UPGRADE_LABEL, upgradeView, useAgentActions } from '@/components/endpoints/workspace/agent-actions';
 import type { AccessReview } from '@/components/endpoints/workspace/access-review-panel';
-import { acceptsQueuedWork, agentType, parseTab, reportsInventory, reportsWindowsDetail, TAB_LABEL, type WorkspaceTab } from '@/components/endpoints/workspace/device-model';
+import { acceptsQueuedWork, agentType, groupOf, parseTab, reportsInventory, reportsWindowsDetail, TAB_GROUPS, TAB_LABEL, type WorkspaceTab } from '@/components/endpoints/workspace/device-model';
 import {
   actionUnavailableReason, agentActionKeys, useActionCatalog, useInventory, useMonitoringView, usePatchStatus,
 } from '@/components/endpoints/workspace/use-device-data';
@@ -49,6 +49,8 @@ import { useToast } from '@/hooks/use-toast';
  * Patch, and More for archive and the other rare things. Tabs, each
  * deep-linkable with `?tab=`: Overview · Performance · Monitoring · Software ·
  * Processes · Services · Network · Patches · Event logs · Diagnostics · Actions · Terminal (0.77) · Chat · History.
+ * 0.87 put them in seven groups (device-model.ts TAB_GROUPS): a row of
+ * groups, then the group's tabs, so nothing scrolls sideways at 1,280 px.
  *
  * Processes, Services and Network (0.33) are read-only snapshots from the
  * standard Windows agent, requested through the diagnostics catalog and shown
@@ -247,6 +249,9 @@ export default function EndpointDetailPage() {
     'history',
   ];
   const active: WorkspaceTab = tabs.includes(tab) ? tab : 'overview';
+  const groups = TAB_GROUPS.map((g) => ({ ...g, tabs: g.tabs.filter((t) => tabs.includes(t)) })).filter((g) => g.tabs.length);
+  const activeGroup = groupOf(active);
+  const groupTabs = groups.find((g) => g.id === activeGroup)?.tabs ?? [active];
 
   // "Agent out of date" opens what the header offers: the upgrade to the full
   // agent when the server offers it, otherwise Update agent; with neither it
@@ -280,6 +285,7 @@ export default function EndpointDetailPage() {
             connecting={launchMutation.isPending || managedConnect.pending}
             onOpenTab={setTab}
             onTools={canView ? () => setToolsOpen(true) : undefined}
+            onTerminal={canView && tabs.includes('terminal') ? () => setTab('terminal') : undefined}
             perms={{ view: canView, edit: canEdit, remove: can(CAP.COMPUTERS_REMOVE), technician: !!technician }}
             actionReason={actionReason}
             reportsInventory={acceptsQueuedWork(agent)}
@@ -316,12 +322,29 @@ export default function EndpointDetailPage() {
         {/* Scrolls sideways on a narrow window rather than wrapping into a
             second row that reads as a different set of tabs. Tabs are left out
             without the capability as a courtesy — every route re-checks. */}
-        <div ref={tabsRef} className="-mx-1 overflow-x-auto px-1 pb-1 scroll-mt-4">
-          <TabsList className="w-max" data-testid="workspace-tabs">
-            {tabs.map((t) => (
-              <TabsTrigger key={t} value={t} data-testid={`tab-${t}`}>{TAB_LABEL[t]}</TabsTrigger>
-            ))}
-          </TabsList>
+        <div ref={tabsRef} className="scroll-mt-4 space-y-1.5">
+          {/* The groups: buttons, each opening its first tab. Pressed shows where you are. */}
+          <div className="-mx-1 flex gap-1 overflow-x-auto px-1" role="group" aria-label="Device sections" data-testid="workspace-groups">
+            {groups.map((g) => {
+              const on = g.id === activeGroup;
+              return (
+                <button key={g.id} type="button" onClick={() => { if (!on) setTab(g.tabs[0]); }} aria-pressed={on}
+                  data-tabgroup={g.id} data-tabs={g.tabs.join(' ')} data-testid={`tabgroup-${g.id}`}
+                  className={on
+                    ? 'whitespace-nowrap rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2'
+                    : 'whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring'}>
+                  {g.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="-mx-1 overflow-x-auto px-1 pb-1">
+            <TabsList className="w-max" data-testid="workspace-tabs" aria-label={groups.find((g) => g.id === activeGroup)?.label}>
+              {groupTabs.map((t) => (
+                <TabsTrigger key={t} value={t} data-testid={`tab-${t}`}>{TAB_LABEL[t]}</TabsTrigger>
+              ))}
+            </TabsList>
+          </div>
         </div>
 
         <TabsContent value="overview" className="mt-4">

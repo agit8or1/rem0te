@@ -5,6 +5,227 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.87.0] — 2026-11-25 · *Compass*
+
+The navigation redesign: UX_ROADMAP.md P0-4 (the application shell), most of
+P0-7, and the colour part of P0-2. The owner's decisions 1a, 2b, 3b, 4 and 5b
+from #206 are applied. **No URL changed**: every page is where it was, and
+every pre-0.87 menu entry is listed in `docs/NAVIGATION_MIGRATION.md` with
+where it is now. Migration 0104 adds two tables; nothing on a computer changes,
+and there is no agent change. Nothing here is evidence about endpoints.
+
+Navigation is presentation, not access control. Hiding an entry hides a link;
+every page and API route still checks for itself.
+
+### Why
+
+UX_AUDIT.md found the menu organised around Settings:
+
+- about twenty Settings entries and nine tabs;
+- customers reached through Settings;
+- *Security* in three places;
+- a Settings "tab" (*Access Control*) that left the page;
+- seven pages reachable only from a Settings tab;
+- a theme toggle with no way back to *System*;
+- polling that never paused in a hidden tab;
+- a device page whose fifteen tabs overflowed at 1280 px.
+
+### Added
+
+- **Nine menu groups**: Dashboard, Devices, Remote support, Monitoring,
+  Patching, Automation, Reports, Security and Administration
+  (`apps/web/components/layout/nav-model.ts`, still the single source).
+  - Customers moved from Settings to Devices.
+  - Security is one group: containment, the audit log, server security,
+    access control, SSO, security features, technician access and update
+    signing.
+  - Administration has 15 entries, where Settings had 20.
+- **Standard and Advanced modes**, per person.
+  - Standard (the default) lists 29 everyday pages for a Platform Admin;
+    Advanced lists all 58.
+  - Every advanced page is a section tab on a standard page and a Ctrl+K
+    result in either mode. `unit-nav-model.mjs` fails if any page becomes
+    unreachable in Standard for any role.
+- **A collapsible sidebar**: 232 px expanded and 60 px collapsed.
+  - Rows are 36 px (pages 32 px; compact density 32 and 28), icons 18 px.
+  - The current group opens by itself, and groups can be pinned.
+  - Collapsed, a group shows a tooltip on hover or focus and a flyout menu on
+    a click.
+  - It fits a 1,080-pixel window with every group open (the unit test adds up
+    the rows).
+  - On a phone it is the same component in the 0.34 drawer.
+- **A compact header** (48 px):
+  - the collapse toggle (`aria-pressed`) and breadcrumbs;
+  - the customer context: a technician's business switcher as before, or a
+    Platform Admin's *keep in view* customer;
+  - search, quick actions, favourites and recent items;
+  - a critical-alerts bell (the alerts list's own query, every 60 s, not in a
+    hidden tab), chat, tasks and Help;
+  - a profile menu with theme (Light, Dark, **System**), density, mode, My
+    account, About and Sign out.
+  - Help, Documentation, About, the theme and Sign out left the sidebar's
+    footer, which is now the version line.
+- **Favourites and recent items, stored on the server** (`/me/navigation`,
+  migration 0104), so they follow a person between browsers.
+  - Each item is a kind and a reference: a record id, or a console path. A
+    name or URL is never stored.
+  - Each is named on every read through the record's own page's rule. A
+    computer someone can no longer see drops out of their lists by itself, and
+    the row is kept for when the access comes back.
+  - Saving one the person cannot see is a 404.
+  - At most 50 favourites (`409 FAVORITES_FULL`) and 15 recent items. Each
+    person's writes take a transaction advisory lock on their id first: two
+    tabs recording a visit at once deadlocked on the trim (a 500 the browser
+    suite caught), and two favourites added together could both pass the cap.
+  - Not audited, because it is presentation, like the theme.
+  - A star on device and customer pages; the header's star menu adds the page
+    you are on.
+- **Ctrl+K finds more:**
+  - **scripts**, through the library's own gate, list rule and per-row view;
+  - **patch policies and automation schedules**, each through its detail
+    page's `scoped()`, with a non-admin's candidates limited to their own
+    business;
+  - **the console's pages**, by label and keywords;
+  - with nothing typed, **recent items and quick actions**.
+- **The device page's tabs are seven groups**: Overview, Health, Software,
+  System, Tools, Remote and History, with at most three tabs each.
+  - `?tab=` still opens any tab, and its group.
+  - Remote control and **Terminal** are buttons in the header.
+- **Colour tokens** from `docs/ux/design-tokens.json` in `globals.css`, in
+  both themes, with `--status-*` and `--nav-*`.
+  - Every text pair is WCAG AA. The computed ratios are in
+    `docs/UI_DESIGN_SYSTEM.md`.
+  - One deliberate difference from the draft: dark `--primary` is `#60A5FA`
+    with dark ink (7.4:1). `#3B82F6` with white is 3.7:1, and shadcn uses the
+    same variable for links.
+- **Accessibility**:
+  - a skip link and `main#main-content`;
+  - groups are buttons with `aria-expanded` and `aria-controls`, and the
+    current page has `aria-current="page"`;
+  - collapsed names are tooltips on focus as well as hover;
+  - `prefers-reduced-motion` stops transitions and animations everywhere.
+- **Docs**:
+  - `docs/NAVIGATION_ARCHITECTURE.md`;
+  - `docs/UI_DESIGN_SYSTEM.md`;
+  - `docs/NAVIGATION_MIGRATION.md`, with 61 old→new rows;
+  - all three in the in-app bundle;
+  - the technician guide, `/help`, the README, and `docs/ux/` (the findings'
+    states, the roadmap's status, the tokens' description).
+- **Invariant §96**:
+  - navigation rows are read and written only in `navigation.service.ts`,
+    and every call names `userId: actor.userId`;
+  - records are named only through their own pages' builders;
+  - the closed lists agree across `model.ts`, 0104's CHECKs and the web menu;
+  - the page-reference expression is the same in TS and SQL;
+  - the caps are enforced inside a transaction;
+  - nothing is audited or logged;
+  - the two new search groups use the library's rule and each policy's
+    `scoped()`.
+
+### Fixed
+
+- **Inter is served from the build** (`apps/web/app/fonts/`, OFL), so the
+  console builds on an offline host (UX_AUDIT.md F-18). `next/font/google`
+  is gone.
+- **Theme *System* is selectable again** (F-8).
+- **Polling in a hidden tab** (F-9):
+  - the task watcher stops (`refetchIntervalInBackground: false`);
+  - the chat inbox slows to a quarter of its rate.
+- **Settings' *Access Control* tab, which navigated away** (F-13). It is a
+  page in the Security group. The Settings tab of security pages is labelled
+  *Security pages* and says the group is in the menu.
+- **"Run action unavailable: no approval signer" under every device header**
+  (owner decision 5b). The reason is now the disabled Run button's
+  description (`aria-describedby`) and the Tools panel's.
+- ***Ask AI* drawn disabled with no AI provider** (owner decision 3b, F-5,
+  STANDALONE S-1): it is not drawn at all.
+- ***Support Rem0te* shown to a customer's Business Users** (owner decision
+  2b, F-24). It is in the profile menu for Platform Admins and MSP
+  technicians only.
+- **"Business" → "Customer"** in the shell, the palette and the device header
+  (owner decision 1a). The app-wide wording pass is P1-1.
+- **What the screenshot review showed**, at seven sizes in both themes,
+  against the scratch docs stack:
+  - the invisible pin cut sidebar labels ("Remote supp…") at 232 px; the
+    pin now overlays the row, so it no longer takes label width;
+  - the profile menu repeated the e-mail address and ran off a 720-pixel
+    screen; it is one line shorter per item;
+  - at tablet width the search button read "S…"; below `lg` it says
+    *Search*, and the shortcut shows from `lg`;
+  - the device header wrapped *More* alone onto a second line at 1366
+    (F-7); *More* now sits with the actions it extends, so the agent's own
+    buttons wrap together instead;
+  - on a phone *Add to favourites* took a row; it is the star alone there,
+    with its name kept for screen readers;
+  - no text in the shell is smaller than 12 px.
+- **Ctrl+K's ArrowDown undone by a menu refresh.** Rebuilding the pages
+  list sent the cursor back to the first result; it now goes back only for
+  a new query.
+
+### Not in this release
+
+- Owner decisions 6a (dashboard presets), 7 (axe as a devDependency) and 8b
+  (`/download` without `api.github.com`).
+- The Tailwind status classes, the hue sweep, the showcase page and the drift
+  check (P0-2, P0-3).
+- The pending-approvals indicator, the Title Case strays and the *Full agent*
+  chip (P0-4, P0-7).
+- In-page text that still says *Settings → Security → …* (13 places), the
+  P1-1 wording pass.
+- The application switcher renders nothing: Rem0te is standalone (S-4), and
+  its contents wait on ClientSt0r.
+
+### Tests
+
+- `apps/web/scripts/unit-nav-model.mjs` (CI, 944 checks):
+  - every entry is a page, with no duplicates;
+  - nine groups, agreeing with the API and 0104;
+  - every migration-table row is reachable and documented;
+  - Standard mode never hides a page, for every role;
+  - `locate()` cases, role visibility and the 1080p budget.
+- `apps/api/scripts/unit-navigation.mjs` (CI, 50): the closed lists, the
+  reference rules and the strict bodies.
+- `apps/api/scripts/e2e-nav-prefs.mjs` (port 4101, `run-e2e.sh`, 95):
+  - preferences and their closed lists;
+  - another business's context customer is a 404;
+  - favourites, own and another business's (404, nothing stored);
+  - the 15 recent cap, and the same person writing at once (40 visits, six
+    favourites with room for three: exactly 50 kept, no 500);
+  - the 50 cap, and that someone else's favourite cannot be removed;
+  - losing access hides, and access coming back restores;
+  - the 15 recent cap;
+  - the stored columns, nothing audited, and 0104's CHECKs written directly;
+  - search scripts and policies isolated for an owner, a user and a
+    technician, with the Platform Admin as the negative control;
+  - a policy naming a computer a user cannot see is hidden.
+- `e2e-search.mjs` (113) passes unchanged.
+- `apps/web/scripts/e2e-ui.mjs` adds `navShell`, per viewport and theme:
+  - collapse to 56–64 px, kept by the server, still collapsed after a reload
+    with the browser's copy cleared;
+  - the collapsed flyout;
+  - Ctrl+K never offering Business B to A's owner;
+  - a favourite from the device star into the header menu and back;
+  - Theme *System* in the profile menu, and no *Support Rem0te* for an owner;
+  - no app switcher, and the skip link.
+
+  The page sweep also opens every URL in the migration table, and the
+  existing drawer, tab and Add-device checks follow the groups.
+- `e2e-navigation.mjs` (docs stack, by hand) and `capture-video.mjs` follow
+  the groups.
+
+### Deploy
+
+- **A schema change**: `prisma migrate deploy` (0104), then rsync `prisma/`
+  and run `prisma generate` at the target. Otherwise `/me/navigation` throws
+  `Unknown field`, and the shell falls back to its browser copy with no
+  favourites.
+- 0103 is left for #205 (0.86.0). Prisma applies whichever is missing, in
+  either order.
+- **The web needs `public/` and the new `app/fonts/`**. Both are in the
+  standalone build's static output; the usual rsync carries them.
+- No production dependency changed, so the target manifest does not need
+  regenerating.
+
 ## [0.86.0] — 2026-11-25 · *Lighthouse*
 
 **Lost-device commands: step M4 of [own-mdm.md](docs/own-mdm.md).** This is the first time Rem0te sends anything to

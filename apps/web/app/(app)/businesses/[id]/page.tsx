@@ -23,6 +23,7 @@ import { usePermissions, CAP } from '@/lib/auth';
 import { Download, Plus, X, Zap } from 'lucide-react';
 import { AgentAutoUpdateCard } from '@/components/businesses/agent-auto-update-card';
 import { BusinessRestartWindowCard } from '@/components/restart-windows/restart-window-card';
+import { CustomerBar } from '@/components/layout/record-bar';
 
 export default function BusinessDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -111,6 +112,7 @@ export default function BusinessDetailPage() {
           {(b.isActive as boolean) ? 'Active' : 'Disabled'}
         </Badge>
       </PageHeader>
+      <CustomerBar id={b.id as string} name={b.name as string} />
 
       <Tabs defaultValue="overview">
         <TabsList>

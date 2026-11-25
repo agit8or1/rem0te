@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import {
-  Archive, ArchiveRestore, ChevronDown, Link2, Copy, Download, Eye, Loader2, MoreHorizontal, PackageCheck, PlayCircle, ShieldCheck, Stethoscope, Wrench, FileDown, LayoutGrid,
+  Archive, ArchiveRestore, ChevronDown, Link2, Copy, Download, Eye, Loader2, MoreHorizontal, PackageCheck, PlayCircle, ShieldCheck, SquareTerminal, Stethoscope, Wrench, FileDown, LayoutGrid,
 } from 'lucide-react';
 import { endpointsApi, diagnosticsApi } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
@@ -63,7 +63,7 @@ function apiMessage(e: unknown, fallback: string) {
 }
 
 export function DeviceActions({
-  endpointId, ep, onConnect, onViewOnly, connecting, onOpenTab, onTools, perms, actionReason, reportsInventory, agent,
+  endpointId, ep, onConnect, onViewOnly, connecting, onOpenTab, onTools, onTerminal, perms, actionReason, reportsInventory, agent,
 }: {
   endpointId: string;
   ep: Record<string, unknown>;
@@ -73,6 +73,8 @@ export function DeviceActions({
   onOpenTab: (t: WorkspaceTab) => void;
   /** 0.75: opens the Tools panel; absent without computers:view. */
   onTools?: () => void;
+  /** 0.87: opens the Terminal tab; absent where the computer has no terminal tab. */
+  onTerminal?: () => void;
   perms: { view: boolean; edit: boolean; remove: boolean; technician: boolean };
   /** Why RUN ACTION cannot work here, or null. */
   actionReason: string | null;
@@ -134,7 +136,10 @@ export function DeviceActions({
 
   const reasons: { label: string; why: string; extra?: React.ReactNode; testId?: string }[] = [];
   if (connectReason) reasons.push({ label: 'Connect', why: connectReason });
-  if (perms.view && actionReason && actionReason !== 'Checking…') reasons.push({ label: 'Run action', why: actionReason });
+  // Owner decision 5 (0.87): "Run action unavailable: no approval signer"
+  // was a line under every device header. The reason is now the disabled
+  // button's own description (title, and aria-describedby for a screen
+  // reader) and the Tools panel's, where it is looked for.
 
   // The agent's buttons (0.37), from GET /endpoints/:id/agent.
   const a = agent?.a;
@@ -151,9 +156,14 @@ export function DeviceActions({
   return (
     <div className="space-y-1.5 max-w-full" data-testid="device-actions">
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={onConnect} disabled={connecting || !!connectReason} data-testid="action-connect">
+        <Button size="sm" onClick={onConnect} disabled={connecting || !!connectReason} data-testid="action-connect" title="Remote control through RustDesk">
           <PlayCircle className="h-4 w-4 mr-1.5" />Connect
         </Button>
+        {onTerminal && (
+          <Button size="sm" variant="outline" onClick={onTerminal} data-testid="action-terminal" title="A command prompt on this computer, in the background">
+            <SquareTerminal className="h-4 w-4 mr-1.5" />Terminal
+          </Button>
+        )}
         {perms.view && onTools && (
           <Button size="sm" variant="outline" onClick={onTools} aria-haspopup="dialog" data-testid="action-tools">
             <LayoutGrid className="h-4 w-4 mr-1.5" />Tools
@@ -165,33 +175,21 @@ export function DeviceActions({
           </Button>
         )}
         {perms.view && (
-          <Button size="sm" variant="outline" onClick={() => onOpenTab('actions')} disabled={!!actionReason} data-testid="action-run">
-            <Wrench className="h-4 w-4 mr-1.5" />Run action
-          </Button>
+          <span className="inline-flex" title={actionReason && actionReason !== 'Checking…' ? `Run action unavailable: ${actionReason}` : undefined}>
+            <Button size="sm" variant="outline" onClick={() => onOpenTab('actions')} disabled={!!actionReason} data-testid="action-run"
+              aria-describedby={actionReason && actionReason !== 'Checking…' ? 'action-run-reason' : undefined}>
+              <Wrench className="h-4 w-4 mr-1.5" />Run action
+            </Button>
+            {actionReason && actionReason !== 'Checking…' && <span id="action-run-reason" className="sr-only" data-testid="action-run-reason">{actionReason}</span>}
+          </span>
         )}
         {perms.view && (
           <Button size="sm" variant="outline" onClick={() => onOpenTab('patches')} data-testid="action-patch">
             <PackageCheck className="h-4 w-4 mr-1.5" />Patch
           </Button>
         )}
-        {a && up && <UpgradeButton view={up} onClick={agent!.askMigrate} testId="header-upgrade-full-agent" />}
-        {a && a.kind === 'signed' && (
-          <span className="inline-flex h-9 items-center gap-1.5 rounded-md border border-green-200 bg-green-50 px-3 text-sm font-medium text-green-900 dark:border-green-900 dark:bg-green-950/50 dark:text-green-100"
-            title="This computer runs the full (signed) agent: it installs only what the signed repository lists." data-testid="header-full-agent">
-            <ShieldCheck className="h-4 w-4" aria-hidden="true" />Full agent
-          </span>
-        )}
-        {a && (a.update.command ? (
-          <Button size="sm" variant="outline" onClick={() => agent!.copy(a.update.command!)} title={a.update.command} data-testid="header-agent-command">
-            <Copy className="h-4 w-4 mr-1.5" />Copy update command
-          </Button>
-        ) : a.kind !== 'unknown' && (
-          <span title={a.update.possible ? undefined : a.update.reason ?? undefined} className="inline-flex max-w-full">
-            <Button size="sm" variant="outline" onClick={agent!.askUpdate} disabled={!a.update.possible || agent!.update.isPending} data-testid="header-update-agent">
-              {agent!.update.isPending ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Wrench className="h-4 w-4 mr-1.5" />}{a.update.label}
-            </Button>
-          </span>
-        ))}
+        {/* 0.87 (F-7): More sits with the actions it extends, before the agent's own cluster, so a
+            narrow window wraps the agent group to a second line instead of leaving More alone there. */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button size="sm" variant="outline" aria-label="More actions" data-testid="action-more">
@@ -241,6 +239,24 @@ export function DeviceActions({
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+        {a && up && <UpgradeButton view={up} onClick={agent!.askMigrate} testId="header-upgrade-full-agent" />}
+        {a && a.kind === 'signed' && (
+          <span className="inline-flex h-9 items-center gap-1.5 rounded-md border border-green-200 bg-green-50 px-3 text-sm font-medium text-green-900 dark:border-green-900 dark:bg-green-950/50 dark:text-green-100"
+            title="This computer runs the full (signed) agent: it installs only what the signed repository lists." data-testid="header-full-agent">
+            <ShieldCheck className="h-4 w-4" aria-hidden="true" />Full agent
+          </span>
+        )}
+        {a && (a.update.command ? (
+          <Button size="sm" variant="outline" onClick={() => agent!.copy(a.update.command!)} title={a.update.command} data-testid="header-agent-command">
+            <Copy className="h-4 w-4 mr-1.5" />Copy update command
+          </Button>
+        ) : a.kind !== 'unknown' && (
+          <span title={a.update.possible ? undefined : a.update.reason ?? undefined} className="inline-flex max-w-full">
+            <Button size="sm" variant="outline" onClick={agent!.askUpdate} disabled={!a.update.possible || agent!.update.isPending} data-testid="header-update-agent">
+              {agent!.update.isPending ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Wrench className="h-4 w-4 mr-1.5" />}{a.update.label}
+            </Button>
+          </span>
+        ))}
       </div>
       {canLink && conn !== 'online' && (
         <p className="text-xs text-muted-foreground" data-testid="header-reinstall-hint">
