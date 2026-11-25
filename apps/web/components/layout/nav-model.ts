@@ -1,51 +1,37 @@
 /**
- * The navigation, in one place (0.31).
+ * The navigation, in one place (0.31; regrouped in 0.87 Compass).
  *
- * The sidebar used to list about thirty routes flat, mixing a person's own
- * computers, daily technician work and platform administration. Now it lists
- * the jobs: Dashboard, Devices, Alerts, Automation, Patching, Remote Support,
- * Reports, and a
- * Settings group that holds the administration. Pages that belong to one job
- * (all devices, add a device, unassigned…) are tabs of that job, drawn by
- * <SectionTabs> from the same model, so the sidebar and the tabs can never
- * disagree about where a page lives.
+ * 0.87 replaced the eight jobs plus a twenty-item Settings group with nine
+ * groups (docs/NAVIGATION_ARCHITECTURE.md; every old entry's new place is in
+ * docs/NAVIGATION_MIGRATION.md): Dashboard, Devices, Remote support,
+ * Monitoring, Patching, Automation, Reports, Security and Administration.
+ * Customers moved out of Settings into Devices; "Security" is one group
+ * instead of three places. No route changed: every page keeps its URL.
  *
- * Every entry still declares who may see it. Hiding an entry is a convenience,
- * never the control: each route and API call checks permissions itself.
+ * Each entry declares:
  *
- * Automation joined with the script library (0.32): write, version and review
- * scripts. It cannot run them yet, and its page says so. Reports joined in 0.32; each report
- * shows only for the capability of the data it summarises (computers:view or
- * monitoring:alerts), the same rule the API applies.
+ *   show   who may see it. Hiding an entry is a convenience, never the
+ *          control: each route and API call checks permissions itself.
+ *   tier   'standard' entries are drawn in the sidebar in both modes;
+ *          'advanced' ones only in Advanced mode. Standard never makes a
+ *          page unreachable: an advanced entry is always also a tab of its
+ *          hub (drawn above the hub's pages, from this same model), and it is
+ *          always in the Ctrl+K palette's Pages. unit-nav-model.mjs checks
+ *          both for every entry.
+ *   hub    entries sharing a hub are drawn as tabs of each other's pages
+ *          (<SectionTabs>), so the sidebar and the tabs can never disagree
+ *          about where a page lives.
  *
- * 0.34 made Automation a hub: the script library and the software catalog
- * (allowlisted winget packages, deployed ring by ring, each ring approved on
- * the approval signer). Reports gained software compliance. Both show for
- * computers:view, the capability the software routes require.
- *
- * 0.35: Devices gained Agent migrations, the status page for moves from the
- * standard agent to the signed one.
- *
- * 0.52: Automation gained Tasks, every task sent or queued with its progress
- * (computers:view, the capability its API needs).
- *
- * 0.37: Devices gained Full agent, the whole move to the signed agent as four
- * live steps (signing set up, a signed agent published, timestamp fresh,
- * computers moved — automatically, canary first). Shown for computers:view,
- * the capability its API needs.
- *
- * 0.64: a hub's pages render only as tabs, so "Add device" — the one page
- * most people come to Devices for — could not be found from the menu (the
- * owner: "also add a menu link to add a device"). A section may now name a
- * `shortcut`, one of its own items that the sidebar also draws as an indented
- * link under the section's row. It is the same leaf object as the tab, with
- * the same `show`, so the menu and the tabs still cannot disagree.
+ * 0.64's "Add device" link under Devices is now an ordinary Devices entry
+ * (it keeps its test id).
  */
 import type { LucideIcon } from 'lucide-react';
 import {
-  Activity, ArrowRightLeft, BarChart3, BellRing, Building2, Cpu, WifiOff, FileCode2, FileText, HardDriveDownload, Inbox, KeyRound, LayoutDashboard, LayoutGrid,
-  Monitor, MonitorCheck, MonitorX, Package, PackageCheck, PlayCircle, Plus, RefreshCw, Settings, Shield, ShieldCheck, Siren,
-  UserCheck, UserCog, UserMinus, Users, Zap, Headset, Cog, CalendarClock, Mail, Sparkles, Ticket, ListChecks, BadgeCheck, ShieldQuestion, MonitorPlay, Smartphone, Archive,
+  Activity, AppWindow, Archive, ArrowRightLeft, BadgeCheck, BarChart3, BellRing, BookMarked, Building2, CalendarClock, CalendarRange, ClipboardCheck, Cog,
+  Cpu, Fingerprint, FileCode2, FileText, Gauge, HardDriveDownload, Headset, Inbox, KeyRound, LayoutDashboard, LayoutGrid, ListChecks, Lock, Mail,
+  Monitor, MonitorCheck, MonitorPlay, MonitorX, Package, PackageCheck, Palette, PlayCircle, Plus, RefreshCw, ScrollText, Server, Settings, Shield,
+  ShieldAlert, ShieldCheck, ShieldHalf, ShieldQuestion, Siren, SlidersHorizontal, Smartphone, Sparkles, Ticket, TimerReset, UserCheck, UserCog, UserMinus, Users,
+  WifiOff, Workflow, Wrench, Zap, PenLine, Download,
 } from 'lucide-react';
 import { CAP, type Capability } from '@/lib/auth';
 
@@ -61,159 +47,161 @@ export type NavCtx = {
   isIndependentReviewer: boolean;
 };
 
+export type NavTier = 'standard' | 'advanced';
+
 export type NavLeaf = {
   href: string;
   label: string;
   icon: LucideIcon;
   show: (c: NavCtx) => boolean;
+  tier: NavTier;
+  /** Entries with the same hub are tabs of each other's pages. */
+  hub?: string;
+  /** Extra words the palette's Pages group matches on. */
+  keywords?: string;
+  /** A stable test id, kept from before 0.87 where one existed. */
+  testId?: string;
 };
 
 export type NavSection = {
+  /** Stable: stored in a person's pinned groups (navigation/model.ts GROUP_IDS, 0104's CHECK). */
   id: string;
   label: string;
   icon: LucideIcon;
-  /**
-   * `link`: one destination. `hub`: several pages shown as tabs, the sidebar
-   * opens the first one this person may see. `group`: a collapsible list in
-   * the sidebar (Settings).
-   */
-  kind: 'link' | 'hub' | 'group';
+  /** `link`: one destination, drawn as a row. `group`: a collapsible list. */
+  kind: 'link' | 'group';
   items: NavLeaf[];
   /** Routes that belong here without being an entry (detail pages, landings). */
   also?: string[];
-  /**
-   * 0.64: one of `items` the sidebar also draws as its own indented link
-   * under this section's row (a hub's items are otherwise only tabs).
-   */
-  shortcut?: NavLeaf;
 };
 
 const all = () => true;
+const S: NavTier = 'standard';
+const A: NavTier = 'advanced';
 
-/** Devices → Add device: a tab of Devices, and (0.64) the sidebar's shortcut under it. */
-const ADD_DEVICE: NavLeaf = { href: '/endpoints/enroll', label: 'Add device', icon: Plus, show: (c) => c.can(CAP.COMPUTERS_ADD) };
 
 export const NAV: NavSection[] = [
   {
     id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, kind: 'link',
-    items: [{ href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, show: all }],
+    items: [{ href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, show: all, tier: S, keywords: 'home overview start' }],
   },
   {
-    id: 'devices', label: 'Devices', icon: MonitorCheck, kind: 'hub',
+    id: 'devices', label: 'Devices', icon: MonitorCheck, kind: 'group',
     items: [
-      { href: '/endpoints', label: 'All devices', icon: MonitorCheck, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
-      { href: '/my-computers', label: 'My devices', icon: Monitor, show: all },
-      { href: '/technician', label: 'All assigned', icon: LayoutGrid, show: (c) => c.hasAssignments },
-      ADD_DEVICE,
-      { href: '/admin/unassigned', label: 'Unassigned', icon: MonitorX, show: (c) => c.isPlatformAdmin },
-      // 0.57: deployment keys and fleet rollout instructions (GPO, Intune, RMM, Linux, macOS).
-      { href: '/admin/deploy', label: 'Deploy agents', icon: HardDriveDownload, show: (c) => c.isPlatformAdmin },
-      // 0.35: the fleet view of moves to the signed agent, which until now was
-      // reachable only from an Agent card's link. Shown to whoever may request
-      // one (computers:edit); the page and its API need only computers:view.
-      { href: '/endpoints/full-agent', label: 'Full agent', icon: ShieldCheck, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
-      { href: '/endpoints/agent-migrations', label: 'Agent migrations', icon: ArrowRightLeft, show: (c) => c.can(CAP.COMPUTERS_EDIT) },
-      // 0.69: Managed Secure Access readiness for every visible computer (read-only).
-      { href: '/endpoints/remote-readiness', label: 'Remote access readiness', icon: ShieldQuestion, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
-      // 0.73: live Managed Secure Access sessions and Disconnect. The page asks
-      // the gated sessions route only when the server says MSA is on.
-      { href: '/endpoints/managed-sessions', label: 'Managed sessions', icon: MonitorPlay, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
-      // 0.80: phones and tablets as an MDM provider reports them (read-only).
-      // mobile:view, the capability its API needs; off for a Business User by default.
-      { href: '/mobile-devices', label: 'Mobile devices', icon: Smartphone, show: (c) => c.can(CAP.MOBILE_VIEW) },
+      { href: '/endpoints', label: 'All devices', icon: MonitorCheck, show: (c) => c.can(CAP.COMPUTERS_VIEW), tier: S, hub: 'devices', keywords: 'computers endpoints inventory list' },
+      { href: '/my-computers', label: 'My devices', icon: Monitor, show: all, tier: S, hub: 'devices', keywords: 'my computers' },
+      { href: '/technician', label: 'All assigned', icon: LayoutGrid, show: (c) => c.hasAssignments, tier: S, hub: 'devices', keywords: 'technician assignments' },
+      // Customers left Settings in 0.87 (owner decision 4). The pages still say "Business" in places (P1-1).
+      { href: '/businesses', label: 'Customers', icon: Building2, show: (c) => c.isPlatformAdmin, tier: S, keywords: 'businesses organizations clients companies sites' },
+      { href: '/endpoints/enroll', label: 'Add device', icon: Plus, show: (c) => c.can(CAP.COMPUTERS_ADD), tier: S, hub: 'devices', keywords: 'enroll install agent new computer', testId: 'nav-shortcut-devices' },
+      { href: '/mobile-devices', label: 'Mobile devices', icon: Smartphone, show: (c) => c.can(CAP.MOBILE_VIEW), tier: S, hub: 'devices', keywords: 'mdm phones tablets ios android' },
+      { href: '/admin/unassigned', label: 'Unassigned', icon: MonitorX, show: (c) => c.isPlatformAdmin, tier: A, hub: 'devices', keywords: 'discovery pool adopt' },
+      { href: '/admin/deploy', label: 'Deploy agents', icon: HardDriveDownload, show: (c) => c.isPlatformAdmin, tier: A, hub: 'devices', keywords: 'deployment keys gpo intune rmm rollout' },
+      { href: '/endpoints/full-agent', label: 'Full agent', icon: BadgeCheck, show: (c) => c.can(CAP.COMPUTERS_VIEW), tier: A, hub: 'devices', keywords: 'signed agent' },
+      { href: '/endpoints/agent-migrations', label: 'Agent migrations', icon: ArrowRightLeft, show: (c) => c.can(CAP.COMPUTERS_EDIT), tier: A, hub: 'devices', keywords: 'signed agent upgrade' },
     ],
     also: ['/endpoints/new', '/trmm', '/quickstart'],
-    shortcut: ADD_DEVICE,
   },
   {
-    // 0.67: a hub — the alerts, and False positives & rules (reports, recommendations, rules, quality checks).
-    id: 'alerts', label: 'Alerts', icon: Siren, kind: 'hub',
+    id: 'remote', label: 'Remote support', icon: Headset, kind: 'group',
     items: [
-      { href: '/alerts', label: 'Alerts', icon: Siren, show: (c) => c.can(CAP.ALERTS_VIEW) },
-      { href: '/alerts/quality', label: 'False positives & rules', icon: BadgeCheck, show: (c) => c.can(CAP.ALERTS_VIEW) },
-    ],
-  },
-  {
-    id: 'automation', label: 'Automation', icon: FileCode2, kind: 'hub',
-    items: [
-      {
-        href: '/automation/scripts', label: 'Script library', icon: FileCode2,
-        show: (c) => c.can(CAP.SCRIPTS_AUTHOR) || c.can(CAP.SCRIPTS_REVIEW) || c.isIndependentReviewer,
-      },
-      { href: '/automation/software', label: 'Software catalog', icon: Package, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
-      // 0.52: every task sent or queued to the computers you can see, and where it is.
-      { href: '/automation/tasks', label: 'Tasks', icon: ListChecks, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
-      // 0.58: recurring script runs and software installs, approved once on the approval signer.
-      { href: '/automation/schedules', label: 'Schedules', icon: CalendarClock, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
-    ],
-  },
-  {
-    id: 'patching', label: 'Patching', icon: ShieldCheck, kind: 'link',
-    items: [{ href: '/patching', label: 'Patching', icon: ShieldCheck, show: (c) => c.can(CAP.COMPUTERS_VIEW) }],
-  },
-  {
-    // 0.81: backup status from a provider (read-only), RPO/RTO measured against target.
-    id: 'backups', label: 'Backups', icon: Archive, kind: 'link',
-    items: [{ href: '/backups', label: 'Backups', icon: Archive, show: (c) => c.can(CAP.BACKUPS_VIEW) }],
-  },
-  {
-    id: 'remote', label: 'Remote Support', icon: Headset, kind: 'hub',
-    items: [
-      { href: '/sessions', label: 'Sessions', icon: PlayCircle, show: (c) => c.can(CAP.SESSIONS_VIEW) },
-      { href: '/quick-connect', label: 'Quick Connect', icon: Zap, show: (c) => c.can(CAP.QUICK_CONNECT) },
-      { href: '/support-requests', label: 'Support requests', icon: Inbox, show: (c) => c.can(CAP.SUPPORT_REQUESTS) },
+      { href: '/sessions', label: 'Sessions', icon: PlayCircle, show: (c) => c.can(CAP.SESSIONS_VIEW), tier: S, hub: 'remote', keywords: 'remote control rustdesk history' },
+      { href: '/quick-connect', label: 'Quick Connect', icon: Zap, show: (c) => c.can(CAP.QUICK_CONNECT), tier: S, hub: 'remote', keywords: 'ad hoc support code' },
+      { href: '/support-requests', label: 'Support requests', icon: Inbox, show: (c) => c.can(CAP.SUPPORT_REQUESTS), tier: S, hub: 'remote', keywords: 'help requests queue' },
+      // Moved from Devices in 0.87: both are about remote access.
+      { href: '/endpoints/managed-sessions', label: 'Managed sessions', icon: MonitorPlay, show: (c) => c.can(CAP.COMPUTERS_VIEW), tier: A, hub: 'remote', keywords: 'managed secure access msa' },
+      { href: '/endpoints/remote-readiness', label: 'Remote access readiness', icon: ShieldQuestion, show: (c) => c.can(CAP.COMPUTERS_VIEW), tier: A, hub: 'remote', keywords: 'managed secure access msa preflight' },
       // The RustDesk client for the technician's own machine: Connect uses it.
-      { href: '/downloads', label: 'Technician client', icon: HardDriveDownload, show: all },
+      { href: '/downloads', label: 'Technician client', icon: Download, show: all, tier: A, hub: 'remote', keywords: 'rustdesk client download' },
     ],
   },
   {
-    id: 'reports', label: 'Reports', icon: BarChart3, kind: 'hub',
+    id: 'monitoring', label: 'Monitoring', icon: Activity, kind: 'group',
     items: [
-      { href: '/reports/patch-compliance', label: 'Patch compliance', icon: ShieldCheck, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
-      { href: '/reports/agent-coverage', label: 'Agent coverage', icon: Cpu, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
-      { href: '/reports/alert-frequency', label: 'Alert frequency', icon: BellRing, show: (c) => c.can(CAP.ALERTS_VIEW) },
-      { href: '/reports/offline-time', label: 'Offline time', icon: WifiOff, show: (c) => c.can(CAP.ALERTS_VIEW) },
-      { href: '/reports/software-compliance', label: 'Software compliance', icon: Package, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
-      { href: '/reports/warranty', label: 'Warranty', icon: BadgeCheck, show: (c) => c.can(CAP.COMPUTERS_VIEW) },
-      // 0.34. Last, so /reports still opens a report. The API decides who may
-      // set one up (a Business Owner in their own business, or a Platform Admin).
-      { href: '/reports/schedules', label: 'Scheduled reports', icon: CalendarClock, show: (c) => c.isPlatformAdmin || (c.isBusinessOwner && !c.technician) },
+      { href: '/alerts', label: 'Alerts', icon: Siren, show: (c) => c.can(CAP.ALERTS_VIEW), tier: S, hub: 'alerts', keywords: 'alarms issues critical warnings' },
+      { href: '/alerts/quality', label: 'False positives & rules', icon: ClipboardCheck, show: (c) => c.can(CAP.ALERTS_VIEW), tier: A, hub: 'alerts', keywords: 'alert quality noise suppress' },
+      // Was reached only from a Settings tab before 0.87.
+      { href: '/settings/monitoring', label: 'Monitoring policies', icon: SlidersHorizontal, show: (c) => c.isBusinessOwner || c.canManageTechnicians, tier: S, keywords: 'monitors notifications escalation maintenance windows thresholds' },
+      { href: '/backups', label: 'Backups', icon: Archive, show: (c) => c.can(CAP.BACKUPS_VIEW), tier: S, keywords: 'backup rpo rto restore drills' },
+    ],
+  },
+  {
+    id: 'patching', label: 'Patching', icon: ShieldCheck, kind: 'group',
+    items: [
+      { href: '/patching', label: 'Patch management', icon: ShieldCheck, show: (c) => c.can(CAP.COMPUTERS_VIEW), tier: S, hub: 'patching', keywords: 'windows updates policies deployments' },
+      { href: '/settings/client-updates', label: 'Client updates', icon: CalendarClock, show: (c) => c.isBusinessOwner || c.canManageTechnicians || (c.technician && c.can(CAP.COMPUTERS_EDIT)), tier: A, hub: 'patching', keywords: 'rustdesk agent update windows' },
+      { href: '/admin/rollouts', label: 'Client rollouts', icon: PackageCheck, show: (c) => c.isPlatformAdmin, tier: A, hub: 'patching', keywords: 'staged rollout rustdesk' },
+    ],
+  },
+  {
+    id: 'automation', label: 'Automation', icon: Workflow, kind: 'group',
+    items: [
+      { href: '/automation/scripts', label: 'Script library', icon: FileCode2, show: (c) => c.can(CAP.SCRIPTS_AUTHOR) || c.can(CAP.SCRIPTS_REVIEW) || c.isIndependentReviewer, tier: S, hub: 'automation', keywords: 'powershell scripts' },
+      { href: '/automation/software', label: 'Software catalog', icon: Package, show: (c) => c.can(CAP.COMPUTERS_VIEW), tier: S, hub: 'automation', keywords: 'winget install deploy' },
+      { href: '/automation/tasks', label: 'Tasks', icon: ListChecks, show: (c) => c.can(CAP.COMPUTERS_VIEW), tier: S, hub: 'automation', keywords: 'jobs queue progress history' },
+      { href: '/automation/schedules', label: 'Schedules', icon: CalendarRange, show: (c) => c.can(CAP.COMPUTERS_VIEW), tier: S, hub: 'automation', keywords: 'automation policies recurring' },
+    ],
+  },
+  {
+    id: 'reports', label: 'Reports', icon: BarChart3, kind: 'group',
+    items: [
+      { href: '/reports/patch-compliance', label: 'Patch compliance', icon: ShieldHalf, show: (c) => c.can(CAP.COMPUTERS_VIEW), tier: S, hub: 'reports', keywords: 'report' },
+      { href: '/reports/agent-coverage', label: 'Agent coverage', icon: Cpu, show: (c) => c.can(CAP.COMPUTERS_VIEW), tier: S, hub: 'reports', keywords: 'report' },
+      { href: '/reports/alert-frequency', label: 'Alert frequency', icon: BellRing, show: (c) => c.can(CAP.ALERTS_VIEW), tier: S, hub: 'reports', keywords: 'report' },
+      { href: '/reports/offline-time', label: 'Offline time', icon: WifiOff, show: (c) => c.can(CAP.ALERTS_VIEW), tier: A, hub: 'reports', keywords: 'report availability' },
+      { href: '/reports/software-compliance', label: 'Software compliance', icon: PackageCheck, show: (c) => c.can(CAP.COMPUTERS_VIEW), tier: A, hub: 'reports', keywords: 'report' },
+      { href: '/reports/warranty', label: 'Warranty', icon: TimerReset, show: (c) => c.can(CAP.COMPUTERS_VIEW), tier: A, hub: 'reports', keywords: 'report hardware' },
+      // The API decides who may set one up (a Business Owner in their own business, or a Platform Admin).
+      { href: '/reports/schedules', label: 'Scheduled reports', icon: Mail, show: (c) => c.isPlatformAdmin || (c.isBusinessOwner && !c.technician), tier: A, hub: 'reports', keywords: 'email report schedule' },
     ],
     also: ['/reports'],
   },
   {
-    id: 'settings', label: 'Settings', icon: Settings, kind: 'group',
+    id: 'security', label: 'Security', icon: Shield, kind: 'group',
+    items: [
+      { href: '/settings/security/containment', label: 'Containment', icon: ShieldAlert, show: (c) => c.isBusinessOwner || c.canManageTechnicians, tier: S, hub: 'security', keywords: 'pause incident stop' },
+      { href: '/audit', label: 'Audit log', icon: ScrollText, show: (c) => c.can(CAP.AUDIT_VIEW), tier: S, hub: 'security', keywords: 'activity history events log' },
+      // F-13: "Security" was three places; this one is the host.
+      { href: '/admin/security', label: 'Server security', icon: Server, show: (c) => c.isPlatformAdmin, tier: S, hub: 'security', keywords: 'host firewall fail2ban ssh tls' },
+      { href: '/admin/access', label: 'Access control', icon: Lock, show: (c) => c.isPlatformAdmin, tier: A, hub: 'security', keywords: 'roles permissions presets' },
+      { href: '/admin/sso', label: 'Single sign-on', icon: KeyRound, show: (c) => c.isPlatformAdmin, tier: A, hub: 'security', keywords: 'sso keycloak oidc identity' },
+      { href: '/settings/security/features', label: 'Security features', icon: Fingerprint, show: (c) => !c.technician && (c.isPlatformAdmin || c.canManageTechnicians || c.isBusinessOwner), tier: A, hub: 'security', keywords: 'mfa passkeys protections' },
+      { href: '/settings/security/technician-access', label: 'Technician access', icon: UserCheck, show: (c) => c.isIndependentReviewer, tier: A, hub: 'security', keywords: 'reviews grants' },
+      { href: '/settings/security/update-signing', label: 'Update signing', icon: PenLine, show: (c) => c.isPlatformAdmin, tier: A, hub: 'security', keywords: 'signed releases trust' },
+    ],
+  },
+  {
+    id: 'admin', label: 'Administration', icon: Settings, kind: 'group',
     items: [
       // A Business Owner configures their business; the operator the platform.
-      { href: '/settings', label: 'Configuration', icon: Cog, show: (c) => c.isBusinessOwner },
-      { href: '/users', label: 'Users', icon: Users, show: (c) => c.can(CAP.USERS_VIEW) },
+      { href: '/settings', label: 'Settings', icon: Cog, show: (c) => c.isBusinessOwner, tier: S, hub: 'admin', keywords: 'configuration general quick connect rustdesk network confirm' },
+      { href: '/users', label: 'Users', icon: Users, show: (c) => c.can(CAP.USERS_VIEW), tier: S, hub: 'admin', keywords: 'people accounts invite' },
+      { href: '/admin/technicians', label: 'Technicians', icon: UserCog, show: (c) => c.canManageTechnicians, tier: S, hub: 'admin', keywords: 'msp staff assignments' },
       // An owner's job in their own business, never through an assignment.
-      { href: '/offboarding', label: 'Offboarding', icon: UserMinus, show: (c) => c.isBusinessOwner && !c.technician },
-      { href: '/technician-approvals', label: 'Technician approvals', icon: UserCheck, show: (c) => c.isBusinessOwner && !c.technician },
-      { href: '/audit', label: 'Audit log', icon: FileText, show: (c) => c.can(CAP.AUDIT_VIEW) },
-      { href: '/businesses', label: 'Businesses', icon: Building2, show: (c) => c.isPlatformAdmin },
-      { href: '/admin/technicians', label: 'Technicians', icon: UserCog, show: (c) => c.canManageTechnicians },
-      { href: '/admin/access', label: 'Access control', icon: ShieldCheck, show: (c) => c.isPlatformAdmin },
-      { href: '/admin/sso', label: 'Single sign-on', icon: KeyRound, show: (c) => c.isPlatformAdmin },
-      // 0.32: who may change it is decided by the API (owner, a whole-business
-      // technician with computers:edit, the MSP); this only decides who sees the entry.
-      { href: '/settings/client-updates', label: 'Client updates', icon: CalendarClock, show: (c) => c.isBusinessOwner || c.canManageTechnicians || (c.technician && c.can(CAP.COMPUTERS_EDIT)) },
-      { href: '/admin/rollouts', label: 'Client rollouts', icon: PackageCheck, show: (c) => c.isPlatformAdmin },
-      { href: '/settings/email', label: 'Email', icon: Mail, show: (c) => c.isPlatformAdmin },
-      // 0.48: the AI provider is the operator's; a Business Owner may set their business's own PSA.
-      { href: '/settings/ai', label: 'AI', icon: Sparkles, show: (c) => c.isPlatformAdmin },
-      { href: '/settings/warranty', label: 'Warranty', icon: BadgeCheck, show: (c) => c.isPlatformAdmin },
-      // 0.82: St0r's push, set up per business (a push token is a credential: Platform Admin, as in 0.81).
-      { href: '/settings/backups', label: 'Backups', icon: Archive, show: (c) => c.isPlatformAdmin },
-      // 0.83: the own MDM's setup (Apple push certificate, Google service account): platform-wide, Platform Admin only.
-      { href: '/settings/mobile-devices', label: 'Mobile devices', icon: Smartphone, show: (c) => c.isPlatformAdmin },
-      { href: '/settings/psa', label: 'PSA / ticketing', icon: Ticket, show: (c) => c.isPlatformAdmin || (c.isBusinessOwner && !c.technician) },
-      { href: '/admin/security', label: 'Security', icon: Shield, show: (c) => c.isPlatformAdmin },
-      { href: '/admin/status', label: 'System status', icon: Activity, show: (c) => c.isPlatformAdmin },
-      { href: '/about', label: 'Updates', icon: RefreshCw, show: (c) => c.isPlatformAdmin },
+      { href: '/technician-approvals', label: 'Technician approvals', icon: UserCheck, show: (c) => c.isBusinessOwner && !c.technician, tier: A, hub: 'admin', keywords: 'approve technicians' },
+      { href: '/offboarding', label: 'Offboarding', icon: UserMinus, show: (c) => c.isBusinessOwner && !c.technician, tier: A, hub: 'admin', keywords: 'leaver remove access' },
+      { href: '/settings/psa', label: 'PSA / ticketing', icon: Ticket, show: (c) => c.isPlatformAdmin || (c.isBusinessOwner && !c.technician), tier: A, hub: 'admin', keywords: 'integrations tickets clientst0r webhook' },
+      { href: '/settings/ai', label: 'AI', icon: Sparkles, show: (c) => c.isPlatformAdmin, tier: A, hub: 'admin', keywords: 'integrations provider' },
+      { href: '/settings/email', label: 'Email', icon: Mail, show: (c) => c.isPlatformAdmin, tier: A, hub: 'admin', keywords: 'smtp relay notifications' },
+      { href: '/settings/warranty', label: 'Warranty', icon: BadgeCheck, show: (c) => c.isPlatformAdmin, tier: A, hub: 'admin', keywords: 'integrations dell lenovo hp apple' },
+      { href: '/settings/backups', label: 'Backup connections', icon: Archive, show: (c) => c.isPlatformAdmin, tier: A, hub: 'admin', keywords: 'integrations st0r comet push' },
+      { href: '/settings/mobile-devices', label: 'Mobile device setup', icon: Smartphone, show: (c) => c.isPlatformAdmin, tier: A, hub: 'admin', keywords: 'mdm apple push google android' },
+      { href: '/settings/api-keys', label: 'API keys', icon: BookMarked, show: (c) => c.isBusinessOwner, tier: A, hub: 'admin', keywords: 'integrations tokens' },
+      { href: '/settings/branding', label: 'Branding', icon: Palette, show: (c) => c.isBusinessOwner, tier: A, hub: 'admin', keywords: 'logo colour accent' },
+      { href: '/admin/status', label: 'System status', icon: Gauge, show: (c) => c.isPlatformAdmin, tier: S, hub: 'admin', keywords: 'health services' },
+      { href: '/about', label: 'Updates', icon: RefreshCw, show: (c) => c.isPlatformAdmin, tier: S, hub: 'admin', keywords: 'version about release' },
     ],
   },
 ];
+
+/** Pages outside the sidebar that the header and the palette still name. */
+export const EXTRA_PAGES: NavLeaf[] = [
+  { href: '/account', label: 'My account', icon: Users, show: all, tier: S, keywords: 'profile password mfa passkey' },
+  { href: '/help', label: 'Help', icon: AppWindow, show: all, tier: S, keywords: 'guide documentation' },
+  { href: '/docs', label: 'Documentation', icon: FileText, show: all, tier: S, keywords: 'docs guide' },
+  { href: '/about', label: 'About', icon: Wrench, show: (c) => !c.isPlatformAdmin, tier: S, keywords: 'version' },
+];
+
 
 /** Does `path` fall under `href` (the page itself or one below it)? */
 export function under(path: string, href: string): boolean {
@@ -241,3 +229,38 @@ export function locate(path: string): { section: NavSection; leaf: NavLeaf | nul
 export function visibleItems(section: NavSection, ctx: NavCtx): NavLeaf[] {
   return section.items.filter((i) => i.show(ctx));
 }
+
+/** What the sidebar lists under a group in a mode. Standard leaves out advanced entries (still tabs and palette pages). */
+export function sidebarItems(section: NavSection, ctx: NavCtx, mode: 'standard' | 'advanced'): NavLeaf[] {
+  const items = visibleItems(section, ctx);
+  return mode === 'advanced' ? items : items.filter((i) => i.tier === 'standard');
+}
+
+/** The tabs drawn above a page: its hub's visible entries (only on the entry's own page). */
+export function hubTabs(path: string, ctx: NavCtx): { hub: string; label: string; items: NavLeaf[]; current: NavLeaf } | null {
+  const here = locate(path);
+  if (!here?.leaf?.hub || here.leaf.href !== path) return null;
+  const hub = here.leaf.hub;
+  const items = here.section.items.filter((i) => i.hub === hub && i.show(ctx));
+  if (items.length < 2) return null;
+  return { hub, label: here.section.label, items, current: here.leaf };
+}
+
+/** Every page this person may open from the menu, for the palette's Pages group. */
+export function allPages(ctx: NavCtx): (NavLeaf & { group: string })[] {
+  const seen = new Set<string>();
+  const out: (NavLeaf & { group: string })[] = [];
+  for (const s of NAV) for (const i of s.items) if (i.show(ctx) && !seen.has(i.href)) { seen.add(i.href); out.push({ ...i, group: s.label }); }
+  for (const i of EXTRA_PAGES) if (i.show(ctx) && !seen.has(i.href)) { seen.add(i.href); out.push({ ...i, group: 'Account & help' }); }
+  return out;
+}
+
+/** The label a stored page favourite is shown with, or null for a page the menu does not know. */
+export function pageLabel(href: string): { label: string; group: string; icon: LucideIcon } | null {
+  for (const s of NAV) for (const i of s.items) if (i.href === href) return { label: i.label, group: s.label, icon: i.icon };
+  for (const i of EXTRA_PAGES) if (i.href === href) return { label: i.label, group: 'Account & help', icon: i.icon };
+  return null;
+}
+
+/** The ids NAV uses, in order: navigation/model.ts GROUP_IDS and 0104's CHECK must agree (§96). */
+export const GROUP_IDS = NAV.map((s) => s.id);

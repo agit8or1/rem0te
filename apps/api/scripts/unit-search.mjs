@@ -58,7 +58,7 @@ for (const s of ['10.0.0.5', '192.168', '10.1.', 'fe80::1', '2001:db8::/32']) ch
 for (const s of ['pc-1234', 'abc', '1234', 'jdoe', 'beef.cafe', '10.0.0.5"', '10\\0']) check(!Q.looksLikeAddress(s), `"${s}" is not (no separator, no digit, or a character JSON would escape)`);
 
 section('GROUP_CAPABILITY names each list page’s gate');
-check(JSON.stringify(Q.GROUP_CAPABILITY) === JSON.stringify({ computers: 'computers:view', businesses: null, sites: 'computers:view', users: 'users:view', alerts: 'monitoring:alerts' }), 'computers/sites computers:view, users users:view, alerts monitoring:alerts, businesses none', JSON.stringify(Q.GROUP_CAPABILITY));
+check(JSON.stringify(Q.GROUP_CAPABILITY) === JSON.stringify({ computers: 'computers:view', businesses: null, sites: 'computers:view', users: 'users:view', alerts: 'monitoring:alerts', scripts: null, policies: 'computers:view' }), 'computers/sites/policies computers:view, users users:view, alerts monitoring:alerts, businesses none, scripts the library\'s own right (0.87)', JSON.stringify(Q.GROUP_CAPABILITY));
 check(JSON.stringify(Q.GROUPS) === JSON.stringify(Object.keys(Q.GROUP_CAPABILITY)), 'every group has a gate entry');
 
 console.log(`\n${fail ? '\x1b[31m' : '\x1b[32m'}${pass} passed, ${fail} failed\x1b[0m`);

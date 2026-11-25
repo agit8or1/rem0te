@@ -5,11 +5,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { CAP, type Capability } from '../rbac/capabilities';
-import { PLATFORM_PERM } from '../rbac/platform-permissions';
 import { assertFresh } from '../security-controls/review';
 import { ApprovalModeProbe } from '../actions/approval-mode';
 import { VersionFields, contentProblem, contributorsOf, hashVersion, lineDiff, type ParameterDecl } from './definition';
 import { staticCheck } from './static-checks';
+import { anyRight, hasBusinessCap, libraryWhere, listScope, platformReviewer, viewOf, type ScriptView } from './access';
 
 /**
  * The script library (docs/script-library.md): scripts, immutable versions
@@ -43,7 +43,7 @@ export const ReviewDto = z.object({
   note: z.string().trim().min(3).max(1000),
 }).strict();
 
-type View = 'full' | 'approved_only';
+type View = ScriptView;
 type ScriptRow = Script & { customer?: { name: string } | null };
 
 function bad(e: z.ZodError) {
@@ -61,41 +61,11 @@ export class ScriptLibraryService {
 
   // ── Who may do what ────────────────────────────────────────────────────────
 
-  /**
-   * A library capability in the business this request acts in. A technician
-   * needs it on a grant covering the WHOLE business: a script is not scoped
-   * to a computer, so a grant naming computers confers no library rights.
-   */
-  private hasBusinessCap(actor: ActorContext, cap: Capability): boolean {
-    if (actor.isPlatformAdmin) return true;
-    if (!actor.businessId) return false;
-    if (actor.technician) {
-      return actor.technician.businessId === actor.businessId
-        && actor.technician.sources.some((s) => s.endpointIds === null && (s.capabilities as string[]).includes(cap));
-    }
-    return actor.capabilities.includes(cap);
-  }
-
-  private platformReviewer(actor: ActorContext) {
-    return actor.isPlatformAdmin || (actor.platformPermissions ?? []).includes(PLATFORM_PERM.APPROVALS_REVIEW);
-  }
-
-  private anyRight(actor: ActorContext) {
-    return this.platformReviewer(actor) || this.hasBusinessCap(actor, CAP.SCRIPTS_AUTHOR) || this.hasBusinessCap(actor, CAP.SCRIPTS_REVIEW);
-  }
-
-  /** How much of a script this person may see, or null (then it is a 404). */
-  private viewOf(actor: ActorContext, s: Script): View | null {
-    if (s.scope === 'GLOBAL') {
-      if (this.platformReviewer(actor)) return 'full';
-      // A business's authors and reviewers see the global scripts that have
-      // been approved, as reference. Never their drafts.
-      return this.hasBusinessCap(actor, CAP.SCRIPTS_AUTHOR) || this.hasBusinessCap(actor, CAP.SCRIPTS_REVIEW) ? 'approved_only' : null;
-    }
-    if (actor.isPlatformAdmin) return 'full';
-    if (!actor.businessId || s.customerId !== actor.businessId) return null;
-    return this.hasBusinessCap(actor, CAP.SCRIPTS_AUTHOR) || this.hasBusinessCap(actor, CAP.SCRIPTS_REVIEW) ? 'full' : null;
-  }
+  // 0.87: who may see what is decided in access.ts, shared with search and favourites.
+  private hasBusinessCap(actor: ActorContext, cap: Capability): boolean { return hasBusinessCap(actor, cap); }
+  private platformReviewer(actor: ActorContext) { return platformReviewer(actor); }
+  private anyRight(actor: ActorContext) { return anyRight(actor); }
+  private viewOf(actor: ActorContext, s: Script): View | null { return viewOf(actor, s); }
 
   private canAuthor(actor: ActorContext, s: Script) {
     if (s.scope === 'GLOBAL') return actor.isPlatformAdmin;
@@ -149,12 +119,9 @@ export class ScriptLibraryService {
 
   async list(actor: ActorContext, businessId?: string) {
     if (!this.anyRight(actor)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'The script library needs the Write scripts or Review scripts permission.' });
-    const scope = actor.isPlatformAdmin ? (businessId?.trim() || null) : (actor.businessId ?? null);
+    const scope = listScope(actor, businessId);
     if (!actor.isPlatformAdmin && businessId && businessId !== actor.businessId) throw new ForbiddenException('You do not have access to that business');
-    const bizVisible = !!scope && (actor.isPlatformAdmin || this.hasBusinessCap(actor, CAP.SCRIPTS_AUTHOR) || this.hasBusinessCap(actor, CAP.SCRIPTS_REVIEW));
-    const where: Prisma.ScriptWhereInput = actor.isPlatformAdmin && !scope
-      ? {}
-      : { OR: [{ scope: 'GLOBAL' }, ...(bizVisible ? [{ customerId: scope! }] : [])] };
+    const where: Prisma.ScriptWhereInput = libraryWhere(actor, scope);
     const rows = await this.prisma.script.findMany({
       where, orderBy: [{ scope: 'asc' }, { name: 'asc' }], take: 500,
       include: { customer: { select: { name: true } }, versions: { orderBy: { version: 'desc' }, select: { version: true, status: true, risk: true, createdAt: true, contentSha256: true, authorId: true } } },

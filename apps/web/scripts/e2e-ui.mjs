@@ -116,6 +116,8 @@ import path from 'path';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.resolve(HERE, '..');
 const ROOT = path.resolve(WEB_DIR, '../..');
+// 0.87: the URLs the pre-0.87 menu linked to, from the migration table's URL column.
+const OLD_ROUTES = [...readFileSync(path.join(ROOT, 'docs/NAVIGATION_MIGRATION.md'), 'utf8').matchAll(/^\| [^|]+\| [^|]+\| `(\/[^`?#]*)` \|/gm)].map((m) => m[1]);
 const API_DIR = path.join(ROOT, 'apps/api');
 
 // ── Refusals, before anything is started or written ────────────────────────
@@ -658,7 +660,8 @@ async function shellChecks(page, vp, label) {
   check(box && box.x >= 0 && box.width <= 375 && box.height >= 700, `${label}: the drawer fits the screen`, JSON.stringify(box));
   check(await drawer.locator('nav[aria-label="Main"] [data-nav]').count() >= 3, `${label}: it holds the main menu`);
   {
-    // 0.64: Add device is in the drawer too, inside its width.
+    // 0.64: Add device is in the drawer too, inside its width (0.87: inside the Devices group).
+    await openNavGroup(drawer, 'devices');
     const sc = drawer.locator('[data-testid="nav-shortcut-devices"]');
     const b = await sc.boundingBox().catch(() => null);
     check(await sc.isVisible() && await sc.getAttribute('href') === '/endpoints/enroll' && /Add device/.test(await sc.innerText()) && b && box && b.x >= box.x && b.x + b.width <= box.x + box.width + 0.5,
@@ -688,16 +691,41 @@ async function shellChecks(page, vp, label) {
   await trigger.click();
   await drawer.waitFor({ state: 'visible' });
   await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
-  await drawer.locator('[data-nav="devices"]').click();
+  await openNavGroup(drawer, 'devices');
+  await drawer.locator('[data-nav-item="/endpoints"]').click();
   await page.waitForURL((u) => u.pathname === '/endpoints', { timeout: 15_000 }).catch(() => {});
   await drawer.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
   check(new URL(page.url()).pathname === '/endpoints' && !(await drawer.isVisible()), `${label}: following a menu link navigates and closes the drawer`, page.url());
   await settled(page);
   await trigger.click();
   await drawer.waitFor({ state: 'visible' });
-  await drawer.locator('[data-nav="devices"]').click();
+  await openNavGroup(drawer, 'devices');
+  await drawer.locator('[data-nav-item="/endpoints"]').click();
   await drawer.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
   check(!(await drawer.isVisible()), `${label}: a link to the page already open closes it too`);
+}
+
+/** 0.87: menu groups are buttons that open; a page is a [data-nav-item] link inside one. */
+async function openNavGroup(scope, id) {
+  const g = scope.locator(`button[data-nav="${id}"]`).first();
+  if (await g.count() && await g.getAttribute('aria-expanded') === 'false') await g.click();
+}
+async function openAllNavGroups(scope) {
+  for (let i = 0; i < 12; i++) {
+    const closed = scope.locator('button[data-nav][aria-expanded="false"]');
+    if (!(await closed.count())) return;
+    await closed.first().click();
+  }
+}
+/** 0.87: device tabs sit in groups; open the group that holds a tab before clicking it. */
+async function openTab(page, id) {
+  const tab = page.locator(`[data-testid="tab-${id}"]`);
+  if (!(await tab.isVisible().catch(() => false))) {
+    const g = page.locator(`[data-testid="workspace-groups"] [data-tabs~="${id}"]`).first();
+    if (await g.count()) await g.click();
+    await tab.waitFor({ timeout: 10_000 }).catch(() => {});
+  }
+  await tab.click();
 }
 
 /**
@@ -706,19 +734,20 @@ async function shellChecks(page, vp, label) {
  * highlighted row there instead of Devices.
  */
 async function addDeviceShortcut(page, nav, label) {
+  await openNavGroup(nav, 'devices');
   const sc = nav.locator('[data-testid="nav-shortcut-devices"]');
-  const devices = nav.locator('[data-nav="devices"]');
+  const devices = nav.locator('[data-nav-item="/endpoints"]');
   const sb = await sc.boundingBox().catch(() => null), db = await devices.boundingBox().catch(() => null);
   check(await sc.isVisible() && await sc.getAttribute('href') === '/endpoints/enroll' && (await sc.innerText()).trim() === 'Add device',
     `${label}: the sidebar has an "Add device" link`, await sc.innerText().catch(() => 'missing'));
-  check(sb && db && sb.y > db.y && sb.x > db.x, `${label}: it sits under Devices, indented`, JSON.stringify({ sb, db }));
+  check(sb && db && sb.y > db.y && Math.abs(sb.x - db.x) <= 1, `${label}: it sits in the Devices group, under All devices`, JSON.stringify({ sb, db }));
   await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
   await sc.click();
   await page.waitForURL((u) => u.pathname === '/endpoints/enroll', { timeout: 15_000 }).catch(() => {});
   await page.locator('[data-testid="add-device-flow"]').waitFor({ timeout: 15_000 }).catch(() => {});
   check(new URL(page.url()).pathname === '/endpoints/enroll' && await page.locator('[data-testid="add-device-flow"]').isVisible(), `${label}: it opens Add device`, page.url());
-  check(await sc.getAttribute('aria-current') === 'page' && !/bg-primary/.test(await devices.getAttribute('class') ?? ''),
-    `${label}: there it is the highlighted row, not Devices`, await devices.getAttribute('class').catch(() => ''));
+  check(await sc.getAttribute('aria-current') === 'page' && await devices.getAttribute('aria-current') !== 'page',
+    `${label}: there it is the highlighted row, not All devices`, await devices.getAttribute('aria-current').catch(() => ''));
   await settled(page);
 }
 
@@ -730,19 +759,19 @@ async function mainPagesSweep(page, f, vp, label) {
     await page.locator('[data-testid="nav-drawer-trigger"]').click();
     const drawer = page.locator('[data-testid="nav-drawer"]');
     await drawer.waitFor({ state: 'visible' });
-    const settings = drawer.locator('[data-nav="settings"]');
-    if (await settings.getAttribute('aria-expanded') === 'false') await settings.click();
+    await openAllNavGroups(drawer);
     hrefs = await drawer.locator('a[href^="/"]').evaluateAll((els) => els.map((e) => e.getAttribute('href')));
     await page.keyboard.press('Escape');
     await drawer.waitFor({ state: 'hidden' });
   } else {
-    const settings = page.locator('nav[aria-label="Main"] [data-nav="settings"]').first();
-    if (await settings.getAttribute('aria-expanded') === 'false') await settings.click();
+    await openAllNavGroups(page.locator('nav[aria-label="Main"]').first());
     hrefs = await page.locator('aside a[href^="/"]').evaluateAll((els) => els.map((e) => e.getAttribute('href')));
   }
   const extra = ['/my-computers', '/sessions', '/quick-connect', '/patching', '/endpoints/enroll', '/endpoints/new', '/settings/api-keys', '/settings/monitoring', '/settings/client-updates', '/reports/agent-coverage', '/reports/offline-time', '/reports/patch-compliance', '/reports/alert-frequency',
     // 0.35: the pages that had no side padding, and a page under each.
-    '/automation/scripts', `/automation/scripts/${f.script.id}`, '/automation/software', '/reports/schedules'];
+    '/automation/scripts', `/automation/scripts/${f.script.id}`, '/automation/software', '/reports/schedules',
+    // 0.87: every pre-0.87 menu URL (docs/NAVIGATION_MIGRATION.md's table) still opens.
+    ...OLD_ROUTES];
   const all = [...new Set([...hrefs, ...extra])].filter((h) => !/^\/(docs|help)\//.test(h));
   check(all.length >= 15, `${label}: ${all.length} main pages to sweep`);
   const bad = [], noisy = [], unpadded = [], noHeading = [];
@@ -801,7 +830,8 @@ async function devicesAndWorkspace(page, f, vp, label) {
   await page.locator('[data-testid="workspace-tabs"]').waitFor({ timeout: 20_000 });
   await settled(page);
   check(await page.locator('main').innerText().then((t) => t.includes(`${TAG}-WS-01`)), `${label}: the device opens on its workspace`);
-  const tabs = await page.locator('[data-testid="workspace-tabs"] [role="tab"]').evaluateAll((els) => els.map((e) => e.getAttribute('data-testid').replace(/^tab-/, '')));
+  // 0.87: the tabs are in groups; the group row lists every tab (data-tabs), the tab list only the open group's.
+  const tabs = (await page.locator('[data-testid="workspace-groups"] [data-tabs]').evaluateAll((els) => els.map((e) => e.getAttribute('data-tabs')))).join(' ').split(' ').filter(Boolean);
   const expected = ['overview', 'performance', 'monitoring', 'software', 'processes', 'services', 'network', 'patches', 'events', 'diagnostics', 'actions', 'history'];
   check(expected.every((t) => tabs.includes(t)), `${label}: all twelve workspace tabs for a Windows agent`, tabs.join(','));
   await cleanCheck(page, `${label} workspace`);
@@ -815,7 +845,7 @@ async function devicesAndWorkspace(page, f, vp, label) {
   };
   for (const t of tabs) {
     await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
-    await page.locator(`[data-testid="tab-${t}"]`).click();
+    await openTab(page, t);
     const panel = page.locator('[role="tabpanel"][data-state="active"]');
     await panel.waitFor({ timeout: 10_000 });
     await settled(page, 12_000);
@@ -834,7 +864,7 @@ async function devicesAndWorkspace(page, f, vp, label) {
 let namingChecked = false;
 async function deviceNaming(page, f, label) {
   const before = await prisma.endpoint.findUnique({ where: { id: f.main.id }, select: { name: true, description: true } });
-  await page.locator('[data-testid="tab-overview"]').click();
+  await openTab(page, 'overview');
   await settled(page);
   await page.locator('[data-testid="rename-device"]').click();
   const dlg = page.locator('[data-testid="rename-dialog"]');
@@ -1125,7 +1155,7 @@ async function serverSecurity(page, label, vp) {
     await page.locator(`[data-testid="security-tab-${tab}"]`).click();
     const ok = await page.locator(sel).first().waitFor({ timeout: 60_000 }).then(() => true).catch(() => false);
     const err = await page.locator('[data-testid="security-error"]').count();
-    check(ok && err === 0, `${label}: Security → ${tab} renders`, ok ? 'an error card is shown' : (await page.locator('main').innerText()).slice(0, 600));
+    check(ok && err === 0, `${label}: Security → ${tab} renders`, ok ? 'an error card is shown' : (await page.locator('main').innerText()).slice(-600));
     if (vp === 'phone') await noSideScroll(page, `${label} Security ${tab}`);
   }
   await page.locator('[data-testid="security-tab-tls"]').click();
@@ -1243,7 +1273,7 @@ async function devicePageGroups(page, f, vp, label) {
   await settled(page);
   let text = await page.locator('main').innerText();
   check(text.includes('Package updates') && !/Windows Update|Windows is/.test(text), `${label}: a Linux computer's Overview names its package updates, never Windows Update`, text.match(/.{0,60}Windows.{0,60}/)?.[0] ?? '');
-  await page.locator('[data-testid="tab-patches"]').click();
+  await openTab(page, 'patches');
   const panel = page.locator('[role="tabpanel"][data-state="active"]');
   await panel.waitFor({ timeout: 10_000 });
   await settled(page, 12_000);
@@ -1655,7 +1685,8 @@ async function memberChecks(browser, f, vp, theme, label) {
   try {
     const page = await signIn(ctx, f.member.email, `${label} (Business User)`, theme);
     // 0.64: the Add device link is shown only with Add computers.
-    if (vp === 'desktop') check(await page.locator('nav[aria-label="Main"] [data-nav="devices"]').first().isVisible() && await page.locator('[data-testid="nav-shortcut-devices"]').count() === 0,
+    if (vp === 'desktop') await openNavGroup(page.locator('nav[aria-label="Main"]').first(), 'devices');
+    if (vp === 'desktop') check(await page.locator('nav[aria-label="Main"] [data-nav-item="/endpoints"]').first().isVisible() && await page.locator('[data-testid="nav-shortcut-devices"]').count() === 0,
       `${label}: a Business User without Add computers has no "Add device" link in the sidebar`);
     await go(page, '/reports/agent-coverage');
     check(await page.locator('main h1').first().isVisible() && !(await page.locator('[data-testid="schedule-report"]').isVisible()), `${label}: a Business User sees the report without "Schedule this report"`);
@@ -1736,6 +1767,106 @@ async function apiKeys(browser, f, vp, theme, label) {
   } finally { await ctx.close(); }
 }
 
+// ── 0.87 Compass: the shell ─────────────────────────────────────────────────
+// As Business A's owner, in a context of its own: the sidebar collapses and
+// stays collapsed after a reload with the browser's copy cleared (so the
+// server kept it), a collapsed group opens a flyout, Ctrl+K never shows
+// Business B, a favourite made on a device page is in the header's menu and
+// opens it, the profile menu offers System, and no app switcher is drawn.
+// The owner's navigation rows are deleted at the end.
+async function navShell(browser, f, vp, theme, label) {
+  const ctx = await newContext(browser, vp, theme);
+  try {
+    const page = await signIn(ctx, f.owner.email, `${label} (owner, shell)`, theme);
+    const sidebar = page.locator('aside [data-testid="sidebar"], [data-testid="sidebar"]').first();
+    if (vp === 'desktop') {
+      const toggle = page.locator('[data-testid="sidebar-toggle"]');
+      check(await sidebar.getAttribute('data-collapsed') === 'false' && (await sidebar.boundingBox())?.width >= 220 && (await sidebar.boundingBox())?.width <= 240,
+        `${label}: the sidebar starts expanded, 220–240 px`, JSON.stringify(await sidebar.boundingBox()));
+      await toggle.click();
+      await page.waitForFunction(() => document.querySelector('[data-testid="sidebar"]')?.getAttribute('data-collapsed') === 'true', null, { timeout: 5_000 }).catch(() => {});
+      await page.waitForTimeout(400); // the width animates for 150 ms
+      const w = (await sidebar.boundingBox())?.width ?? 0;
+      check(w >= 56 && w <= 64 && await toggle.getAttribute('aria-pressed') === 'true', `${label}: the toggle collapses it to 56–64 px and says so`, String(w));
+      for (let i = 0; i < 20; i++) { const r = await prisma.userNavPreference.findUnique({ where: { userId: f.owner.id } }); if (r?.sidebarCollapsed) break; await new Promise((x) => setTimeout(x, 250)); }
+      check((await prisma.userNavPreference.findUnique({ where: { userId: f.owner.id } }))?.sidebarCollapsed === true, `${label}: the server keeps it`);
+      await page.evaluate(() => { try { localStorage.removeItem('nav.prefs'); } catch { /* */ } });
+      await page.reload();
+      await settled(page);
+      await page.waitForFunction(() => document.querySelector('[data-testid="sidebar"]')?.getAttribute('data-collapsed') === 'true', null, { timeout: 10_000 }).catch(() => {});
+      check(await sidebar.getAttribute('data-collapsed') === 'true', `${label}: after a reload with the browser's copy cleared, it is still collapsed`);
+      await page.locator('button[data-nav="devices"]').first().click();
+      const fly = page.locator('[data-testid="nav-flyout-devices"]');
+      await fly.waitFor({ timeout: 5_000 }).catch(() => {});
+      check(await fly.isVisible() && await fly.locator('a[href="/endpoints"]').count() === 1, `${label}: a collapsed group opens a flyout with its pages`);
+      await shot(page, `${label}-nav-collapsed-flyout`);
+      await page.keyboard.press('Escape');
+      await toggle.click();
+      await page.waitForFunction(() => document.querySelector('[data-testid="sidebar"]')?.getAttribute('data-collapsed') === 'false', null, { timeout: 5_000 }).catch(() => {});
+      check(await sidebar.getAttribute('data-collapsed') === 'false', `${label}: and expands again`);
+      check(await page.locator('[data-testid="breadcrumbs"]').isVisible(), `${label}: the header shows breadcrumbs`);
+    }
+
+    // The palette: Business B is never offered to Business A's owner.
+    await go(page, '/dashboard');
+    const pal = page.locator('[data-testid="global-search"]');
+    if (vp === 'desktop') await page.keyboard.press('Control+k');
+    else await page.locator('[data-testid="global-search-trigger"]').click();
+    await pal.waitFor({ timeout: 5_000 });
+    const quick = await pal.locator('[data-group="quick"] [role="option"], [data-group="pages"] [role="option"]').count();
+    check(quick > 0, `${label}: before anything is typed, the palette offers pages and quick actions`, String(quick));
+    const answered = page.waitForResponse((r) => r.url().includes('/search?q=') && r.url().includes('BIRCH'), { timeout: 15_000 }).catch(() => null);
+    await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
+    await page.locator('[data-testid="global-search-input"]').pressSequentially(`${TAG}-BIRCH`, { delay: 15 });
+    const res = await answered;
+    await page.waitForTimeout(400);
+    const opts = await pal.locator('[role="option"]').allInnerTexts();
+    check(res && res.status() === 200 && !opts.some((t) => /BIRCH|Birch/.test(t)), `${label}: searching for Business B's computer finds nothing of Business B`, opts.join(' | ').slice(0, 300));
+    await page.locator('[data-testid="global-search-input"]').fill('');
+    await page.locator('[data-testid="global-search-input"]').pressSequentially(`${TAG} Birch`, { delay: 15 });
+    await page.waitForTimeout(1200);
+    check(!(await pal.locator('[role="option"]').allInnerTexts()).some((t) => /Birch/.test(t)), `${label}: nor Business B itself`);
+    await page.keyboard.press('Escape');
+
+    // A favourite, from the device page to the header's menu and back.
+    await go(page, `/endpoints/${f.main.id}`);
+    const star = page.locator('[data-testid="record-favorite"]');
+    await star.waitFor({ timeout: 15_000 });
+    await page.waitForFunction(() => !document.querySelector('[data-testid="record-favorite"]')?.hasAttribute('disabled'), null, { timeout: 10_000 }).catch(() => {});
+    if (await star.getAttribute('aria-pressed') !== 'true') await star.click();
+    await page.waitForFunction(() => document.querySelector('[data-testid="record-favorite"]')?.getAttribute('aria-pressed') === 'true', null, { timeout: 10_000 }).catch(() => {});
+    check(await star.getAttribute('aria-pressed') === 'true', `${label}: the star on a device page makes it a favourite`);
+    check(await prisma.userNavItem.count({ where: { userId: f.owner.id, list: 'favorite', kind: 'device', ref: f.main.id } }) === 1, `${label}: kept on the server as a kind and an id`);
+    await go(page, '/dashboard');
+    await page.locator('[data-testid="favorites-trigger"]').click();
+    const item = page.locator('[data-testid="favorite-item"]').filter({ hasText: `${TAG}-WS-01` });
+    await item.first().waitFor({ timeout: 5_000 }).catch(() => {});
+    check(await item.count() === 1, `${label}: it is in the header's favourites, named`);
+    if (theme === 'light') await shot(page, `${label}-favorites`);
+    await item.first().click();
+    await page.waitForURL((u) => u.pathname === `/endpoints/${f.main.id}`, { timeout: 15_000 }).catch(() => {});
+    check(new URL(page.url()).pathname === `/endpoints/${f.main.id}`, `${label}: and opens the device`, page.url());
+    await settled(page);
+
+    // The profile menu: theme with System, density and mode; no app switcher.
+    await page.locator('[data-testid="profile-menu-trigger"]').click();
+    const menu = page.locator('[data-testid="profile-menu"]');
+    await menu.waitFor({ timeout: 5_000 }).catch(() => {});
+    check(await menu.locator('[data-testid="theme-system"]').count() === 1 && await menu.locator('[data-testid="mode-advanced"]').count() === 1 && await menu.locator('[data-testid="density-compact"]').count() === 1,
+      `${label}: the profile menu offers Light, Dark and System, density and mode`);
+    check(!/Support Rem0te/.test(await menu.innerText().catch(() => '')), `${label}: a Business Owner is not offered "Support Rem0te" (staff only)`);
+    await page.keyboard.press('Escape');
+    check(await page.locator('[data-testid="app-switcher"]').count() === 0 && await page.locator('header a[href*="clientst0r" i], header a[href*="agit8or" i]').count() === 0,
+      `${label}: standalone: no app switcher and no link to another product in the header`);
+    check(await page.locator('[data-testid="skip-link"]').count() === 1 && await page.locator('main#main-content').count() === 1, `${label}: a skip link to the main content`);
+    await cleanCheck(page, `${label} shell`);
+  } finally {
+    await ctx.close();
+    await prisma.userNavItem.deleteMany({ where: { userId: f.owner.id } });
+    await prisma.userNavPreference.deleteMany({ where: { userId: f.owner.id } });
+  }
+}
+
 async function combo(browser, f, vp, theme) {
   const label = `${vp}/${theme}`;
   section(`${vp === 'desktop' ? 'Desktop 1440 × 900' : 'Phone 375 × 812'}, ${theme} theme`);
@@ -1776,6 +1907,7 @@ async function combo(browser, f, vp, theme) {
     await mdmSettingsUi(page, f, vp, theme, label);
     if (theme === 'light') await mainPagesSweep(page, f, vp, label);
   } finally { await ctx.close(); }
+  await navShell(browser, f, vp, theme, label);
   await mobileRequiresSetup(browser, f, vp, theme, label);
   await apiKeys(browser, f, vp, theme, label);
   if (theme === 'light') await memberChecks(browser, f, vp, theme, label);
@@ -1970,7 +2102,7 @@ async function chatTab(page, f, vp, label) {
   const ep = f.c.chat;
   await go(page, `/endpoints/${ep.id}?tab=chat`);
   if (!(await page.locator('[data-testid="chat-tab"]').isVisible().catch(() => false))) {
-    await page.locator('[data-testid="tab-chat"]').click();
+    await openTab(page, 'chat');
     await page.locator('[data-testid="chat-tab"]').waitFor({ timeout: 15_000 });
   }
   await settled(page);
@@ -2280,8 +2412,8 @@ async function msaReadinessUi(page, f, vp, theme, label) {
   await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="msa-fleet-rows"] li')].some((r) => r.getAttribute('data-state') !== 'compatible'), null, { timeout: 15_000 }).catch(() => {});
   const states = await page.locator('[data-testid="msa-fleet-rows"] li').evaluateAll((els) => [...new Set(els.map((e) => e.getAttribute('data-state')))]);
   check(states.includes('unsupported') && states.every((s) => ['unsupported', 'upgrade_available', 'compatible', 'unknown'].includes(s)), `${label}: Show all brings the rest back, and no computer is managed`, JSON.stringify(states));
-  const current = await page.locator('[data-section-tabs="devices"] a[aria-current="page"]').innerText().catch(() => null);
-  check(current === 'Remote access readiness', `${label}: Remote access readiness is the current Devices tab`, String(current));
+  const current = await page.locator('[data-section-tabs="remote"] a[aria-current="page"]').innerText().catch(() => null);
+  check(current === 'Remote access readiness', `${label}: Remote access readiness is the current Remote support tab (0.87)`, String(current));
   await themeCheck(page, theme, `${label} Remote access readiness`);
   if (vp === 'phone') await noSideScroll(page, `${label} Remote access readiness`);
   await shot(page, `${label}-remote-readiness`);
@@ -2294,8 +2426,8 @@ async function msaReadinessUi(page, f, vp, theme, label) {
   const off = await page.getByTestId('msa-sessions-off').innerText().catch(() => '');
   check(/not switched on on this server/.test(off) && await page.getByTestId('msa-cutover-runs').count() === 0,
     `${label}: Managed sessions says Managed Secure Access is off, and no cutover-run controls are drawn`, off.slice(0, 200));
-  const cur = await page.locator('[data-section-tabs="devices"] a[aria-current="page"]').innerText().catch(() => null);
-  check(cur === 'Managed sessions', `${label}: Managed sessions is the current Devices tab`, String(cur));
+  const cur = await page.locator('[data-section-tabs="remote"] a[aria-current="page"]').innerText().catch(() => null);
+  check(cur === 'Managed sessions', `${label}: Managed sessions is the current Remote support tab (0.87)`, String(cur));
   if (vp === 'phone') await noSideScroll(page, `${label} Managed sessions`);
   await cleanCheck(page, `${label} Managed sessions`);
 }
@@ -3084,7 +3216,7 @@ async function headerAgentUpgrade(page, f, vp, theme, label) {
 async function aiHistoryPanel(page, f, vp, label) {
   const caps = peer.state.capsRequests;
   await go(page, `/endpoints/${f.main.id}`);
-  await page.locator('[data-testid="tab-history"]').click();
+  await openTab(page, 'history');
   const why = page.locator('[data-testid="ai-summary-unavailable"]');
   await page.waitForFunction(() => /Needs ClientSt0r/.test(document.querySelector('[data-testid="ai-summary-unavailable"]')?.textContent ?? ''), null, { timeout: 15_000 }).catch(() => {});
   const t = await why.innerText().catch(() => '');

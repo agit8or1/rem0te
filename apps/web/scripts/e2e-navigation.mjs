@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 /**
+ * Updated for 0.87's groups, header and grouped device tabs.
  * The 0.31 navigation (and 0.32's Reports, 0.34's Automation hub, software
  * compliance and scheduled reports, Chat tab, Agent card, Email settings and
  * Data retention card, 0.35's Agent migrations tab and 0.37's Full agent tab), in a real browser: every sidebar entry and section tab
@@ -41,8 +42,8 @@ let pass = 0, fail = 0; const failures = [];
 const check = (c, m, d = '') => { if (c) { pass++; console.log(`  \x1b[32m✓\x1b[0m ${m}`); } else { fail++; failures.push(m); console.log(`  \x1b[31m✗\x1b[0m ${m}${d ? `\n      ${d}` : ''}`); } };
 
 const VIEWPORTS = { desktop: { width: 1440, height: 900 }, tablet: { width: 820, height: 1180 } };
-const SETTINGS_ADMIN = ['/settings', '/users', '/offboarding', '/technician-approvals', '/audit', '/businesses', '/admin/technicians', '/admin/access', '/admin/sso',
-  '/settings/client-updates', '/admin/rollouts', '/settings/email', '/settings/ai', '/settings/psa', '/admin/security', '/admin/status', '/about'];
+// 0.87: Administration (Standard mode), in order. Customers moved to Devices; the Security pages to their own group.
+const ADMIN_GROUP = ['/settings', '/users', '/admin/technicians', '/admin/status', '/about'];
 
 async function signIn(context, email, password) {
   const page = await context.newPage();
@@ -58,8 +59,35 @@ async function setTheme(page, theme) {
   await page.reload({ waitUntil: 'networkidle' });
 }
 
-/** What a person sees: the main-menu sections in order. */
-const sections = (page) => page.$$eval('nav[aria-label="Main"] [data-nav]', (els) => els.map((e) => e.getAttribute('data-nav')));
+/** What a person sees: the main-menu groups in order (0.87: nine groups, each a button or, alone, a link). */
+const sections = (page) => page.$$eval('nav[aria-label="Main"] [data-nav]', (els) => [...new Set(els.map((e) => e.getAttribute('data-nav')))]);
+
+/** 0.87: open a menu group (if it is a button) and follow its first page. Returns that page's href. */
+async function openSection(page, id) {
+  const sel = `nav[aria-label="Main"] [data-nav="${id}"]`;
+  const tag = await page.$eval(sel, (e) => e.tagName.toLowerCase());
+  if (tag === 'a') { const href = await page.$eval(sel, (e) => e.getAttribute('href')); await follow(page, sel); return href; }
+  if (await page.$eval(sel, (e) => e.getAttribute('aria-expanded')) === 'false') await page.click(sel);
+  const list = await page.$eval(sel, (e) => e.getAttribute('aria-controls'));
+  const first = `#${list} a[data-nav-item]`;
+  const href = await page.$eval(first, (e) => e.getAttribute('href'));
+  await follow(page, first);
+  return href;
+}
+/** 0.87: the links inside a menu group, opened first. */
+async function groupLinks(page, id) {
+  const sel = `nav[aria-label="Main"] button[data-nav="${id}"]`;
+  if (!(await page.$(sel))) return [];
+  if (await page.$eval(sel, (e) => e.getAttribute('aria-expanded')) === 'false') await page.click(sel);
+  const list = await page.$eval(sel, (e) => e.getAttribute('aria-controls'));
+  return page.$$eval(`#${list} a[data-nav-item]`, (els) => els.map((e) => e.getAttribute('href')));
+}
+/** 0.87: device tabs sit in groups; the group row names every tab (data-tabs). */
+const workspaceTabIds = (page) => page.$$eval('[data-testid="workspace-groups"] [data-tabs]', (els) => els.flatMap((e) => e.getAttribute('data-tabs').split(' ')));
+async function openTab(page, id) {
+  if (!(await page.isVisible(`[data-testid="tab-${id}"]`).catch(() => false))) await page.click(`[data-testid="workspace-groups"] [data-tabs~="${id}"]`);
+  await page.click(`[data-testid="tab-${id}"]`);
+}
 
 async function pageHealth(page) {
   return page.evaluate(() => {
@@ -117,10 +145,11 @@ async function noApproveControl(page) {
  * computers:view sees only the catalog, so no tab bar, and cannot add to it.
  */
 async function automationChecks(page, who) {
-  await follow(page, 'nav[aria-label="Main"] [data-nav="automation"]');
+  await openSection(page, 'automation');
   const tabs = await page.$$eval('[data-section-tabs="automation"] a', (els) => els.map((e) => e.textContent.trim()));
-  const want = who === 'user' ? [] : ['Script library', 'Software catalog'];
-  check(JSON.stringify(tabs) === JSON.stringify(want), want.length ? `Automation tabs: ${want.join(' · ')}` : 'a user who sees only the software catalog gets no Automation tab bar', tabs.join(' · '));
+  // 0.87: the hub's tabs are every Automation page the person may open (0.52 Tasks, 0.58 Schedules).
+  const want = who === 'user' ? ['Software catalog', 'Tasks', 'Schedules'] : ['Script library', 'Software catalog', 'Tasks', 'Schedules'];
+  check(JSON.stringify(tabs) === JSON.stringify(want), `Automation tabs: ${want.join(' · ')}`, tabs.join(' · '));
   await softwareChecks(page, who);
   if (who === 'user') {
     const h = await visit(page, '/automation/scripts');
@@ -129,7 +158,7 @@ async function automationChecks(page, who) {
     return;
   }
   await visit(page, '/dashboard');
-  await follow(page, 'nav[aria-label="Main"] [data-nav="automation"]');
+  await openSection(page, 'automation');
   const h = await pageHealth(page);
   check(new URL(page.url()).pathname === '/automation/scripts' && h.h1 === 'Script library', 'Automation opens the Script library', JSON.stringify(h));
   const notice = await page.$eval('[data-script-run-notice]', (e) => e.textContent).catch(() => '');
@@ -312,10 +341,10 @@ try {
     return u.email;
   };
   const personas = {
-    admin: { email: await mk('admin', { isPlatformAdmin: true }), expect: ['dashboard', 'devices', 'alerts', 'automation', 'patching', 'remote', 'reports', 'settings'] },
-    owner: { email: await mk('owner', {}, { roleId: ownerRole.id, capabilities: [] }), expect: ['dashboard', 'devices', 'alerts', 'automation', 'patching', 'remote', 'reports', 'settings'] },
+    admin: { email: await mk('admin', { isPlatformAdmin: true }), expect: ['dashboard', 'devices', 'remote', 'monitoring', 'patching', 'automation', 'reports', 'security', 'admin'] },
+    owner: { email: await mk('owner', {}, { roleId: ownerRole.id, capabilities: [] }), expect: ['dashboard', 'devices', 'remote', 'monitoring', 'patching', 'automation', 'reports', 'security', 'admin'] },
     // computers:view without monitoring:alerts: the device reports, not the alert ones (0.32).
-    user: { email: await mk('user', {}, { roleId: userRole.id, capabilities: ['computers:view', 'computers:connect'] }), expect: ['dashboard', 'devices', 'automation', 'patching', 'remote', 'reports'] },
+    user: { email: await mk('user', {}, { roleId: userRole.id, capabilities: ['computers:view', 'computers:connect'] }), expect: ['dashboard', 'devices', 'remote', 'patching', 'automation', 'reports'] },
   };
   const anyEndpoint = await prisma.endpoint.findFirst({ where: { customerId: biz.id, status: 'ACTIVE' }, select: { id: true } });
   // 0.35: the Business User is granted that one computer (removed with the user), so their Agent card is checked too.
@@ -340,10 +369,10 @@ try {
       check(JSON.stringify(got) === JSON.stringify(p.expect), `the menu is exactly: ${p.expect.join(', ')}`, `got ${got.join(', ')}`);
 
       // Every section entry opens a real page, highlighted, without sideways overflow.
-      for (const id of got.filter((s) => s !== 'settings')) {
-        await follow(page, `nav[aria-label="Main"] [data-nav="${id}"]`);
+      for (const id of got.filter((s) => s !== 'admin')) {
+        const href = await openSection(page, id);
         const h = await pageHealth(page);
-        const active = await page.$eval(`nav[aria-label="Main"] [data-nav="${id}"]`, (e) => e.className.includes('bg-primary'));
+        const active = await page.$eval(`nav[aria-label="Main"] [data-nav-item="${href}"]`, (e) => e.getAttribute('aria-current') === 'page').catch(() => false);
         check(!h.notFound && h.h1 && h.overflow <= 1 && active, `${id} → ${new URL(page.url()).pathname} renders "${h.h1}", highlighted, no overflow`, JSON.stringify(h));
       }
 
@@ -377,7 +406,8 @@ try {
         }
         // 0.35: Agent migrations, for whoever may request one (computers:edit).
         // 0.37: Full agent, for computers:view.
-        const want = who === 'admin' ? ['All devices', 'My devices', 'Add device', 'Unassigned', 'Full agent', 'Agent migrations'] : who === 'owner' ? ['All devices', 'My devices', 'Add device', 'Full agent', 'Agent migrations'] : ['All devices', 'My devices', 'Full agent'];
+        // 0.87: Customers is a menu entry, not a Devices tab (it has no hub); Mobile devices (0.80) and Deploy agents (0.57) are.
+        const want = who === 'admin' ? ['All devices', 'My devices', 'Add device', 'Mobile devices', 'Unassigned', 'Deploy agents', 'Full agent', 'Agent migrations'] : who === 'owner' ? ['All devices', 'My devices', 'Add device', 'Mobile devices', 'Full agent', 'Agent migrations'] : ['All devices', 'My devices', 'Full agent'];
         check(JSON.stringify(tabs) === JSON.stringify(want), `Devices tabs: ${want.join(' · ')}`, `got ${tabs.join(' · ')}`);
         for (const t of tabs) {
           await follow(page, `[data-section-tabs="devices"] a:text-is("${t}")`);
@@ -397,10 +427,10 @@ try {
           // A Business User sees only company-wide computers (and those granted to them): theirs is checked below.
           if (who !== 'user') await agentCardChecks(page, who, anyEndpoint.id);
           // 0.33: Performance sits right after Overview for any computer whose agent reports.
-          const wtabs = await page.$$eval('[data-testid="workspace-tabs"] [role="tab"]', (els) => els.map((e) => e.textContent.trim()));
-          if (wtabs.includes('Performance')) {
-            check(wtabs[1] === 'Performance', 'the device workspace has Performance right after Overview', wtabs.join(' · '));
-            await page.click('[data-testid="tab-performance"]');
+          const wtabs = await workspaceTabIds(page);
+          if (wtabs.includes('performance')) {
+            check(wtabs[1] === 'performance', 'the device workspace has Performance right after Overview (both in its first group)', wtabs.join(' · '));
+            await openTab(page, 'performance');
             await page.waitForSelector('[data-testid="performance-tab"] [data-testid="metric-range"]', { timeout: 15000 });
             await page.waitForSelector('[data-testid="metric-cpu-chart"] svg, [data-testid="metric-empty"]', { timeout: 15000 });
             const h = await pageHealth(page);
@@ -417,8 +447,8 @@ try {
         // Uninstall or says why not (with the server's reason), and never approves.
         if (windowsEndpoint) {
           await visit(page, `/endpoints/${windowsEndpoint.id}`);
-          if (await page.$('[data-testid="tab-software"]')) {
-            await page.click('[data-testid="tab-software"]');
+          if ((await workspaceTabIds(page)).includes('software')) {
+            await openTab(page, 'software');
             await page.waitForSelector('[data-testid="managed-software"]', { timeout: 15_000 }).catch(() => {});
             const ms = await page.$eval('[data-testid="managed-software"]', (el) => ({
               buttons: [...el.querySelectorAll('button')].map((b) => (b.textContent ?? '').trim()),
@@ -436,10 +466,10 @@ try {
         // control that acts on the computer (no end task, stop or start).
         if (windowsEndpoint && who !== 'user') {
           await visit(page, `/endpoints/${windowsEndpoint.id}`);
-          const wsTabs = await page.$$eval('[data-testid="workspace-tabs"] [role="tab"]', (els) => els.map((e) => e.textContent.trim()));
-          check(['Processes', 'Services', 'Network'].every((t) => wsTabs.includes(t)), 'a Windows device has Processes, Services and Network tabs', wsTabs.join(' · '));
+          const wsTabs = await workspaceTabIds(page);
+          check(['processes', 'services', 'network'].every((t) => wsTabs.includes(t)), 'a Windows device has Processes, Services and Network tabs', wsTabs.join(' · '));
           for (const [t, key] of [['processes', 'process_list'], ['services', 'service_list'], ['network', 'network_adapters']]) {
-            await page.click(`[data-testid="tab-${t}"]`);
+            await openTab(page, t);
             await page.waitForSelector(`[data-testid="snapshot-${key}"]`, { timeout: 15_000 }).catch(() => {});
             const card = await page.$(`[data-testid="snapshot-${key}"]`);
             const info = card ? await card.evaluate((el) => ({
@@ -453,8 +483,8 @@ try {
           }
           // 0.34: the Chat tab is on every computer the viewer can see. On one
           // whose agent cannot chat it says so (and why) and offers no Start.
-          check(wsTabs.includes('Chat') && wsTabs.indexOf('Chat') === wsTabs.length - 2, 'the device workspace has a Chat tab, just before History', wsTabs.join(' · '));
-          await page.click('[data-testid="tab-chat"]');
+          check(wsTabs.includes('chat') && wsTabs.indexOf('chat') === wsTabs.length - 2, 'the device workspace has a Chat tab, just before History (in the Remote group)', wsTabs.join(' · '));
+          await openTab(page, 'chat');
           await page.waitForSelector('[data-testid="chat-tab"]', { timeout: 15_000 }).catch(() => {});
           const chat = await page.evaluate(() => ({
             tab: !!document.querySelector('[data-testid="chat-tab"]'),
@@ -466,17 +496,19 @@ try {
         }
       }
       if (got.includes('remote')) {
-        await follow(page, 'nav[aria-label="Main"] [data-nav="remote"]');
+        await openSection(page, 'remote');
         const tabs = await page.$$eval('[data-section-tabs="remote"] a', (els) => els.map((e) => e.textContent.trim()));
-        check(who === 'user' ? tabs.length === 0 : tabs.includes('Sessions') && tabs.includes('Technician client'), who === 'user' ? 'a user with one Remote Support page sees no tab bar' : `Remote Support tabs: ${tabs.join(' · ')}`, tabs.join(' · '));
+        // 0.87: Managed sessions and Remote access readiness moved here from Devices.
+        check(who === 'user' ? !tabs.includes('Sessions') && tabs.includes('Technician client') : ['Sessions', 'Technician client', 'Managed sessions', 'Remote access readiness'].every((t) => tabs.includes(t)), `Remote support tabs: ${tabs.join(' · ')}`, tabs.join(' · '));
       }
 
       // Reports (0.32): one tab per report the person's permissions allow, each a real page.
       if (got.includes('reports')) {
-        await follow(page, 'nav[aria-label="Main"] [data-nav="reports"]');
+        await openSection(page, 'reports');
         const tabs = await page.$$eval('[data-section-tabs="reports"] a', (els) => els.map((e) => e.textContent.trim()));
         // 0.34: Software compliance; and Scheduled reports, last, for a Business Owner or a Platform Admin.
-        const want = who === 'user' ? ['Patch compliance', 'Agent coverage', 'Software compliance'] : ['Patch compliance', 'Agent coverage', 'Alert frequency', 'Offline time', 'Software compliance', 'Scheduled reports'];
+        // 0.56: Warranty, before Scheduled reports.
+        const want = who === 'user' ? ['Patch compliance', 'Agent coverage', 'Software compliance', 'Warranty'] : ['Patch compliance', 'Agent coverage', 'Alert frequency', 'Offline time', 'Software compliance', 'Warranty', 'Scheduled reports'];
         check(JSON.stringify(tabs) === JSON.stringify(want), `Reports tabs: ${want.join(' · ')}`, `got ${tabs.join(' · ')}`);
         for (const t of tabs) {
           await follow(page, `[data-section-tabs="reports"] a:text-is("${t}")`);
@@ -496,27 +528,24 @@ try {
         check(new URL(page.url()).pathname === '/reports/patch-compliance' || h.h1 === 'Patch compliance', '/reports opens the first report', page.url());
       }
 
-      // Settings: collapsible, every entry renders, the group stays open on its pages.
-      if (got.includes('settings')) {
+      // Administration (0.87, was Settings): every entry renders, and the group is open on its pages.
+      if (got.includes('admin')) {
         await visit(page, '/dashboard');
-        const before = await page.$$('nav[aria-label="Main"] a[href="/audit"]');
-        if (before.length) await page.click('nav[aria-label="Main"] [data-nav="settings"]'); // close if it was left open
-        await page.click('nav[aria-label="Main"] [data-nav="settings"]');
-        const hrefs = await page.$$eval('nav[aria-label="Main"] [data-nav="settings"] + div a', (els) => els.map((e) => e.getAttribute('href')));
-        if (who === 'admin') check(JSON.stringify(hrefs) === JSON.stringify(SETTINGS_ADMIN), 'Settings holds the administration, in order', hrefs.join(' '));
-        else check(hrefs.includes('/settings') && hrefs.includes('/users') && !hrefs.includes('/admin/access'), 'an owner\'s Settings has their business, not the platform', hrefs.join(' '));
+        const hrefs = await groupLinks(page, 'admin');
+        if (who === 'admin') check(JSON.stringify(hrefs) === JSON.stringify(ADMIN_GROUP), 'Administration holds the platform\'s settings, in order', hrefs.join(' '));
+        else if (who === 'owner') check(hrefs.includes('/settings') && hrefs.includes('/users') && !hrefs.includes('/admin/access'), 'an owner\'s Administration has their business, not the platform', hrefs.join(' '));
         for (const href of hrefs) {
           const h = await visit(page, href);
-          const open = await page.$$eval('nav[aria-label="Main"] [data-nav="settings"] + div a', (els) => els.length);
-          const active = await page.$eval(`nav[aria-label="Main"] a[href="${href}"]`, (e) => e.className.includes('bg-primary')).catch(() => false);
-          check(!h.notFound && h.h1 && h.overflow <= 1 && open > 0 && active, `Settings → ${href} renders "${h.h1}"; group open, entry highlighted`, JSON.stringify(h));
+          const expanded = await page.$eval('nav[aria-label="Main"] button[data-nav="admin"]', (e) => e.getAttribute('aria-expanded')).catch(() => null);
+          const active = await page.$eval(`nav[aria-label="Main"] a[data-nav-item="${href}"]`, (e) => e.getAttribute('aria-current') === 'page').catch(() => false);
+          check(!h.notFound && h.h1 && h.overflow <= 1 && expanded === 'true' && active, `Administration → ${href} renders "${h.h1}"; group open, entry current`, JSON.stringify(h));
         }
       }
 
       if (who === 'admin') await adminCardsChecks(page);
 
       // A dashboard tile's link opens the list already filtered.
-      if (got.includes('alerts')) {
+      if (got.includes('monitoring')) {
         await visit(page, '/alerts?state=open&severity=critical');
         const sel = await page.evaluate(() => [document.querySelector('#al-state')?.value, document.querySelector('#al-sev')?.value]);
         check(sel[0] === 'open' && sel[1] === 'critical', '/alerts?state=open&severity=critical opens filtered', JSON.stringify(sel));
@@ -540,8 +569,8 @@ try {
         await anon.close();
       }
 
-      // Help & docs, at the bottom.
-      await follow(page, 'aside a[href="/help"]');
+      // Help & docs, in the header (0.87; it was the sidebar's footer).
+      await follow(page, '[data-testid="help-link"]');
       check(await page.$('main a[href="/docs"]') !== null, 'Help links to the full documentation');
 
       for (const theme of ['light', 'dark']) {

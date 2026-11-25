@@ -82,6 +82,16 @@ jobs:
       - name: Device Tools tests
         run: node apps/web/scripts/unit-device-tools.mjs
 
+      # The navigation (0.87): every entry is a page, every pre-0.87 URL is
+      # still reachable (docs/NAVIGATION_MIGRATION.md's table), Standard mode
+      # never hides a page, roles, the 1,080 p budget, and the group ids
+      # agreeing with the API and migration 0104. Then the API's closed lists
+      # and parsing for preferences and favourites.
+      - name: Navigation tests
+        run: |
+          node apps/web/scripts/unit-nav-model.mjs
+          node apps/api/scripts/unit-navigation.mjs
+
       # Contract ticket-rmm-v1: the JSON Schemas ClientSt0r validates against are
       # generated from the runtime zod schemas; drift between them, or a fixture
       # that no longer parses, fails here. Then the signing, trust-file and

@@ -31,6 +31,26 @@ export const TAB_LABEL: Record<WorkspaceTab, string> = {
 };
 
 /**
+ * The tabs in groups (0.87, UX_AUDIT.md F-7): fifteen tabs in one row
+ * scrolled sideways at every width below 1,920 px. The first row names the
+ * group and the second holds its tabs. Every tab keeps its id, its `?tab=`
+ * and its `tab-<id>` test id; a group button carries its tabs in `data-tabs`.
+ */
+export type TabGroup = 'overview' | 'health' | 'software' | 'system' | 'tools' | 'remote' | 'history';
+export const TAB_GROUPS: { id: TabGroup; label: string; tabs: WorkspaceTab[] }[] = [
+  { id: 'overview', label: 'Overview', tabs: ['overview', 'performance'] },
+  { id: 'health', label: 'Health', tabs: ['monitoring', 'events'] },
+  { id: 'software', label: 'Software & updates', tabs: ['software', 'patches'] },
+  { id: 'system', label: 'System', tabs: ['processes', 'services', 'network'] },
+  { id: 'tools', label: 'Tools', tabs: ['diagnostics', 'actions'] },
+  { id: 'remote', label: 'Remote', tabs: ['terminal', 'files', 'chat'] },
+  { id: 'history', label: 'History', tabs: ['history'] },
+];
+export function groupOf(t: WorkspaceTab): TabGroup {
+  return TAB_GROUPS.find((g) => g.tabs.includes(t))?.id ?? 'overview';
+}
+
+/**
  * Old `?tab=` values, from before the tabs were regrouped (0.31). Alert links,
  * bookmarks and the docs screenshots used them, so they still land somewhere.
  */

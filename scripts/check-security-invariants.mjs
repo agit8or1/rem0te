@@ -916,11 +916,22 @@ check(
   const code = (s) => s.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
   // 0.34: the pure parameter/hash rules live in actions/script-run (zod and
   // node:crypto only, also loaded by the signer); the library takes them from there.
-  const ALLOWED = /^(node:crypto|zod|express|@nestjs\/common|@prisma\/client|\.\/(definition|static-checks|script-library\.(service|controller))|\.\.\/(prisma\/prisma\.service|audit\/audit\.(service|module)|rbac\/(access-control\.service|capabilities|platform-permissions)|security-controls\/review|common\/guards\/jwt-auth\.guard|common\/decorators\/actor\.decorator|common\/throttling|auth\/step-up\.service|actions\/script-run|actions\/approval-mode))$/;
+  const ALLOWED = /^(node:crypto|zod|express|@nestjs\/common|@prisma\/client|\.\/(definition|static-checks|access|script-library\.(service|controller))|\.\.\/(prisma\/prisma\.service|audit\/audit\.(service|module)|rbac\/(access-control\.service|capabilities|platform-permissions)|security-controls\/review|common\/guards\/jwt-auth\.guard|common\/decorators\/actor\.decorator|common\/throttling|auth\/step-up\.service|actions\/script-run|actions\/approval-mode))$/;
   const importsOf = (s) => [...s.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s*['"]([^'"]+)['"]|\b(?:require|import)\(\s*['"]([^'"]+)['"]/gm)].map((m) => m[1] ?? m[2]);
   const badImports = files.flatMap((f) => importsOf(src[f]).filter((i) => !ALLOWED.test(i)).map((i) => `${f} imports ${i}`));
   const touches = files.flatMap((f) => [...code(src[f]).matchAll(/\b(actionJob|actionTarget|ActionsService|SignerClient|createPlan|endpointCommand|diagnosticRun|rustdeskNode|EnrollmentService|DiagnosticsCatalogService|PatchingService|heartbeat|forHeartbeat|envelope)\b|\.endpoint\./gi)].map((m) => `${f}: ${m[0]}`));
-  const reachIn = walk('apps/api/src').filter((f) => !f.startsWith(dir) && f !== 'apps/api/src/app.module.ts' && /from ['"][./]*script-library\//.test(read(f)));
+  // 0.87 (§96): access.ts — pure, who may see which script — is the one file
+  // other modules may import, and only global search and favourites do, so a
+  // script is found and named only where it could be opened.
+  const ACCESS_READERS = ['apps/api/src/search/search.service.ts', 'apps/api/src/navigation/navigation.service.ts'];
+  const reachIn = walk('apps/api/src').filter((f) => !f.startsWith(dir) && f !== 'apps/api/src/app.module.ts' && /from ['"][./]*script-library\//.test(read(f)))
+    .filter((f) => !(ACCESS_READERS.includes(f) && [...read(f).matchAll(/from ['"]([./]*script-library\/[^'"]+)['"]/g)].every((m) => m[1] === '../script-library/access')));
+  const accessSrc = code(src[`${dir}/access.ts`] ?? '');
+  check('script library: access.ts is pure — types, capabilities and platform permissions only, no database or Nest',
+    !!accessSrc && importsOf(accessSrc).every((i) => /^(@prisma\/client|\.\.\/rbac\/(access-control\.service|capabilities|platform-permissions))$/.test(i))
+      && /^import type \{ Prisma \} from '@prisma\/client';/m.test(accessSrc) && /^import type \{ ActorContext \}/m.test(accessSrc)
+      && !/prisma\.|this\.|async |await /.test(accessSrc),
+    'access.ts may import only types from @prisma/client and access-control.service, and rbac constants');
   const mod = src[`${dir}/script-library.module.ts`] ?? '';
   check('the script library creates no action job and reaches no agent, signer or heartbeat',
     files.length >= 5 && badImports.length === 0 && touches.length === 0 && reachIn.length === 0 && !/@Global\(\)/.test(code(mod)) && !/exports\s*:/.test(code(mod)),
@@ -8805,6 +8816,112 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /unit-mdm-lost-device\.mjs/.test(read('.github/workflows/ci.yml')) && /:issueCommand/.test(read('apps/api/scripts/e2e-mdm-android.mjs')) && /MDM_ACTIONS_PAUSED/.test(read('apps/api/scripts/e2e-mdm-android.mjs'))
       && /DeviceLock/.test(read('apps/api/scripts/e2e-mdm-apple.mjs')) && /\bmdm-android\b/.test(read('scripts/run-e2e.sh')) && /mdm-act-confirm/.test(read('apps/web/scripts/e2e-ui.mjs')),
     'ci.yml / e2e suites');
+}
+
+// ── §96 (0.87 Compass): navigation preferences, favourites and recent items ──
+//     Presentation only, and each person's own. Every UserNavPreference and
+//     UserNavItem read or write is in navigation.service.ts and names
+//     `userId: actor.userId`; no route names another person. A favourite or
+//     recent item stores a kind and a reference, never a name or URL, and is
+//     named on every read through the record's own page's builder (the device
+//     list's scopedWhere, GET /businesses' and GET /sites' listWhere, the
+//     library's libraryWhere + viewOf), so losing access hides it. A page is a
+//     console path (model.ts PAGE_REF = 0104's CHECK). The closed lists agree
+//     with 0104's CHECKs and the web's NAV ids, in order. Bounded (50 / 15,
+//     inside a transaction) and not audited. Global search's two 0.87 groups
+//     (scripts, policies) start from the library's rule and each policy page's
+//     own scoped().
+{
+  console.log('\n§96 Navigation (0.87): own rows only, named through each record\'s rule, closed lists, bounded; search scripts and policies');
+  const code = (t) => t.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const N = 'apps/api/src/navigation';
+  const svc = code(read(`${N}/navigation.service.ts`));
+  const ctl = code(read(`${N}/navigation.controller.ts`));
+  const model = read(`${N}/model.ts`);
+  const sql = read('apps/api/prisma/migrations/0104_navigation/migration.sql');
+
+  const writers = walk('apps/api/src').filter((f) => /\.ts$/.test(f) && /\buserNav(Item|Preference)\b/.test(code(read(f))));
+  check('only navigation.service.ts reads or writes UserNavPreference / UserNavItem',
+    JSON.stringify(writers) === JSON.stringify([`${N}/navigation.service.ts`]), writers.join(', '));
+  const calls = [...svc.matchAll(/\b(?:this\.prisma|tx)\.userNav(?:Item|Preference)\.(\w+)\(([\s\S]*?)\);/g)];
+  check('every one of its calls names the caller: userId: actor.userId (or the key built from it)',
+    calls.length >= 8 && calls.every((m) => /userId: actor\.userId|where: \{ userId_list_kind_ref: key \}/.test(m[2]))
+      && /const key = \{ userId: actor\.userId, list: 'recent'/.test(svc),
+    calls.filter((m) => !/userId: actor\.userId|userId_list_kind_ref: key/.test(m[2])).map((m) => m[1]).join(', ') || `${calls.length} calls`);
+  check('no route names another person: GET me/navigation and four writes to the caller\'s own state, each signed in and rate-limited',
+    /@Controller\('me\/navigation'\)\s*@UseGuards\(JwtAuthGuard\)/.test(ctl) && !/:userId|@Query\(/.test(ctl)
+      && (ctl.match(/@(Get|Put|Post|Delete)\(/g) ?? []).length === 5 && (ctl.match(/@RateLimit\(\d+\)/g) ?? []).length === 5,
+    'navigation.controller.ts');
+  check('records are named only through their own pages\' builders, AND-ed with the id; no visibility rule of its own',
+    /this\.devices\.scopedWhere\(actor, \{ status: 'current' \}\), \{ id: \{ in: ids \} \}/.test(svc)
+      && /AND: \[this\.businesses\.listWhere\(actor\), \{ id: \{ in: ids \} \}\]/.test(svc)
+      && /AND: \[this\.sites\.listWhere\(actor\), \{ id: \{ in: ids \} \}\]/.test(svc) && /this\.acl\.can\(actor, CAP\.COMPUTERS_VIEW\)/.test(svc)
+      && /AND: \[libraryWhere\(actor, listScope\(actor\)\), \{ id: \{ in: ids \} \}\]/.test(svc) && /const view = viewOf\(actor, s\);/.test(svc) && /if \(!ids\.length \|\| !anyRight\(actor\)\) return m;/.test(svc)
+      && !/endpointVisibilityWhere|resolveScope|isPlatformAdmin/.test(svc),
+    'navigation.service.ts');
+  check('saving a favourite or a visit, and naming a context customer, checks the same rule first (404 otherwise)',
+    (svc.match(/if \(!\(await this\.visible\(actor, p\.data\)\)\) throw new NotFoundException/g) ?? []).length === 2
+      && /AND: \[this\.businesses\.listWhere\(actor\), \{ id: d\.contextBusinessId \}\][\s\S]{0,80}if \(!ok\) throw new NotFoundException/.test(svc)
+      && /AND: \[this\.businesses\.listWhere\(actor\), \{ id: row\.contextBusinessId \}\]/.test(svc),
+    'navigation.service.ts');
+  check('bounded and serialised: both writes take a per-person advisory lock first; the favourite cap is counted before the insert, recent items trimmed, in the same transaction',
+    /\$transaction\(async \(tx\) => \{[\s\S]*?tx\.userNavItem\.count\(\{ where: \{ userId: actor\.userId, list: 'favorite' \} \}\);\s*if \(n >= FAVORITE_CAP\) throw new ConflictException\(\{ code: 'FAVORITES_FULL'[\s\S]*?tx\.userNavItem\.create\(/.test(svc)
+      && /skip: RECENT_CAP[\s\S]{0,200}tx\.userNavItem\.deleteMany\(\{ where: \{ userId: actor\.userId, list: 'recent'/.test(svc)
+      && (svc.match(/\$transaction\(async \(tx\) => \{\s*await this\.lock\(tx, actor\);/g) ?? []).length === 2
+      && /pg_advisory_xact_lock\(hashtextextended\(\${'rem0te\.nav:' \+ actor\.userId}, 0\)\)/.test(svc)
+      && /export const FAVORITE_CAP = 50;/.test(model) && /export const RECENT_CAP = 15;/.test(model),
+    'navigation.service.ts / model.ts');
+  check('not audited, and nothing in navigation/ logs',
+    ![...walk(N)].some((f) => /audit|Logger|console\./.test(code(read(f)))), N);
+
+  // What is stored.
+  const schema = read('apps/api/prisma/schema.prisma');
+  const itemModel = (schema.match(/model UserNavItem \{([\s\S]*?)\n\}/) ?? ['', ''])[1];
+  const fields = [...itemModel.matchAll(/^\s{2}(\w+)\s+\S/gm)].map((m) => m[1]);
+  check('UserNavItem holds a kind and a reference only: no name, title or URL column',
+    JSON.stringify(fields) === JSON.stringify(['id', 'userId', 'user', 'list', 'kind', 'ref', 'createdAt', 'usedAt']), fields.join(','));
+  const tsList = (name) => [...((model.match(new RegExp(`export const ${name} = \\[([^\\]]*)\\] as const;`)) ?? ['', ''])[1]).matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  const sqlList = (re) => [...((sql.match(re) ?? ['', ''])[1]).matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  const same = (a, b) => a.length > 0 && JSON.stringify(a) === JSON.stringify(b);
+  const webGroups = [...code(read('apps/web/components/layout/nav-model.ts')).matchAll(/^ {4}id: '([a-z]+)', label: /gm)].map((m) => m[1]);
+  check('0104\'s CHECKs name model.ts\'s modes, densities, groups, lists and kinds, in order; the web menu\'s group ids are the same',
+    same(tsList('MODES'), sqlList(/"mode" IN \(([^)]*)\)/)) && same(tsList('DENSITIES'), sqlList(/"density" IN \(([^)]*)\)/))
+      && same(tsList('GROUP_IDS'), sqlList(/<@ ARRAY\[([^\]]*)\]/)) && same(tsList('LISTS'), sqlList(/"list" IN \(([^)]*)\)/))
+      && same(tsList('KINDS'), sqlList(/"kind" IN \(([^)]*)\)/)) && same(tsList('GROUP_IDS'), webGroups)
+      && /cardinality\("pinnedGroups"\), 0\) <= 9/.test(sql),
+    `web ${webGroups.join(',')}`);
+  const pageRe = (model.match(/export const PAGE_REF = \/(.*)\/;/) ?? ['', ''])[1].replace(/\(\?:/g, '(').replace(/\\\//g, '/');
+  const recRe = (model.match(/export const RECORD_REF = \/(.*)\/;/) ?? ['', ''])[1];
+  check('a page reference is a console path (PAGE_REF = 0104\'s ref CHECK, ≤ 120); a record reference is an id (RECORD_REF = the CHECK)',
+    !!pageRe && sql.includes(`"kind" = 'page' AND char_length("ref") <= 120 AND "ref" ~ '${pageRe}'`) && sql.includes(`"kind" <> 'page' AND "ref" ~ '${recRe}'`)
+      && /ref\.length <= 120 && PAGE_REF\.test\(ref\)/.test(model) && !new RegExp(pageRe).test('//evil.example.com') && !new RegExp(pageRe).test('https://x'),
+    pageRe);
+  check('the web sends a favourite or a visit as { kind, ref } only',
+    /addFavorite: \(kind: NavItemKind, ref: string\) => api\.post<[^>]*>\('\/me\/navigation\/favorites', \{ kind, ref \}\)/.test(read('apps/web/lib/api-client.ts'))
+      && /recordVisit: \(kind: NavItemKind, ref: string\) => api\.post\('\/me\/navigation\/recent', \{ kind, ref \}\)/.test(read('apps/web/lib/api-client.ts')),
+    'apps/web/lib/api-client.ts');
+
+  // Global search's 0.87 groups.
+  const ssvc = code(read('apps/api/src/search/search.service.ts'));
+  const fn = (t, name) => { const i = t.indexOf(`async ${name}(`); return i < 0 ? '' : t.slice(i, t.indexOf('\n  }\n', i)); };
+  const scr = fn(ssvc, 'scriptGroup'), pol = fn(ssvc, 'policyGroup');
+  check('search scripts: the library\'s gate (anyRight), its where (libraryWhere + listScope) with the name AND-ed, and viewOf on every row',
+    /if \(!anyRight\(actor\)\) return null;/.test(scr) && /where: \{ AND: \[libraryWhere\(actor, listScope\(actor\)\), \{ name: \{ contains: likeEscape\(q\), mode: 'insensitive' \} \}\] \}/.test(scr)
+      && /const v = viewOf\(actor, s\); return v === 'full' \|\| \(v === 'approved_only' && s\.versions\.length > 0\);/.test(scr),
+    'search.service.ts scriptGroup');
+  const pps = code(read('apps/api/src/patching/policies.service.ts')), aps = code(read('apps/api/src/automation/automation.service.ts'));
+  const fp = fn(pps, 'findVisibleByName'), fa = fn(aps, 'findVisibleByName');
+  check('search policies: computers:view, then each policy through its detail page\'s own scoped(); a non-admin\'s candidates are their own business\'s only',
+    /if \(!this\.allowed\(actor, 'policies'\)\) return null;/.test(pol) && /this\.patchPolicies\.findVisibleByName\(actor, q, GROUP_CAP\)/.test(pol) && /this\.automation\.findVisibleByName\(actor, q, GROUP_CAP\)/.test(pol)
+      && [fp, fa].every((f) => /actor\.isPlatformAdmin \? \{\} : \{ customerId: actor\.businessId \?\? '-' \}/.test(f) && /const r = await this\.scoped\(actor, r0\.id\);/.test(f) && /contains: likeEscape\(q\)/.test(f))
+      && /taskKind: \{ not: 'restart' \}/.test(fa) && /policies: 'computers:view'/.test(read('apps/api/src/search/query.ts')) && /scripts: null/.test(read('apps/api/src/search/query.ts')),
+    'policies.service.ts / automation.service.ts findVisibleByName');
+
+  check('suites: e2e-nav-prefs in run-e2e.sh (port 4101: isolation, caps, losing access, search scripts and policies); unit-nav-model and unit-navigation in CI; e2e-ui drives the shell',
+    /\bnav-prefs\b/.test(read('scripts/run-e2e.sh')) && /NAV_API_PORT \?\? 4101/.test(read('apps/api/scripts/e2e-nav-prefs.mjs'))
+      && /unit-nav-model\.mjs/.test(read('.github/workflows/ci.yml')) && /unit-navigation\.mjs/.test(read('.github/workflows/ci.yml'))
+      && /sidebar-toggle/.test(read('apps/web/scripts/e2e-ui.mjs')) && /favorites-trigger/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    'run-e2e.sh / ci.yml / e2e-ui.mjs');
 }
 
 if (failures.length > 0) {

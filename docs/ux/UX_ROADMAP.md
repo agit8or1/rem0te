@@ -25,7 +25,10 @@ Section numbers (§) are the directive's. Findings (F-n) are
 
 | Item | Release | State |
 |---|---|---|
-| P0-1 Audit, baselines, standalone requirements | 0.85.1 | **This release** (PR open, not merged) |
+| P0-1 Audit, baselines, standalone requirements | 0.85.1 | Done (#206) |
+| P0-2 Design tokens, Inter bundled | 0.87.0 | **Partly done**: the colour tokens are in `globals.css` (both themes, every text pair AA, [UI_DESIGN_SYSTEM.md](../UI_DESIGN_SYSTEM.md)), Inter is bundled. The Tailwind status classes, the showcase page and the drift check are not |
+| P0-4 Application shell | 0.87.0 | **Done** except the nav search box (the Ctrl+K palette searches pages instead) and the pending-approvals indicator. The app switcher renders nothing (S-4) |
+| P0-7 Critical navigation and labelling defects | 0.87.0 | **Partly done**: Access Control and the three Securities. Title Case strays and the *Full agent* chip remain |
 | Everything else | — | Planned |
 
 ## P0

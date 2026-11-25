@@ -1,6 +1,6 @@
 {
   "$schema": "https://design-tokens.github.io/community-group/format/",
-  "$description": "Rem0te design tokens, draft 0 (0.85.1). Planning values from the owner's UI/UX directive §5, with WCAG 2.2 AA variants worked out against them. NOT YET IN THE CODE: the console still uses the shadcn defaults in apps/web/app/globals.css. The shared MSPZero specification (github.com/agit8or1/clientst0r/tree/main/docs/ux) was not published when this was written (checked against clientst0r main 2d26c30, 2026-11-25); when it is, this file follows it and records the adopted commit in CLIENTST0R_HANDOFF.md. Every ratio below was computed, not estimated; see SHARED_DESIGN_SYSTEM.md#contrast.",
+  "$description": "Rem0te design tokens, draft 0 (0.85.1). Planning values from the owner's UI/UX directive §5, with WCAG 2.2 AA variants worked out against them. IN THE CODE SINCE 0.87.0: apps/web/app/globals.css carries these values as the shadcn HSL variables, plus --status-* and --nav-*; one deliberate difference, dark --primary is #60A5FA (primary-text) with dark ink, 7.4:1 (docs/UI_DESIGN_SYSTEM.md). The shared MSPZero specification (github.com/agit8or1/clientst0r/tree/main/docs/ux) was not published when this was written (checked against clientst0r main 2d26c30, 2026-11-25); when it is, this file follows it and records the adopted commit in CLIENTST0R_HANDOFF.md. Every ratio below was computed, not estimated; see SHARED_DESIGN_SYSTEM.md#contrast.",
   "meta": {
     "version": "0.0.0-draft",
     "source": "UI/UX directive §5 initial tokens",

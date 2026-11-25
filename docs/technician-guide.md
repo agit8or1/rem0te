@@ -29,15 +29,39 @@ next. Recovery codes work here too, and each one is single-use.
 
 Below 768 px wide (a phone, or a tablet held upright) the menu is not drawn
 beside the page. The **☰ menu button** at the left of the top bar opens it as a
-panel over the page; it holds everything the sidebar holds, including the
-business switcher, the theme and *Sign out*. Choosing a page closes it, and so
+panel over the page; it holds everything the sidebar holds. The business
+switcher, Help and your profile menu (theme, *Sign out*) stay in the top bar.
+Choosing a page closes it, and so
 do **Esc**, tapping outside it and the **✕** in its corner. While it is open,
 the keyboard stays inside it and a screen reader treats it as a dialog named
 *Main menu*.
 
 Wide tables — the device list, reports, API keys — scroll sideways inside their
 own box rather than widening the page; swipe the table, not the page. The
-device workspace's tab row scrolls the same way.
+device workspace's tab groups and tabs scroll the same way.
+
+### Finding your way (0.87)
+
+The menu is nine groups: **Dashboard, Devices, Remote support, Monitoring,
+Patching, Automation, Reports, Security** and **Administration**. The group
+holding the page you are on opens by itself; pin one to keep it open.
+
+- **Standard** mode (the default) lists the everyday pages. Every other page
+  is a tab on one of them and is in Ctrl+K. **Advanced**, in the profile menu
+  at the top right, lists them all.
+- **The toggle** at the top left collapses the menu to icons. Hover or focus
+  one for its name; click it for its pages. It stays as you left it, on any
+  browser you sign in on.
+- **The top bar** holds the breadcrumbs, the customer you are working in,
+  search, quick actions, your **favourites and recent items** (the star),
+  critical alerts, chat, tasks, Help and the profile menu (theme Light, Dark or
+  System; density; mode; *Sign out*).
+- **Favourites.** The star on a device or customer page adds it; the star menu
+  adds the page you are on. At most 50. Something you can no longer see drops
+  out of the list by itself.
+
+No address changed: an old bookmark still opens its page.
+[Where things moved](NAVIGATION_MIGRATION.md) lists every old menu entry.
 
 ### The dashboard: what to work on (0.31)
 
@@ -116,8 +140,8 @@ company-wide; for a technician, only the machines your assignment names.
 
 ![Computers list](screenshots/guide/tech-02-computers.png)
 
-1. **Devices** — the menu entry; its tabs hold *My devices*, *Add device* and the others. From 0.64 *Add device* is
-   also its own link just under *Devices* in the menu, for anyone with *Add computers*.
+1. **Devices** — the menu group: *All devices*, *My devices*, *Customers*, *Add device* (for anyone with *Add
+   computers*) and the others.
 2. **Search** — matches name, hostname, IP address, OS, alias, RustDesk ID, business,
    site and the signed-in user. The server does the matching, so it searches every page,
    not just the one on screen.
@@ -287,8 +311,11 @@ its Agent card. The dashboard counts these apart from online ones.
 ### Search everything — Ctrl+K (0.33)
 
 The **Search** box at the top of every page, or **Ctrl+K** (**⌘K** on a Mac)
-from anywhere, searches devices, businesses, sites, people and open alerts in
-one go. Type at least two characters (at most 100); results appear when you
+from anywhere, searches devices, customers, sites, people, open alerts,
+scripts, patch policies and automation schedules in one go (scripts and
+policies from 0.87), and the console's pages by name. Before you type it offers
+your recent items and quick actions. Type at least two characters (at most
+100); results appear when you
 pause. **↑ / ↓** move through them, **Enter** opens the highlighted one, **Esc**
 closes the box. Ctrl/⌘-click opens a result in a new tab.
 
@@ -733,7 +760,7 @@ See [support-requests.md](support-requests.md).
 
 ## 9. Working for several businesses
 
-If you have technician assignments, the sidebar shows a **business switcher**.
+If you have technician assignments, the top bar shows a **business switcher**.
 Pick the business you are working in; everything you see is then that
 business, limited to what your assignment allows. **All assigned** gives an
 overview across all of them, and lists access that is not active right now and

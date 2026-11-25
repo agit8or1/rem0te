@@ -12,7 +12,7 @@ export const MAX_QUERY = 100;
 /** Results per group. One more is fetched to say "more" without counting. */
 export const GROUP_CAP = 8;
 
-export const GROUPS = ['computers', 'businesses', 'sites', 'users', 'alerts'] as const;
+export const GROUPS = ['computers', 'businesses', 'sites', 'users', 'alerts', 'scripts', 'policies'] as const;
 export type SearchGroup = (typeof GROUPS)[number];
 
 /**
@@ -25,6 +25,9 @@ export type SearchGroup = (typeof GROUPS)[number];
  *   users       GET /users                    users:view
  *   alerts      GET /monitoring/alerts        monitoring:alerts (inside alertWhere)
  *   businesses  GET /businesses               none
+ *   scripts     GET /scripts                  a library right (inside script-library/access.ts anyRight)
+ *   policies    GET /patching/policies,       computers:view (every policy also through its
+ *               GET /automation/schedules       detail page's own scoped(): each computer visible)
  */
 export const GROUP_CAPABILITY = {
   computers: 'computers:view',
@@ -32,6 +35,8 @@ export const GROUP_CAPABILITY = {
   sites: 'computers:view',
   users: 'users:view',
   alerts: 'monitoring:alerts',
+  scripts: null,
+  policies: 'computers:view',
 } as const satisfies Record<SearchGroup, string | null>;
 
 /** Which computer field matched, in the order a tie is reported. */

@@ -1,7 +1,7 @@
 # Rem0te documentation
 
 Start with the page that matches what you are doing. All of this is also inside
-the product under **Help & docs → Full documentation** in the sidebar, as a grouped index with a
+the product under **Help (?) → Documentation** in the top bar, as a grouped index with a
 contents panel on every page and search across all of it (press <kbd>/</kbd>).
 
 ## Something is broken
@@ -14,6 +14,8 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 
 - **[technician-guide.md](technician-guide.md)** — day-to-day: find a computer,
   connect, help someone unenrolled, review sessions; which Devices-list columns show on narrower windows (0.48.1).
+- **[NAVIGATION_MIGRATION.md](NAVIGATION_MIGRATION.md)** — where every menu entry went in 0.87,
+  Standard and Advanced modes, favourites and the Ctrl+K palette. No address changed.
 - **[clients.md](clients.md)** — every RustDesk client Rem0te hands out, who each
   is for, and how it learns where this server is.
 - **[deployment.md](deployment.md)** — rolling the agent out to many computers:
@@ -154,6 +156,10 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   or off for one computer or one business (0.46).
 - **[architecture.md](architecture.md)** — what runs where, the data model, and
   the RustDesk configuration chain.
+- **[NAVIGATION_ARCHITECTURE.md](NAVIGATION_ARCHITECTURE.md)** — how the console's menu, header,
+  palette, favourites and device tabs are built, and why they are presentation only (0.87).
+- **[UI_DESIGN_SYSTEM.md](UI_DESIGN_SYSTEM.md)** — the colour tokens with their WCAG contrast,
+  type, spacing, density, focus and motion (0.87).
 - **[access-control.md](access-control.md)** — the permission model in full.
 - **[offboarding.md](offboarding.md)** — who can reach a computer and why, and
   removing someone's access — including what revocation cannot undo.

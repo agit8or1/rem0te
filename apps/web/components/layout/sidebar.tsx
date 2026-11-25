@@ -1,306 +1,243 @@
 'use client';
 
-import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-import {
-  Settings, LogOut, Shield, Sun, Moon, BookOpen, Info, UserCircle, Heart, Star, Users, Globe,
-  ChevronDown, ChevronRight, type LucideIcon,
-} from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { NAV, locate, under, visibleItems, type NavCtx, type NavSection } from './nav-model';
-import { BusinessSwitcher } from './business-switcher';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  DropdownMenuSeparator,
-} from '@/components/ui/dropdown-menu';
-import { cn } from '@/lib/utils';
-import { authApi, updateApi } from '@/lib/api-client';
-import { useBrandAccent } from './brand-accent';
-import { useQuery } from '@tanstack/react-query';
-import { useTheme } from '@/lib/theme-provider';
-import { usePermissions } from '@/lib/auth';
-
-type NavItem = {
-  href: string;
-  label: string;
-  icon: LucideIcon;
-};
-
-/** Whether the Settings group was left open, per browser. A convenience only. */
-const SETTINGS_OPEN_KEY = 'nav.settingsOpen';
-
 /**
- * The main menu. Beside the page from `md` up (the app layout); inside the
- * off-canvas drawer below it (nav-drawer.tsx), where `className` makes it fill
- * the drawer instead of the screen height.
+ * The main menu (0.87 Compass): nine groups from nav-model.ts on the
+ * navigation colour, compact and collapsible.
+ *
+ *   Expanded   232 px. Rows 36 px (32 in compact density), icons 18 px. The
+ *              group holding the current page opens by itself; opening
+ *              another closes the rest, except groups the person pinned
+ *              (the pin beside each group name). Standard mode lists each
+ *              group's everyday pages; Advanced lists all of them. Either
+ *              way the rest are tabs of the same pages and in Ctrl+K.
+ *   Collapsed  60 px icon rail. Each icon has a tooltip (on hover and on
+ *              keyboard focus) and opens its group as a flyout menu (Radix:
+ *              a real menu, arrow keys, Esc returns focus to the icon).
+ *   Drawer     Below `md` the same sidebar, always expanded, inside the
+ *              off-canvas drawer (nav-drawer.tsx).
+ *
+ * Collapsed, mode and pinned groups are the person's own preferences, kept
+ * on the server (GET/PUT /me/navigation). Hiding an entry is a convenience,
+ * never the control: every route checks permissions itself.
  */
-export function Sidebar({ className }: { className?: string } = {}) {
-  const pathname = usePathname();
-  const router = useRouter();
-  const { resolvedTheme, setTheme } = useTheme();
-  const {
-    can, isPlatformAdmin, isBusinessOwner, accessLevel, technician, assignedBusinesses, canManageTechnicians, isIndependentReviewer,
-  } = usePermissions();
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { ChevronDown, Pin, PinOff, Shield } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { NAV, locate, sidebarItems, under, visibleItems, type NavLeaf, type NavSection } from './nav-model';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { cn } from '@/lib/utils';
+import { updateApi } from '@/lib/api-client';
+import { useBrandAccent } from './brand-accent';
+import { usePermissions } from '@/lib/auth';
+import { useNavCtx, useNavigation } from '@/lib/navigation';
 
-  // Branding, and the ink readable on its accent (0.35: black or white by
-  // luminance, so a pale accent no longer gets white text).
+export const SIDEBAR_WIDTH = { expanded: 232, collapsed: 60 } as const;
+
+type Tip = { label: string; top: number } | null;
+
+export function Sidebar({ className, inDrawer = false }: { className?: string; inDrawer?: boolean } = {}) {
+  const pathname = usePathname() ?? '/';
+  const { accessLevel } = usePermissions();
+  const ctx = useNavCtx();
+  const { prefs, setPrefs } = useNavigation();
+  const collapsed = !inDrawer && prefs.sidebarCollapsed;
+  const mode = prefs.mode;
+  const pinned = useMemo(() => new Set(prefs.pinnedGroups), [prefs.pinnedGroups]);
   const { portalTitle, logoUrl, accentColor, ink } = useBrandAccent();
-
-  async function handleLogout() {
-    // 0.59: a session that came from single sign-on is also ended at the
-    // provider (RP-initiated logout); the API hands back where to go.
-    let redirectTo: string | null = null;
-    try {
-      redirectTo = (await authApi.logout()).data?.data?.redirectTo ?? null;
-    } catch { /* signed out here or not, the login page is next */ }
-    if (redirectTo && /^https?:\/\//.test(redirectTo)) window.location.assign(redirectTo);
-    else router.push('/login');
-  }
-
-  // A toggle should toggle. This used to cycle light → dark → system, so getting
-  // from light back to dark took two clicks and landed on "system" in between —
-  // which looks like nothing happened whenever the OS preference matches.
-  //
-  // Flip against `resolvedTheme` (what is actually on screen) rather than the
-  // stored preference, so one click always visibly changes something.
-  function toggleTheme() {
-    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
-  }
-
-  const ThemeIcon = resolvedTheme === 'dark' ? Moon : Sun;
-  const themeLabel = resolvedTheme === 'dark' ? 'Dark' : 'Light';
-
-  const ctx: NavCtx = {
-    can, isPlatformAdmin, isBusinessOwner, technician: !!technician,
-    hasAssignments: assignedBusinesses.length > 0, canManageTechnicians, isIndependentReviewer,
-  };
   const here = locate(pathname);
+  const activeGroup = here?.section.id ?? null;
 
-  // Settings opens by itself on a settings page; otherwise it stays as the
-  // person left it.
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  useEffect(() => {
-    try { setSettingsOpen(window.localStorage.getItem(SETTINGS_OPEN_KEY) === '1'); } catch { /* storage unavailable */ }
-  }, []);
-  const inSettings = here?.section.id === 'settings';
-  function toggleSettings() {
-    const next = !settingsOpen;
-    setSettingsOpen(next);
-    try { window.localStorage.setItem(SETTINGS_OPEN_KEY, next ? '1' : '0'); } catch { /* storage unavailable */ }
+  // One group opened by hand at a time; the current page's group opens by
+  // itself, and the person may close it (until they move to another group).
+  const [opened, setOpened] = useState<string | null>(null);
+  const [closedActive, setClosedActive] = useState(false);
+  useEffect(() => { setClosedActive(false); setOpened(null); }, [activeGroup]);
+  const isOpen = (id: string) => pinned.has(id) || opened === id || (id === activeGroup && !closedActive);
+  function toggle(id: string) {
+    if (isOpen(id)) {
+      if (id === activeGroup) setClosedActive(true);
+      if (opened === id) setOpened(null);
+      if (pinned.has(id)) setPrefs({ pinnedGroups: prefs.pinnedGroups.filter((g) => g !== id) });
+    } else {
+      setOpened(id);
+      if (id === activeGroup) setClosedActive(false);
+    }
+  }
+  function togglePin(id: string) {
+    setPrefs({ pinnedGroups: pinned.has(id) ? prefs.pinnedGroups.filter((g) => g !== id) : [...prefs.pinnedGroups, id] });
   }
 
-  const linkClass = (active: boolean) => cn(
-    'flex items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-    active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+  // The tooltip of the collapsed rail: positioned beside the hovered or
+  // focused icon, outside the scrolling list so it is never clipped.
+  const [tip, setTip] = useState<Tip>(null);
+  const tipFor = (label: string) => collapsed ? {
+    onMouseEnter: (e: React.MouseEvent<HTMLElement>) => setTip({ label, top: e.currentTarget.getBoundingClientRect().top + 18 }),
+    onMouseLeave: () => setTip(null),
+    onFocus: (e: React.FocusEvent<HTMLElement>) => setTip({ label, top: e.currentTarget.getBoundingClientRect().top + 18 }),
+    onBlur: () => setTip(null),
+  } : {};
+
+  const row = (active: boolean) => cn(
+    'nav-row group/row flex w-full min-w-0 items-center gap-3 rounded-md px-2.5 text-sm font-medium outline-none transition-colors',
+    'focus-visible:ring-2 focus-visible:ring-[var(--nav-focus)] focus-visible:ring-offset-0',
+    active ? 'bg-[var(--nav-active-bg)] text-[var(--nav-active-fg)]' : 'text-[var(--nav-fg-muted)] hover:bg-[var(--nav-hover)] hover:text-[var(--nav-fg)]',
+    collapsed && 'justify-center px-0',
   );
 
-  /** One sidebar row for a section: link and hub open their first visible page. */
-  function sectionLink(section: NavSection) {
-    const items = visibleItems(section, ctx);
-    if (!items.length) return null;
-    const { icon: Icon } = section;
-    // A Business User without the device list still has their own devices.
-    const label = section.id === 'devices' && items[0].href === '/my-computers' ? 'My devices' : section.label;
-    // 0.64: a section's shortcut (Devices → Add device) is its own indented
-    // link under the row, drawn only for whoever may see that tab. On its
-    // page the shortcut is the highlighted row, not the section.
-    const sc = section.shortcut && section.shortcut.show(ctx) ? section.shortcut : null;
-    const onShortcut = !!sc && here?.leaf?.href === sc.href;
-    const row = (
-      <Link key={section.id} href={items[0].href} className={linkClass(here?.section.id === section.id && !onShortcut)}
-        data-nav={section.id}>
-        <Icon className="h-4 w-4" />
-        {label}
-      </Link>
-    );
-    if (!sc) return row;
-    const { icon: ScIcon } = sc;
+  function leafLink(i: NavLeaf, opts: { child?: boolean; groupId?: string } = {}) {
+    const active = here?.leaf?.href === i.href;
+    const Icon = i.icon;
     return (
-      <div key={section.id} className="space-y-0.5">
-        {row}
-        <Link href={sc.href} className={cn(linkClass(onShortcut), 'ml-4 py-1 text-[13px]')}
-          data-nav={`${section.id}-shortcut`} data-testid={`nav-shortcut-${section.id}`} aria-current={onShortcut ? 'page' : undefined}>
-          <ScIcon className="h-3.5 w-3.5" />
-          {sc.label}
-        </Link>
-      </div>
-    );
-  }
-
-  function settingsGroup(section: NavSection) {
-    const items = visibleItems(section, ctx);
-    if (!items.length) return null;
-    const open = settingsOpen || inSettings;
-    const Chevron = open ? ChevronDown : ChevronRight;
-    return (
-      <div key={section.id}>
-        <button type="button" onClick={toggleSettings} aria-expanded={open} data-nav="settings"
-          className={cn(linkClass(false), 'w-full', inSettings && 'text-foreground')}>
-          <Settings className="h-4 w-4" />
-          <span className="flex-1 text-left">Settings</span>
-          <Chevron className="h-3.5 w-3.5" />
-        </button>
-        {open && (
-          <div className="mt-0.5 space-y-0.5 pl-4">
-            {items.map((i) => {
-              const active = here?.leaf?.href === i.href;
-              const { icon: Icon } = i;
-              return (
-                <Link key={i.href} href={i.href} className={cn(linkClass(active), 'py-1 text-[13px]')}>
-                  <Icon className="h-3.5 w-3.5" />
-                  {i.label}
-                </Link>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  function navLink(item: NavItem) {
-    const { href, label, icon: Icon } = item;
-    const active = under(pathname, href);
-    return (
-      <Link
-        key={href}
-        href={href}
-        className={cn(
-          'flex items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-          active
-            ? 'bg-primary text-primary-foreground'
-            : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-        )}
-      >
-        <Icon className="h-4 w-4" />
-        {label}
+      <Link key={i.href} href={i.href} className={cn(row(active), opts.child && !collapsed && 'nav-child pl-[2.125rem] font-normal')}
+        aria-current={active ? 'page' : undefined} data-nav-item={i.href} data-testid={i.testId}
+        {...(opts.groupId ? { 'data-nav': opts.groupId } : {})}
+        aria-label={collapsed ? i.label : undefined} {...tipFor(i.label)}>
+        {!opts.child && <Icon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />}
+        {!collapsed && <span className="truncate">{i.label}</span>}
       </Link>
     );
   }
 
-  function supportMenu() {
+  function group(section: NavSection) {
+    const visible = visibleItems(section, ctx);
+    if (!visible.length) return null;
+    let items = sidebarItems(section, ctx, mode);
+    // In Standard, an advanced page you are on is still listed, so you can see where you are.
+    if (here?.section.id === section.id && here.leaf && !items.includes(here.leaf) && visible.includes(here.leaf)) items = [...items, here.leaf];
+    if (!items.length) items = visible.slice(0, 1);
+    const Icon = section.icon;
+    const active = activeGroup === section.id;
+    // A group with one entry is that entry: one click, no expander.
+    if (section.kind === 'link' || items.length === 1) {
+      const only = items[0];
+      const label = section.kind === 'link' ? section.label : only.label;
+      return (
+        <li key={section.id}>
+          {leafLink({ ...only, label, icon: section.kind === 'link' ? only.icon : Icon }, { groupId: section.id })}
+        </li>
+      );
+    }
+    if (collapsed) {
+      return (
+        <li key={section.id}>
+          <DropdownMenu onOpenChange={(o) => { if (o) setTip(null); }}>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className={row(active)} aria-label={section.label} data-nav={section.id} {...tipFor(section.label)}>
+                <Icon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="right" align="start" sideOffset={8} className="w-60" data-testid={`nav-flyout-${section.id}`}>
+              <DropdownMenuLabel className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{section.label}</DropdownMenuLabel>
+              {visible.map((i) => {
+                const I = i.icon;
+                const on = here?.leaf?.href === i.href;
+                return (
+                  <DropdownMenuItem key={i.href} asChild>
+                    <Link href={i.href} aria-current={on ? 'page' : undefined} className={cn('gap-2', on && 'font-semibold')} data-nav-item={i.href}>
+                      <I className="h-4 w-4" aria-hidden="true" />{i.label}
+                    </Link>
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </li>
+      );
+    }
+    const open = isOpen(section.id);
+    const listId = `nav-group-${section.id}`;
+    const isPinned = pinned.has(section.id);
     return (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button className="flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors">
-            <Heart className="h-4 w-4 text-red-500 fill-red-500" />
-            Support Rem0te
+      <li key={section.id} data-group={section.id}>
+        {/* The pin overlays the row's right side, left of the chevron, so it never takes the label's width
+            (at 232 px "Remote support" was cut to "Remote supp…" by an invisible pin). */}
+        <div className="relative flex items-center">
+          <button type="button" onClick={() => toggle(section.id)} aria-expanded={open} aria-controls={listId} data-nav={section.id}
+            className={cn(row(false), active && !open && 'text-[var(--nav-fg)]', active && 'font-semibold text-[var(--nav-fg)]')}>
+            <Icon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+            <span className="flex-1 truncate text-left">{section.label}</span>
+            <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 opacity-70 transition-transform motion-reduce:transition-none', !open && '-rotate-90')} aria-hidden="true" />
           </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent side="right" align="end" className="w-52">
-          <DropdownMenuItem asChild>
-            <a href="https://github.com/agit8or1/rem0te" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
-              <Star className="h-4 w-4 text-yellow-500" />
-              Star on GitHub
-            </a>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <a href="https://github.com/sponsors/agit8or1" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-primary" />
-              Sponsors Page
-            </a>
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem asChild>
-            <a href="https://mspreboot.com" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
-              <Globe className="h-4 w-4 text-muted-foreground" />
-              mspreboot.com
-            </a>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+          {!inDrawer && (
+            <button type="button" onClick={() => togglePin(section.id)} aria-pressed={isPinned}
+              aria-label={isPinned ? `Unpin ${section.label}` : `Pin ${section.label} open`} title={isPinned ? 'Unpin: closes with the others' : 'Pin: stays open'}
+              data-testid={`nav-pin-${section.id}`}
+              className={cn('absolute right-7 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-[var(--nav-fg-muted)] outline-none transition-opacity hover:bg-[var(--nav-hover)] hover:text-[var(--nav-fg)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--nav-focus)]',
+                isPinned ? 'opacity-100' : 'opacity-0 group-hover/nav:opacity-60')}>
+              {isPinned ? <PinOff className="h-3.5 w-3.5" aria-hidden="true" /> : <Pin className="h-3.5 w-3.5" aria-hidden="true" />}
+            </button>
+          )}
+        </div>
+        {open && (
+          <ul id={listId} className="mt-0.5 space-y-0.5" aria-label={section.label}>
+            {items.map((i) => <li key={i.href}>{leafLink(i, { child: true })}</li>)}
+          </ul>
+        )}
+      </li>
     );
   }
 
-  // The running version, shown at the bottom of the menu. Nobody reporting a
-  // problem can be expected to find the About page first, and "which version
-  // are you on?" is the first question asked every time.
   const { data: build } = useQuery({
     queryKey: ['app-version'],
-    queryFn: () =>
-      updateApi.appVersion().then(
-        (r) => r.data?.data as { version: string; codename: string | null } | undefined,
-      ),
+    queryFn: () => updateApi.appVersion().then((r) => r.data?.data as { version: string; codename: string | null } | undefined),
     staleTime: 60 * 60 * 1000,
     retry: false,
   });
 
-
+  const navRef = useRef<HTMLElement>(null);
   return (
-    <aside className={cn('flex h-screen w-60 flex-col border-r bg-background', className)}>
-      {/* Logo / branding */}
+    <aside
+      className={cn('nav-shell group/nav relative flex h-screen shrink-0 flex-col bg-[var(--nav-bg)] text-[var(--nav-fg)] transition-[width] duration-150 motion-reduce:transition-none', className)}
+      style={inDrawer ? undefined : { width: collapsed ? SIDEBAR_WIDTH.collapsed : SIDEBAR_WIDTH.expanded }}
+      data-collapsed={collapsed ? 'true' : 'false'} data-testid="sidebar"
+    >
       <div
-        className="flex h-14 items-center gap-2 border-b px-4"
+        className={cn('flex h-12 shrink-0 items-center gap-2 border-b border-[var(--nav-border)]', collapsed ? 'justify-center px-2' : 'px-3')}
         style={accentColor && ink ? { backgroundColor: accentColor, color: ink } : undefined}
         data-testid="brand-header"
       >
         {logoUrl ? (
-          <img
-            src={logoUrl}
-            alt={portalTitle}
-            className="h-7 w-auto max-w-[100px] object-contain"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-          />
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={logoUrl} alt={portalTitle} className={cn('h-7 w-auto object-contain', collapsed ? 'max-w-[36px]' : 'max-w-[100px]')}
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
         ) : (
-          <Shield className={`h-5 w-5 ${accentColor ? '' : 'text-primary'}`} />
+          <Shield className={cn('h-5 w-5 shrink-0', !accentColor && 'text-[var(--nav-accent)]')} aria-hidden="true" />
         )}
-        <div className="min-w-0 leading-tight">
-          <div className="font-semibold text-sm truncate">
-            {portalTitle}
+        {!collapsed && (
+          <div className="min-w-0 leading-tight">
+            <div className="truncate text-sm font-semibold">{portalTitle}</div>
+            {accessLevel && <div className={cn('truncate text-xs', !accentColor && 'text-[var(--nav-fg-muted)]')}>{accessLevel}</div>}
           </div>
-          {accessLevel && (
-            <div className={`text-[10px] uppercase tracking-wider truncate ${accentColor ? '' : 'text-muted-foreground/70'}`}>
-              {accessLevel}
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
-      <BusinessSwitcher />
-
-      <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5" aria-label="Main">
-        {NAV.map((section) => (section.kind === 'group' ? settingsGroup(section) : sectionLink(section)))}
+      <nav ref={navRef} className={cn('nav-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-2', collapsed ? 'px-2' : 'px-2')} aria-label="Main"
+        onScroll={() => setTip(null)}>
+        <ul className="space-y-0.5">{NAV.map(group)}</ul>
       </nav>
 
-      <div className="border-t p-2 space-y-0.5">
-        {navLink({ href: '/account', label: 'My Account', icon: UserCircle })}
-        {/* Help and Documentation were two main-menu entries for one need. */}
-        <Link href="/help" className={linkClass(under(pathname, '/help') || under(pathname, '/docs'))}>
-          <BookOpen className="h-4 w-4" />
-          Help &amp; docs
-        </Link>
-        {/* Platform Admins reach the same page as Settings → Updates. */}
-        {!isPlatformAdmin && navLink({ href: '/about', label: 'About', icon: Info })}
-        {supportMenu()}
-        <button
-          onClick={toggleTheme}
-          className="flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-          title={`${themeLabel} theme — click to switch to ${resolvedTheme === 'dark' ? 'light' : 'dark'}`}
-        >
-          <ThemeIcon className="h-4 w-4" />
-          {themeLabel} theme
-        </button>
-        <button
-          onClick={handleLogout}
-          className="flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-        >
-          <LogOut className="h-4 w-4" />
-          Sign out
-        </button>
-        {build?.version && (
-          <Link
-            href="/about"
-            className="block px-3 pt-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors truncate"
-            title={build.codename ? `Rem0te v${build.version} — ${build.codename}` : `Rem0te v${build.version}`}
-          >
-            v{build.version}
-            {build.codename && <span className="ml-1">· {build.codename}</span>}
+      {build?.version && (
+        <div className={cn('shrink-0 border-t border-[var(--nav-border)] py-2', collapsed ? 'px-1 text-center' : 'px-3')}>
+          <Link href="/about" className="block truncate rounded text-xs text-[var(--nav-fg-muted)] outline-none hover:text-[var(--nav-fg)] focus-visible:ring-2 focus-visible:ring-[var(--nav-focus)]"
+            title={build.codename ? `Rem0te v${build.version} — ${build.codename}` : `Rem0te v${build.version}`} data-testid="nav-version">
+            {collapsed ? `v${build.version.split('.').slice(0, 2).join('.')}` : <>v{build.version}{build.codename && <span className="ml-1">· {build.codename}</span>}</>}
           </Link>
-        )}
-      </div>
+        </div>
+      )}
+
+      {collapsed && tip && (
+        <div role="tooltip" className="pointer-events-none fixed z-[60] -translate-y-1/2 whitespace-nowrap rounded-md bg-popover px-2 py-1 text-xs font-medium text-popover-foreground shadow-md ring-1 ring-border"
+          style={{ left: SIDEBAR_WIDTH.collapsed + 6, top: tip.top }} data-testid="nav-tooltip">
+          {tip.label}
+        </div>
+      )}
     </aside>
   );
+}
+
+/** Whether `path` is one of the menu's pages (for tests and the palette). */
+export function isMenuPage(path: string) {
+  return NAV.some((s) => s.items.some((i) => under(path, i.href)));
 }

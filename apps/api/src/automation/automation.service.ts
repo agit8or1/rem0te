@@ -3,6 +3,7 @@ import { Prisma, type AutomationPolicy } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { z } from 'zod';
 import { PrismaService } from '../prisma/prisma.service';
+import { likeEscape } from '../common/like';
 import { AuditService } from '../audit/audit.service';
 import { AccessControlService, type ActorContext } from '../rbac/access-control.service';
 import { ActorResolverService } from '../rbac/actor-resolver.service';
@@ -580,6 +581,30 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     const doc = r.document as unknown as AutomationDoc;
     if (doc.targets?.kind === 'computers') for (const c of doc.targets.computers) await this.acl.assertEndpointInScope(actor, c.endpointId).catch(() => { throw new NotFoundException('Schedule not found'); });
     return r;
+  }
+
+  /**
+   * 0.87 global search: schedules (not restart windows, as in the list) whose
+   * name matches, each read through scoped() — the detail page's own rule.
+   */
+  async findVisibleByName(actor: ActorContext, q: string, cap: number) {
+    const rows = await this.prisma.automationPolicy.findMany({
+      where: { AND: [
+        actor.isPlatformAdmin ? {} : { customerId: actor.businessId ?? '-' },
+        { taskKind: { not: 'restart' } },
+        { name: { contains: likeEscape(q), mode: 'insensitive' } },
+      ] },
+      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], take: cap * 2, select: { id: true },
+    });
+    const out: { id: string; name: string; status: string; businessId: string; businessName: string | null }[] = [];
+    for (const r0 of rows) {
+      if (out.length > cap) break;
+      try {
+        const r = await this.scoped(actor, r0.id);
+        out.push({ id: r.id, name: r.name, status: r.status, businessId: r.customerId, businessName: (r.document as unknown as AutomationDoc).businessName ?? null });
+      } catch { /* not visible to this caller */ }
+    }
+    return out;
   }
 
   private mayManage(actor: ActorContext, r: AutomationPolicy) {

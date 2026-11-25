@@ -9,6 +9,9 @@ import { BusinessesService } from '../businesses/businesses.service';
 import { SitesService } from '../sites/sites.service';
 import { UsersService } from '../users/users.service';
 import { MonitoringAdminService } from '../monitoring/monitoring-admin.service';
+import { PatchPolicyService } from '../patching/policies.service';
+import { AutomationService } from '../automation/automation.service';
+import { anyRight, libraryWhere, listScope, viewOf } from '../script-library/access';
 import { GROUP_CAP, GROUP_CAPABILITY, likeEscape, likePatterns, looksLikeAddress, nameWords, rankOf, type ComputerField } from './query';
 
 /**
@@ -22,6 +25,9 @@ import { GROUP_CAP, GROUP_CAPABILITY, likeEscape, likePatterns, looksLikeAddress
  *   sites       SitesService.listWhere            (computers:view, like GET /sites)
  *   users       UsersService.memberWhere          (users:view, like GET /users)
  *   alerts      MonitoringAdminService.alertWhere (monitoring:alerts, like GET /monitoring/alerts)
+ *   scripts     script-library/access.ts libraryWhere + viewOf (a library right, like GET /scripts)
+ *   policies    PatchPolicyService / AutomationService.findVisibleByName (computers:view; each
+ *               row through its detail page's own scoped(), 0.87)
  *
  * The search condition is always AND-ed onto that fragment, never merged into
  * it, so no query text can add a row the list would not show. A group the
@@ -69,21 +75,25 @@ export class SearchService {
     private readonly sites: SitesService,
     private readonly users: UsersService,
     private readonly monitoring: MonitoringAdminService,
+    private readonly patchPolicies: PatchPolicyService,
+    private readonly automation: AutomationService,
   ) {}
 
   async search(actor: ActorContext, q: string) {
-    const [computers, businesses, sites, users, alerts] = await Promise.all([
+    const [computers, businesses, sites, users, alerts, scripts, policies] = await Promise.all([
       gated(() => this.computers(actor, q)),
       gated(() => this.businessGroup(actor, q)),
       gated(() => this.siteGroup(actor, q)),
       gated(() => this.userGroup(actor, q)),
       gated(() => this.alertGroup(actor, q)),
+      gated(() => this.scriptGroup(actor, q)),
+      gated(() => this.policyGroup(actor, q)),
     ]);
-    return { query: q, cap: GROUP_CAP, groups: { computers, businesses, sites, users, alerts } };
+    return { query: q, cap: GROUP_CAP, groups: { computers, businesses, sites, users, alerts, scripts, policies } };
   }
 
   /** The group's list-page capability (GROUP_CAPABILITY). Alerts are decided by alertWhere itself. */
-  private allowed(actor: ActorContext, group: 'computers' | 'sites' | 'users'): boolean {
+  private allowed(actor: ActorContext, group: 'computers' | 'sites' | 'users' | 'policies'): boolean {
     return this.acl.can(actor, GROUP_CAPABILITY[group]);
   }
 
@@ -277,6 +287,42 @@ export class SearchService {
         id: a.id, title: a.title, severity: a.severity, state: a.state, kind: a.kind, lastSeenAt: a.lastSeenAt,
         business: a.customer, computer: a.endpoint, site: a.site,
       })),
+    };
+  }
+
+  // ── Scripts and policies (0.87) ───────────────────────────────────────────
+
+  private async scriptGroup(actor: ActorContext, q: string) {
+    // The library's own gate: without a right in it, GET /scripts refuses.
+    if (!anyRight(actor)) return null;
+    const rows = await this.prisma.script.findMany({
+      where: { AND: [libraryWhere(actor, listScope(actor)), { name: { contains: likeEscape(q), mode: 'insensitive' } }] },
+      select: {
+        id: true, name: true, scope: true, customerId: true, customer: { select: { id: true, name: true } },
+        versions: { where: { status: 'APPROVED' }, select: { id: true }, take: 1 },
+      },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }], take: RANK_WINDOW,
+    });
+    // viewOf on every row, as the list does; a global script with nothing approved is not there for a business.
+    const seen = rows.filter((s) => { const v = viewOf(actor, s); return v === 'full' || (v === 'approved_only' && s.versions.length > 0); });
+    const r = this.capRanked(seen, (s) => [s.name], q);
+    return { more: r.more, items: r.items.map((s) => ({ id: s.id, name: s.name, scope: s.scope.toLowerCase(), business: s.customer, approved: s.versions.length > 0 })) };
+  }
+
+  private async policyGroup(actor: ActorContext, q: string) {
+    if (!this.allowed(actor, 'policies')) return null;
+    const [patch, schedules] = await Promise.all([
+      this.patchPolicies.findVisibleByName(actor, q, GROUP_CAP),
+      this.automation.findVisibleByName(actor, q, GROUP_CAP),
+    ]);
+    const rows = [
+      ...patch.map((p) => ({ ...p, kind: 'patch' as const })),
+      ...schedules.map((p) => ({ ...p, kind: 'schedule' as const })),
+    ];
+    const r = this.capRanked(rows, (p) => [p.name], q);
+    return {
+      more: r.more,
+      items: r.items.map((p) => ({ id: p.id, name: p.name, kind: p.kind, status: p.status, business: { id: p.businessId, name: p.businessName } })),
     };
   }
 }

@@ -77,7 +77,8 @@ export function ChatInbox() {
   const { data } = useQuery<Inbox>({
     queryKey: ['chat-inbox'],
     enabled,
-    refetchInterval: POLL_MS,
+    // F-9 (0.87): a hidden tab still hears about a reply (the title count and the sound are for that), but at a quarter of the rate — 10 s polls from every open tab ran into the 30-a-minute limit.
+    refetchInterval: () => (typeof document !== 'undefined' && document.hidden ? POLL_MS * 4 : POLL_MS),
     refetchIntervalInBackground: true,
     retry: false,
     queryFn: async () => {

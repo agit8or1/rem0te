@@ -7,6 +7,8 @@ import { SitesModule } from '../sites/sites.module';
 import { UsersModule } from '../users/users.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { MonitoringAdminService } from '../monitoring/monitoring-admin.service';
+import { PatchingModule } from '../patching/patching.module';
+import { AutomationModule } from '../automation/automation.module';
 
 /**
  * MonitoringAdminService is provided here, as in DashboardModule and
@@ -14,7 +16,7 @@ import { MonitoringAdminService } from '../monitoring/monitoring-admin.service';
  * visibility rule — instead of a copy. It is stateless.
  */
 @Module({
-  imports: [EndpointsModule, BusinessesModule, SitesModule, UsersModule, RbacModule],
+  imports: [EndpointsModule, BusinessesModule, SitesModule, UsersModule, RbacModule, PatchingModule, AutomationModule],
   controllers: [SearchController],
   providers: [SearchService, MonitoringAdminService],
 })

@@ -41,7 +41,7 @@ export function BusinessSwitcher() {
           <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1">
             <span className="block truncate font-medium">{label}</span>
-            {technician && <span className="block text-[10px] uppercase tracking-wider text-amber-600 dark:text-amber-400">Technician access</span>}
+            {technician && <span className="block text-xs uppercase tracking-wider text-amber-600 dark:text-amber-400">Technician access</span>}
           </span>
           <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         </button>

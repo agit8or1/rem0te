@@ -1041,10 +1041,39 @@ export interface SearchResults {
       id: string; title: string; severity: 'INFO' | 'WARNING' | 'CRITICAL'; state: string; kind: string; lastSeenAt: string;
       business: { id: string; name: string } | null; computer: { id: string; name: string } | null; site: { id: string; name: string } | null;
     }> | null;
+    // 0.87: scripts (the library's own rule) and policies (patch policies and automation schedules, each through its page's rule).
+    scripts?: SearchGroup<{ id: string; name: string; scope: string; business: { id: string; name: string } | null; approved: boolean }> | null;
+    policies?: SearchGroup<{ id: string; name: string; kind: 'patch' | 'schedule'; status: string; business: { id: string; name: string | null } }> | null;
   };
 }
 export const searchApi = {
   search: (q: string, signal?: AbortSignal) => api.get<{ success: boolean; data: SearchResults }>('/search', { params: { q }, signal }),
+};
+
+// The person's own navigation state (0.87): mode, sidebar, pinned groups,
+// density, the customer named in the header, favourites and recent items.
+// Items carry only a kind and a reference; the server names them through
+// each record's own visibility rule, and leaves out what the caller cannot open.
+export type NavItemKind = 'device' | 'business' | 'site' | 'script' | 'page';
+export interface NavItem {
+  id: string; list: 'favorite' | 'recent'; kind: NavItemKind; ref: string; usedAt: string;
+  title: string | null; detail: string | null; href: string; connectivity?: string;
+}
+export interface NavPreferences {
+  mode: 'standard' | 'advanced';
+  sidebarCollapsed: boolean;
+  pinnedGroups: string[];
+  density: 'comfortable' | 'compact';
+  contextBusiness: { id: string; name: string } | null;
+}
+export interface NavigationState { preferences: NavPreferences; favorites: NavItem[]; recent: NavItem[]; caps: { favorites: number; recent: number } }
+export type NavPreferencesInput = Partial<Omit<NavPreferences, 'contextBusiness'>> & { contextBusinessId?: string | null };
+export const navigationApi = {
+  get: () => api.get<{ success: boolean; data: NavigationState }>('/me/navigation'),
+  setPreferences: (p: NavPreferencesInput) => api.put<{ success: boolean; data: NavigationState }>('/me/navigation/preferences', p),
+  addFavorite: (kind: NavItemKind, ref: string) => api.post<{ success: boolean; data: NavigationState }>('/me/navigation/favorites', { kind, ref }),
+  removeFavorite: (id: string) => api.delete<{ success: boolean; data: NavigationState }>(`/me/navigation/favorites/${encodeURIComponent(id)}`),
+  recordVisit: (kind: NavItemKind, ref: string) => api.post('/me/navigation/recent', { kind, ref }),
 };
 
 // Scheduled RustDesk client updates (0.32). Turning a policy on, or removing a

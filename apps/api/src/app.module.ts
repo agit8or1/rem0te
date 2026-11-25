@@ -51,6 +51,7 @@ import { NotesModule } from './notes/notes.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ReportsModule } from './reports/reports.module';
 import { SearchModule } from './search/search.module';
+import { NavigationModule } from './navigation/navigation.module';
 import { GeoipModule } from './geoip/geoip.module';
 import { AdminModule } from './admin/admin.module';
 import { DiagnosticsModule } from './diagnostics/diagnostics.module';
@@ -150,6 +151,7 @@ import { TrayModule } from './tray/tray.module';
     DashboardModule,
     ReportsModule,
     SearchModule,
+    NavigationModule,
     GeoipModule,
     AdminModule,
     UpdateRolloutModule,

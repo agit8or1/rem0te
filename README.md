@@ -9,7 +9,7 @@ people and its own history. Rem0te is the portal around a self-hosted RustDesk
 server that keeps them organised and separate.
 
 [![CI](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml/badge.svg)](https://github.com/agit8or1/rem0te/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.86.0-blue)](https://github.com/agit8or1/rem0te/releases)
+[![Version](https://img.shields.io/badge/version-0.87.0-blue)](https://github.com/agit8or1/rem0te/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/agit8or1/rem0te?style=flat)](https://github.com/agit8or1/rem0te)
 
@@ -61,10 +61,28 @@ without the portal. That is why offboarding tells you which passwords to rotate.
 
 Clipboard, file transfer and view-only for business members are RustDesk defaults, not Rem0te restrictions.
 So are terminal and chat, and Rem0te ships no remote shell of its own. Each control, the layer that enforces
-it, its default and its limits: **Settings → Security → Security Features**, and
+it, its default and its limits: **Security → Security features**, and
 [docs/security-model.md](docs/security-model.md).
 
 Found a problem? Report it privately: [SECURITY.md](.github/SECURITY.md).
+
+## What's new in 0.87
+
+- **A new menu (0.87 Compass).** Nine groups — Dashboard, Devices, Remote support, Monitoring, Patching,
+  Automation, Reports, Security and Administration — in a sidebar that collapses to icons and opens as a drawer on
+  a phone. Customers left Settings for Devices; Security is one group instead of three places. *Standard* mode lists
+  the everyday pages and *Advanced* all of them; every page is still a tab or a Ctrl+K result in either. **No
+  address changed**: [where things moved](docs/NAVIGATION_MIGRATION.md).
+- **A compact top bar**: breadcrumbs, the customer you are working in, search, quick actions, favourites and
+  recent items, critical alerts, Help and a profile menu with theme (Light, Dark or **System**), density and mode.
+- **Ctrl+K** also finds scripts, patch policies, automation schedules and the console's pages, each through its own
+  page's rule, so it never shows a record that page would not.
+- **Favourites and recent items** follow you between browsers. They hold an id, never a name, and something you
+  can no longer see drops out by itself.
+- **The device page's tabs are seven groups**, with Remote control and Terminal in the header.
+- **Colour tokens with every text pair at WCAG AA in both themes**, and Inter served from the build, so an offline
+  host can build the console. [UI design system](docs/UI_DESIGN_SYSTEM.md) ·
+  [Navigation architecture](docs/NAVIGATION_ARCHITECTURE.md)
 
 ## What's new in 0.40 to 0.61
 

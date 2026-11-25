@@ -1,12 +1,10 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
 import './globals.css';
 import { QueryProvider } from '@/components/providers/query-provider';
 import { Toaster } from '@/components/ui/toaster';
 import { ThemeProvider } from '@/lib/theme-provider';
 import { HydrationMarker } from '@/components/providers/hydration-marker';
 
-const inter = Inter({ subsets: ['latin'] });
 
 // 0.85.1: every tab used to say "Reboot Remote", the product's old name. A
 // page that sets its own title (Documentation) now reads "Documentation · Rem0te".
@@ -26,7 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }}
         />
       </head>
-      <body className={inter.className}>
+      <body>
         <ThemeProvider>
           <QueryProvider>
             {children}

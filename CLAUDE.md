@@ -2451,6 +2451,37 @@ by name) and `e2e-mdm-apple.mjs` (the queue, held under a pause, mdmb's
 `Error`), both in `run-e2e.sh`. Unit: `unit-mdm-lost-device.mjs` (in CI).
 Browser: `e2e-ui.mjs` opens and cancels the lock dialog.
 
+§96 (0.87) is navigation preferences, favourites and recent items
+(`docs/NAVIGATION_ARCHITECTURE.md`). **Navigation is presentation, never
+access control**: hiding a menu entry hides a link, and every page and route
+still checks for itself. (§94 is 0.85's; §95 is 0.86's, #205.)
+
+- **Own rows only.** `UserNavPreference` and `UserNavItem` are read and
+  written only in `navigation/navigation.service.ts`, every call naming
+  `userId: actor.userId`. No route names another person.
+- **A kind and a reference, never a name or URL.** A record id, or a console
+  path (`PAGE_REF` in `navigation/model.ts`, the same expression as 0104's
+  CHECK, at most 120 characters). The web sends `{ kind, ref }` only.
+- **Named through the record's own rule on every read**: the device list's
+  `scopedWhere`, `GET /businesses`' and `GET /sites`' `listWhere`, the
+  library's `libraryWhere` + `viewOf` (`script-library/access.ts`, pure, which
+  only search and navigation import). Losing access hides an item; saving one
+  not visible is a 404, as is a context customer the caller cannot list.
+- **Bounded**: 50 favourites (`FAVORITES_FULL`) counted, and recent items
+  trimmed to 15, inside the write's transaction, after a per-person
+  `pg_advisory_xact_lock`. Not audited, nothing logged.
+- **Closed lists agree** in order: `model.ts`'s modes, densities, nine group
+  ids, lists and kinds, 0104's CHECKs, and the web menu's group ids.
+- **Search's 0.87 groups.** Scripts through `anyRight`, `libraryWhere` +
+  `listScope` and `viewOf`; policies (patch and automation, not restart
+  windows) through `computers:view`, then each one's own `scoped()`, with a
+  non-admin's candidates limited to `actor.businessId`.
+
+Behavioural proof: `e2e-nav-prefs.mjs` (port 4101, in `run-e2e.sh`). Unit:
+`unit-navigation.mjs` and `apps/web/scripts/unit-nav-model.mjs` (both in CI;
+the second also proves every pre-0.87 URL in `docs/NAVIGATION_MIGRATION.md` is
+reachable and Standard mode hides no page). Browser: `e2e-ui.mjs` (`navShell`).
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs
