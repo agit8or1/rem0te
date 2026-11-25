@@ -172,7 +172,7 @@ export class EnrollmentService {
         where: { id: dto.siteId, customerId: businessId, isActive: true },
         select: { id: true, name: true },
       });
-      if (!site) throw new BadRequestException('Unknown site for this business');
+      if (!site) throw new BadRequestException('Unknown site for this customer');
     }
 
     if (auth.via === 'session') {

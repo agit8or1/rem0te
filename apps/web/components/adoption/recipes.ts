@@ -25,7 +25,7 @@ export function deploymentRecipes(origin: string, key: string): Recipe[] {
   // Both agents keep this task; its presence means "already installed".
   const guard = `if (Get-ScheduledTask -TaskName 'Rem0teHeartbeat' -ErrorAction SilentlyContinue) { exit 0 }`;
   const ps1 = [
-    '# install-rem0te.ps1 - runs as SYSTEM. Exits at once on a computer that already has the agent.',
+    '# install-rem0te.ps1 - runs as SYSTEM. Exits at once on a device that already has the agent.',
     guard,
     '[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12',
     `$log = Join-Path $env:ProgramData 'Rem0te-deploy.log'`,
@@ -35,21 +35,21 @@ export function deploymentRecipes(origin: string, key: string): Recipe[] {
   return [
     {
       id: 'gpo', label: 'Group Policy',
-      intro: 'A computer startup script, which Windows runs as SYSTEM before anyone signs in. Works for every computer in the OUs you link it to, through Active Directory.',
+      intro: 'A device startup script, which Windows runs as SYSTEM before anyone signs in. Works for every device in the OUs you link it to, through Active Directory.',
       steps: [
-        { text: 'Save this as install-rem0te.ps1 in the GPO’s Scripts\\Startup folder (or a share every computer account can read):', code: ps1 },
+        { text: 'Save this as install-rem0te.ps1 in the GPO’s Scripts\\Startup folder (or a share every device account can read):', code: ps1 },
         { text: 'Group Policy Management → create a GPO → Computer Configuration → Policies → Windows Settings → Scripts (Startup/Shutdown) → Startup → PowerShell Scripts → Add install-rem0te.ps1.' },
-        { text: 'Link the GPO to the OU holding the computers. They install on their next restart (or after gpupdate /force and a restart).' },
-        { text: 'Watch Devices → Unassigned (a review key) or the business’s device list (a straight-in key).' },
+        { text: 'Link the GPO to the OU holding the devices. They install on their next restart (or after gpupdate /force and a restart).' },
+        { text: 'Watch Devices → Unassigned (a review key) or the customer’s device list (a straight-in key).' },
       ],
-      note: 'The script is stored in SYSVOL, readable by every computer and user in the domain: use a key with a sensible use limit and expiry, and revoke it when the rollout is done. The first line makes it a no-op on every later boot.',
+      note: 'The script is stored in SYSVOL, readable by every device and user in the domain: use a key with a sensible use limit and expiry, and revoke it when the rollout is done. The first line makes it a no-op on every later boot.',
     },
     {
       id: 'intune', label: 'Intune',
       intro: 'Either a platform script (simplest) or a Win32 app (for a detection rule and retries). Both run as SYSTEM.',
       steps: [
         { text: 'Platform script: Devices → Scripts and remediations → Platform scripts → Add → Windows 10 and later. Upload this as install-rem0te.ps1; run as the logged-on user: No; enforce signature check: No; run in 64-bit PowerShell: Yes.', code: ps1 },
-        { text: 'Or Win32 app: package install-rem0te.ps1 with IntuneWinAppUtil.exe (on a Windows computer), then use this install command:', code: 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\install-rem0te.ps1' },
+        { text: 'Or Win32 app: package install-rem0te.ps1 with IntuneWinAppUtil.exe (on a Windows device), then use this install command:', code: 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\install-rem0te.ps1' },
         { text: 'Uninstall command: leave a no-op (remove the agent from the console). Install behaviour: System. Detection rule: custom script —', code: `if (Get-ScheduledTask -TaskName 'Rem0teHeartbeat' -ErrorAction SilentlyContinue) { 'Installed' }` },
         { text: 'Assign to a device group.' },
       ],
@@ -57,18 +57,18 @@ export function deploymentRecipes(origin: string, key: string): Recipe[] {
     },
     {
       id: 'msi', label: 'Windows Installer (.msi)',
-      intro: 'One .msi (0.65) that installs the signed agent silently, as SYSTEM, and takes the key as TOKEN. The plain download carries no key, so it can sit on a share or in Intune; the key is given on the command line. It has not yet been run on real Windows: try it on one computer first.',
+      intro: 'One .msi (0.65) that installs the signed agent silently, as SYSTEM, and takes the key as TOKEN. The plain download carries no key, so it can sit on a share or in Intune; the key is given on the command line. It has not yet been run on real Windows: try it on one device first.',
       steps: [
         { text: 'Download the package (no key inside):', code: `${origin}/api/v1/public/install/windows.msi` },
         { text: 'Install silently (as an administrator, or from your RMM as SYSTEM):', code: `msiexec /i rem0te.msi TOKEN=${key} /qn /l*v "%ProgramData%\\Rem0te-msi.log"` },
         { text: 'Intune: Apps → Windows → Add → Line-of-business app → upload rem0te.msi, and put this in Command-line arguments:', code: `TOKEN=${key}` },
         { text: 'Group Policy Software Installation cannot pass TOKEN on a command line. Either use the startup script on the Group Policy tab, or download a package with the key already in it and assign that (the key then lives in the share, like the script):', code: `${origin}/api/v1/public/install/windows.msi?token=${key}` },
       ],
-      note: 'Uninstalling the .msi removes only its own entry in Programs and Features, never the agent: remove a computer from the console. The .msi needs this server to publish the signed agent. TOKEN is hidden from the installer log; a package with the key built in is kept in Windows\'s installer cache on each computer, so revoke the key when the rollout is done.',
+      note: 'Uninstalling the .msi removes only its own entry in Programs and Features, never the agent: remove a device from the console. The .msi needs this server to publish the signed agent. TOKEN is hidden from the installer log; a package with the key built in is kept in Windows\'s installer cache on each device, so revoke the key when the rollout is done.',
     },
     {
       id: 'rmm', label: 'Existing RMM',
-      intro: 'Any tool that can run a command as SYSTEM (or root) on its computers: ConnectWise Automate, NinjaOne, Datto, Tactical RMM, PDQ, SCCM and so on.',
+      intro: 'Any tool that can run a command as SYSTEM (or root) on its devices: ConnectWise Automate, NinjaOne, Datto, Tactical RMM, PDQ, SCCM and so on.',
       steps: [
         { text: 'Windows (run as SYSTEM):', code: oneLinerWin },
         { text: 'Linux (run as root):', code: `curl -fsSL '${linux}' | bash` },
@@ -78,12 +78,12 @@ export function deploymentRecipes(origin: string, key: string): Recipe[] {
     },
     {
       id: 'manual', label: 'Manual',
-      intro: 'One computer at a time, with the same key — for a small office or a handful of stragglers.',
+      intro: 'One device at a time, with the same key — for a small office or a handful of stragglers.',
       steps: [
         { text: 'Windows: open PowerShell as Administrator and run', code: `irm '${win}' | iex` },
         { text: 'Or download an installer with the key built in (double-click, accept the UAC prompt):', code: `${origin}/api/v1/public/install/windows.exe?token=${key}` },
       ],
-      note: 'For one computer, Devices → Add device makes a single-use code instead, which is safer to hand to someone.',
+      note: 'For one device, Devices → Add device makes a single-use code instead, which is safer to hand to someone.',
     },
     {
       id: 'linux', label: 'Linux',

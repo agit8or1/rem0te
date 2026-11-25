@@ -120,7 +120,7 @@ for (const want of fixture.actions) {
   };
   const N = load('action-notes.ts');
   const t = targetTally(['SUCCEEDED', 'SUCCEEDED', 'FAILED', 'PENDING'].map((status) => ({ status })));
-  check('tallyText names every non-zero count', N.tallyText(t) === 'Of 4 computers: 2 succeeded, 1 failed, 1 still waiting.', N.tallyText(t));
+  check('tallyText names every non-zero count', N.tallyText(t) === 'Of 4 devices: 2 succeeded, 1 failed, 1 still waiting.', N.tallyText(t));
   check('tallyProblems counts failed, refused, not executed and uncertain', N.tallyProblems(targetTally(['FAILED', 'REFUSED_BY_ENDPOINT', 'NOT_EXECUTED', 'UNKNOWN', 'SUCCEEDED', 'PENDING'].map((status) => ({ status })))) === 4);
   const D = load('device-tools.ts');
   check('the console labels every rollback kind', j(Object.keys(D.ROLLBACK_LABEL).sort()) === j([...cat.ROLLBACK_KINDS].sort()));

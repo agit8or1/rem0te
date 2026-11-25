@@ -575,7 +575,7 @@ export const updateApi = {
 };
 
 // ─── Admin Security ───────────────────────────────────────────────────────
-// Admin → Security (0.74). Platform Admin only. Every change may answer
+// Security → Server security (0.74). Platform Admin only. Every change may answer
 // 403 STEP_UP_REQUIRED (server.security, or login.lockout when the lockout is
 // weakened), which the interceptor below answers.
 export const securityApi = {
@@ -831,7 +831,7 @@ export const passkeysApi = {
 };
 
 // ─── v0.23: technician access presets and security controls ─────────────────
-// Settings → Security → Technician Access, the Security Features catalog, and
+// Security → Technician access, the Security Features catalog, and
 // a technician's own temporary-access requests. Every mutation here except the
 // revoke routes needs fresh authentication; the step-up interceptor above
 // prompts and retries. A widening change comes back as
@@ -918,7 +918,7 @@ export const backupsApi = {
   link: (assetId: string, body: { link: 'manual'; endpointId: string } | { link: 'none' } | { link: 'auto' }) => api.put(`/backups/assets/${assetId}/link`, body),
 };
 
-/** Settings → Backups (0.82): GET /backups/connections. Never a token, hash or credential. */
+/** Administration → Backup connections (0.82): GET /backups/connections. Never a token, hash or credential. */
 export type BackupCapabilityState = 'available' | 'requires_setup' | 'unsupported' | 'planned';
 export interface BackupConnectionView {
   id: string; businessId: string; kind: string; label: string; transport: 'push' | 'pull'; enabled: boolean;
@@ -1443,7 +1443,7 @@ export const mobileApi = {
 };
 
 /**
- * Settings → Mobile devices (0.83 Beacon): the own MDM's setup wizard,
+ * Administration → Mobile device setup (0.83 Beacon): the own MDM's setup wizard,
  * Platform Admin only. Every write but a delete asks for fresh
  * authentication when mdm.setup asks. Nothing here reaches Apple or Google.
  */

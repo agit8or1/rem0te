@@ -5804,7 +5804,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /this\.prisma\.restartWindowSetting\.count\(\{ where: \{ groupId \} \}\)/.test(dgs),
     'device-groups.service.ts policiesOn counts restart window settings');
   check('UI: says "Waiting for approval", and never ticks the RustDesk exception by default',
-    card.includes('Waiting for approval') && /const \[ignore, setIgnore\] = useState\(initial\?\.ignoreRemoteSession \?\? false\);/.test(card) && card.includes('IGNORE_REMOTE_SESSION_LABEL') && card.includes('SIGNED_IN_USER_NOTE'),
+    card.includes('Pending approval') && /const \[ignore, setIgnore\] = useState\(initial\?\.ignoreRemoteSession \?\? false\);/.test(card) && card.includes('IGNORE_REMOTE_SESSION_LABEL') && card.includes('SIGNED_IN_USER_NOTE'),
     'restart-window-card.tsx');
   check('restart windows: the suites run',
     /unit-restart-window-settings\.mjs/.test(read('.github/workflows/ci.yml')) && /run restart-window-settings node scripts\/e2e-restart-window-settings\.mjs/.test(read('scripts/run-e2e.sh')),
@@ -6963,7 +6963,7 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /async assertPasswordAccess\(actor: ActorContext, id: string\) \{[\s\S]{0,300}await this\.refuseMsaManaged\(id\);/.test(eps)
       && /async setPassword\(actor: ActorContext, id: string, password: string \| null\): Promise<void> \{[\s\S]{0,300}await this\.refuseMsaManaged\(id\);/.test(eps)
       && /if \(await this\.msaLegacyRefused\(endpoint\.id\)\) return \{ ok: false, reason: 'msa_managed'/.test(eps)
-      && /code: 'MSA_MANAGED', message: 'This computer is in Managed Secure Access: its password is set by the agent/.test(eps),
+      && /code: 'MSA_MANAGED', message: 'This device is in Managed Secure Access: its password is set by the agent/.test(eps),
     'endpoints.service.ts');
 
   // The release host.
@@ -7636,8 +7636,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && /TERMINAL_SWEEP: 'off'/.test(read('apps/web/scripts/e2e-ui.mjs')) && /name: 'TERMINAL_SWEEP'/.test(read(`${SRC}/admin/host-security/posture.ts`)),
     'TERMINAL_SWEEP');
   const tab = read('apps/web/components/endpoints/workspace/terminal-tab.tsx');
-  check('terminal: the console says "SYSTEM — full control of this computer" and renders output as text',
-    /SYSTEM — full control of this computer/.test(tab) && !/dangerouslySetInnerHTML|innerHTML/.test(tab), 'terminal-tab.tsx');
+  check('terminal: the console says "SYSTEM — full control of this device" and renders output as text',
+    /SYSTEM — full control of this device/.test(tab) && !/dangerouslySetInnerHTML|innerHTML/.test(tab), 'terminal-tab.tsx');
   check('terminal: the suites prove it (unit in CI, e2e with the agent\'s worker, the browser, the Windows lab)',
     /unit-terminal\.mjs/.test(read('.github/workflows/ci.yml')) && /rem0te-remote-sim/.test(read('.github/workflows/ci.yml'))
       && /run terminal node scripts\/e2e-terminal\.mjs/.test(read('scripts/run-e2e.sh')) && /async function terminalPanel\(/.test(read('apps/web/scripts/e2e-ui.mjs'))
@@ -7757,8 +7757,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('files: files.transfer is a catalog key defaulting to off',
     /key: 'files\.transfer'[\s\S]{0,600}?default: 'off'/.test(cat), 'confirm-catalog.ts');
   const tab = read('apps/web/components/endpoints/workspace/files-tab.tsx');
-  check('files: the console says "SYSTEM — full control of this computer", hashes in the browser and renders nothing as HTML',
-    /SYSTEM — full control of this computer/.test(tab) && /from '@\/lib\/sha256'/.test(tab) && !/dangerouslySetInnerHTML|innerHTML/.test(tab), 'files-tab.tsx');
+  check('files: the console says "SYSTEM — full control of this device", hashes in the browser and renders nothing as HTML',
+    /SYSTEM — full control of this device/.test(tab) && /from '@\/lib\/sha256'/.test(tab) && !/dangerouslySetInnerHTML|innerHTML/.test(tab), 'files-tab.tsx');
   check('files: the suites prove it (unit in CI, e2e with the agent\'s worker, the browser, the Windows lab)',
     /unit-files\.mjs/.test(read('.github/workflows/ci.yml')) && /run files node scripts\/e2e-files\.mjs/.test(read('scripts/run-e2e.sh'))
       && /async function filesPanel\(/.test(read('apps/web/scripts/e2e-ui.mjs')) && /TestLabFilesAsAdministrator/.test(read(`${GO}/internal/remote/lab_files_windows_test.go`)),

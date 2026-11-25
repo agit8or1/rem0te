@@ -1,5 +1,5 @@
 /**
- * Accepted risks on Admin → Security (0.75.1). Pure: it imports only
+ * Accepted risks on Security → Server security (0.75.1). Pure: it imports only
  * node:crypto and posture's types.
  *
  * A Platform Admin may mark one finding Accepted, with a reason, so a

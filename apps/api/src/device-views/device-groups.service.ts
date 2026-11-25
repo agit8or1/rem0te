@@ -82,7 +82,7 @@ export class DeviceGroupsService {
   /** As findVisible, then the manage rule. A pre-0.33 group is never edited here. */
   async findManageable(a: ActorContext, id: string): Promise<GroupRow & { customerId: string }> {
     const g = await this.findVisible(a, id);
-    if (!g.customerId) throw new BadRequestException({ code: 'LEGACY_GROUP', message: 'This group predates 0.33 and belongs to no business, so it cannot be edited here.' });
+    if (!g.customerId) throw new BadRequestException({ code: 'LEGACY_GROUP', message: 'This group predates 0.33 and belongs to no customer, so it cannot be edited here.' });
     const why = manageRefusal(a, g.customerId);
     if (why) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: why });
     return g as GroupRow & { customerId: string };
@@ -132,7 +132,7 @@ export class DeviceGroupsService {
     const rule = parseRule(raw);
     if (typeof rule.siteId === 'string') {
       const site = await this.prisma.site.findFirst({ where: { id: rule.siteId, customerId }, select: { id: true } });
-      if (!site) throw new BadRequestException({ code: 'INVALID_RULE', message: 'Unknown site for this business' });
+      if (!site) throw new BadRequestException({ code: 'INVALID_RULE', message: 'Unknown site for this customer' });
     }
     return rule;
   }
@@ -147,11 +147,11 @@ export class DeviceGroupsService {
     if (why) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: why });
     const rule = d.kind === 'rule' ? await this.validRule(d.rule, customerId) : null;
     if (await this.prisma.endpointGroup.count({ where: { customerId } }) >= MAX_GROUPS_PER_BUSINESS) {
-      throw new BadRequestException({ code: 'TOO_MANY_GROUPS', message: `A business can have at most ${MAX_GROUPS_PER_BUSINESS} device groups.` });
+      throw new BadRequestException({ code: 'TOO_MANY_GROUPS', message: `A customer can have at most ${MAX_GROUPS_PER_BUSINESS} device groups.` });
     }
     // Every rule group is evaluated on each device-list read that shows groups.
     if (rule && await this.prisma.endpointGroup.count({ where: { customerId, kind: 'RULE' } }) >= MAX_RULE_GROUPS_PER_BUSINESS) {
-      throw new BadRequestException({ code: 'TOO_MANY_GROUPS', message: `A business can have at most ${MAX_RULE_GROUPS_PER_BUSINESS} rule groups.` });
+      throw new BadRequestException({ code: 'TOO_MANY_GROUPS', message: `A customer can have at most ${MAX_RULE_GROUPS_PER_BUSINESS} rule groups.` });
     }
     let g;
     try {
@@ -162,7 +162,7 @@ export class DeviceGroupsService {
         },
       });
     } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw new ConflictException({ code: 'NAME_TAKEN', message: 'This business already has a group with that name.' });
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw new ConflictException({ code: 'NAME_TAKEN', message: 'This customer already has a group with that name.' });
       throw e;
     }
     await this.audit.log({
@@ -197,7 +197,7 @@ export class DeviceGroupsService {
         },
       });
     } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw new ConflictException({ code: 'NAME_TAKEN', message: 'This business already has a group with that name.' });
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw new ConflictException({ code: 'NAME_TAKEN', message: 'This customer already has a group with that name.' });
       throw e;
     }
     await this.audit.log({
@@ -230,7 +230,7 @@ export class DeviceGroupsService {
     // client-update group policy needs fresh authentication — it can hand the
     // computers to an enabled one — so deleting the group is not a way round it.
     const held = await this.policiesOn(g.id);
-    if (held) throw new ConflictException({ code: 'GROUP_HAS_POLICIES', message: `This group carries ${held} polic${held === 1 ? 'y' : 'ies'} (monitors, client updates or a restart window). Remove ${held === 1 ? 'it' : 'them'} first, under Settings → Monitoring, Settings → Client updates, or the business's Restart window card.` });
+    if (held) throw new ConflictException({ code: 'GROUP_HAS_POLICIES', message: `This group carries ${held} polic${held === 1 ? 'y' : 'ies'} (monitors, client updates or a restart window). Remove ${held === 1 ? 'it' : 'them'} first, under Monitoring → Monitoring policies, Patching → Client updates, or the customer's Restart window card.` });
     const released = await this.prisma.$transaction(async (tx) => {
       const r = await tx.endpointGroupMember.deleteMany({ where: { endpointGroupId: g.id } });
       await tx.endpointGroup.delete({ where: { id: g.id } });

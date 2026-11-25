@@ -17,15 +17,15 @@ import { reauthSuffix, useAsks } from '@/lib/confirm-policy';
 import { RecipientsCard } from '@/components/email/recipients-card';
 
 /**
- * Settings → PSA / ticketing (0.48): where "Create ticket" sends. A Platform
+ * Administration → PSA / ticketing (0.48): where "Create ticket" sends. A Platform
  * Admin sets the platform default; a Business Owner may give their business
  * its own connector, which then wins for that business's computers. Every
  * save asks for fresh authentication.
  */
 const KIND_HELP: Record<PsaKind, string> = {
-  email: 'Most PSAs (ConnectWise, Autotask, HaloPSA, Syncro, Freshdesk, Zendesk…) open a ticket from mail sent to their inbound support address. Add that address below; it must be confirmed — the confirmation email arrives in the PSA as a ticket, open it and follow its link — before any ticket is sent. Mail goes through the relay in Settings → Email.',
+  email: 'Most PSAs (ConnectWise, Autotask, HaloPSA, Syncro, Freshdesk, Zendesk…) open a ticket from mail sent to their inbound support address. Add that address below; it must be confirmed — the confirmation email arrives in the PSA as a ticket, open it and follow its link — before any ticket is sent. Mail goes through the relay in Administration → Email.',
   webhook: 'An HTTPS POST of a fixed JSON ticket body to a public URL — for HaloPSA or Syncro automations, Zapier, Make or n8n. The address is resolved and checked on every send; certificates are verified and redirects are not followed.',
-  clientst0r: 'A signed ticket request to ClientSt0r, for businesses mapped to a ClientSt0r organization. It is offered only once ClientSt0r’s signed capabilities advertise ticket_create_request_v1, which today’s ClientSt0r does not: until then the button says so and nothing is sent.',
+  clientst0r: 'A signed ticket request to ClientSt0r, for customers mapped to a ClientSt0r organization. It is offered only once ClientSt0r’s signed capabilities advertise ticket_create_request_v1, which today’s ClientSt0r does not: until then the button says so and nothing is sent.',
 };
 
 type Form = { kind: PsaKind; enabled: boolean; label: string; emailRecipientId: string; webhookUrl: string; webhookSecret: string; clearSecret: boolean };
@@ -64,7 +64,7 @@ function ScopeCard({ scope, businessId, ok, fail }: { scope: 'global' | 'busines
       <Card data-testid={`psa-${scope}`}>
         <CardHeader>
           <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
-            {scope === 'global' ? 'Platform default' : `${data?.name ?? 'This business'}'s own connector`}
+            {scope === 'global' ? 'Platform default' : `${data?.name ?? 'This customer'}'s own connector`}
             {c ? (c.enabled ? <Badge>{c.kindLabel} · on</Badge> : <Badge variant="outline">{c.kindLabel} · off</Badge>) : <Badge variant="outline">none</Badge>}
           </CardTitle>
         </CardHeader>
@@ -72,9 +72,9 @@ function ScopeCard({ scope, businessId, ok, fail }: { scope: 'global' | 'busines
           {error ? <p className="text-muted-foreground">{apiError(error).message}</p> : null}
           <p className="text-muted-foreground">
             {scope === 'global'
-              ? 'Used for every computer whose business has no enabled connector of its own.'
+              ? 'Used for every device whose customer has no enabled connector of its own.'
               : data?.platformDefault
-                ? `Without one, this business uses the platform default (${data.platformDefault.kindLabel}${data.platformDefault.enabled ? '' : ', currently off'}).`
+                ? `Without one, this customer uses the platform default (${data.platformDefault.kindLabel}${data.platformDefault.enabled ? '' : ', currently off'}).`
                 : 'Without one, and with no platform default, Create ticket is not available.'}
           </p>
           {c && (
@@ -125,7 +125,7 @@ function ScopeCard({ scope, businessId, ok, fail }: { scope: 'global' | 'busines
                   </div>
                   <div className="space-y-1 text-xs text-muted-foreground md:col-span-2">
                     <p>With a secret, every request carries <span className="font-mono">X-Rem0te-Timestamp: &lt;unix seconds&gt;</span> and <span className="font-mono break-all">X-Rem0te-Signature: sha256=&lt;hex HMAC-SHA256(secret, &quot;&lt;timestamp&gt;.&lt;body&gt;&quot;)&gt;</span>. Check both, and refuse an old timestamp.</p>
-                    <p>The body is JSON: <span className="font-mono break-all">{'{ source: "rem0te", type: "ticket.create", version: 1, sent_at, ticket: { subject, body, note, link, computer, business, requested_by, source_ref, event, alert, ai } }'}</span>. Answer with JSON naming <span className="font-mono">ticket_id</span> (or id / number / ref) and optionally <span className="font-mono">url</span> to show the reference in rem0te.</p>
+                    <p>The body is JSON: <span className="font-mono break-all">{'{ source: "rem0te", type: "ticket.create", version: 1, sent_at, ticket: { subject, body, note, link, device, customer, requested_by, source_ref, event, alert, ai } }'}</span>. Answer with JSON naming <span className="font-mono">ticket_id</span> (or id / number / ref) and optionally <span className="font-mono">url</span> to show the reference in rem0te.</p>
                   </div>
                 </div>
               )}
@@ -151,11 +151,11 @@ export default function PsaSettingsPage() {
   const fail = (e: unknown) => setNotice({ ok: false, text: apiError(e).message });
   if (!user) return null;
   const owner = isBusinessOwner && !technician && !!businessId;
-  if (!isPlatformAdmin && !owner) return <div className="p-6 text-sm text-muted-foreground">Where tickets are sent is set by a Platform Admin, or by the Business Owner for their business.</div>;
+  if (!isPlatformAdmin && !owner) return <div className="p-6 text-sm text-muted-foreground">Where tickets are sent is set by a Platform Admin, or by the Business Owner for their customer.</div>;
   return (
     <div className="max-w-4xl space-y-4 p-4 md:p-6">
       <Link href="/settings" className="inline-flex items-center text-sm text-muted-foreground hover:underline"><ArrowLeft className="mr-1 h-4 w-4" />Settings</Link>
-      <PageHeader title="PSA / ticketing" description="Where “Create ticket” on an event-log entry or alert sends. A business's own connector wins; otherwise the platform default is used." />
+      <PageHeader title="PSA / ticketing" description="Where “Create ticket” on an event-log entry or alert sends. A customer's own connector wins; otherwise the platform default is used." />
       {notice && <div className={`rounded-md border p-3 text-sm ${notice.ok ? 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100' : 'border-destructive/40 bg-destructive/10 text-destructive'}`}>{notice.text}</div>}
       {isPlatformAdmin && <ScopeCard scope="global" businessId={null} ok={ok} fail={fail} />}
       {owner && <ScopeCard scope="business" businessId={businessId} ok={ok} fail={fail} />}

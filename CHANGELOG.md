@@ -5,6 +5,125 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.87.1] — 2026-11-25 · *Compass*
+
+The wording pass (UX_ROADMAP.md P1-1, owner decision 1a). 0.87's menu said
+*Customers* and *Devices*, but the pages under it still said *business*,
+*computer* and *endpoint*, sometimes all three on one screen. Some sentences
+also sent people to *Settings → Security → Containment* and other menu paths
+that 0.87 had retired. This release changes only text that people read. Codes,
+routes, DTO fields, Prisma models and columns, audit action names and the
+ClientSt0r contract are unchanged (`businessId`, `/endpoints`,
+`computers:view`, `BUSINESS_OWNER`). There is no migration and no agent
+change. Nothing here is evidence about devices.
+
+### Changed
+
+- **The console says *Customer* and *Device*.** That covers labels, headings,
+  buttons, empty states, toasts, dialogs, rendered errors, page titles and
+  `/help`. About 1,700 visible strings changed across 150 web files:
+
+  | Area | Strings |
+  |---|---|
+  | Devices and the device page | 398 |
+  | Help (`/help`) | 294 |
+  | Security, access and people | 247 |
+  | Patching and client updates | 180 |
+  | Settings and administration | 164 |
+  | Dashboard, monitoring and backups | 108 |
+  | Automation | 103 |
+  | Reports | 67 |
+  | Shared wording (`lib/`) | 51 |
+  | Remote support | 44 |
+  | Customers | 37 |
+  | Shell (header, menu, search) | 4 |
+
+- **Messages the API writes for the console** changed too: about 590 lines in
+  119 files. These are labels, descriptions, prompts, hints, the task
+  lifecycle sentences, the platform wording, the dashboard's *Work on next*
+  reasons, and `message` texts of exceptions that the console shows. The
+  error codes did not change, so anything that branches on `code` is
+  unaffected.
+- **Menu paths in sentences match the 0.87 menu** (decision N4). The 13
+  *Settings → Security → …* strings now read *Security → Containment*,
+  *Update signing*, *Technician access*, *Security features*, *Single
+  sign-on* or *Audit log*. *Settings → Monitoring*, *Client updates* /
+  *rollouts*, *Warranty*, *Backups*, *API keys*, *Email*, *AI*, *PSA*,
+  *System status* and *Updates* now name the group they are in. *Admin →
+  Security* is *Security → Server security*. *Remote Support →* is *Remote
+  support →*. This applies to the web, the API's messages and the docs.
+- **One word per state.** *Awaiting approval* and *Waiting for approval*
+  are now *Pending approval* everywhere, including the dashboard tile, task
+  stages, restart windows, scripts, schedules, quality rules and technician
+  assignments.
+- **Sentence case.** 101 Title Case labels became sentence case, for
+  example *Add customer*, *Save branding*, *Change password*, *Network /
+  ports* and *Session timeout (minutes)*. Product and feature names keep
+  their capitals: *Quick Connect*, *Windows Update*, *Managed Secure Access*.
+- **Docs.** The prose changed in 58 pages of `docs/` and in the in-app
+  bundle (regenerated). Fifty-nine headings changed slug, and every link to
+  them in the docs and the console moved with them, so no anchor is broken.
+  `UI_DESIGN_SYSTEM.md` gains a **Words** glossary.
+  `NAVIGATION_MIGRATION.md` gains a *Wording (0.87.1)* table, and its *Was*
+  column keeps the old names on purpose.
+
+### Kept, with the reason
+
+- **The role names *Business Owner* and *Business User*.** They are stored
+  (`User.role`), mapped from SSO groups, and named in the audit log and the
+  security documents. Renaming them is an owner decision.
+- **Other vendors' names**: *computer name*, *Computer Management*, *Computer
+  Configuration*, *Domain Computers*, *Apple Business Manager*,
+  *line-of-business*, and macOS *Software Update*.
+- ***real Windows computer*.** It is an evidence statement about a physical
+  machine, and the security invariants match it word for word.
+- ***your own computer*** and *Set up this computer for Connect* both mean
+  the technician's own workstation.
+- **An HTTP endpoint** (*token endpoint*, *API endpoint*, *webhook endpoint*)
+  is not a device.
+- **The public pages for the person at the device** (`/download`, `/quick`,
+  `/support`, `/verify-email`, the tray and `/assist`). That person is not
+  signed in to the console.
+- **API messages an integration may parse**, and API text that is stored or
+  sent on:
+  - the 404 messages *Computer not found* and *Business not found*, which the
+    invariants and the visibility tests compare and API-key callers see;
+  - the `integration`, `public-api` ("branch on message" in its docs),
+    `enrollment`, tray, assist, remote-agent, downloads and email modules,
+    and the approval signer;
+  - monitoring alert titles such as *N of M computers offline*, which are
+    stored and go to email, PSA and ClientSt0r.
+- **Search keywords**, so that typing *computer* or *business* still finds
+  the page.
+- **Mobile devices**, which are left for after MDM M5:
+  `apps/web/app/**/mobile-devices`, `components/mobile`, `apps/api/src/mdm`,
+  `docs/own-mdm.md` and `docs/mobile-devices.md`.
+- **Historical audits and the GitHub gallery** (`screenshots.md`, P1-18).
+
+### Added
+
+- **`apps/web/scripts/check-terminology.mjs`**, run in CI as *Terminology*.
+  It parses every `.ts`/`.tsx` file under `app`, `components` and `lib` with
+  the workspace's TypeScript (`scripts/lib/visible-text.mjs`). It finds JSX
+  text and the string and template literals that read as prose. It skips code
+  positions: imports, types, property keys, comparisons, `case`, `console`,
+  `className`/`href`/`id`/`data-*`, an API call's path, and text inside
+  `<code>`, `<pre>`, `<kbd>` and `<samp>`. It fails on *business*, *computer*
+  or *endpoint* in what is left, and on a retired menu path. The phrases it
+  keeps and the files it leaves alone are listed in
+  `scripts/lib/terminology.mjs` and the script, each with its reason. A
+  self-test runs first.
+
+### Tests
+
+`e2e-ui.mjs`, `e2e-navigation.mjs`, `screenshots.mjs`, `unit-device-tools.mjs`,
+and the API units and e2e suites that compare a sentence were updated in the
+same commit. The security invariants that quote a sentence were updated as
+well: *full control of this device*, the Managed Secure Access refusal, and
+the restart window's *Pending approval*.
+
+---
+
 ## [0.87.0] — 2026-11-25 · *Compass*
 
 The navigation redesign: UX_ROADMAP.md P0-4 (the application shell), most of

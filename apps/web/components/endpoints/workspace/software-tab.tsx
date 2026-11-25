@@ -129,7 +129,7 @@ function RefreshInventoryBanner({ endpointId, why }: { endpointId: string; why: 
     onSuccess: () => {
       setAsked(true);
       qc.invalidateQueries({ queryKey: ['endpoint-software', endpointId] });
-      toast({ title: 'Inventory requested', description: 'The computer collects it at its next check-in (a few minutes) and reports back.' });
+      toast({ title: 'Inventory requested', description: 'The device collects it at its next check-in (a few minutes) and reports back.' });
     },
     onError: () => toast({ title: 'Not requested', variant: 'destructive' }),
   });
@@ -139,7 +139,7 @@ function RefreshInventoryBanner({ endpointId, why }: { endpointId: string; why: 
         {why === 'no_keys'
           ? 'This inventory predates the 0.41 agent: it lists no uninstall keys, so nothing here can be uninstalled yet. Refresh it to see which programs can be.'
           : 'This inventory came from an older collector that did not check for the uninstallers 0.42 runs silently (Inno Setup, NSIS, Chromium, msiexec /I). Refresh it to see which programs can be uninstalled.'}
-        {' '}If a refresh does not change this, update the agent on this computer — the collector comes with the agent install.
+        {' '}If a refresh does not change this, update the agent on this device — the collector comes with the agent install.
       </span>
       <Button size="sm" variant="outline" className="h-7 text-xs" data-testid="refresh-inventory" disabled={m.isPending || asked} onClick={() => m.mutate()}>
         {m.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1" />}{asked ? 'Inventory requested' : 'Refresh inventory'}

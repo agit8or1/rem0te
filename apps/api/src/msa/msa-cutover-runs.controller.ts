@@ -61,7 +61,7 @@ export class MsaCutoverRunsController {
   @RateLimit(20)
   @HttpCode(HttpStatus.OK)
   async confirm(@Actor() a: ActorContext, @Param('runId') runId: string, @Req() req: Request) {
-    assertFresh(this.method(req), { action: 'msa.cutover', message: 'Confirm it is you to mark these computers managed and verified.' });
+    assertFresh(this.method(req), { action: 'msa.cutover', message: 'Confirm it is you to mark these devices managed and verified.' });
     return { success: true, data: await this.runs.confirm(a, runId) };
   }
 

@@ -349,7 +349,7 @@ const code = (r) => (r.ok ? 'ok' : r.code);
     r = evaluate(s3, ring2(), { evidence: ev3([r1t(R1A), r1t(R1B, {}, null)]) });
     check('a ring-1 computer the portal reports succeeded, with no signature → result_signature_missing', code(r) === 'result_signature_missing', code(r));
     r = evaluate(s3, ring2(), { evidence: ev3([r1t(R1A), r1t(R1B, { status: 'CANCELED', result: null }, null)]) });
-    check('a ring-1 computer the portal calls canceled, with no signature, counts as FAILED (a hidden failure looks the same) → gate_not_passed', code(r) === 'gate_not_passed' && /2|1 computer/.test(r.message), JSON.stringify(r));
+    check('a ring-1 computer the portal calls canceled, with no signature, counts as FAILED (a hidden failure looks the same) → gate_not_passed', code(r) === 'gate_not_passed' && /2|1 device/.test(r.message), JSON.stringify(r));
     r = evaluate(s3, ring2(), { evidence: ev3([r1t(R1A), r1t(R1B, { status: 'DISPATCHED', result: null }, null)]) });
     check('a ring-1 computer that has not answered → the gate waits (gate_not_passed, in progress)', code(r) === 'gate_not_passed' && /not answered/.test(r.message), JSON.stringify(r));
     r = evaluate(s3, ring2(), { evidence: ev3([r1t(R1A), r1t(R1B, {}, signStatement(DEV[R1A.endpointId], 'result', resultStatement({ jobId: ring1Job, planSha256: R1_PLAN, rustdeskId: R1A.rustdeskId, deviceSecretSha256: R1A.deviceSecretSha256, outcome: 'succeeded', completedAt: iso(resultAt) })))]) });

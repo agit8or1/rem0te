@@ -345,10 +345,10 @@ export interface PolicyApproval { userId: string; name: string; role: 'approver'
 export function validatePolicyDoc(doc: PolicyDoc, now: Date): { ok: true } | { ok: false; reason: string; message: string } {
   const staging = stagingOf(doc);
   if (!staging) return { ok: false, reason: 'staging_unknown', message: 'The staging is not one this version knows (none or canary).' };
-  if (staging === 'canary' && doc.rings[0].length !== 1) return { ok: false, reason: 'bad_rings', message: 'Ring 0 is the canary: exactly one computer.' };
+  if (staging === 'canary' && doc.rings[0].length !== 1) return { ok: false, reason: 'bad_rings', message: 'Ring 0 is the canary: exactly one device.' };
   const all = doc.rings.flat();
   if (new Set(all.map((c) => c.endpointId)).size !== all.length || new Set(all.map((c) => c.rustdeskId)).size !== all.length) {
-    return { ok: false, reason: 'bad_rings', message: 'A computer can be in one ring only.' };
+    return { ok: false, reason: 'bad_rings', message: 'A device can be in one ring only.' };
   }
   // 0.63: an expiry date (0.32's rules), or a signed "never"; anything else is refused.
   const ex = expiryProblem(doc, now, MAX_POLICY_DAYS, 'policy');
@@ -644,12 +644,12 @@ export function evaluateRingGate(g: GateInput, now: Date): Gate {
   if (!g.jobStatus) return { ok: false, reason: 'not_requested', detail: `Ring ${ring} has not been requested.` };
   if (['AWAITING_APPROVAL', 'APPROVED', 'DISPATCHED'].includes(g.jobStatus)) return { ok: false, reason: 'in_progress', detail: `Ring ${ring} is ${g.jobStatus.toLowerCase().replace(/_/g, ' ')}.` };
   if (['REJECTED', 'CANCELED', 'EXPIRED'].includes(g.jobStatus)) return { ok: false, reason: 'ring_not_run', detail: `Ring ${ring}'s plan was ${g.jobStatus.toLowerCase()}; request it again.` };
-  if (g.targets.some((t) => t.status === 'UNKNOWN' && !t.reconciled)) return { ok: false, reason: 'unreconciled', detail: `A computer in ring ${ring} has an uncertain outcome. Reconcile it first.` };
-  if (g.targets.some((t) => t.status === 'PENDING' || t.status === 'DISPATCHED')) return { ok: false, reason: 'in_progress', detail: `A computer in ring ${ring} has not answered yet.` };
+  if (g.targets.some((t) => t.status === 'UNKNOWN' && !t.reconciled)) return { ok: false, reason: 'unreconciled', detail: `A device in ring ${ring} has an uncertain outcome. Reconcile it first.` };
+  if (g.targets.some((t) => t.status === 'PENDING' || t.status === 'DISPATCHED')) return { ok: false, reason: 'in_progress', detail: `A device in ring ${ring} has not answered yet.` };
   const computers = g.targets.filter((t) => t.status !== 'CANCELED');
-  if (computers.length === 0) return { ok: false, reason: 'ring_not_run', detail: `No computer in ring ${ring} was reached.` };
+  if (computers.length === 0) return { ok: false, reason: 'ring_not_run', detail: `No device in ring ${ring} was reached.` };
   const failed = computers.filter((t) => t.status !== 'SUCCEEDED' || targetStates(g.updates, t, g.jobStatus!).some((s) => FAILED_STATES.includes(s.state)));
-  if (failed.length > g.failureThreshold) return { ok: false, reason: 'too_many_failures', detail: `${failed.length} computer(s) in ring ${ring} failed; the threshold is ${g.failureThreshold}.` };
+  if (failed.length > g.failureThreshold) return { ok: false, reason: 'too_many_failures', detail: `${failed.length} device(s) in ring ${ring} failed; the threshold is ${g.failureThreshold}.` };
   if (ring === 0 && g.canary !== false) {
     const states = targetStates(g.updates, computers[0], g.jobStatus);
     const pending = states.filter((s) => !CANARY_OK.includes(s.state));
@@ -965,7 +965,7 @@ export function verifiedGateTargets(
   const out: GateTarget[] = [];
   for (const t of ev.targets) {
     const c = byId.get(t.endpointId);
-    if (!c) return { ok: false, code: 'evidence_mismatch', message: 'The evidence names a computer this ring of the policy does not.' };
+    if (!c) return { ok: false, code: 'evidence_mismatch', message: 'The evidence names a device this ring of the policy does not.' };
     const name = c.hostname;
     if (!c.resultKey) {
       return { ok: false, code: 'result_key_not_pinned', message: `${name} has no result-signing key in this policy (it was approved before 0.34, or for an older agent), so its results cannot be verified and no later ring is signed under it. Update the agent, let it scan, and approve a new policy.` };

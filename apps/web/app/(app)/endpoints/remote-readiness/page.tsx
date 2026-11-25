@@ -14,7 +14,7 @@ import { MSA_FLEET_NOTE, MsaNote, MsaStateBadge, type MsaState } from '@/compone
 import { MsaCutoverRuns } from '@/components/endpoints/msa-cutover-runs';
 
 /**
- * Devices → Remote access readiness (0.69): Managed Secure Access readiness
+ * Remote support → Remote access readiness (0.69): Managed Secure Access readiness
  * for every computer this person can see, from GET /msa/readiness
  * (computers:view; the API reads computers only through
  * endpointVisibilityWhere). Read-only: there is no control on this page,
@@ -61,9 +61,9 @@ export default function RemoteReadinessPage() {
     <div className="p-4 sm:p-6 space-y-5">
       <PageHeader
         title="Remote access readiness"
-        description="Whether each computer could later use Managed Secure Access: short-lived, per-session RustDesk access applied and checked by the signed agent. Read from what the agents report."
+        description="Whether each device could later use Managed Secure Access: short-lived, per-session RustDesk access applied and checked by the signed agent. Read from what the agents report."
       />
-      {!allowed ? <p className="text-sm text-muted-foreground">This page needs the View computers permission.</p> : (
+      {!allowed ? <p className="text-sm text-muted-foreground">This page needs the View devices permission.</p> : (
         <>
           <MsaNote text={data?.note ?? MSA_FLEET_NOTE} testId="msa-fleet-note" />
           {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -91,12 +91,12 @@ export default function RemoteReadinessPage() {
                 <CardContent className="p-0">
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b p-3 text-sm">
                     <span className="font-medium">
-                      {filter ? `${data.states.find((s) => s.state === filter)?.label}: ${rows.length}` : `All computers: ${data.total}`}
+                      {filter ? `${data.states.find((s) => s.state === filter)?.label}: ${rows.length}` : `All devices: ${data.total}`}
                     </span>
                     {filter && <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setFilter(null)} data-testid="msa-filter-clear">Show all</Button>}
                   </div>
                   {rows.length === 0 ? (
-                    <p className="p-4 text-sm text-muted-foreground">No computers{filter ? ' in this state' : ''}.</p>
+                    <p className="p-4 text-sm text-muted-foreground">No devices{filter ? ' in this state' : ''}.</p>
                   ) : (
                     <ul className="divide-y" data-testid="msa-fleet-rows">
                       {rows.map((r) => (
@@ -117,7 +117,7 @@ export default function RemoteReadinessPage() {
                       ))}
                     </ul>
                   )}
-                  {data.truncated && <p className="border-t p-3 text-xs text-muted-foreground">Showing the first {data.total} computers.</p>}
+                  {data.truncated && <p className="border-t p-3 text-xs text-muted-foreground">Showing the first {data.total} devices.</p>}
                 </CardContent>
               </Card>
 
@@ -126,13 +126,13 @@ export default function RemoteReadinessPage() {
               {isPlatformAdmin && data.managedControls === true && <MsaCutoverRuns />}
               {data.managedControls === true && (
                 <p className="text-xs text-muted-foreground">
-                  Live managed sessions: <Link className="underline" href="/endpoints/managed-sessions">Devices → Managed sessions</Link>.
+                  Live managed sessions: <Link className="underline" href="/endpoints/managed-sessions">Remote support → Managed sessions</Link>.
                 </p>
               )}
 
               <p className="text-xs text-muted-foreground">
                 Lab-tested RustDesk releases: {data.labTested.versions.join(', ')} (on Windows Server, as SYSTEM). Agents report from {data.minAgent}; signed agents
-                update themselves under <Link className="underline" href="/settings/client-updates">Settings → Client updates</Link>.
+                update themselves under <Link className="underline" href="/settings/client-updates">Patching → Client updates</Link>.
                 {' '}More: <Link className="underline" href="/docs/managed-secure-access">Managed Secure Access</Link>.
               </p>
             </>

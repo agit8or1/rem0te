@@ -284,9 +284,9 @@ export class EndpointsService {
     const g = await this.prisma.endpointGroup.findFirst({
       where: { id: groupId, OR: [{ customerId: businessId }, { customerId: null, tenantId }] }, select: { id: true, kind: true },
     });
-    if (!g) throw new BadRequestException('Unknown device group for this business');
+    if (!g) throw new BadRequestException('Unknown device group for this customer');
     // 0.34: a rule group's members follow its rule; nothing joins one by hand.
-    if (g.kind === 'RULE') throw new BadRequestException({ code: 'RULE_GROUP', message: 'That is a rule group: a computer is in it when it matches the rule, so it cannot be put in one.' });
+    if (g.kind === 'RULE') throw new BadRequestException({ code: 'RULE_GROUP', message: 'That is a rule group: a device is in it when it matches the rule, so it cannot be put in one.' });
   }
 
   async create(actor: ActorContext, dto: CreateEndpointDto & { businessId?: string }) {
@@ -306,7 +306,7 @@ export class EndpointsService {
       const site = await this.prisma.site.findFirst({
         where: { id: dto.siteId, customerId: businessId }, select: { id: true },
       });
-      if (!site) throw new BadRequestException('That site does not belong to this business');
+      if (!site) throw new BadRequestException('That site does not belong to this customer');
     }
 
     // So does a device group (0.33): a group holds only its own business's
@@ -374,13 +374,13 @@ export class EndpointsService {
       // ENDPOINT_ADOPTED audit row naming who approved it. This route used to
       // set the business and leave the tenant (and the RustDesk node's) null.
       if (isUnassigned(existing)) {
-        throw new BadRequestException({ code: 'USE_ADOPTION', message: 'Assign an unassigned computer from Devices → Unassigned.' });
+        throw new BadRequestException({ code: 'USE_ADOPTION', message: 'Assign an unassigned device from Devices → Unassigned.' });
       }
       if (dto.customerId) {
         const target = await this.prisma.customer.findUnique({
           where: { id: dto.customerId }, select: { id: true, tenantId: true },
         });
-        if (!target) throw new NotFoundException('Target business not found');
+        if (!target) throw new NotFoundException('Target customer not found');
       }
     }
 
@@ -392,7 +392,7 @@ export class EndpointsService {
       const site = await this.prisma.site.findFirst({
         where: { id: dto.siteId, customerId: targetBusiness ?? '__none__' }, select: { id: true },
       });
-      if (!site) throw new BadRequestException('That site does not belong to this business');
+      if (!site) throw new BadRequestException('That site does not belong to this customer');
     }
 
     // Moving a computer to another business takes it out of every device
@@ -408,7 +408,7 @@ export class EndpointsService {
     // clears it. Nothing the agent reports writes `name` after enrolment, so a
     // nickname stays until someone changes it (the hostname is its own field).
     const name = dto.name !== undefined ? dto.name.trim() : undefined;
-    if (name !== undefined && !name) throw new BadRequestException({ code: 'NAME_REQUIRED', message: 'A computer needs a name.' });
+    if (name !== undefined && !name) throw new BadRequestException({ code: 'NAME_REQUIRED', message: 'A device needs a name.' });
     const description = dto.description !== undefined ? (dto.description.trim() || null) : undefined;
     const renamed = name !== undefined && name !== existing.name ? { before: existing.name, after: name } : null;
     const priorDescription = description !== undefined
@@ -473,7 +473,7 @@ export class EndpointsService {
   async restore(actor: ActorContext, id: string) {
     const existing = await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_REMOVE);
     this.acl.assertCapability(actor, CAP.COMPUTERS_REMOVE);
-    if (existing.status !== 'ARCHIVED') throw new BadRequestException('This computer is not archived');
+    if (existing.status !== 'ARCHIVED') throw new BadRequestException('This device is not archived');
 
     // Back to wherever its enrolment had got to: a machine still waiting for
     // a business is PENDING_ENROLLMENT, everything else is ACTIVE.
@@ -511,11 +511,11 @@ export class EndpointsService {
       },
     });
     if (!node?.candidateSecretHash || !node.candidateSecretSeenAt) {
-      throw new BadRequestException('This computer is not offering a new device secret');
+      throw new BadRequestException('This device is not offering a new device secret');
     }
     if (Date.now() - node.candidateSecretSeenAt.getTime() >= CANDIDATE_LIVE_MS) {
       throw new BadRequestException(
-        'The new device secret has not been seen recently. Make sure the computer is on, wait for its next heartbeat, and try again.',
+        'The new device secret has not been seen recently. Make sure the device is on, wait for its next heartbeat, and try again.',
       );
     }
     if (node.candidateSecretConflict) {
@@ -580,10 +580,10 @@ export class EndpointsService {
     if (!value) throw new BadRequestException({ code: 'ALIAS_REQUIRED', message: 'An alias cannot be blank.' });
     const current = await this.prisma.endpointAlias.findMany({ where: { endpointId: id }, select: { alias: true } });
     if (current.some((a) => a.alias.toLowerCase() === value.toLowerCase())) {
-      throw new ConflictException({ code: 'ALIAS_EXISTS', message: `This computer already has the alias "${value}".` });
+      throw new ConflictException({ code: 'ALIAS_EXISTS', message: `This device already has the alias "${value}".` });
     }
     if (current.length >= ALIASES_PER_COMPUTER) {
-      throw new BadRequestException({ code: 'TOO_MANY_ALIASES', message: `A computer can have at most ${ALIASES_PER_COMPUTER} aliases.` });
+      throw new BadRequestException({ code: 'TOO_MANY_ALIASES', message: `A device can have at most ${ALIASES_PER_COMPUTER} aliases.` });
     }
     if (isPrimary) {
       await this.prisma.endpointAlias.updateMany({ where: { endpointId: id, isPrimary: true }, data: { isPrimary: false } });
@@ -628,7 +628,7 @@ export class EndpointsService {
     // computer lists apply to credential reveal and rotation exactly as they
     // do to connecting.
     if (!endpoint || !(await this.acl.canReachEndpoint(actor, endpoint, undefined, CAP.COMPUTERS_EDIT))) {
-      throw new ForbiddenException('You have not been given access to this computer');
+      throw new ForbiddenException('You have not been given access to this device');
     }
   }
 
@@ -640,7 +640,7 @@ export class EndpointsService {
     await this.admitWrite(actor, id);
 
     const node = await this.prisma.rustdeskNode.findUnique({ where: { endpointId: id }, select: { id: true } });
-    if (!node) throw new NotFoundException('No RustDesk node linked to this computer');
+    if (!node) throw new NotFoundException('No RustDesk node linked to this device');
     await this.prisma.rustdeskNode.update({
       where: { id: node.id },
       data: { permanentPassword: password ? this.encryptPassword(password) : null },
@@ -734,19 +734,19 @@ export class EndpointsService {
     const node = await this.prisma.rustdeskNode.findUnique({
       where: { endpointId }, select: { id: true, agentSecretHash: true },
     });
-    if (!node) throw new NotFoundException('No RustDesk node linked to this computer');
+    if (!node) throw new NotFoundException('No RustDesk node linked to this device');
     // The staged password is handed to whoever heartbeats as this RustDesk ID.
     // Without a bound device secret that is anyone who knows the ID.
     if (!node.agentSecretHash) {
       throw new BadRequestException(
-        'This computer has no device secret yet. Re-run its installer before rotating its password.',
+        'This device has no device secret yet. Re-run its installer before rotating its password.',
       );
     }
 
     // 0.72: a managed computer's RustDesk password is the agent's (§82).
     const managed = await this.prisma.msaManagedComputer.findUnique({ where: { endpointId }, select: { state: true } });
     if (managed && managed.state !== 'pending') {
-      throw new ConflictException({ code: 'MSA_MANAGED', message: 'This computer is in Managed Secure Access: its password is set by the agent. Roll it back to Legacy to rotate it.' });
+      throw new ConflictException({ code: 'MSA_MANAGED', message: 'This device is in Managed Secure Access: its password is set by the agent. Roll it back to Legacy to rotate it.' });
     }
 
     await this.stagePendingPassword(node.id);
@@ -836,7 +836,7 @@ export class EndpointsService {
     if (opts.managed !== true) {
       if (await this.msaLegacyRefused(endpoint.id)) return { ok: false, reason: 'msa_managed', status: 'denied', message: LEGACY_REFUSED_MESSAGE };
     } else if (!(await this.msaLegacyRefused(endpoint.id))) {
-      return { ok: false, reason: 'msa_not_managed', status: 'denied', message: 'This computer is not a verified Managed Secure Access computer: use the ordinary Connect.' };
+      return { ok: false, reason: 'msa_not_managed', status: 'denied', message: 'This device is not a verified Managed Secure Access device: use the ordinary Connect.' };
     }
 
     // Business members and admins need computers:connect, as before. A
@@ -846,7 +846,7 @@ export class EndpointsService {
     if (!actor.technician && !this.acl.can(actor, CAP.COMPUTERS_CONNECT)) {
       // 403 with a reason, as the route guard gave before 0.23: business
       // scope has already passed, so this reveals nothing about existence.
-      return { ok: false, reason: 'missing_connect_permission', status: 'denied', message: 'Your role in this business does not include Remote connect.' };
+      return { ok: false, reason: 'missing_connect_permission', status: 'denied', message: 'Your role in this customer does not include Remote connect.' };
     }
 
     // Owners/admins: anything in scope. Technicians: their assignment's
@@ -1010,7 +1010,7 @@ export class EndpointsService {
     }
 
     const rdId = grant.endpoint.rustdeskNode?.rustdeskId;
-    if (!rdId) throw new NotFoundException('Computer is not enrolled');
+    if (!rdId) throw new NotFoundException('Device is not enrolled');
     // A preset-backed launch never receives the permanent password: it would
     // outlive the grant and allow a direct reconnect the portal never sees.
     const password = authz.revealCredential && grant.endpoint.rustdeskNode?.permanentPassword
@@ -1116,7 +1116,7 @@ export class EndpointsService {
       },
     });
     if (!endpoint?.rustdeskNode?.rustdeskId) {
-      throw new NotFoundException('Computer is not yet enrolled to accept connections');
+      throw new NotFoundException('Device is not yet enrolled to accept connections');
     }
 
     // Whether this launch carries the password, and — only when the caller
@@ -1246,7 +1246,7 @@ export class EndpointsService {
       where: { userId, isActive: true, customerId: endpoint.customerId ?? '__none__' },
       select: { id: true, tenantId: true },
     });
-    if (!membership) throw new NotFoundException('That user is not an active member of this business');
+    if (!membership) throw new NotFoundException('That user is not an active member of this customer');
 
     const startsAt = window.startsAt ? new Date(window.startsAt) : null;
     const expiresAt = window.expiresAt ? new Date(window.expiresAt) : null;
@@ -1319,7 +1319,7 @@ export class EndpointsService {
   ) {
     // A rustdeskId may only ever map to one computer, platform-wide.
     const dupe = await this.prisma.rustdeskNode.findFirst({ where: { rustdeskId, endpointId: { not: endpointId } } });
-    if (dupe) throw new ConflictException('That RustDesk ID is already assigned to another computer');
+    if (dupe) throw new ConflictException('That RustDesk ID is already assigned to another device');
 
     const existing = await this.prisma.rustdeskNode.findUnique({ where: { endpointId }, select: { tenantId: true } });
     if (existing && existing.tenantId && existing.tenantId !== tenantId) {
@@ -1543,7 +1543,7 @@ export class EndpointsService {
       where: { endpointId: id },
       select: { id: true, agentSecretHash: true, reinstallRequestedAt: true },
     });
-    if (!node) throw new NotFoundException('No RustDesk node linked to this computer');
+    if (!node) throw new NotFoundException('No RustDesk node linked to this device');
 
     // The heartbeat only hands work to an endpoint that authenticated with its
     // device secret, so staging this for an unbound machine would look like it

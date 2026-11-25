@@ -137,7 +137,7 @@ export default function DashboardPage() {
       <div className="flex shrink-0 flex-wrap items-baseline gap-x-4 gap-y-1">
         <h1 className="text-xl font-semibold">Dashboard</h1>
         <p className="text-xs text-muted-foreground">
-          {d.scope === 'business' ? 'This business' : 'Every business'} · data from {ago(new Date(dataUpdatedAt || Date.parse(d.generatedAt)).toISOString(), now)} · refreshes every 30 s
+          {d.scope === 'business' ? 'This customer' : 'Every customer'} · data from {ago(new Date(dataUpdatedAt || Date.parse(d.generatedAt)).toISOString(), now)} · refreshes every 30 s
         </p>
         <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
           {d.devices && (
@@ -197,14 +197,14 @@ export default function DashboardPage() {
           <Tile href="/reports/warranty" icon={BadgeCheck} label="Warranty" value={d.warranty.within30 + d.warranty.expired}
             sub={`${d.warranty.expired} expired · ${d.warranty.within30} end in 30 days${d.warranty.unknown ? ` · ${d.warranty.unknown} no date${d.warranty.unknownFixable ? ` (${d.warranty.unknownFixable} lookup not on)` : ''}` : ''}`}
             tone={d.warranty.expired ? 'bad' : d.warranty.within30 ? 'warn' : undefined}
-            title={`Hardware warranties: ${d.warranty.expired} expired, ${d.warranty.within30} ending within 30 days, ${d.warranty.within90} within 90 days, ${d.warranty.unknown} with no date stored${d.warranty.unknownFixable ? ` — ${d.warranty.unknownFixable} of them could be looked up if the vendor lookup were switched on in Settings → Warranty` : ''}. The report says why each one has no date.`} />
+            title={`Hardware warranties: ${d.warranty.expired} expired, ${d.warranty.within30} ending within 30 days, ${d.warranty.within90} within 90 days, ${d.warranty.unknown} with no date stored${d.warranty.unknownFixable ? ` — ${d.warranty.unknownFixable} of them could be looked up if the vendor lookup were switched on in Administration → Warranty` : ''}. The report says why each one has no date.`} />
         )}
         {d.actions && (
           <Tile href="/automation/tasks?state=problem" icon={XCircle} label="Failed actions" value={failedActions}
             sub={d.actions.uncertain ? `${d.actions.uncertain} outcome unknown · 7 days` : 'last 7 days'} tone={failedActions ? 'bad' : undefined} />
         )}
         {d.actions && (
-          <Tile href="/automation/tasks?state=approval" icon={Hourglass} label="Awaiting approval" value={d.actions.awaitingApproval}
+          <Tile href="/automation/tasks?state=approval" icon={Hourglass} label="Pending approval" value={d.actions.awaitingApproval}
             sub="approved on the signer, not here" />
         )}
         {d.sessions && (
@@ -269,7 +269,7 @@ export default function DashboardPage() {
         {/* Who is affected. */}
         <Panel testId="dashboard-customers" title="Customers affected" className="lg:col-span-3 lg:col-start-10 lg:row-start-1">
           {d.customers.length === 0 ? (
-            <Empty icon={Building2}>No business has an open alert, an offline device or a failed action that you can see.</Empty>
+            <Empty icon={Building2}>No customer has an open alert, an offline device or a failed action that you can see.</Empty>
           ) : (
             <ul className="divide-y">
               {d.customers.slice(0, 10).map((c) => {
@@ -399,7 +399,7 @@ function InProgress({ d, now }: { d: Overview; now: number }) {
   for (const s of d.sessions?.live ?? []) {
     rows.push({
       key: `s:${s.id}`, icon: PlayCircle,
-      text: `${s.technician ?? 'Someone'} ${s.connected ? 'connected to' : 'launching'} ${s.device?.name ?? (s.isAdHoc ? 'a Quick Connect computer' : 'a computer')}`,
+      text: `${s.technician ?? 'Someone'} ${s.connected ? 'connected to' : 'launching'} ${s.device?.name ?? (s.isAdHoc ? 'a Quick Connect device' : 'a device')}`,
       sub: `${s.business?.name ? `${s.business.name} · ` : ''}last signal ${ago(s.lastSignalAt, now)}`, href: '/sessions',
     });
   }
@@ -407,7 +407,7 @@ function InProgress({ d, now }: { d: Overview; now: number }) {
     rows.push({ key: `a:${a.id}`, icon: Siren, text: a.title, sub: `${a.by ? `${a.by} acknowledged` : 'Acknowledged'} ${ago(a.acknowledgedAt, now)}${a.business ? ` · ${a.business.name}` : ''}`, href: a.href });
   }
   for (const j of d.actions?.inFlight ?? []) {
-    rows.push({ key: `j:${j.id}`, icon: Wrench, text: `${j.title}${j.device ? ` on ${j.device.name}` : ` on ${j.targets} computers`}`, sub: `${j.status === 'DISPATCHED' ? `sent ${ago(j.dispatchedAt, now)}` : 'approved, not yet sent'}${j.business ? ` · ${j.business.name}` : ''}`, href: j.href });
+    rows.push({ key: `j:${j.id}`, icon: Wrench, text: `${j.title}${j.device ? ` on ${j.device.name}` : ` on ${j.targets} devices`}`, sub: `${j.status === 'DISPATCHED' ? `sent ${ago(j.dispatchedAt, now)}` : 'approved, not yet sent'}${j.business ? ` · ${j.business.name}` : ''}`, href: j.href });
   }
   for (const p of d.patchDeployments ?? []) {
     rows.push({ key: `p:${p.id}`, icon: ShieldCheck, text: `Patch deployment: ${p.name}`, sub: `${p.status === 'PAUSED' ? `paused${p.pausedReason ? `: ${p.pausedReason}` : ''}` : 'in progress'}${p.business ? ` · ${p.business.name}` : ''}`, href: `/patching/${p.id}` });
@@ -477,7 +477,7 @@ function RecentAlerts({ r, now }: { r: NonNullable<Overview['recentAlerts']>; no
         <Siren className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <span>
           No monitors are configured, so nothing can alert yet. Open{' '}
-          <Link href="/settings/monitoring" className="underline text-foreground">Settings → Monitoring</Link> and press <strong>Add recommended</strong>: it sets up offline, disk space, failed and outstanding updates and more.
+          <Link href="/settings/monitoring" className="underline text-foreground">Monitoring → Monitoring policies</Link> and press <strong>Add recommended</strong>: it sets up offline, disk space, failed and outstanding updates and more.
         </span>
       </p>
     ) : <Empty icon={CheckCircle2}>No open alerts. The monitors have found nothing that needs you.</Empty>;

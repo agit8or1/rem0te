@@ -250,7 +250,7 @@ async function all() {
     check(!!env, 'the next heartbeat hands it out');
     await heartbeat(dewey); await heartbeat(dewey); await heartbeat(dewey);
     v = installTask(await tasksOf(dewey));
-    check(v?.stage === 'handed_out' && v.deliveries === 4 && /^Handed to the computer at \d\d:\d\d UTC \(4 deliveries, the last at \d\d:\d\d UTC\)/.test(v.text) && !v.overdue && v.cancelJobId === null,
+    check(v?.stage === 'handed_out' && v.deliveries === 4 && /^Handed to the device at \d\d:\d\d UTC \(4 deliveries, the last at \d\d:\d\d UTC\)/.test(v.text) && !v.overdue && v.cancelJobId === null,
       'handed out: four deliveries, as on DEWEY — not overdue yet, and no longer cancelable', JSON.stringify(v));
 
     // 31 minutes pass without a result (time moved in the database; nothing else changed).
@@ -340,7 +340,7 @@ async function all() {
     check(audit?.metadata?.scheduledFor ?? audit?.meta?.scheduledFor, 'the audit entry records when it was scheduled for', JSON.stringify(audit?.metadata ?? audit?.meta));
     await approve(sj2.id, pk.olivia); await approve(sj2.id, pk.quinn);
     let v = installTask(await tasksOf(sched));
-    check(v?.stage === 'scheduled' && v.state === 'scheduled' && /Nothing is handed to the computer before then/.test(v.text) && v.cancelJobId === sj2.id, 'Tasks panel: "Scheduled for …", cancelable', JSON.stringify(v));
+    check(v?.stage === 'scheduled' && v.state === 'scheduled' && /Nothing is handed to the device before then/.test(v.text) && v.cancelJobId === sj2.id, 'Tasks panel: "Scheduled for …", cancelable', JSON.stringify(v));
     const sl = (await req('GET', '/tasks?state=scheduled', asOwen)).body?.data;
     check(sl?.tasks.some((x) => x.id === v.id) && sl.scheduled >= 1, 'the Tasks page lists it under Scheduled');
     const hb = await heartbeat(sched);
@@ -384,7 +384,7 @@ async function all() {
     const hb = await heartbeat(spare);
     check(!(hb.body?.data?.actions ?? []).some((x) => x.jobId === cj.id), 'nothing is handed out for it afterwards');
     const v = installTask(await tasksOf(spare));
-    check(v?.state === 'canceled' && !v.inFlight && /Nothing reached the computer/.test(v.text) && v.cancelJobId === null, 'the task shows it canceled', JSON.stringify(v));
+    check(v?.state === 'canceled' && !v.inFlight && /Nothing reached the device/.test(v.text) && v.cancelJobId === null, 'the task shows it canceled', JSON.stringify(v));
     const late = await req('POST', `/actions/${job.id}/cancel`, asOwen);
     check(late.status === 409 && code(late) === 'NOT_CANCELABLE', 'DEWEY\'s install, already delivered and answered, cannot be canceled', msg(late));
   }

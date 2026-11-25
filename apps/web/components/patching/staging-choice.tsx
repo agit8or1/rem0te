@@ -44,11 +44,11 @@ export function StagingChoice({ id, value, onChange, what = 'policy' }: { id: st
       <label className="flex items-start gap-2 text-xs">
         <input id={`${id}-test-first`} type="checkbox" className="mt-0.5" checked={value} onChange={(e) => onChange(e.target.checked)} data-testid={`${id}-test-first`} />
         <span>
-          <strong>Test on one computer first</strong>
+          <strong>Test on one device first</strong>
           <span className="block text-muted-foreground">
             {value
-              ? `One computer installs first. The others follow in rings of up to ${MAX_PER_PLAN}, each only after the ring before it has confirmed every update took effect (a restart if one is needed, a new scan, and the soak time).`
-              : `Off: every computer you tick installs together, in the ${what === 'policy' ? 'maintenance window' : 'same window'}. Nothing waits for a test computer. Up to ${MAX_ALL_AT_ONCE} computers, sent as plans of up to ${MAX_PER_PLAN}.`}
+              ? `One device installs first. The others follow in rings of up to ${MAX_PER_PLAN}, each only after the ring before it has confirmed every update took effect (a restart if one is needed, a new scan, and the soak time).`
+              : `Off: every device you tick installs together, in the ${what === 'policy' ? 'maintenance window' : 'same window'}. Nothing waits for a test device. Up to ${MAX_ALL_AT_ONCE} devices, sent as plans of up to ${MAX_PER_PLAN}.`}
           </span>
         </span>
       </label>

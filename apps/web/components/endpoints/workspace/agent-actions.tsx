@@ -97,7 +97,7 @@ export const UPGRADE_STATE_LABEL: Record<string, string> = {
   held: 'Upgrade requested — on hold',
   dispatched: 'Upgrade handed out — installing',
   downloaded: 'Upgrade downloaded — waiting for the full agent to report',
-  not_confirmed: 'Upgrade not confirmed — check the computer',
+  not_confirmed: 'Upgrade not confirmed — check the device',
 };
 export const FULL_AGENT_HREF = '/endpoints/full-agent';
 
@@ -129,7 +129,7 @@ export function useAgentActions(endpointId: string, enabled = true) {
       setConfirmUpdate(false);
       refresh();
       const check = r.data?.data?.what === 'check';
-      toast({ title: check ? 'Update check queued' : 'Agent update queued', description: check ? 'The signed agent checks the signed repository at its next check-in and installs only what it lists.' : 'The current installer re-runs at the computer’s next check-in. It keeps the enrolment, device secret and RustDesk settings.' });
+      toast({ title: check ? 'Update check queued' : 'Agent update queued', description: check ? 'The signed agent checks the signed repository at its next check-in and installs only what it lists.' : 'The current installer re-runs at the device’s next check-in. It keeps the enrolment, device secret and RustDesk settings.' });
     },
     onError: (e) => { setConfirmUpdate(false); toast({ title: 'Not queued', description: apiMessage(e, 'The request failed.'), variant: 'destructive' }); },
   });
@@ -137,7 +137,7 @@ export function useAgentActions(endpointId: string, enabled = true) {
     mutationFn: () => endpointsApi.migrateAgent(endpointId, reason.trim()),
     onSuccess: () => {
       setMigrateOpen(false); setReason(''); refresh();
-      toast({ title: 'Upgrade requested', description: 'The computer is handed the migration at its next check-in. The page header, the Agent card and Devices → Agent migrations follow it.' });
+      toast({ title: 'Upgrade requested', description: 'The device is handed the migration at its next check-in. The page header, the Agent card and Devices → Agent migrations follow it.' });
     },
     onError: (e) => toast({ title: 'Not requested', description: apiMessage(e, 'The request failed.'), variant: 'destructive' }),
   });
@@ -177,7 +177,7 @@ export function upgradeView(a: AgentCardData | undefined, canEdit: boolean): Upg
   if (m.request && OPEN_MIGRATION_STATES.has(m.request.state)) return { state: 'pending', text: m.request.text, requestedAt: m.request.requestedAt, reason: m.request.reason, step: m.request.state };
   if (!canEdit) return { state: 'no-permission', reason: 'Upgrading to the full agent needs the computers:edit permission.' };
   if (m.possible) return { state: 'enabled' };
-  return { state: 'blocked', reason: m.reason ?? 'The server does not offer it for this computer right now.', fix: m.fix, link: m.link };
+  return { state: 'blocked', reason: m.reason ?? 'The server does not offer it for this device right now.', fix: m.fix, link: m.link };
 }
 
 /**
@@ -235,7 +235,7 @@ export function AgentActionDialogs({ actions }: { actions: AgentActions }) {
           title={a.kind === 'signed' ? 'Check for an agent update now?' : 'Update the agent?'}
           description={a.kind === 'signed'
             ? 'The signed agent runs rem0te-agent.exe update at its next check-in. It installs only what the signed repository lists, verified against the root compiled into it.'
-            : 'The current standard installer re-runs at the computer’s next check-in, as Reinstall agent does. It keeps the enrolment, device secret and RustDesk configuration and password, and downloads the RustDesk client again.'}
+            : 'The current standard installer re-runs at the device’s next check-in, as Reinstall agent does. It keeps the enrolment, device secret and RustDesk configuration and password, and downloads the RustDesk client again.'}
           confirmLabel="Queue it"
           loading={update.isPending}
           onConfirm={() => update.mutate()}
@@ -247,11 +247,11 @@ export function AgentActionDialogs({ actions }: { actions: AgentActions }) {
           <DialogHeader>
             <DialogTitle>Upgrade to full agent?</DialogTitle>
             <DialogDescription>
-              The full agent is the signed agent. At its next check-in the computer is handed, once, the portal’s
+              The full agent is the signed agent. At its next check-in the device is handed, once, the portal’s
               migration script. It downloads the signed agent, checks it against the digest the signed repository
               publishes, and runs <code>migrate</code>, which keeps the enrolment, device secret and RustDesk
               configuration. That one run trusts the portal, as every standard-agent update already does; afterwards the
-              computer runs only code signed offline.{askMigrate ? ' You will be asked to confirm it is you.' : ''}
+              device runs only code signed offline.{askMigrate ? ' You will be asked to confirm it is you.' : ''}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">

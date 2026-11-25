@@ -70,7 +70,7 @@ function scenario(name, f, expect) {
   const ids = tools.map((t) => t.id);
   check('tool ids are unique', new Set(ids).size === ids.length, j(ids));
   for (const g of T.TOOL_GROUPS) check(`group ${g.id} has at least one tool`, tools.some((t) => t.group === g.id));
-  check('nine groups, in the directive order (0.77: Terminal after Diagnostics; 0.78: and files)', j(T.TOOL_GROUPS.map((g) => g.label)) === j(['Diagnostics', 'Terminal and files', 'PowerShell / Scripts', 'Services & Processes', 'Software', 'Windows Updates', 'Networking', 'Security', 'Maintenance']));
+  check('nine groups, in the directive order (0.77: Terminal after Diagnostics; 0.78: and files)', j(T.TOOL_GROUPS.map((g) => g.label)) === j(['Diagnostics', 'Terminal and files', 'PowerShell / Scripts', 'Services & processes', 'Software', 'Windows Updates', 'Networking', 'Security', 'Maintenance']));
   check('every tool belongs to a known group', tools.every((t) => T.TOOL_GROUPS.some((g) => g.id === t.group)));
   const later = tools.filter((t) => kindOf(t) === 'later').map((t) => t.id);
   check('only one tool is "coming later" (flush DNS / renew DHCP); 0.76 replaced the security-posture placeholder with its checks', j(later) === j(['flush-dns']), j(later));

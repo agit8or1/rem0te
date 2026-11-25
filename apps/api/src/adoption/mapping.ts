@@ -89,8 +89,8 @@ export function normaliseValue(kind: MappingKind, raw: string): { ok: true; valu
   const v = raw.trim().toLowerCase().replace(/\.$/, '');
   switch (kind) {
     case 'domain':
-      if (!validDomain(v)) return { ok: false, message: 'A domain is letters, digits, hyphens and dots, as the computer reports it (contoso.local or CONTOSO).' };
-      if (NOT_A_DOMAIN.has(v)) return { ok: false, message: `"${v}" is what computers outside a domain report; a rule on it would match all of them.` };
+      if (!validDomain(v)) return { ok: false, message: 'A domain is letters, digits, hyphens and dots, as the device reports it (contoso.local or CONTOSO).' };
+      if (NOT_A_DOMAIN.has(v)) return { ok: false, message: `"${v}" is what devices outside a domain report; a rule on it would match all of them.` };
       return { ok: true, value: v };
     case 'hostname_prefix':
       if (!PREFIX_RE.test(v)) return { ok: false, message: 'A hostname prefix is at least two letters, digits or hyphens (e.g. ACME-).' };

@@ -76,14 +76,14 @@ export default function BrandingPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Form */}
         <Card>
-          <CardHeader><CardTitle className="text-sm">Brand Settings</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-sm">Brand settings</CardTitle></CardHeader>
           <CardContent>
             <form
               onSubmit={(e: FormEvent) => { e.preventDefault(); updateMutation.mutate(); }}
               className="space-y-4"
             >
               <div className="space-y-2">
-                <Label htmlFor="portal-title">Portal Title</Label>
+                <Label htmlFor="portal-title">Portal title</Label>
                 <Input
                   id="portal-title"
                   value={form.portalTitle}
@@ -102,7 +102,7 @@ export default function BrandingPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="accent-color">Accent Color</Label>
+                <Label htmlFor="accent-color">Accent color</Label>
                 <div className="flex gap-2">
                   <input
                     type="color"
@@ -119,7 +119,7 @@ export default function BrandingPage() {
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="support-email">Support Email</Label>
+                <Label htmlFor="support-email">Support email</Label>
                 <Input
                   id="support-email"
                   type="email"
@@ -129,7 +129,7 @@ export default function BrandingPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="support-phone">Support Phone</Label>
+                <Label htmlFor="support-phone">Support phone</Label>
                 <Input
                   id="support-phone"
                   value={form.supportPhone}
@@ -138,7 +138,7 @@ export default function BrandingPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="footer-text">Footer Text</Label>
+                <Label htmlFor="footer-text">Footer text</Label>
                 <Input
                   id="footer-text"
                   value={form.footerText}
@@ -147,7 +147,7 @@ export default function BrandingPage() {
                 />
               </div>
               <Button type="submit" disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? 'Saving…' : 'Save Branding'}
+                {updateMutation.isPending ? 'Saving…' : 'Save branding'}
               </Button>
             </form>
           </CardContent>
@@ -175,7 +175,7 @@ export default function BrandingPage() {
                   />
                 )}
                 <span className="text-white font-semibold text-sm">
-                  {form.portalTitle || 'Support Portal'}
+                  {form.portalTitle || 'Support portal'}
                 </span>
               </div>
               <div className="p-4 bg-background">

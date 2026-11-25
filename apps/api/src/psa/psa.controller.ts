@@ -16,7 +16,7 @@ function fresh(stepUp: StepUpService, req: Request) {
 const scopeOf = (q: Record<string, unknown>) => ({ scope: q.scope === 'global' ? 'global' as const : 'business' as const, businessId: typeof q.businessId === 'string' && q.businessId ? q.businessId : null });
 
 /**
- * Settings → PSA / ticketing (0.48). The platform default is a Platform
+ * Administration → PSA / ticketing (0.48). The platform default is a Platform
  * Admin's; a business's own connector its Business Owner's (checked in the
  * service). Every write needs fresh authentication.
  */

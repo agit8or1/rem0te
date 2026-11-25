@@ -81,8 +81,8 @@ export class GroupMembershipService {
     const g = await this.prisma.endpointGroup.findFirst({ where: { id: groupId, customerId }, select: { id: true, name: true, customerId: true, kind: true, rule: true } });
     if (!g?.customerId) throw new NotFoundException('Group not found');
     const pg = this.describe(g as { id: string; name: string; customerId: string; kind: 'STATIC' | 'RULE'; rule: unknown });
-    if (pg.use === 'reads_alerts') throw new BadRequestException({ code: 'GROUP_READS_ALERTS', message: `"${g.name}" picks computers by their alerts. A policy cannot use it: monitors raise alerts, so the group would decide its own monitors.` });
-    if (pg.use === 'unreadable') throw new BadRequestException({ code: 'GROUP_RULE_UNREADABLE', message: `"${g.name}" has a rule this server cannot read, so it matches no computer. Fix the rule first.` });
+    if (pg.use === 'reads_alerts') throw new BadRequestException({ code: 'GROUP_READS_ALERTS', message: `"${g.name}" picks devices by their alerts. A policy cannot use it: monitors raise alerts, so the group would decide its own monitors.` });
+    if (pg.use === 'unreadable') throw new BadRequestException({ code: 'GROUP_RULE_UNREADABLE', message: `"${g.name}" has a rule this server cannot read, so it matches no device. Fix the rule first.` });
     return pg;
   }
 

@@ -78,11 +78,11 @@ export function RequestAttachments({ requestId, attachments, hidden }: { request
   if (!attachments.length && !hidden) return null;
   return (
     <div className="space-y-2" data-testid="request-attachments">
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sent from the computer</p>
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sent from the device</p>
       {attachments.map((a) => (a.kind === 'screenshot' ? <Screenshot key={a.id} requestId={requestId} a={a} /> : <Usage key={a.id} a={a} />))}
       {hidden > 0 && (
         <p className="text-xs text-muted-foreground" data-testid="request-attachments-hidden">
-          This request carries {hidden === 1 ? 'an attachment' : `${hidden} attachments`} from the computer, shown only to people who can see that computer.
+          This request carries {hidden === 1 ? 'an attachment' : `${hidden} attachments`} from the device, shown only to people who can see that device.
         </p>
       )}
     </div>

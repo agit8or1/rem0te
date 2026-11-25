@@ -313,7 +313,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
           display: { updates: [], deployment: null, policy: { id: r.id, name: doc.name.slice(0, 120), digest: r.digest }, ...(doc.task.kind === 'software' ? { software: doc.task.display } : {}) },
         });
         await this.prisma.automationOccurrence.create({
-          data: { policyId: r.id, customerId: r.customerId, occurrenceKey: key, attempt: plans.length + 1, jobId: job.id, ok: true, code: 'proposed', message: `Signed for ${ids.length} computer(s), valid until ${notAfter.toISOString()}.`, targets: ids.length, skipped: skipped as unknown as Prisma.InputJsonValue },
+          data: { policyId: r.id, customerId: r.customerId, occurrenceKey: key, attempt: plans.length + 1, jobId: job.id, ok: true, code: 'proposed', message: `Signed for ${ids.length} device(s), valid until ${notAfter.toISOString()}.`, targets: ids.length, skipped: skipped as unknown as Prisma.InputJsonValue },
         });
         return rec(true, 'proposed', `Signed for ${ids.length} computer(s)${skipped.length ? `; ${skipped.length} left out` : ''}.`, job.id);
       } catch (e) {
@@ -417,7 +417,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     if (dto.supersedes) {
       supersedes = await this.scoped(actor, dto.supersedes);
       if (supersedes.customerId !== dto.businessId) this.bad('INVALID_REQUEST', 'A revision replaces a schedule of the same business.');
-      if (!this.mayManage(actor, supersedes)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever created the schedule, a Business Owner of this business or a Platform Admin can revise it.' });
+      if (!this.mayManage(actor, supersedes)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever created the schedule, a Business Owner of this customer or a Platform Admin can revise it.' });
       if (['REVOKED', 'REJECTED', 'EXPIRED'].includes(supersedes.status)) this.bad('INVALID_REQUEST', 'That schedule is no longer live; make a new one instead of a revision.');
     }
 
@@ -440,7 +440,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       const name = (ep.hostname ?? ep.name).slice(0, 64);
       const dec = await this.access.evaluateAction(actor, ep, 'high');
       if (!dec.ok) throw new ForbiddenException({ code: dec.reason.toUpperCase(), message: `${name}: ${dec.message}`, endpointId: id });
-      if (!ep.rustdeskNode?.rustdeskId || !ep.rustdeskNode.agentSecretHash) throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: `${name}: this computer has no enrolled device identity.`, endpointId: id });
+      if (!ep.rustdeskNode?.rustdeskId || !ep.rustdeskNode.agentSecretHash) throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: `${name}: this device has no enrolled device identity.`, endpointId: id });
       if (ep.updateChannel !== 'signed') throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: `${name}: runs the standard agent. Move it to the signed agent first.`, endpointId: id });
       return { endpointId: id, hostname: name, rustdeskId: ep.rustdeskNode.rustdeskId, deviceSecretSha256: ep.rustdeskNode.agentSecretHash };
     };
@@ -453,7 +453,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       const g = await this.membership.groupForPolicy(dto.businessId, dto.targets.groupId);
       // The author must be able to act on every computer the group holds now; later members are checked at each run.
       for (const id of (await this.membership.snapshot([g.id])).members(g.id)) {
-        await this.acl.assertEndpointInScope(actor, id).catch(() => { throw new ForbiddenException({ code: 'GROUP_NOT_REACHABLE', message: `"${g.name}" holds a computer you cannot act on, so you cannot schedule it.` }); });
+        await this.acl.assertEndpointInScope(actor, id).catch(() => { throw new ForbiddenException({ code: 'GROUP_NOT_REACHABLE', message: `"${g.name}" holds a device you cannot act on, so you cannot schedule it.` }); });
         const ep = await this.actions.endpointFor(id);
         const dec = ep ? await this.access.evaluateAction(actor, ep, 'high') : null;
         if (!dec?.ok) throw new ForbiddenException({ code: 'GROUP_NOT_REACHABLE', message: `"${g.name}" holds ${ep?.hostname ?? ep?.name ?? 'a computer'}, which you cannot act on: ${dec && !dec.ok ? dec.message : 'not found'}` });
@@ -462,7 +462,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     }
 
     const signerPolicy = await this.signer.policy(dto.businessId);
-    if (signerPolicy.status !== 200) throw new ConflictException({ code: 'APPROVAL_SIGNER_ERROR', message: 'The approval signer did not return this business\'s policy.' });
+    if (signerPolicy.status !== 200) throw new ConflictException({ code: 'APPROVAL_SIGNER_ERROR', message: 'The approval signer did not return this customer\'s policy.' });
     const direct = signerPolicy.body.approval === DIRECT;
     // §58: in direct mode the signer activates it at admission, with no approvers; the request is the decision.
     if (direct) assertFresh(freshMethod, { action: 'actions.direct', message: 'Direct mode: this schedule starts running as soon as you create it, with no approval step. Confirm it is you.' });
@@ -494,7 +494,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       if (!supersedes || supersedes.customerId !== input.businessId || supersedes.taskKind !== 'restart' || ['REVOKED', 'REJECTED', 'EXPIRED'].includes(supersedes.status)) supersedes = null;
     }
     const signerPolicy = await this.signer.policy(input.businessId);
-    if (signerPolicy.status !== 200) throw new ConflictException({ code: 'APPROVAL_SIGNER_ERROR', message: 'The approval signer did not return this business\'s policy.' });
+    if (signerPolicy.status !== 200) throw new ConflictException({ code: 'APPROVAL_SIGNER_ERROR', message: 'The approval signer did not return this customer\'s policy.' });
     const direct = signerPolicy.body.approval === DIRECT;
     // §58: in direct mode the signer activates it at admission, with no approvers; the request is the decision.
     if (direct) assertFresh(freshMethod, { action: 'actions.direct', message: 'Direct mode: this restart window starts working as soon as you save it, with no approval step. Confirm it is you.' });
@@ -698,7 +698,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     const dto = ReasonDto.safeParse(raw ?? {});
     if (!dto.success) this.bad('INVALID_REQUEST', 'A reason of at least 3 characters is required.');
     const r = await this.scoped(actor, id);
-    if (!this.mayManage(actor, r)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever created the schedule, a Business Owner of this business or a Platform Admin can pause it.' });
+    if (!this.mayManage(actor, r)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever created the schedule, a Business Owner of this customer or a Platform Admin can pause it.' });
     if (!['AWAITING_APPROVAL', 'ACTIVE'].includes(r.status)) throw new ConflictException({ code: 'NOT_ALLOWED_NOW', message: `The schedule is ${r.status.toLowerCase().replace(/_/g, ' ')}.` });
     const c = await this.prisma.automationPolicy.updateMany({ where: { id, pausedAt: null }, data: { pausedAt: now, pausedById: actor.userId, pauseReason: dto.data!.reason } });
     if (!c.count) throw new ConflictException({ code: 'NOT_ALLOWED_NOW', message: 'The schedule is already paused.' });
@@ -710,7 +710,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
   /** Resume: the controller asks for a fresh sign-in (automation.policy) first — it lets the schedule run again. */
   async resume(actor: ActorContext, id: string, now = new Date()) {
     const r = await this.scoped(actor, id);
-    if (!this.mayManage(actor, r)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever created the schedule, a Business Owner of this business or a Platform Admin can resume it.' });
+    if (!this.mayManage(actor, r)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever created the schedule, a Business Owner of this customer or a Platform Admin can resume it.' });
     if (!['AWAITING_APPROVAL', 'ACTIVE'].includes(r.status)) throw new ConflictException({ code: 'NOT_ALLOWED_NOW', message: `The schedule is ${r.status.toLowerCase().replace(/_/g, ' ')}; it cannot be resumed.` });
     const c = await this.prisma.automationPolicy.updateMany({ where: { id, pausedAt: { not: null }, status: { in: ['AWAITING_APPROVAL', 'ACTIVE'] } }, data: { pausedAt: null, pausedById: null, pauseReason: null } });
     if (!c.count) throw new ConflictException({ code: 'NOT_ALLOWED_NOW', message: 'The schedule is not paused.' });
@@ -738,7 +738,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     const dto = ReasonDto.safeParse(raw ?? {});
     if (!dto.success) this.bad('INVALID_REQUEST', 'A reason of at least 3 characters is required.');
     const r = await this.scoped(actor, id);
-    if (!this.mayManage(actor, r)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever created the schedule, a Business Owner of this business or a Platform Admin can revoke it.' });
+    if (!this.mayManage(actor, r)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever created the schedule, a Business Owner of this customer or a Platform Admin can revoke it.' });
     if (r.status === 'REVOKED') throw new ConflictException({ code: 'NOT_ALLOWED_NOW', message: 'The schedule is already revoked.' });
     const reason = dto.data!.reason;
     const u = await this.prisma.automationPolicy.update({ where: { id }, data: { status: 'REVOKED', revokedAt: now, revokedById: actor.userId, revokeReason: reason } });

@@ -34,7 +34,7 @@ const SECRET: Record<string, string> = { bound: 'Bound', none: 'Not bound', no_r
 function DeviceTable({ list, empty, extra }: { list: List; empty: string; extra: { head: string; cell: (r: Row) => React.ReactNode } }) {
   return (
     <>
-      <Table head={['Device', 'Business · site', 'Platform', 'Agent', extra.head]} empty={empty}
+      <Table head={['Device', 'Customer · site', 'Platform', 'Agent', extra.head]} empty={empty}
         rows={list.rows.map((r) => [
           <Link key="d" href={`/endpoints/${r.device.id}`} className="font-medium hover:underline">{r.device.name}</Link>,
           where(r.business, r.site), r.platform ?? 'Not reported', <span key="a" title={agentVersionTitle(r.agent.versionView)}>{`${AGENT[r.agent.type] ?? r.agent.type}${shownAgentVersion(r.agent.versionView, r.agent.version) ? ` ${shownAgentVersion(r.agent.versionView, r.agent.version)}` : ''}`}</span>, extra.cell(r),
@@ -54,7 +54,7 @@ export default function AgentCoveragePage() {
   return (
     <div className="p-6 space-y-6">
       <PageHeader title="Agent coverage" description="Which agent each device runs, and the devices whose agent cannot be relied on." />
-      {!allowed ? <Refused error={{ response: { status: 403, data: { message: 'Agent coverage needs the View computers permission.' } } }} /> : (
+      {!allowed ? <Refused error={{ response: { status: 403, data: { message: 'Agent coverage needs the View devices permission.' } } }} /> : (
         <>
           <FilterBar facets={data?.facets} filters={filters} set={set} silent report="agent-coverage" params={params} disabled={!t?.total} />
           {error ? <Refused error={error} /> : null}
@@ -83,7 +83,7 @@ export default function AgentCoveragePage() {
                   ])} />
               </Section>
               <Section title="By site">
-                <Table head={['Business · site', 'Devices', 'Signed', 'Standard', 'No agent', 'No secret', `Silent ${data.silentDays} d`, 'Non-Windows, no inventory']} empty="No sites."
+                <Table head={['Customer · site', 'Devices', 'Signed', 'Standard', 'No agent', 'No secret', `Silent ${data.silentDays} d`, 'Non-Windows, no inventory']} empty="No sites."
                   rows={data.bySite.map((g) => [where(g.business, g.site), g.total, g.signed, g.standard, g.none, g.noDeviceSecret, g.silent, g.nonWindowsNoInventory])} />
               </Section>
               <Section title="No device secret">

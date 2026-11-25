@@ -40,7 +40,7 @@ export default function MfaPage() {
           <Tabs defaultValue="totp">
             <TabsList className="w-full mb-4">
               <TabsTrigger value="totp" className="flex-1">Authenticator</TabsTrigger>
-              <TabsTrigger value="recovery" className="flex-1">Recovery Code</TabsTrigger>
+              <TabsTrigger value="recovery" className="flex-1">Recovery code</TabsTrigger>
             </TabsList>
             <TabsContent value="totp">
               <form onSubmit={handleVerify} className="space-y-4">
@@ -80,7 +80,7 @@ export default function MfaPage() {
                 </div>
                 {error && <p className="text-sm text-destructive">{error}</p>}
                 <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? 'Verifying…' : 'Use Recovery Code'}
+                  {loading ? 'Verifying…' : 'Use recovery code'}
                 </Button>
               </form>
             </TabsContent>

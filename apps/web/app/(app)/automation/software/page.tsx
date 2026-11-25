@@ -72,21 +72,21 @@ export default function SoftwareCatalogPage() {
 
       <div className="mb-4 rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1 max-w-4xl" data-software-explainer>
         <p>
-          Only what is in this catalog can be installed or uninstalled, and only at the version pinned here. Each computer downloads the installer with winget from winget&apos;s own source, hashes the file itself and refuses it unless it matches the SHA-256 pinned here — nothing is uploaded to or served by this portal.
+          Only what is in this catalog can be installed or uninstalled, and only at the version pinned here. Each device downloads the installer with winget from winget&apos;s own source, hashes the file itself and refuses it unless it matches the SHA-256 pinned here — nothing is uploaded to or served by this portal.
           winget&apos;s own hash check applies again when it installs. The install step downloads once more, and those bytes are checked by winget against the source manifest, not hashed again by the agent.
         </p>
         <p>
-          Every plan is high risk and needs two approvers on the approval signer; you cannot approve your own request, and nothing on this page can approve. (In direct mode, which only the approval signer&apos;s operator can turn on for a business, a ring is signed as soon as it is requested{askDirect ? ', after a fresh sign-in' : ''}.) A deployment starts with one canary computer, and each later ring can be requested only once the one before it has passed: the canary&apos;s detection rule must confirm the change, failures must stay within the threshold, and the soak time must have passed.
-          Computers whose software is managed by Configuration Manager or Intune refuse software plans. Nothing here has been run on a real Windows computer yet.
+          Every plan is high risk and needs two approvers on the approval signer; you cannot approve your own request, and nothing on this page can approve. (In direct mode, which only the approval signer&apos;s operator can turn on for a customer, a ring is signed as soon as it is requested{askDirect ? ', after a fresh sign-in' : ''}.) A deployment starts with one canary device, and each later ring can be requested only once the one before it has passed: the canary&apos;s detection rule must confirm the change, failures must stay within the threshold, and the soak time must have passed.
+          Devices whose software is managed by Configuration Manager or Intune refuse software plans. Nothing here has been run on a real Windows computer yet.
         </p>
       </div>
 
       <div className="mb-4 flex flex-wrap items-end gap-4">
         {isPlatformAdmin && (
           <div className="w-72">
-            <Label htmlFor="sw-biz" className="text-xs">Business</Label>
+            <Label htmlFor="sw-biz" className="text-xs">Customer</Label>
             <select id="sw-biz" className={selectClass} value={picked} onChange={(e) => { setPicked(e.target.value); setCreating(false); }}>
-              <option value="">Every business, and global entries</option>
+              <option value="">Every customer, and global entries</option>
               {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           </div>
@@ -121,7 +121,7 @@ export default function SoftwareCatalogPage() {
                   <Package className="h-4 w-4 text-muted-foreground" />
                   <strong className="break-all">{e.name}</strong>
                   <span className="font-mono text-xs">{e.packageId} {e.version}</span>
-                  <Badge variant="outline">{e.scope === 'global' ? 'Global' : e.businessName ?? 'Business'}</Badge>
+                  <Badge variant="outline">{e.scope === 'global' ? 'Global' : e.businessName ?? 'Customer'}</Badge>
                   <Badge variant={e.hashSource === 'winget_pkgs' ? 'secondary' : 'warning'}>{e.hashSource === 'winget_pkgs' ? 'hash from winget-pkgs' : 'hash pasted'}</Badge>
                   {e.archivedAt && <Badge variant="outline">archived</Badge>}
                 </div>

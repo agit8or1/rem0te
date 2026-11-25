@@ -84,7 +84,7 @@ export const idKey = (u: { updateId: string; revision: number }) => `${u.updateI
 export function eligibility(u: PostureUpdate): { ok: boolean; reason: string | null } {
   if (!CLASSIFICATIONS[u.classification]) return { ok: false, reason: EXCLUDED_CLASSIFICATIONS[u.classification] ? `${EXCLUDED_CLASSIFICATIONS[u.classification]} are not installed by a plan` : 'unclassified updates are not installed by a plan' };
   if (u.browseOnly) return { ok: false, reason: 'optional update' };
-  if (u.userInput && !USER_INPUT_TOLERATED.has(u.classification)) return { ok: false, reason: 'needs someone at the computer' };
+  if (u.userInput && !USER_INPUT_TOLERATED.has(u.classification)) return { ok: false, reason: 'needs someone at the device' };
   if (!u.eulaAccepted) return { ok: false, reason: 'needs a licence accepted' };
   return { ok: true, reason: null };
 }
@@ -141,7 +141,7 @@ export function updateState(u: { updateId: string; revision: number }, t: Target
         if (stillOffered) return { state: 'failed', detail: 'a later scan offers it again: it did not stay installed' };
       }
       if (o.state === 'restart_required') return { state: 'restart_required', detail: 'installed; takes effect after a restart' };
-      if (after && posture!.reboot.pending) return { state: 'installed', detail: 'a restart is pending on this computer; confirmed by a scan after it' };
+      if (after && posture!.reboot.pending) return { state: 'installed', detail: 'a restart is pending on this device; confirmed by a scan after it' };
       return { state: 'installed', detail: o.state === 'already_installed' ? 'already installed' : 'waiting for a later scan to confirm' };
     }
     case 'superseded': return { state: 'superseded', detail: o.reason ?? null };

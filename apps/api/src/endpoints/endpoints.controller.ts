@@ -257,7 +257,7 @@ export class EndpointsController {
    */
   private async credentialGate(req: Request, u: JwtPayload): Promise<void> {
     if (u.mfaVerified !== true && await this.svc.userHasMfa(u.sub)) {
-      throw new ForbiddenException({ code: 'MFA_REQUIRED', message: 'Sign in again with your authenticator to reveal a computer password.' });
+      throw new ForbiddenException({ code: 'MFA_REQUIRED', message: 'Sign in again with your authenticator to reveal a device password.' });
     }
     await this.stepUp.assert(req, 'credential.reveal');
   }

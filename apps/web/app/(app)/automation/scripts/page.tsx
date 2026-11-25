@@ -57,9 +57,9 @@ export default function ScriptLibraryPage() {
 
       {isPlatformAdmin && (
         <div className="mb-4 max-w-sm">
-          <Label htmlFor="sl-biz" className="text-xs">Business</Label>
+          <Label htmlFor="sl-biz" className="text-xs">Customer</Label>
           <select id="sl-biz" className={selectClass} value={picked} onChange={(e) => { setPicked(e.target.value); setCreating(false); }}>
-            <option value="">Every business, and global scripts</option>
+            <option value="">Every customer, and global scripts</option>
             {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </div>
@@ -78,7 +78,7 @@ export default function ScriptLibraryPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <FileCode2 className="h-4 w-4 text-muted-foreground" />
                   <strong className="break-all">{s.name}</strong>
-                  <Badge variant="outline">{s.scope === 'global' ? 'Global' : s.businessName ?? 'Business'}</Badge>
+                  <Badge variant="outline">{s.scope === 'global' ? 'Global' : s.businessName ?? 'Customer'}</Badge>
                   <StatusBadge status={s.latest.status} />
                   <RiskBadge risk={s.latest.risk} />
                 </div>
@@ -123,14 +123,14 @@ function CreateScript({ you, businesses, onDone }: { you: ListData['you']; busin
               <div className="space-y-1">
                 <Label htmlFor="ns-scope" className="text-xs">Scope</Label>
                 <select id="ns-scope" className={selectClass} value={scope} onChange={(e) => setScope(e.target.value as 'business' | 'global')}>
-                  <option value="business">One business</option>
-                  <option value="global">Global (every business)</option>
+                  <option value="business">One customer</option>
+                  <option value="global">Global (every customer)</option>
                 </select>
               </div>
             )}
             {scope === 'business' && isPlatformAdmin && (
               <div className="space-y-1">
-                <Label htmlFor="ns-biz" className="text-xs">Business</Label>
+                <Label htmlFor="ns-biz" className="text-xs">Customer</Label>
                 <select id="ns-biz" className={selectClass} value={businessId} onChange={(e) => setBusinessId(e.target.value)}>
                   <option value="">Choose…</option>
                   {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}

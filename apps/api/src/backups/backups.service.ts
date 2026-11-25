@@ -204,7 +204,7 @@ export class BackupsService {
   // ── Connections (Platform Admin; the controller's guard and fresh check come first) ──
 
   /**
-   * Settings → Backups (0.82): the connections (live and revoked) with their
+   * Administration → Backup connections (0.82): the connections (live and revoked) with their
    * asset counts and last dry run, what St0r is told (the push address from
    * the public address setting, headers, limits), and — for one business —
    * every capability in the four states. Platform Admin (the controller's
@@ -303,13 +303,13 @@ export class BackupsService {
       select: { id: true, customerId: true, endpointId: true, linkSource: true, customer: { select: { tenantId: true } } },
     });
     if (!x) throw new NotFoundException('Asset not found');
-    if (!this.mayConfigure(a, x.customerId)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Linking a backup asset to a computer needs the monitoring:configure permission for the whole business.' });
+    if (!this.mayConfigure(a, x.customerId)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Linking a backup asset to a device needs the monitoring:configure permission for the whole customer.' });
     let endpointId: string | null = null;
     if (d.data.link === 'manual') {
       const ep = await this.prisma.endpoint.findFirst({
         where: { AND: [{ id: d.data.endpointId, customerId: x.customerId, status: 'ACTIVE' }, this.acl.endpointVisibilityWhere(a, x.customerId)] }, select: { id: true },
       });
-      if (!ep) throw new NotFoundException({ code: 'COMPUTER_NOT_FOUND', message: 'No such computer in this asset\'s business.' });
+      if (!ep) throw new NotFoundException({ code: 'COMPUTER_NOT_FOUND', message: 'No such device in this asset\'s customer.' });
       endpointId = ep.id;
     }
     const r = await this.ingest.setLink(x.id, x.customerId, { source: d.data.link, endpointId, by: a.userId });
@@ -344,7 +344,7 @@ export class BackupsService {
       throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'A push provider takes no credential: Rem0te makes its token.' });
     }
     if (await this.prisma.backupConnection.findFirst({ where: { customerId: businessId, kind, revokedAt: null }, select: { id: true } })) {
-      throw new ConflictException({ code: 'BACKUP_CONNECTION_EXISTS', message: 'This business already has a connection to that provider. Revoke it first.' });
+      throw new ConflictException({ code: 'BACKUP_CONNECTION_EXISTS', message: 'This customer already has a connection to that provider. Revoke it first.' });
     }
     const id = `bkc${randomBytes(12).toString('hex')}`;
     const tok = transport === 'push' ? newPushToken(id) : null;
@@ -363,7 +363,7 @@ export class BackupsService {
       });
       return { connection: this.connectionView(c), ...(tok ? { pushToken: tok.token, shownOnce: true } : {}) };
     } catch (e) {
-      if ((e as { code?: string }).code === 'P2002') throw new ConflictException({ code: 'BACKUP_CONNECTION_EXISTS', message: 'This business already has a connection to that provider.' });
+      if ((e as { code?: string }).code === 'P2002') throw new ConflictException({ code: 'BACKUP_CONNECTION_EXISTS', message: 'This customer already has a connection to that provider.' });
       throw e;
     }
   }
@@ -388,7 +388,7 @@ export class BackupsService {
     const d = ObjectiveInput.safeParse(raw ?? {});
     if (!d.success) throw bad(d.error);
     const scope = this.acl.requireScope(a, d.data.businessId);
-    if (!this.mayConfigure(a, scope)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Setting backup targets needs the monitoring:configure permission for the whole business.' });
+    if (!this.mayConfigure(a, scope)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Setting backup targets needs the monitoring:configure permission for the whole customer.' });
     let assetId: string | null = null;
     if (d.data.assetId) {
       // The asset must be readable by this person AND in this business.

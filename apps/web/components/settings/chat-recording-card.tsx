@@ -52,9 +52,9 @@ export function ChatRecordingCard() {
       <CardHeader><CardTitle className="text-sm">Chat recording</CardTitle></CardHeader>
       <CardContent className="space-y-4 text-sm">
         <p className="text-muted-foreground">
-          Recorded chats keep their transcript on the computer&apos;s Chat tab for 400 days after they end. Chats that are not
+          Recorded chats keep their transcript on the device&apos;s Chat tab for 400 days after they end. Chats that are not
           recorded are relayed only: each message is deleted once both sides have it, and anything left when the chat ends.
-          Both the technician and the person at the computer are told which it is. A chat keeps the setting it started with.
+          Both the technician and the person at the device are told which it is. A chat keeps the setting it started with.
         </p>
         {isLoading || !data ? <p className="text-muted-foreground">Loading…</p> : (
           <>
@@ -64,7 +64,7 @@ export function ChatRecordingCard() {
                   <p className="font-medium">{data.business.name}</p>
                   <p className="text-xs text-muted-foreground" data-testid="chat-recording-business" data-effective={data.business.effective ? 'on' : 'off'}>
                     New chats are {word(data.business.effective)}
-                    {data.business.setting === null ? ' (the platform default)' : ' (set for this business)'}.
+                    {data.business.setting === null ? ' (the platform default)' : ' (set for this customer)'}.
                   </p>
                 </div>
                 {data.business.canChange && (
@@ -79,7 +79,7 @@ export function ChatRecordingCard() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="font-medium">Platform default</p>
-                <p className="text-xs text-muted-foreground">Businesses without their own setting: chats are {word(data.platformDefault)}.</p>
+                <p className="text-xs text-muted-foreground">Customers without their own setting: chats are {word(data.platformDefault)}.</p>
               </div>
               {data.canChangePlatform && (
                 <Button size="sm" variant="outline" disabled={setPlatform.isPending} onClick={() => setPlatform.mutate(!data.platformDefault)}>
@@ -88,7 +88,7 @@ export function ChatRecordingCard() {
               )}
             </div>
             {!data.canChangePlatform && !data.business?.canChange && (
-              <p className="text-xs text-muted-foreground">A Business Owner changes this for their business; a Platform Admin sets the default.</p>
+              <p className="text-xs text-muted-foreground">A Business Owner changes this for their customer; a Platform Admin sets the default.</p>
             )}
           </>
         )}

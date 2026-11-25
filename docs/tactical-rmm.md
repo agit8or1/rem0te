@@ -1,6 +1,6 @@
 # Tactical RMM
 
-Connecting to a computer, and reading what Rem0te knows about it, from inside
+Connecting to a device, and reading what Rem0te knows about it, from inside
 Tactical RMM.
 
 ---
@@ -41,7 +41,7 @@ https://<your-rem0te-host>/trmm?host={{agent.hostname}}&client={{client.name}}&s
 
 Right-click any agent → **Run URL Action** → *Connect with Rem0te*.
 
-A second action that opens the computer's page instead of connecting — specs,
+A second action that opens the device's page instead of connecting — specs,
 pending Windows updates, event log — is the same URL with `&action=open`:
 
 ```
@@ -58,7 +58,7 @@ You can make either one the **double-click** action for an agent under
 ### There is no API key in that URL, deliberately
 
 A URL Action opens in the technician's own browser, so it authenticates as
-**them**, with their existing Rem0te session, scoped to the computers they can
+**them**, with their existing Rem0te session, scoped to the devices they can
 already see. Someone who cannot reach a machine in Rem0te cannot reach it from
 TRMM either.
 
@@ -70,24 +70,24 @@ carries on.
 
 ---
 
-## 2. How a TRMM agent is matched to a Rem0te computer
+## 2. How a TRMM agent is matched to a Rem0te device
 
 In this order, stopping at the first exact answer:
 
-1. **The recorded TRMM agent id.** Stored as an endpoint alias (`trmm:<id>`).
+1. **The recorded TRMM agent id.** Stored as a device alias (`trmm:<id>`).
    The only match that cannot be wrong.
-2. **Hostname, narrowed by client name.** Business names are compared loosely —
+2. **Hostname, narrowed by client name.** Customer names are compared loosely —
    case, punctuation and company suffixes are ignored, so *Harbor Logistics* in
    TRMM matches *Harbor Logistics Ltd* in Rem0te.
-3. **Hostname alone**, when exactly one computer answers to it.
+3. **Hostname alone**, when exactly one device answers to it.
 
 **Hostnames collide.** Two customers each with a `SERVER01` is not an edge case,
 and connecting a technician to the wrong customer's machine is the worst thing
-this could do — so when more than one computer matches, Rem0te shows a short
+this could do — so when more than one device matches, Rem0te shows a short
 list and asks. It never picks a "closest" match.
 
 Choosing from that list **records the mapping**: the TRMM agent id is stored
-against that computer, and every later launch from TRMM goes straight through.
+against that device, and every later launch from TRMM goes straight through.
 The integration gets more reliable the more it is used, and the mapping moves
 rather than duplicating if an agent is later rebuilt onto different hardware.
 
@@ -139,11 +139,11 @@ Two reasons it does not:
 
 - **TRMM does not document an API endpoint for setting custom field values.**
   Collector Tasks are the documented mechanism. Building on an undocumented
-  endpoint means an integration that breaks on somebody else's upgrade, in a
+  device means an integration that breaks on somebody else's upgrade, in a
   way that looks like Rem0te's fault.
 - **It would mean Rem0te storing an API key for your RMM.** A TRMM API key
   inherits its user's full permissions and bypasses 2FA. Holding one — to reach
-  across the network and write a field that the endpoint can print locally for
+  across the network and write a field that the device can print locally for
   free — is a large amount of custody for a small amount of convenience.
 
 The machine already knows its own RustDesk ID. Asking it is cheaper and safer
@@ -170,22 +170,22 @@ Write-Output "Rem0te business: $($me.businessId)"
 ```
 
 Scopes, request and response shapes and error codes are in
-[PUBLIC-API.md](PUBLIC-API.md). Keys are scoped to one business and can do
+[PUBLIC-API.md](PUBLIC-API.md). Keys are scoped to one customer and can do
 nothing outside it.
 
 ---
 
 ## Troubleshooting
 
-**"No computer matched"** — the hostname TRMM sent is not one Rem0te knows, or
+**"No device matched"** — the hostname TRMM sent is not one Rem0te knows, or
 not one you have access to. Rem0te matches on hostname, display name and alias;
 check the machine is enrolled and the names agree.
 
-**"More than one computer matches"** — working as intended. Pick one; it is
+**"More than one device matches"** — working as intended. Pick one; it is
 recorded and will not ask again.
 
 **The URL Action opens a login page** — expected the first time in a browser
-that has no Rem0te session. Sign in; it continues to the computer.
+that has no Rem0te session. Sign in; it continues to the device.
 
 **The variable arrives as literal `{{agent.hostname}}`** — a typo in the URL
 pattern, or the wrong case. TRMM does not warn about this.
@@ -194,7 +194,7 @@ pattern, or the wrong case. TRMM does not warn about this.
 
 ## See also
 
-- [inventory.md](inventory.md) — what the computer's page shows once you land on it
+- [inventory.md](inventory.md) — what the device's page shows once you land on it
 - [PUBLIC-API.md](PUBLIC-API.md) — the API guide, for scripts
 - [clients.md](clients.md) — deploying the Rem0te agent, which TRMM can also do
   as an ordinary script

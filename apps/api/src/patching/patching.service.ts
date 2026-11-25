@@ -674,7 +674,7 @@ export class PatchingService {
     const dto = ReasonDto.safeParse(raw ?? {});
     if (!dto.success) this.bad('INVALID_REQUEST', 'A reason of at least 3 characters is required.');
     const d = await this.scoped(actor, id);
-    if (!this.mayManage(actor, d)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever created the deployment, a Business Owner of this business or a Platform Admin can change it.' });
+    if (!this.mayManage(actor, d)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever created the deployment, a Business Owner of this customer or a Platform Admin can change it.' });
     const from = { pause: ['ACTIVE'], resume: ['PAUSED'], cancel: ['ACTIVE', 'PAUSED'] }[to];
     if (!from.includes(d.status)) throw new ConflictException({ code: 'NOT_ALLOWED_NOW', message: `The deployment is ${d.status.toLowerCase()}.` });
     let resumedOverJobId = d.resumedOverJobId;

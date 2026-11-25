@@ -199,7 +199,7 @@ export function membershipStep(
   refusal: string | null,
 ): MembershipStep {
   if (refusal) return { kind: 'refuse', code: 'NOT_ALLOWED', reason: refusal };
-  if (t.customerId !== group.customerId) return { kind: 'refuse', code: 'OTHER_BUSINESS', reason: 'This computer is not in the group’s business; a group holds only its own business’s computers.' };
+  if (t.customerId !== group.customerId) return { kind: 'refuse', code: 'OTHER_BUSINESS', reason: 'This device is not in the group’s customer; a group holds only its own customer’s devices.' };
   if (action === 'group.add' ? isMember : !isMember) return { kind: 'unchanged' };
   return { kind: 'write' };
 }
@@ -255,5 +255,5 @@ export function refusalOf(e: unknown): { code: string; reason: string } {
   if (status === 403) return { code: 'NOT_ALLOWED', reason: msg };
   if (status === 400) return { code: 'INVALID_REQUEST', reason: msg };
   if (status === 409) return { code: 'CONFLICT', reason: msg };
-  return { code: 'ERROR', reason: 'This computer could not be processed; nothing was changed for it.' };
+  return { code: 'ERROR', reason: 'This device could not be processed; nothing was changed for it.' };
 }

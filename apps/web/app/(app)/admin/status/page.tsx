@@ -148,7 +148,7 @@ export default function StatusPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <PageHeader title="System Status" description="Server health and service monitoring">
+      <PageHeader title="System status" description="Server health and service monitoring">
         <div className="flex items-center gap-2">
           {dataUpdatedAt > 0 && (
             <span className="text-xs text-muted-foreground">

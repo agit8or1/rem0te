@@ -105,7 +105,7 @@ export const COLUMNS: ColumnDef[] = [
       </div>
     ),
   },
-  { id: 'business', label: 'Business', defaultOn: true, sort: 'business', cell: (r) => r.business?.name ? <span className="block max-w-[10rem] truncate" title={r.business.name}>{r.business.name}</span> : dash },
+  { id: 'business', label: 'Customer', defaultOn: true, sort: 'business', cell: (r) => r.business?.name ? <span className="block max-w-[10rem] truncate" title={r.business.name}>{r.business.name}</span> : dash },
   { id: 'site', label: 'Site', defaultOn: true, sort: 'site', hideBelow: 'site', cell: (r) => r.site?.name ? <span className="block max-w-[8rem] truncate" title={r.site.name}>{r.site.name}</span> : dash },
   // Id kept as 'group' so saved views from 0.33 keep the column.
   {
@@ -266,7 +266,7 @@ function HealthCell({ r, now }: { r: DeviceRow; now?: number }) {
     <span className="inline-flex items-center gap-2 whitespace-nowrap">
     <Link href={`/endpoints/${r.id}?tab=monitoring`} className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       aria-label={`${h.label}: ${h.title}. Open ${r.name}'s monitoring`} data-testid="health-link">
-      <Badge variant={h.variant} title={`${h.title}. Click to see this computer's monitoring.`} data-health={h.label.toLowerCase()} className="whitespace-nowrap cursor-pointer hover:opacity-80">{h.label}</Badge>
+      <Badge variant={h.variant} title={`${h.title}. Click to see this device's monitoring.`} data-health={h.label.toLowerCase()} className="whitespace-nowrap cursor-pointer hover:opacity-80">{h.label}</Badge>
     </Link>
     {(h.label === 'Warning' || h.label === 'Issues') && <ClearAlertsButton endpointId={r.id} name={r.name} count={r.alerts!.open} />}
     </span>

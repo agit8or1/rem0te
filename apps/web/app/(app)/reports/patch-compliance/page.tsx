@@ -42,8 +42,8 @@ export default function PatchCompliancePage() {
 
   return (
     <div className="p-6 space-y-6">
-      <PageHeader title="Patch compliance" description="Windows Update compliance per business and site, from the update scans your devices have sent." />
-      {!allowed ? <Refused error={{ response: { status: 403, data: { message: 'Patch compliance needs the View computers permission.' } } }} /> : (
+      <PageHeader title="Patch compliance" description="Windows Update compliance per customer and site, from the update scans your devices have sent." />
+      {!allowed ? <Refused error={{ response: { status: 403, data: { message: 'Patch compliance needs the View devices permission.' } } }} /> : (
         <>
           <FilterBar facets={data?.facets} filters={filters} set={set} report="patch-compliance" params={params} disabled={!t?.total} />
           {error ? <Refused error={error} /> : null}
@@ -69,16 +69,16 @@ export default function PatchCompliancePage() {
                 Scans in this view range from {data!.oldestScanAt ? ago(data!.oldestScanAt) : '—'} to {data!.newestScanAt ? ago(data!.newestScanAt) : '—'}.
               </p>
               {data!.byBusiness.length > 1 && (
-                <Section title="By business">
-                  <Table head={['Business', ...head]} empty="No businesses." rows={data!.byBusiness.map((g) => [g.business?.name ?? 'No business', ...row(g)])} />
+                <Section title="By customer">
+                  <Table head={['Customer', ...head]} empty="No customers." rows={data!.byBusiness.map((g) => [g.business?.name ?? 'No customer', ...row(g)])} />
                 </Section>
               )}
               <Section title="By site">
-                <Table head={['Business · site', ...head]} empty="No sites." rows={data!.bySite.map((g) => [where(g.business, g.site), ...row(g)])} />
+                <Table head={['Customer · site', ...head]} empty="No sites." rows={data!.bySite.map((g) => [where(g.business, g.site), ...row(g)])} />
               </Section>
               <Section title="Devices that are not up to date" note={data!.devicesTotal > data!.devices.length ? `Showing ${data!.devices.length} of ${data!.devicesTotal}; the export has every device` : undefined}>
                 <Table
-                  head={['Device', 'Business · site', 'State', 'Scan from', 'Scan age', 'Pending', 'Restart']}
+                  head={['Device', 'Customer · site', 'State', 'Scan from', 'Scan age', 'Pending', 'Restart']}
                   empty="Every device in this view has a fresh scan with nothing pending."
                   rows={data!.devices.map((d) => [
                     <Link key="d" href={`/endpoints/${d.device.id}?tab=patches`} className="font-medium hover:underline">{d.device.name}</Link>,

@@ -1,17 +1,17 @@
 # Patching setup
 
 This page is the order of work for turning on signed Windows patching on a production server: installing updates
-from a computer's **Patches** tab, staged deployments, and automatic patch policies. Each step links to the page that
+from a device's **Patches** tab, staged deployments, and automatic patch policies. Each step links to the page that
 holds the detail. This page doesn't repeat them.
 
 **Check where you are first.** As a Platform Admin, open **Patching**. The **Signed patching pre-flight** card at the
 top (`GET /api/v1/patching/preflight`) lists each prerequisite below as present or missing. Every line is read from
-real state: the served update repository, the approval signer's own answers, and what the computers report. None of
+real state: the served update repository, the approval signer's own answers, and what the devices report. None of
 it is a checkbox someone ticked. Run it again after each step.
 
 > **Fixture-tested only.** The automatic path has been proven end to end against a simulated Windows Update,
 > synthetic passkeys and a scratch approval signer (`e2e-patch-policies.mjs`). It has not yet run on a real Windows
-> computer, a real Windows Update service or a real authenticator. Before relying on it, run it once in a lab with a
+> device, a real Windows Update service or a real authenticator. Before relying on it, run it once in a lab with a
 > canary you can watch.
 
 ## Direct mode (the default for a single operator)
@@ -25,9 +25,9 @@ $S policy set --business default --approval direct
 
 Installs, rings and patch policies are then signed as soon as you request them, after a fresh sign-in, with no
 approval page: a policy is active as soon as it is proposed. What it gives up is a second person — anyone who fully
-takes over the portal can then install updates on those computers. What still protects: the fresh sign-in, your
+takes over the portal can then install updates on those devices. What still protects: the fresh sign-in, your
 permissions, the audit log, containment pauses, the policy's own filter, window and restart rule, the canary gate, and
-each computer verifying the signer's signature. Direct mode cannot be combined with customer sign-off, and computers
+each device verifying the signer's signature. Direct mode cannot be combined with customer sign-off, and devices
 need the 0.40 agent. The full account is in
 [Approved actions → Direct mode](approved-actions.md#direct-mode-the-default-for-a-single-operator); the signed
 mode below remains the alternative.
@@ -73,32 +73,32 @@ trade-off. Nothing is pushed to GitHub: the owner's `root.json` is written only 
 - [Update signing → Shipping a release](update-signing.md#shipping-a-release)
 - [Update signing → Portal configuration](update-signing.md#portal-configuration) (`UPDATE_REPO_DIR`)
 
-A patch policy with more than one ring needs the **0.34** agent on every computer in every ring but the last: those
-computers' signed results are what open the next ring
+A patch policy with more than one ring needs the **0.34** agent on every device in every ring but the last: those
+devices' signed results are what open the next ring
 ([Staged patching → Signed results](staged-patching.md#signed-results-034)). An older agent signs nothing, and the
 policy is refused (`RESULT_KEY_MISSING`) until it has upgraded and scanned once.
 
-Plans name the build by its digest, and a computer on any other build refuses the plan. So "published" here means the
-build the computers will actually run.
+Plans name the build by its digest, and a device on any other build refuses the plan. So "published" here means the
+build the devices will actually run.
 
-## 2. Move computers to the signed channel
+## 2. Move devices to the signed channel
 
-Pre-flight checks: **Computers are on the signed channel, on the published build** and **Signed computers have
+Pre-flight checks: **Devices are on the signed channel, on the published build** and **Signed devices have
 reported a Windows Update scan.**
 
 Follow [Update signing → Moving existing agents](update-signing.md#moving-existing-agents). GPO or Intune is the
-method that doesn't trust the portal. From 0.34 you can also move one computer, or a selection, from the console:
-**Upgrade to full agent** at the top of the computer's page or on its **Overview → Agent** card (or **Upgrade to full agent…** for selected devices
+method that doesn't trust the portal. From 0.34 you can also move one device, or a selection, from the console:
+**Upgrade to full agent** at the top of the device's page or on its **Overview → Agent** card (or **Upgrade to full agent…** for selected devices
 on **All devices**), with a reason and a fresh sign-in, and follow it on **Devices → Agent migrations**. That run trusts
-the portal once, as every standard-agent update already does; it is refused in *Signed only* mode. Each computer then:
+the portal once, as every standard-agent update already does; it is refused in *Signed only* mode. Each device then:
 
 - reports `windows.update.install@1` in its heartbeat;
 - updates itself to the published build;
 - sends a signed Windows Update scan within its first check-ins. To get one sooner, press **Scan now** on its
   **Patches** tab.
 
-A computer still on the standard agent shows its updates read-only. Its Patches tab has no **Install updates** button
-and says why. When the computer can be moved from the console it says so and offers **Open the Agent card**; when it
+A device still on the standard agent shows its updates read-only. Its Patches tab has no **Install updates** button
+and says why. When the device can be moved from the console it says so and offers **Open the Agent card**; when it
 can't, it names exactly what is missing — for example *No signed release is published. Publishing one needs the
 offline signing keys only you hold*, with a link to [Update signing → Roles and keys](update-signing.md#roles-and-keys).
 
@@ -120,7 +120,7 @@ pre-flight reports it as too old.
 
 Signed results need the **0.34** signer, rebuilt with `build-approval-signer.mjs`. Policies approved by an older
 signer carry no result keys; after the upgrade they can run their canary but no later ring
-(`result_key_not_pinned`), so approve them again once their computers run the 0.34 agent.
+(`result_key_not_pinned`), so approve them again once their devices run the 0.34 agent.
 
 ## 4. Point the portal at the signer
 
@@ -146,27 +146,27 @@ $S policy set --business default --approval direct
 ```
 
 **Signed mode** (approvals): follow [Approved actions → Setting it up](approved-actions.md#setting-it-up), steps 3
-and 4. The fingerprint is read aloud from the approver's own screen. If the business needs customer sign-off, set it
+and 4. The fingerprint is read aloud from the approver's own screen. If the customer needs customer sign-off, set it
 on the signer. You need two approvers other than whoever will propose the policy. Nobody approves their own request.
 
 ## 6. Create the first policy
 
 Pre-flight check: **The policy sweep is running.** It runs unless `PATCH_POLICY_SWEEP=off`.
 
-Try one computer first: on its **Patches** tab, the **Install updates** card lists every update Windows offers it,
+Try one device first: on its **Patches** tab, the **Install updates** card lists every update Windows offers it,
 each with its own checkbox (0.42; **Select all** ticks every installable one). Tick one and give a reason. Updates that
 cannot be installed — feature upgrades, optional previews, anything needing a licence — are listed greyed out with
 why.
-That builds a one-computer deployment whose plan two approvers approve on the signer (in direct mode it is signed at
+That builds a one-device deployment whose plan two approvers approve on the signer (in direct mode it is signed at
 once). Watch it reach **effective**.
 Then:
 
 1. Open **Patching** → **Automatic patch policies** → **New policy**. You need a fresh sign-in.
-2. Choose the computers. From 0.62 you just tick them (or **Select all**), and they all install together in the
-   window — at most 125, split into plans of 25 that wait for nothing. Tick **Test on one computer first** only if you
+2. Choose the devices. From 0.62 you just tick them (or **Select all**), and they all install together in the
+   window — at most 125, split into plans of 25 that wait for nothing. Tick **Test on one device first** only if you
    want the staged rollout:
-   - **Ring 0** is the canary: one computer that is representative and that someone can restart.
-   - Later rings can each hold up to 25 computers.
+   - **Ring 0** is the canary: one device that is representative and that someone can restart.
+   - Later rings can each hold up to 25 devices.
 3. Choose what it may install:
    - the classes (Security, Critical, Update Rollups, Updates, and from 0.42 Drivers and Definition Updates — only
      Security is ticked to start with, and drivers are installed only if you tick them);
@@ -180,11 +180,11 @@ Then:
      none, the policy would be refused (`window_never_opens`). A monthly window needs the approval signer rebuilt
      from 0.53 (see [Staged patching → Monthly windows](staged-patching.md#monthly-windows-053)); until then it is
      refused at the signer (`invalid_policy`).
-   - with *Test on one computer first* only: the soak time between rings and the number of failed computers allowed
+   - with *Test on one device first* only: the soak time between rings and the number of failed devices allowed
      per ring;
    - there is no expiry (0.63): the policy stands until it is revoked. A policy made before 0.63 keeps its expiry;
    - the restart rule: **Never restart** (the default) or **Restart if required, inside the window** (0.34);
-   - from 0.54, a **restart window**: *Restart if required, in a restart window* or *Restart every computer in a
+   - from 0.54, a **restart window**: *Restart if required, in a restart window* or *Restart every device in a
      restart window (maintenance restart)*, with its own weekly or monthly window, and optionally the RustDesk
      exception (never ticked by default). See
      [Staged patching → Restart windows](staged-patching.md#restart-windows-054).
@@ -192,61 +192,61 @@ Then:
    button says **Create policy**, no reason is asked for, and it is active at once, labelled *Approved automatically
    (direct mode)*. An all-at-once policy needs the approval signer from 0.62.
 
-![Patching for one business: the pre-flight checks and the policies](screenshots/guide/patch-policies.png)
+![Patching for one customer: the pre-flight checks and the policies](screenshots/guide/patch-policies.png)
 
-1. **Business** — policies belong to one business.
+1. **Customer** — policies belong to one customer.
 2. **Pre-flight** — each requirement in this guide, checked against the server as it is. On this demo server only
    the policy sweep fails (it is off in the docs stack), which is what it should say.
 3. **Check again** — re-runs them.
-4. **Company-wide patch policy** — one policy for every computer of the business set to *Inherit*, plus
-   assignable ones for a named group (see [Or: one policy for the whole business](#or-one-policy-for-the-whole-business-050) below).
+4. **Company-wide patch policy** — one policy for every device of the customer set to *Inherit*, plus
+   assignable ones for a named group (see [Or: one policy for the whole customer](#or-one-policy-for-the-whole-customer-050) below).
 5. **Active** — approved; it acts only inside its windows. In two-person mode a new policy is *awaiting
    approval* until two people on the signer approve it.
 6. **New policy** — needs a fresh sign-in.
 
 From then on, inside each open window:
 
-- All at once: the sweep proposes a deployment of every ready computer's offered, policy-allowed updates, and the
+- All at once: the sweep proposes a deployment of every ready device's offered, policy-allowed updates, and the
   signer signs every plan without further approval.
-- With *Test on one computer first*: the sweep proposes the canary's updates; once a later scan confirms the canary
+- With *Test on one device first*: the sweep proposes the canary's updates; once a later scan confirms the canary
   **effective** and the soak has passed, the signer signs the next ring.
 
 It signs nothing outside the policy. The bounds are listed in
 [Staged patching → Patch policies](staged-patching.md#patch-policies).
 
-### Or: one policy for the whole business (0.50)
+### Or: one policy for the whole customer (0.50)
 
 Instead of naming rings by hand, open **Patching** → **Company-wide patch policy** → **Company-wide policy** (fresh
 sign-in). Choose the classes, window (weekly or, from 0.53, monthly), soak, failure threshold, restart rule and, optionally, the canary
-(revisions don't expire from 0.63). The portal names the computers: every Windows computer of the business on the
+(revisions don't expire from 0.63). The portal names the devices: every Windows device of the customer on the
 signed agent whose **Patch policy** is *Inherit*. The canary is the one you chose, or the one that checks in most
-reliably, and the rest go in rings of at most 25. Computers it can't include are listed with the reason.
+reliably, and the rest go in rings of at most 25. Devices it can't include are listed with the reason.
 
-Each set of computers is an ordinary signed policy, a *revision*, approved like any other (at once in direct mode).
-When computers join or leave, the portal proposes the next revision: after the change has held
-`PATCH_POLICY_SETTLE_MINUTES`, at most once per `PATCH_POLICY_REVISION_MINUTES` per business, and never while a
+Each set of devices is an ordinary signed policy, a *revision*, approved like any other (at once in direct mode).
+When devices join or leave, the portal proposes the next revision: after the change has held
+`PATCH_POLICY_SETTLE_MINUTES`, at most once per `PATCH_POLICY_REVISION_MINUTES` per customer, and never while a
 deployment is running. Revisions made from 0.63 never expire; a revision made before 0.63 is renewed once more
 before it expires, into one that does not. In signed mode the previous revision keeps
 running until two approvers approve the new one.
 
-**Assignable policy** is the same thing, but it covers only the computers set to use it, for example servers with a
-narrower window. Each computer's **Patch policy** setting, on its **Patches** tab or under **Each computer's Patch
+**Assignable policy** is the same thing, but it covers only the devices set to use it, for example servers with a
+narrower window. Each device's **Patch policy** setting, on its **Patches** tab or under **Each device's Patch
 policy**, is *Inherit*, *Exclude* (no automatic patching, effective at once) or *Use policy X*. Changing it needs
-**Edit computers** on that computer and a fresh sign-in, and it is audited. A computer is in one policy at a time, so
-a hand-made policy can't name a computer one of these covers. The Patches tab shows which policy patches the computer
+**Edit devices** on that device and a fresh sign-in, and it is audited. A device is in one policy at a time, so
+a hand-made policy can't name a device one of these covers. The Patches tab shows which policy patches the device
 and why. Device groups aren't a scope: use an assignable policy. See
-[Staged patching → Company-wide policies](staged-patching.md#company-wide-policies-and-each-computers-patch-policy-050).
+[Staged patching → Company-wide policies](staged-patching.md#company-wide-policies-and-each-devices-patch-policy-050).
 
-![The company-wide patch policy for one business, an assignable policy, and each computer's setting](screenshots/guide/company-wide-policy.png)
+![The company-wide patch policy for one customer, an assignable policy, and each device's setting](screenshots/guide/company-wide-policy.png)
 
-1. **Assignable policy** — create one (*Company-wide policy* appears instead while the business has none).
+1. **Assignable policy** — create one (*Company-wide policy* appears instead while the customer has none).
 2. **The company-wide policy** — its window and restart rule; *Retire* revokes every revision.
 3. **What the next revision would name**, and the canary the portal picked, with why.
-4. **Left out** — computers it can't include, each with the reason.
+4. **Left out** — devices it can't include, each with the reason.
 5. **The running revision** — an ordinary signed policy; open it to see its rings.
-6. **A computer's setting** — here *Exclude*; *Inherit* and *Use policy* are the others.
+6. **A device's setting** — here *Exclude*; *Inherit* and *Use policy* are the others.
 
-![The Patch policy card on a computer's Patches tab](screenshots/guide/patch-policy-setting.png)
+![The Patch policy card on a device's Patches tab](screenshots/guide/patch-policy-setting.png)
 
 1. **Where it stands** — patched automatically, pending a revision, left out, excluded or none.
 2. **Open the policy** that patches it.
@@ -262,20 +262,20 @@ $S patch-policy revoke --id <policyId> --reason 'why'
 $S patch-policy list
 ```
 
-**Restarts.** By default computers are never restarted, and "restart required" waits for a person. From 0.34 a
+**Restarts.** By default devices are never restarted, and "restart required" waits for a person. From 0.34 a
 policy, a deployment or a Patches-tab install can choose **Restart if required, inside the window**: after
-installing, a computer Windows says needs a restart shows the fixed warning and restarts 15 minutes later, unless a
+installing, a device Windows says needs a restart shows the fixed warning and restarts 15 minutes later, unless a
 technician is connected through RustDesk (or it cannot tell) or the window would close first, in which case it reports
 the restart deferred. A signed-in user does not stop the restart. They see the 15-minute warning, and unsaved work is
-lost. From 0.54 a policy's **restart window** restarts the computers that still need it, and asks again after a
+lost. From 0.54 a policy's **restart window** restarts the devices that still need it, and asks again after a
 deferral. See [Staged patching → Restarting after updates](staged-patching.md#restarting-after-updates). It has been
 tested against a simulated Windows only and has not yet run on a real Windows computer: try it with **Install
-updates** on one computer you can watch before choosing it for a policy. Leave enough of the maintenance window after
+updates** on one device you can watch before choosing it for a policy. Leave enough of the maintenance window after
 the install for the 15-minute warning, or every restart defers.
 
 **0.54 needs the 0.54 agent and the 0.54 approval signer.** Restart windows, *only if required* and the RustDesk
 exception are new parameters on the signed plan. Publish the agent (`sudo rem0te-signed-publish`) and let the
-computers update before using them; an older agent refuses such a plan, and the portal refuses to request one for it.
+devices update before using them; an older agent refuses such a plan, and the portal refuses to request one for it.
 Rebuild and redeploy the approval signer (`apps/api/scripts/build-approval-signer.mjs`): an older signer refuses a
 policy with a restart window at admission (`invalid_policy`), and signs no restart under a policy.
 
@@ -286,12 +286,12 @@ policy with a restart window at admission (`invalid_policy`), and signs no resta
 | `APPROVAL_SIGNER_INTERNAL_URL` | unset | The signer's internal listener, loopback only. Unset: no approvals, no policies |
 | `PATCH_POLICY_SWEEP` | on | `off` stops the sweep: approved policies are never acted on. Scratch, e2e and docs stacks set it off |
 | `PATCH_POLICY_SWEEP_SECONDS` | 60 | How often the sweep runs (minimum 2) |
-| `PATCH_POLICY_REVISION_MINUTES` | 60 | 0.50: at most one automatic revision pass of a business's company-wide and assignable policies per this many minutes (minimum 1, maximum 1440) |
-| `PATCH_POLICY_SETTLE_MINUTES` | 10 | 0.50: how long a change of computers must hold before a revision is proposed (renewal doesn't wait) |
+| `PATCH_POLICY_REVISION_MINUTES` | 60 | 0.50: at most one automatic revision pass of a customer's company-wide and assignable policies per this many minutes (minimum 1, maximum 1440) |
+| `PATCH_POLICY_SETTLE_MINUTES` | 10 | 0.50: how long a change of devices must hold before a revision is proposed (renewal doesn't wait) |
 
 ## See also
 
 - [Staged patching](staged-patching.md): deployments, the gate, states, refusal codes, patch policies.
 - [Approved actions](approved-actions.md): the signer, the roster, and what a compromised portal can't do.
-- [Update signing](update-signing.md): the chain that tells computers which approval key to trust.
-- [Containment](containment.md): a pause stops policies too, on the signer and on the computers.
+- [Update signing](update-signing.md): the chain that tells devices which approval key to trust.
+- [Containment](containment.md): a pause stops policies too, on the signer and on the devices.

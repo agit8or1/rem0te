@@ -105,23 +105,23 @@ function reconcileFor(actionId: string, observed?: Record<string, string>) {
   switch (actionId) {
     case UPDATE_ACTION:
       return { label: 'Found the updates', choices: ['installed', 'not_installed', 'other'] as const,
-        text: 'The outcome is uncertain — the computer may or may not have installed these updates. It will not run this again. Check Settings › Windows Update › Update history on the computer, then record what you found; the deployment does not move on until you do.' };
+        text: 'The outcome is uncertain — the device may or may not have installed these updates. It will not run this again. Check Settings › Windows Update › Update history on the device, then record what you found; the deployment does not move on until you do.' };
     case 'windows.service.restart':
       return { label: `Found ${observed?.service ?? 'the service'}`, choices: ['running', 'stopped', 'other'] as const,
-        text: 'The outcome is uncertain — the computer may have stopped the service and not started it again. It will not run this again. Check the service on the computer, then record what you found; no new restart request is accepted until you do.' };
+        text: 'The outcome is uncertain — the device may have stopped the service and not started it again. It will not run this again. Check the service on the device, then record what you found; no new restart request is accepted until you do.' };
     case 'windows.reboot.schedule':
     case 'windows.reboot.cancel':
       return { label: 'Found', choices: ['restart_scheduled', 'no_restart_scheduled', 'other'] as const,
-        text: 'The outcome is uncertain — Windows may or may not have a restart pending. It will not run this again. Check the computer (a restart warning on screen, or ask the person there), then record what you found; no new request for this action is accepted until you do.' };
+        text: 'The outcome is uncertain — Windows may or may not have a restart pending. It will not run this again. Check the device (a restart warning on screen, or ask the person there), then record what you found; no new request for this action is accepted until you do.' };
     case SCRIPT_ACTION:
       return { label: 'Found', choices: ['other'] as const,
-        text: 'The outcome is uncertain — the agent stopped while the script was running, so it may have done part of its work, and its output was not kept. It will not run this again. Check the computer for what the script changes, then record what you found; no new run of a script on this computer is accepted until you do.' };
+        text: 'The outcome is uncertain — the agent stopped while the script was running, so it may have done part of its work, and its output was not kept. It will not run this again. Check the device for what the script changes, then record what you found; no new run of a script on this device is accepted until you do.' };
     case 'windows.logs.collect':
       return { label: 'Found', choices: ['other'] as const,
-        text: 'The outcome is uncertain — the agent stopped while collecting. Nothing was changed on the computer. Record that you have seen this; no new collection is accepted until you do.' };
+        text: 'The outcome is uncertain — the agent stopped while collecting. Nothing was changed on the device. Record that you have seen this; no new collection is accepted until you do.' };
     default:
       return { label: 'Found the spooler', choices: ['running', 'stopped', 'other'] as const,
-        text: 'The outcome is uncertain — the computer may or may not have started the spooler. It will not run this again. Check the computer, then record what you found; no new request is accepted until you do.' };
+        text: 'The outcome is uncertain — the device may or may not have started the spooler. It will not run this again. Check the device, then record what you found; no new request is accepted until you do.' };
   }
 }
 
@@ -130,19 +130,19 @@ const RESULT_CAVEAT: Record<string, string> = {
   [UPDATE_ACTION]: '. An install is confirmed only by a later scan; see the deployment.',
   'windows.service.start': '. This shows the service state only, not that anything printed.',
   'windows.service.restart': '. This shows the service state only, not that whatever was failing now works.',
-  'windows.reboot.schedule': '. This shows that Windows accepted the restart, not that the computer restarted; a new boot time in the inventory shows that.',
+  'windows.reboot.schedule': '. This shows that Windows accepted the restart, not that the device restarted; a new boot time in the inventory shows that.',
   'windows.reboot.cancel': '. This shows what Windows answered when asked to cancel.',
-  'windows.logs.collect': '. Redacted on the computer and again on receipt.',
+  'windows.logs.collect': '. Redacted on the device and again on receipt.',
   [SCRIPT_ACTION]: '. An exit code is what the script returned, not proof that it did what it says.',
 };
 
 const STATUS: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning' }> = {
-  AWAITING_APPROVAL: { label: 'Awaiting approval', variant: 'warning' },
-  APPROVED: { label: 'Approved — waiting for the computer', variant: 'secondary' },
+  AWAITING_APPROVAL: { label: 'Pending approval', variant: 'warning' },
+  APPROVED: { label: 'Approved — waiting for the device', variant: 'secondary' },
   DISPATCHED: { label: 'Delivered — waiting for its result', variant: 'secondary' },
   SUCCEEDED: { label: 'Succeeded', variant: 'success' },
   FAILED: { label: 'Failed', variant: 'destructive' },
-  REFUSED_BY_ENDPOINT: { label: 'Refused by the computer', variant: 'destructive' },
+  REFUSED_BY_ENDPOINT: { label: 'Refused by the device', variant: 'destructive' },
   NOT_EXECUTED: { label: 'Not executed', variant: 'outline' },
   UNKNOWN: { label: 'Outcome uncertain', variant: 'destructive' },
   REJECTED: { label: 'Rejected', variant: 'outline' },
@@ -264,7 +264,7 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
   // The server allows one open request per action per computer.
   const pending = action && jobs.find((j) => j.action.id === action.id && (['AWAITING_APPROVAL', 'APPROVED', 'DISPATCHED'].includes(j.status) || (j.status === 'UNKNOWN' && !j.reconciled)));
   const notSupported = action && !unavailableReason && !supported(action)
-    ? 'This computer’s agent does not report support for this action. The maintenance actions need a signed agent from 0.32 on; let it update first.'
+    ? 'This device’s agent does not report support for this action. The maintenance actions need a signed agent from 0.32 on; let it update first.'
     : null;
   const blocked = unavailableReason ?? notSupported;
 
@@ -304,12 +304,12 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
             <p className="text-xs text-muted-foreground flex gap-2">
               <ShieldCheck className="h-3.5 w-3.5 shrink-0 mt-0.5" />
               Requesting runs nothing. People on the approval roster authorize the exact plan with a passkey on the approval page — {action.workstationRisk === 'high'
-                ? 'this action always needs two different approvers, whatever the computer'
+                ? 'this action always needs two different approvers, whatever the device'
                 : 'one for a standard workstation, two for anything else'}, plus the customer where their policy requires it. You cannot approve your own request.
             </p>
             )}
             {action.requiresCapability && (
-              <p className="text-xs text-muted-foreground">Requesting this, and reading what it collects, also needs permission to read this computer’s event logs ({action.requiresCapability}).</p>
+              <p className="text-xs text-muted-foreground">Requesting this, and reading what it collects, also needs permission to read this device’s event logs ({action.requiresCapability}).</p>
             )}
             {serviceName && <ServiceNow endpointId={endpointId} service={serviceName} onState={setSvcState} />}
             {pending ? (
@@ -317,11 +317,11 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
             ) : alreadyRunning && !startAnyway ? (
               <div className="rounded-md border bg-muted/40 p-2 text-xs space-y-1" data-testid="action-already-running">
                 <p><strong>Nothing to do:</strong> the latest service list shows {serviceName} is already running.</p>
-                <p className="text-muted-foreground">If you think it has stopped since, refresh the service list above, or <button type="button" className="underline" onClick={() => setStartAnyway(true)}>start it anyway</button> (the computer checks again and changes nothing if it is running).</p>
+                <p className="text-muted-foreground">If you think it has stopped since, refresh the service list above, or <button type="button" className="underline" onClick={() => setStartAnyway(true)}>start it anyway</button> (the device checks again and changes nothing if it is running).</p>
               </div>
             ) : blocked ? (
               <p className="rounded-md border bg-muted/40 p-2 text-xs" data-testid="action-unavailable">
-                <strong>Cannot be requested for this computer:</strong> {blocked}
+                <strong>Cannot be requested for this device:</strong> {blocked}
               </p>
             ) : (
               <>
@@ -347,7 +347,7 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
                   {request.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}{directMode ? 'Run it' : 'Request approval'}
                 </Button>
                 {action.maxWindowHours < 4 && !directMode && <p className="text-xs text-muted-foreground">An approved plan for this action is valid for {action.maxWindowHours} hour{action.maxWindowHours === 1 ? '' : 's'} only: approve it promptly, or it expires unrun.</p>}
-                {!isOnline && <p className="text-xs text-muted-foreground">This computer is offline. An approved plan waits for it until its window closes, then expires unrun.</p>}
+                {!isOnline && <p className="text-xs text-muted-foreground">This device is offline. An approved plan waits for it until its window closes, then expires unrun.</p>}
               </>
             )}
           </CardContent>
@@ -357,7 +357,7 @@ export function EndpointActions({ endpointId, isOnline, unavailableReason, agent
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-sm">History</CardTitle></CardHeader>
         <CardContent className="space-y-3 text-sm">
-          {isLoading ? <p className="text-muted-foreground">Loading…</p> : jobs.length === 0 ? <p className="text-muted-foreground">No actions have been requested on this computer.</p> : jobs.map((j) => (
+          {isLoading ? <p className="text-muted-foreground">Loading…</p> : jobs.length === 0 ? <p className="text-muted-foreground">No actions have been requested on this device.</p> : jobs.map((j) => (
             <JobRow key={j.id} job={j} titles={titles} onCancel={() => cancel.mutate(j.id)} onChanged={refresh} />
           ))}
         </CardContent>
@@ -413,7 +413,7 @@ function JobRow({ job: j, titles, onCancel, onChanged }: { job: Job; titles: Rec
           {j.via === 'clientst0r' && <Badge variant="outline" className="text-xs">via ClientSt0r</Badge>}
           {j.deploymentId && (
             <Link href={`/patching/${j.deploymentId}`} className="text-xs underline">
-              {j.ring === 0 ? 'Patch canary' : `Patch ring ${j.ring}`}{(j.ringSize ?? 1) > 1 ? ` · ${j.ringSize} computers` : ''}
+              {j.ring === 0 ? 'Patch canary' : `Patch ring ${j.ring}`}{(j.ringSize ?? 1) > 1 ? ` · ${j.ringSize} devices` : ''}
             </Link>
           )}
         </div>
@@ -435,17 +435,17 @@ function JobRow({ job: j, titles, onCancel, onChanged }: { job: Job; titles: Rec
       {j.approvers?.length ? <p className="text-xs text-muted-foreground">Approved by {j.approvers.map((a) => `${a.name}${a.role === 'customer' ? ' (customer)' : ''}`).join(', ')}</p> : null}
       {j.statusReason && <p className="text-xs text-muted-foreground">Reason: {j.statusReason.replace(/_/g, ' ')}</p>}
       {(j.statusReason === 'revoked' || mine?.statusReason === 'revoked') && <p className="text-xs text-muted-foreground">The script or software entry this runs was revoked after the plan was signed, so it will never run here.</p>}
-      {(j.ringSize ?? 1) > 1 && mine && <p className="text-xs text-muted-foreground">This computer: {mine.status.toLowerCase().replace(/_/g, ' ')}{mine.statusReason ? ` (${mine.statusReason.replace(/_/g, ' ')})` : ''}</p>}
+      {(j.ringSize ?? 1) > 1 && mine && <p className="text-xs text-muted-foreground">This device: {mine.status.toLowerCase().replace(/_/g, ' ')}{mine.statusReason ? ` (${mine.statusReason.replace(/_/g, ' ')})` : ''}</p>}
       {j.ringTally && j.ringTally.total > 1 && (
         <p className="text-xs flex flex-wrap items-center gap-2" data-testid="job-tally" data-partial={j.ringTally.partial ? 'true' : 'false'}>
           {j.ringTally.partial && <Badge variant="warning">Partial</Badge>}
           <span className={tallyProblems(j.ringTally) ? '' : 'text-muted-foreground'}>{tallyText(j.ringTally)}</span>
-          {j.deploymentId && <Link href={`/patching/${j.deploymentId}`} className="underline">Each computer</Link>}
+          {j.deploymentId && <Link href={`/patching/${j.deploymentId}`} className="underline">Each device</Link>}
         </p>
       )}
       {result && (
         <p className="text-xs">
-          Computer reported <strong>{outcome?.replace(/_/g, ' ')}</strong>
+          Device reported <strong>{outcome?.replace(/_/g, ' ')}</strong>
           {result.reason ? ` (${result.reason.replace(/_/g, ' ')})` : ''}
           {result.observed && !isUpdate ? ` — observed: ${Object.entries(result.observed).map(([k, v]) => `${k} ${v}`).join(', ')}` : ''}
           {RESULT_CAVEAT[j.action.id] ?? '.'}
@@ -508,7 +508,7 @@ function ScriptOutputView({ out }: { out: ScriptOutput | { pruned: true } | null
       <p className="text-xs">
         {out.timedOut ? 'Stopped at its timeout' : `Exit code ${out.exitCode ?? 'unknown'}`}
         {out.durationMs !== null ? ` · ran ${(out.durationMs / 1000).toFixed(1)} s` : ''}
-        <span className="text-muted-foreground"> · redacted on the computer and again on receipt</span>
+        <span className="text-muted-foreground"> · redacted on the device and again on receipt</span>
       </p>
       {stream('Output', out.stdout, out.stdoutBytes, out.stdoutTruncated)}
       {stream('Errors', out.stderr, out.stderrBytes, out.stderrTruncated)}
@@ -545,7 +545,7 @@ function ServiceNow({ endpointId, service, onState }: { endpointId: string; serv
     <div className="flex flex-wrap items-center gap-2 rounded-md border p-2 text-xs" data-testid="action-service-state" data-state={state ?? 'unknown'}>
       <span>
         {isLoading ? 'Reading the service list…'
-          : !data?.takenAt ? 'No service list from this computer yet.'
+          : !data?.takenAt ? 'No service list from this device yet.'
             : !row ? `${service} is not in the latest service list.`
               : <>{row.displayName ?? service}: <strong className={tone}>{state === 'Running' ? 'Running' : state ?? 'unknown'}</strong>{row.startMode ? ` · ${row.startMode}` : ''}</>}
         {data?.takenAt && <span className="text-muted-foreground"> — as of {formatDate(data.takenAt)}</span>}

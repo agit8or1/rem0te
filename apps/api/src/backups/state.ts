@@ -206,7 +206,7 @@ export function drillVerdict(name: string, f: AssetFacts, days: number, now: Dat
 export function rpoVerdict(name: string, f: AssetFacts, fallbackHours: number | undefined, now: Date): BackupVerdict {
   const tg = targetsOf(f);
   const target = tg.rpoMinutes ?? (fallbackHours ? fallbackHours * 60 : null);
-  if (target === null) return { verdict: 'skip', reason: 'no RPO target for this asset or business' };
+  if (target === null) return { verdict: 'skip', reason: 'no RPO target for this asset or customer' };
   const at = newestRestorableAt(f);
   const age = now.getTime() - (at ?? f.firstSeenAt).getTime();
   if (age <= target * MINUTE) return at ? { verdict: 'ok' } : { verdict: 'skip', reason: 'no recovery point yet, but the asset is newer than the target' };

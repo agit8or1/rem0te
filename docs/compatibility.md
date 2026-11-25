@@ -1,8 +1,8 @@
 # Compatibility testing
 
 Every release must keep working with the agents already installed. Nothing
-forces a computer to update on the day a release ships: the signed agent
-checks once a day, a computer may be off for weeks, and an update can be
+forces a device to update on the day a release ships: the signed agent
+checks once a day, a device may be off for weeks, and an update can be
 paused. So a server release is tested against the **older released agents**
 still in use, not only against the agent built from the same commit.
 
@@ -35,7 +35,7 @@ portal never fails either. `e2e-msa-readiness.mjs` checks both.
 
 | Agent | Why |
 |---|---|
-| v0.64.0 | running on production computers (2026-11-19) |
+| v0.64.0 | running on production devices (2026-11-19) |
 | v0.67.0 | the previous minor release before 0.68 |
 | v0.68.3 | the previous release (0.69 adds the RustDesk preflight; 0.68.3 sends none) |
 
@@ -45,13 +45,13 @@ suites.
 **Changing the list is a support decision.** A version leaves only by moving
 to `retired` with the date and the reason, so the record of what was once
 supported stays. Add the previous release on every release, and any version
-still reported by computers you manage.
+still reported by devices you manage.
 
 ## When an older agent fails
 
 A supported agent failing a suite fails the job. Either the server broke it
 (fix the server), or the change is intentional: then the suite goes in
-`knownIncompatible` for that tag, with the reason and what the computers on
+`knownIncompatible` for that tag, with the reason and what the devices on
 that version must do, and the release notes say so. Nothing is dropped
 silently.
 
@@ -81,7 +81,7 @@ writes `.compat-logs/wire/evidence.json`.
 ## Wire fixtures: the standard agents (0.73.1)
 
 The standard agents are not built once and published: the server writes them
-at install time, so a computer runs whatever its installing server wrote, and
+at install time, so a device runs whatever its installing server wrote, and
 an old one can still be speaking that release's dialect. The portal rejects
 any field a DTO does not declare (`forbidNonWhitelisted`), so removing or
 renaming a field breaks every older agent that still sends it, and nothing
@@ -110,11 +110,11 @@ the scripts that release served, then runs them:
 
 **What the replay checks** (`scripts/compat-wire.sh`, then
 `scripts/compat-wire.mjs`, against this checkout's API on a scratch database,
-port 3981). For every agent × release, fresh computers in a fresh business:
+port 3981). For every agent × release, fresh devices in a fresh customer:
 
 - every request is accepted (HTTP 200, `success: true`): nothing refused that
   was accepted at that release;
-- its effect: the claim places the computer in the token's business, binds
+- its effect: the claim places the device in the token's customer, binds
   the device secret and consumes the token; the unclaimed heartbeat lands in
   the unassigned pool; a heartbeat writes `lastSeenAt`, the agent version,
   hostname, platform, the live sample and the RustDesk version; results close
@@ -134,7 +134,7 @@ port 3981). For every agent × release, fresh computers in a fresh business:
   the release's pattern, and the paired key is recognised on the next beat.
 
 The server hands out two commands a heartbeat, so a result whose command has
-not been handed out yet waits for the next heartbeat, as on the computer: the
+not been handed out yet waits for the next heartbeat, as on the device: the
 replay sends the same heartbeat again (at most three more times).
 
 ### The matrix
@@ -172,7 +172,7 @@ with the command's name: add it to `windows-prelude.ps1` (or the POSIX stubs in
 
 When an old agent's request has to stop working, add an entry to
 `knownIncompatible` in `agents.json`: `{ "agent", "tag", "fixture"` (a file
-name, or `"*"`)`, "reason" }`, with what the computers on that release must do.
+name, or `"*"`)`, "reason" }`, with what the devices on that release must do.
 An entry without a reason fails the run. The release notes say so.
 
 ## What is not covered yet
@@ -186,7 +186,7 @@ An entry without a reason fails the run. The release notes say so.
   and does not capture again; capturing needs the release tags and pwsh.
 - **The OS side of the standard agents.** The bodies are built by the real
   scripts from stand-in values. That a release's CIM, `/proc` or `sw_vers`
-  reads work on a real computer is the lab's and the fleet's evidence, not
+  reads work on a real device is the lab's and the fleet's evidence, not
   this.
 - **RustDesk client versions** against the server's connect paths: part of the
   lab.

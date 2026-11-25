@@ -15,7 +15,7 @@ import { useToast } from '@/hooks/use-toast';
 import { SessionTimeline, sessionWhat, technicianText, type MsaSession } from '@/components/endpoints/msa-sessions';
 
 /**
- * Devices → Managed sessions (0.73): every live Managed Secure Access session
+ * Remote support → Managed sessions (0.73): every live Managed Secure Access session
  * on the computers this person can see, with Disconnect one by one or
  * together. It reads the ungated readiness route first and asks the gated
  * sessions route only when that says `managedControls: true`, so with
@@ -49,7 +49,7 @@ export default function ManagedSessionsPage() {
     onSuccess: (r) => {
       setAsking(null); setPicked(new Set());
       void qc.invalidateQueries({ queryKey: ['msa-sessions-active'] });
-      toast({ title: `Disconnect sent: ${r?.revoked ?? 0} session${r?.revoked === 1 ? '' : 's'}`, description: 'Each computer\'s agent ends its session when the signed revocation reaches it; an offline computer\'s session still ends at its time limit.' });
+      toast({ title: `Disconnect sent: ${r?.revoked ?? 0} session${r?.revoked === 1 ? '' : 's'}`, description: 'Each device\'s agent ends its session when the signed revocation reaches it; an offline device\'s session still ends at its time limit.' });
     },
     onError: (e: unknown) => toast({ title: 'Not disconnected', description: apiError(e).message, variant: 'destructive' }),
   });
@@ -59,9 +59,9 @@ export default function ManagedSessionsPage() {
     <div className="p-4 sm:p-6 space-y-5">
       <PageHeader
         title="Managed sessions"
-        description="Live Managed Secure Access sessions on the computers you can see: who, what the grant allows, and how far it got. Disconnect ends a session on the computer."
+        description="Live Managed Secure Access sessions on the devices you can see: who, what the grant allows, and how far it got. Disconnect ends a session on the device."
       />
-      {!allowed ? <p className="text-sm text-muted-foreground">This page needs the View computers permission.</p>
+      {!allowed ? <p className="text-sm text-muted-foreground">This page needs the View devices permission.</p>
         : fleetLoading ? <p className="text-sm text-muted-foreground">Loading…</p>
           : !on ? (
             <p className="text-sm text-muted-foreground" data-testid="msa-sessions-off">
@@ -72,7 +72,7 @@ export default function ManagedSessionsPage() {
             <>
               <p className="rounded-md border border-sky-500/40 bg-sky-500/5 px-3 py-2 text-xs" data-testid="msa-sessions-evidence">
                 Managed Secure Access has run only in the Windows lab (Windows Server, as SYSTEM): never on a Windows 10 or 11 desktop or on the fleet.
-                A session shown as Launched has had its one-time password handed over; Connected means the computer&apos;s agent saw RustDesk accept a connection.
+                A session shown as Launched has had its one-time password handed over; Connected means the device&apos;s agent saw RustDesk accept a connection.
               </p>
               {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
               {isError && <p className="text-sm text-destructive">Managed sessions could not be loaded.</p>}
@@ -126,7 +126,7 @@ export default function ManagedSessionsPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Disconnect {asking?.length === 1 ? 'this session' : `${asking?.length ?? 0} sessions`}?</DialogTitle>
-            <DialogDescription>Each is revoked now with a signed revocation; the computer&apos;s agent ends the session when it receives it. Nothing can extend a revoked session.</DialogDescription>
+            <DialogDescription>Each is revoked now with a signed revocation; the device&apos;s agent ends the session when it receives it. Nothing can extend a revoked session.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAsking(null)}>Cancel</Button>

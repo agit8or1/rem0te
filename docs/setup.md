@@ -25,7 +25,7 @@ This guide covers everything you need to go from a blank Ubuntu server to a full
 | 21117 | TCP | RustDesk relay (hbbr) |
 | 21118–21119 | TCP | RustDesk websocket (optional) |
 
-These minimums are for a small fleet. For CPU, memory, disk and PostgreSQL by number of computers (50, 250, 1,000,
+These minimums are for a small fleet. For CPU, memory, disk and PostgreSQL by number of devices (50, 250, 1,000,
 5,000), with the measured cost of a heartbeat and how fast the database grows, see
 [server-sizing.md](server-sizing.md).
 
@@ -78,13 +78,13 @@ The installer pre-configures the RustDesk relay host to your domain and sets the
 
 Once set, the **Download** page (`/download`) will generate install scripts pre-configured for your server.
 
-### Create your first business
+### Create your first customer
 
-The seed creates a Platform Admin — the Rem0te operator. Everything else hangs off a **Business**.
+The seed creates a Platform Admin — the Rem0te operator. Everything else hangs off a **Customer**.
 
 1. Sign in as the Platform Admin.
-2. Go to **Businesses → Add Business** and create one for your first customer.
-3. Open **Users → Add person**, choose that business, and create its **Business Owner**. Send them
+2. Go to **Customers → Add Customer** and create one for your first customer.
+3. Open **Users → Add person**, choose that customer, and create its **Business Owner**. Send them
    the one-time setup link that comes back.
 4. That owner can now add **Business Users** and set exactly what each one can do.
 
@@ -96,7 +96,7 @@ Quick Connect ships **off**. To enable temporary support sessions for machines t
 devices:
 
 1. **Settings → Quick Connect** → turn the master switch on and pick which client builds to offer.
-2. Per business: **Businesses → [Business] → Overview → Quick Connect**.
+2. Per customer: **Customers → [Customer] → Overview → Quick Connect**.
 3. Per person: grant **Use Quick Connect** on their permissions. Business Owners get it implicitly.
 
 Then send anyone who needs help to `https://<your-host>/quick`.
@@ -107,14 +107,14 @@ Then send anyone who needs help to `https://<your-host>/quick`.
 
 1. Go to **Devices → Add device** (the *Add device* link under *Devices* in the menu, the Devices page's
    *Add device* button, or the tab).
-2. Pick the business, then a site (or none), and who should be able to reach the computer. The
+2. Pick the customer, then a site (or none), and who should be able to reach the device. The
    binding is fixed at this point — the machine that runs the link cannot choose a different
-   business or site.
+   customer or site.
 3. Pick the operating system and make the install command. From 0.64 *Install links* is *Don't ask* by default;
    a Platform Admin who sets it to *Ask* has you confirm it is you first (0.33; 0.49,
    [sign-in.md](sign-in.md#install-links-and-api-keys)).
 4. Choose how to install (0.64), on two tabs:
-   - **Download installer.** Windows: **Download .exe**, a one-click installer — run it on the computer and accept
+   - **Download installer.** Windows: **Download .exe**, a one-click installer — run it on the device and accept
      the administrator prompt — and the same link to copy and send. Beside it (0.65) **Download .msi**, a Windows
      Installer package with the token already in it, and the silent line `msiexec /i rem0te.msi TOKEN=<token> /qn`
      to copy. Linux and macOS: the install script as a file; run it with `sudo bash install-rustdesk.sh` (macOS:
@@ -122,7 +122,7 @@ Then send anyone who needs help to `https://<your-host>/quick`.
    - **Command.** The one-line command for PowerShell as Administrator, or a root shell.
 
    All of them carry the same enrolment token: single use, expiring in 24 hours, and shown once. Downloading does
-   not use it up; the computer's first check-in does.
+   not use it up; the device's first check-in does.
 
    **The .msi** (0.65) installs the same signed agent, silently, as SYSTEM, and needs the server to publish the
    signed agent ([update-signing.md](update-signing.md)) and to have `wixl` and `msibuild` (`apt-get install wixl
@@ -133,7 +133,7 @@ Then send anyone who needs help to `https://<your-host>/quick`.
 5. Run it on the device, or send it to the person there.
 6. Leave the page open: it shows the device arriving, then its first health — online, the agent
    and its version, whether its first inventory has arrived — and links to the device and to the
-   business's monitoring policies. See [technician-guide.md](technician-guide.md) §5.
+   customer's monitoring policies. See [technician-guide.md](technician-guide.md) §5.
 
 The install script on the device:
 - Downloads and silently installs RustDesk
@@ -207,10 +207,10 @@ Until step 1 is done the Security page's fail2ban controls still work (the API
 falls back to `fail2ban-client`), but the RustDesk server upgrade on the
 Updates page refuses to run and says why.
 
-**Computers enrolled before device secrets existed** (0.13.0) no longer bind a
+**Devices enrolled before device secrets existed** (0.13.0) no longer bind a
 secret from their first heartbeat. They keep reporting online, but nothing they
 send is trusted until their installer is re-run from an enrollment link. The
-computer's Specs tab says *This computer cannot report its specs yet* for these.
+device's Specs tab says *This device cannot report its specs yet* for these.
 
 ### In-app updates are off by default
 
@@ -351,7 +351,7 @@ openssl rand -hex 32   # for ENCRYPTION_KEY (must be exactly 64 hex chars)
 **Data retention (0.34).** Finished commands and diagnostics are deleted after 90 days, inventory changes and
 resolved alerts after 400, by a sweep inside the API (`RETENTION_SWEEP=off` stops it). The audit log is never
 pruned. Every window is a `RETENTION_*_DAYS` variable with a floor and a ceiling; see
-[data-retention.md](data-retention.md), and Settings → System status for what each table holds now.
+[data-retention.md](data-retention.md), and Administration → System status for what each table holds now.
 
 ---
 
@@ -375,7 +375,7 @@ This is the address people use to reach the server, such as `https://remote.exam
 - New links, downloads and installers use the new address at once. A support link already sent to a customer, or a Connect script already downloaded, still names the old one.
 - **Passkeys** are bound to the host name. If `WEBAUTHN_RP_ID` is not set, every registered passkey stops working when the host name changes; the card says how many there are.
 - **SSO:** the redirect URI registered at each provider must be updated to `<new address>/api/v1/auth/sso/callback`.
-- **Enrolled computers are not affected.** They check in through the RustDesk relay host (*Settings → RustDesk*), not this address.
+- **Enrolled devices are not affected.** They check in through the RustDesk relay host (*Settings → RustDesk*), not this address.
 
 If a wrong address is saved, put it right from the card, or clear it from the server with `node dist/cli/auth-recovery.js --clear-public-url --yes` (see [sign-in.md](sign-in.md#recovery)). The API picks up the change within a minute, without a restart.
 
@@ -426,7 +426,7 @@ Quickest first move:
 sudo deploy/scripts/hbbs-probe.py <rustdesk-id>
 ```
 
-`ONLINE` means the server and endpoint are both fine and the problem is the
+`ONLINE` means the server and device are both fine and the problem is the
 client you are connecting *from*.
 
 **Reset admin password:**
@@ -474,7 +474,7 @@ sudo scripts/update-geoip.sh
 sudo systemctl restart reboot-remote-api
 ```
 
-Without it the API logs a warning at startup and every computer is reported as
+Without it the API logs a warning at startup and every device is reported as
 "unlocatable" — the dashboard still works, the map just has nothing to show.
 
 The data is DB-IP City Lite (CC BY 4.0), refreshed monthly and requiring no

@@ -101,8 +101,8 @@ export function RegistrationNote({ job }: { job: Pick<UpdateJob, 'events' | 'sta
 // ─── Events ─────────────────────────────────────────────────────────────────
 
 const EVENT_LABEL: Record<string, string> = {
-  dispatched: 'Update handed to the computer in a heartbeat response',
-  installer_fetched: 'Computer fetched the installer',
+  dispatched: 'Update handed to the device in a heartbeat response',
+  installer_fetched: 'Device fetched the installer',
   version_reported: 'Authenticated heartbeat reported the approved version',
   verified: 'Verified',
   deferred: 'Deferred',
@@ -182,7 +182,7 @@ export function EndpointUpdateHistory({ endpointId }: { endpointId: string }) {
 
   if (isError) return null;
   if (isLoading) return <p className="text-sm text-muted-foreground">Loading update history…</p>;
-  if (!data?.length) return <p className="text-sm text-muted-foreground">This computer has not been part of a staged update.</p>;
+  if (!data?.length) return <p className="text-sm text-muted-foreground">This device has not been part of a staged update.</p>;
 
   return (
     <ul className="divide-y rounded-md border">

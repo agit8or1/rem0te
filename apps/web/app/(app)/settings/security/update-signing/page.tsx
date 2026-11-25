@@ -15,7 +15,7 @@ import { apiError } from '@/components/security-controls/shared';
 import { useAsks } from '@/lib/confirm-policy';
 
 /**
- * Settings → Security → Update Signing (v0.24).
+ * Security → Update signing (v0.24).
  *
  * Read-mostly. The repository is signed offline with rem0te-release; this
  * portal only mirrors it, so everything under "Repository" is what the portal
@@ -81,9 +81,9 @@ export default function UpdateSigningPage() {
       <Link href="/settings" className="inline-flex items-center text-sm text-muted-foreground hover:underline">
         <ArrowLeft className="mr-1 h-4 w-4" />Settings
       </Link>
-      <PageHeader title="Update Signing" description="What agents verify before they run anything, and how legacy agents are contained." />
+      <PageHeader title="Update signing" description="What agents verify before they run anything, and how legacy agents are contained." />
       <p className="text-sm" data-testid="update-signing-full-agent">
-        Setting signing up, publishing, and moving computers to the signed agent (automatically, canary first) are shown step by step on{' '}
+        Setting signing up, publishing, and moving devices to the signed agent (automatically, canary first) are shown step by step on{' '}
         <Link className="underline" href="/endpoints/full-agent">Devices → Full agent</Link>.
       </p>
       {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -190,7 +190,7 @@ export default function UpdateSigningPage() {
               {(inv?.legacy.length ?? 0) > 0 && (
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
-                    <thead className="text-left text-muted-foreground"><tr><th className="py-1 pr-3">Computer</th><th className="pr-3">Business</th><th className="pr-3">Agent</th><th>Last seen</th></tr></thead>
+                    <thead className="text-left text-muted-foreground"><tr><th className="py-1 pr-3">Device</th><th className="pr-3">Customer</th><th className="pr-3">Agent</th><th>Last seen</th></tr></thead>
                     <tbody>
                       {inv!.legacy.map((a) => (
                         <tr key={a.id} className="border-t">
@@ -209,7 +209,7 @@ export default function UpdateSigningPage() {
                 <Link className="underline" href="/docs/update-signing">Update signing</Link>.
               </p>
               <p className="text-xs text-muted-foreground">
-                Or one computer at a time from the console (0.34): <strong>Upgrade to full agent</strong> at the top of a computer’s page or on its Agent card, or for a
+                Or one device at a time from the console (0.34): <strong>Upgrade to full agent</strong> at the top of a device’s page or on its Agent card, or for a
                 selection on All devices. It needs {askMigrate ? 'a fresh sign-in and ' : ''}a reason, is refused in <em>Signed only</em> without portal migration, and is
                 followed on <Link className="underline" href="/endpoints/agent-migrations">Agent migrations</Link>. From 0.37 the portal also moves them
                 by itself, one canary first: see <Link className="underline" href="/endpoints/full-agent">Full agent</Link>.

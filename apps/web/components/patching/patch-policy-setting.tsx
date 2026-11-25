@@ -73,7 +73,7 @@ export function PatchPolicySetting({ endpointId }: { endpointId: string }) {
         {p.effective.policy && <p className="text-xs"><Link className="underline" href={`/patching/policies/${p.effective.policy.id}`}>Open the policy</Link></p>}
         {p.effective.window && (
           <p className="text-xs" data-testid="policy-next-window">
-            {p.effective.nextWindow ? <>Next install window: <strong>{describeOccurrence(p.effective.nextWindow, p.effective.window.timezone)}</strong></> : <span className="text-muted-foreground">No install window coming up for this computer.</span>}
+            {p.effective.nextWindow ? <>Next install window: <strong>{describeOccurrence(p.effective.nextWindow, p.effective.window.timezone)}</strong></> : <span className="text-muted-foreground">No install window coming up for this device.</span>}
             <span className="block text-muted-foreground">Window: {describeWindow(p.effective.window)}</span>
           </p>
         )}
@@ -86,7 +86,7 @@ export function PatchPolicySetting({ endpointId }: { endpointId: string }) {
         )}
         <div className="flex flex-wrap items-center gap-2">
           <select aria-label="Patch policy" className={selectClass} value={value} disabled={!p.mayEdit} onChange={(e) => setValue(e.target.value)}>
-            <option value="inherit">Inherit{p.companyWide ? ` — the company-wide policy "${p.companyWide.name}"` : ' (this business has no company-wide policy)'}</option>
+            <option value="inherit">Inherit{p.companyWide ? ` — the company-wide policy "${p.companyWide.name}"` : ' (this customer has no company-wide policy)'}</option>
             <option value="exclude">Exclude — no automatic patching</option>
             {p.choices.map((c) => <option key={c.id} value={`policy:${c.id}`}>Use policy &quot;{c.name}&quot;</option>)}
             {p.setting.mode === 'policy' && !p.choices.some((c) => c.id === p.setting.seriesId) && <option value={encode(p.setting)}>Use policy &quot;{p.setting.seriesName ?? 'retired'}&quot; (retired)</option>}
@@ -94,8 +94,8 @@ export function PatchPolicySetting({ endpointId }: { endpointId: string }) {
           <Button size="sm" disabled={!p.mayEdit || save.isPending || value === encode(p.setting)} onClick={() => save.mutate()}>{save.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Save</Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          The computer&apos;s own setting comes first, then the business&apos;s company-wide policy. A computer is in one policy at a time. A change reaches the signed policy by revision — after it has held a few minutes, at most once an hour per business, and never in the middle of a deployment — and, in signed mode, after two approvals. Exclude stops automatic patching at once.
-          {!p.mayEdit && ' Changing it needs Edit computers.'} <Link className="underline" href="/docs/staged-patching">Staged patching</Link>
+          The device&apos;s own setting comes first, then the customer&apos;s company-wide policy. A device is in one policy at a time. A change reaches the signed policy by revision — after it has held a few minutes, at most once an hour per customer, and never in the middle of a deployment — and, in signed mode, after two approvals. Exclude stops automatic patching at once.
+          {!p.mayEdit && ' Changing it needs Edit devices.'} <Link className="underline" href="/docs/staged-patching">Staged patching</Link>
         </p>
       </CardContent>
     </Card>

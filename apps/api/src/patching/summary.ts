@@ -86,7 +86,7 @@ export function buildPatchSummary(i: SummaryInput) {
   }));
 
   const deploy = !i.signedCapable
-    ? { possible: false, reason: 'Deploying updates needs the signed agent (update channel "signed", 0.27 or later). This computer reports read-only.' }
+    ? { possible: false, reason: 'Deploying updates needs the signed agent (update channel "signed", 0.27 or later). This device reports read-only.' }
     : managers.length ? { possible: false, reason: `Managed by ${managers.map((m) => m.label).join(', ')}: rem0te will not deploy here.` }
       : !p ? { possible: false, reason: 'No signed scan yet: run Scan now.' }
         : freshness === 'stale' ? { possible: false, reason: 'The last scan is stale: a plan is built from a fresh scan.' }

@@ -51,7 +51,7 @@ interface Readiness {
 interface EndpointLite { id: string; name: string; hostname?: string | null; isOnline?: boolean; lastSeenAt?: string | null; connectivity?: string }
 
 const ENTRY: Record<string, { label: string; variant: 'success' | 'warning' | 'outline' | 'destructive' }> = {
-  AWAITING_APPROVAL: { label: 'Awaiting approval on the signer', variant: 'warning' },
+  AWAITING_APPROVAL: { label: 'Pending approval on the signer', variant: 'warning' },
   ACTIVE: { label: 'On the signer\'s allowlist', variant: 'success' },
   REJECTED: { label: 'Rejected on the signer', variant: 'destructive' },
   REVOKED: { label: 'Revoked', variant: 'destructive' },
@@ -155,8 +155,8 @@ export function ScriptRunPanel({ versionId }: { versionId: string }) {
           <details className="rounded-md border p-2">
             <summary className="cursor-pointer text-xs font-medium">Revoke from the allowlist</summary>
             <div className="mt-2 space-y-2">
-              <p className="text-xs text-muted-foreground">Permanent. The approval signer refuses every new run of this content, and every run not yet signed. A run already signed may still reach a computer within its window; cancel it from the computer&apos;s Actions tab.</p>
-              <Textarea rows={2} maxLength={300} value={revokeReason} onChange={(x) => setRevokeReason(x.target.value)} placeholder="Why, e.g. it deletes the wrong folder on some computers" aria-label="Reason for revoking" />
+              <p className="text-xs text-muted-foreground">Permanent. The approval signer refuses every new run of this content, and every run not yet signed. A run already signed may still reach a device within its window; cancel it from the device&apos;s Actions tab.</p>
+              <Textarea rows={2} maxLength={300} value={revokeReason} onChange={(x) => setRevokeReason(x.target.value)} placeholder="Why, e.g. it deletes the wrong folder on some devices" aria-label="Reason for revoking" />
               <Button size="sm" variant="destructive" disabled={revokeReason.trim().length < 3 || revoke.isPending} onClick={() => revoke.mutate()}><ShieldOff className="h-4 w-4 mr-1" />Revoke permanently</Button>
             </div>
           </details>
@@ -204,12 +204,12 @@ function RunForm({ r }: { r: Readiness }) {
       </div>
 
       <div className="space-y-1">
-        <Label className="text-xs">Computers ({ids.length} of at most {r.maxTargets}) · Windows, signed agent 0.34 or later</Label>
-        {isLoading ? <p className="text-xs text-muted-foreground">Loading computers…</p> : (
+        <Label className="text-xs">Devices ({ids.length} of at most {r.maxTargets}) · Windows, signed agent 0.34 or later</Label>
+        {isLoading ? <p className="text-xs text-muted-foreground">Loading devices…</p> : (
           <>
-            <Input placeholder="Filter computers…" value={q} onChange={(x) => setQ(x.target.value)} />
+            <Input placeholder="Filter devices…" value={q} onChange={(x) => setQ(x.target.value)} />
             <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-1">
-              {shown.length === 0 && <p className="p-2 text-xs text-muted-foreground">No computers you can reach.</p>}
+              {shown.length === 0 && <p className="p-2 text-xs text-muted-foreground">No devices you can reach.</p>}
               {shown.map((e) => {
                 const on = ids.includes(e.id);
                 return (
@@ -262,7 +262,7 @@ function RunForm({ r }: { r: Readiness }) {
           </select>
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">The first {Math.round(r.maxOutputBytes / 1024)} KB of its output and of its errors are kept, redacted on the computer and again here, for {r.retentionDays} days, on each computer&apos;s Actions tab.</p>
+      <p className="text-xs text-muted-foreground">The first {Math.round(r.maxOutputBytes / 1024)} KB of its output and of its errors are kept, redacted on the device and again here, for {r.retentionDays} days, on each device&apos;s Actions tab.</p>
       <ScheduleChoice id="script-run-when" value={when} onChange={setWhen} zones={{}} nowLabel="Run now" />
       <p className="text-xs text-muted-foreground">
         To run it on a schedule — every few hours, daily, weekly or monthly — make an{' '}
@@ -277,15 +277,15 @@ function RunForm({ r }: { r: Readiness }) {
       <Button size="sm" disabled={!ack || ids.length === 0 || !!problem || reason.trim().length < 3 || run.isPending} onClick={() => run.mutate()}>
         {run.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Request a run
       </Button>
-      <p className="text-xs text-muted-foreground flex gap-2"><ShieldCheck className="h-3.5 w-3.5 shrink-0 mt-0.5" />Requesting runs nothing. Two approvers on the approval roster, neither of whom wrote this script, approve the exact plan with a passkey on the approval signer&apos;s page. You cannot approve your own request. (In direct mode, set on the approval signer for this business, the run is signed as soon as you request it{askRun ? ', after you confirm it is you' : ''}.)</p>
+      <p className="text-xs text-muted-foreground flex gap-2"><ShieldCheck className="h-3.5 w-3.5 shrink-0 mt-0.5" />Requesting runs nothing. Two approvers on the approval roster, neither of whom wrote this script, approve the exact plan with a passkey on the approval signer&apos;s page. You cannot approve your own request. (In direct mode, set on the approval signer for this customer, the run is signed as soon as you request it{askRun ? ', after you confirm it is you' : ''}.)</p>
       {requested && (
         <div className="rounded-md border p-2 space-y-1 text-xs" data-script-run-requested>
-          <p>{requested.direct ? `${requested.direct}. It runs when each computer next checks in.` : 'Requested. Waiting for approval.'}</p>
+          <p>{requested.direct ? `${requested.direct}. It runs when each device next checks in.` : 'Requested. Pending approval.'}</p>
           <div className="flex flex-wrap gap-2">
             {!requested.direct && <Button size="sm" variant="outline" asChild><a href={requested.approvalUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5 mr-1" />Open the approval page</a></Button>}
             {requested.endpointIds.slice(0, 5).map((id) => {
               const e = (eps ?? []).find((x) => x.id === id);
-              return <Button key={id} size="sm" variant="ghost" asChild><Link href={`/endpoints/${id}?tab=actions`}>{e?.name ?? 'Computer'}: results</Link></Button>;
+              return <Button key={id} size="sm" variant="ghost" asChild><Link href={`/endpoints/${id}?tab=actions`}>{e?.name ?? 'Device'}: results</Link></Button>;
             })}
           </div>
         </div>

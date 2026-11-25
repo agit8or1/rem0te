@@ -59,7 +59,7 @@ export default function MyComputersPage() {
       const res = await endpointsApi.connect(c.id);
       const info = res.data?.data as { rustdeskId?: string; sessionId?: string | null } | undefined;
       if (!info?.rustdeskId) {
-        toast({ title: 'Computer not ready', description: 'This computer has not finished enrollment.', variant: 'destructive' });
+        toast({ title: 'Device not ready', description: 'This device has not finished enrollment.', variant: 'destructive' });
         return;
       }
       // Hand over a file that does the whole job rather than a bare
@@ -87,7 +87,7 @@ export default function MyComputersPage() {
   if (isLoading) {
     return (
       <div className="p-6 flex items-center gap-2 text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading your computers…
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading your devices…
       </div>
     );
   }
@@ -107,7 +107,7 @@ export default function MyComputersPage() {
         <Card>
           <CardContent className="p-10 text-center space-y-3">
             <Monitor className="h-10 w-10 mx-auto text-muted-foreground/50" />
-            <p className="font-medium">No computers assigned yet.</p>
+            <p className="font-medium">No devices assigned yet.</p>
             <p className="text-sm text-muted-foreground">
               Ask your company administrator to grant you access.
             </p>
@@ -218,11 +218,11 @@ function RequestSupportDialog({
             </div>
             {computers.length > 0 && (
               <div className="space-y-1.5">
-                <Label htmlFor="rs-computer">Computer (optional)</Label>
+                <Label htmlFor="rs-computer">Device (optional)</Label>
                 <Select value={endpointId} onValueChange={setEndpointId}>
                   <SelectTrigger id="rs-computer"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={NO_COMPUTER}>Not about a specific computer</SelectItem>
+                    <SelectItem value={NO_COMPUTER}>Not about a specific device</SelectItem>
                     {computers.map((c) => (
                       <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                     ))}

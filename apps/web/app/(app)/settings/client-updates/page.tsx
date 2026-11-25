@@ -21,7 +21,7 @@ import { useAsks } from '@/lib/confirm-policy';
 import { connectivityFrom, connectivityHint, connectivityLabel, CONNECTIVITY_DOT } from '@/lib/connectivity';
 
 /**
- * Settings → Client updates (0.32).
+ * Patching → Client updates (0.32).
  *
  * A business — and, optionally, each of its sites and (0.35) device groups —
  * gets a policy that lets
@@ -95,22 +95,22 @@ export default function ClientUpdatesPage() {
       />
       {msp && !ownBusiness && (
         <div className="space-y-1">
-          <Label htmlFor="cu-business">Business</Label>
+          <Label htmlFor="cu-business">Customer</Label>
           <select id="cu-business" className="w-full rounded-md border bg-background p-2 text-sm md:w-96" value={picked} onChange={(e) => { setPicked(e.target.value); setNotice(null); }}>
-            <option value="">Choose a business…</option>
+            <option value="">Choose a customer…</option>
             {(businesses ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </div>
       )}
       <Notice n={notice} />
       {isPlatformAdmin && <AgentAutoUpdateCard setNotice={setNotice} />}
-      {!businessId && <p className="text-sm text-muted-foreground">Choose a business to see and set its policy.</p>}
+      {!businessId && <p className="text-sm text-muted-foreground">Choose a customer to see and set its policy.</p>}
       {policy.isError && <Notice n={{ ok: false, text: apiError(policy.error).message }} />}
       {d && (
         <>
           <div className="space-y-2">
             {d.containment.paused && (
-              <Notice n={{ ok: false, text: `Updates are paused for ${d.containment.scope === 'global' ? 'every business' : 'this business'} (containment): nothing is queued or handed out until the pause is lifted. Reason: ${d.containment.reason ?? '—'}` }} />
+              <Notice n={{ ok: false, text: `Updates are paused for ${d.containment.scope === 'global' ? 'every customer' : 'this customer'} (containment): nothing is queued or handed out until the pause is lifted. Reason: ${d.containment.reason ?? '—'}` }} />
             )}
             {!d.sweep.enabled && (
               <Notice n={{ ok: false, text: 'The client-update sweep is turned off on this server (CLIENT_UPDATE_SWEEP=off), so nothing is queued automatically whatever the policy says.' }} />
@@ -123,9 +123,9 @@ export default function ClientUpdatesPage() {
           </div>
 
           <Card>
-            <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><CalendarClock className="h-4 w-4" />{d.business.name} — business policy</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><CalendarClock className="h-4 w-4" />{d.business.name} — customer policy</CardTitle></CardHeader>
             <CardContent className="space-y-3">
-              {d.policy ? <WindowLine p={d.policy} /> : <p className="text-sm text-muted-foreground">No policy yet: off. Computers update only when someone clicks Update.</p>}
+              {d.policy ? <WindowLine p={d.policy} /> : <p className="text-sm text-muted-foreground">No policy yet: off. Devices update only when someone clicks Update.</p>}
               <PolicyForm key={`b-${d.policy?.updatedAt ?? 'new'}`} businessId={d.business.id} siteId={null} current={d.policy}
                 defaultTz={browserTimeZone()} canEdit={d.may.edit} setNotice={setNotice} />
             </CardContent>
@@ -135,7 +135,7 @@ export default function ClientUpdatesPage() {
             <Card>
               <CardHeader><CardTitle className="text-sm">Sites</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <p className="text-sm text-muted-foreground">A site override replaces the business policy for that site’s computers — including being off when the business policy is on.</p>
+                <p className="text-sm text-muted-foreground">A site override replaces the customer policy for that site’s devices — including being off when the customer policy is on.</p>
                 {d.sites.map((s) => <SiteRow key={s.id} businessId={d.business.id} site={s} canEdit={d.may.edit} setNotice={setNotice} />)}
               </CardContent>
             </Card>
@@ -144,8 +144,8 @@ export default function ClientUpdatesPage() {
           <Card data-testid="cu-groups">
             <CardHeader><CardTitle className="text-sm">Device groups</CardTitle></CardHeader>
             <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">{d.precedence} Members are counted now, over the computers you can see; a rule group&apos;s members change by themselves as computers change.</p>
-              {d.groups.length === 0 && <p className="text-sm text-muted-foreground">This business has no device groups. Make one on the <Link href="/endpoints" className="underline">device list</Link>.</p>}
+              <p className="text-sm text-muted-foreground">{d.precedence} Members are counted now, over the devices you can see; a rule group&apos;s members change by themselves as devices change.</p>
+              {d.groups.length === 0 && <p className="text-sm text-muted-foreground">This customer has no device groups. Make one on the <Link href="/endpoints" className="underline">device list</Link>.</p>}
               {d.groups.map((g) => <GroupRow key={g.id} businessId={d.business.id} group={g} canEdit={d.may.edit} setNotice={setNotice} />)}
             </CardContent>
           </Card>
@@ -166,7 +166,7 @@ function SiteRow({ businessId, site, canEdit, setNotice }: {
     mutationFn: () => clientUpdatesApi.removeSiteOverride(businessId, site.id),
     onSuccess: (r) => {
       const n = (r.data?.data as { clearedQueued: number })?.clearedQueued ?? 0;
-      setNotice({ ok: true, text: `${site.name} now follows the business policy.${n ? ` ${n} automatic request${n === 1 ? '' : 's'} withdrawn.` : ''}` });
+      setNotice({ ok: true, text: `${site.name} now follows the customer policy.${n ? ` ${n} automatic request${n === 1 ? '' : 's'} withdrawn.` : ''}` });
       qc.invalidateQueries({ queryKey: ['client-update-policy'] }); qc.invalidateQueries({ queryKey: ['client-update-computers'] });
     },
     onError: (e) => setNotice({ ok: false, text: apiError(e).message }),
@@ -175,7 +175,7 @@ function SiteRow({ businessId, site, canEdit, setNotice }: {
   return (
     <div className="space-y-2 rounded-md border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="font-medium">{site.name} {site.override ? <Badge variant="secondary" className="ml-1">Override</Badge> : <Badge variant="outline" className="ml-1">Business policy</Badge>}</div>
+        <div className="font-medium">{site.name} {site.override ? <Badge variant="secondary" className="ml-1">Override</Badge> : <Badge variant="outline" className="ml-1">Customer policy</Badge>}</div>
         {canEdit && (site.override
           ? <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}><Trash2 className="mr-1 h-4 w-4" />Remove override</Button>
           : !adding && <Button variant="outline" size="sm" onClick={() => setAdding(true)}><Plus className="mr-1 h-4 w-4" />Override for this site</Button>)}
@@ -190,8 +190,8 @@ function SiteRow({ businessId, site, canEdit, setNotice }: {
 }
 
 const USE_TEXT: Record<string, string> = {
-  unreadable: 'Its rule can no longer be read, so it matches no computer and its policy applies to none.',
-  reads_alerts: 'Its rule picks computers by their alerts, so its policy applies to none. Change the rule or remove the policy.',
+  unreadable: 'Its rule can no longer be read, so it matches no device and its policy applies to none.',
+  reads_alerts: 'Its rule picks devices by their alerts, so its policy applies to none. Change the rule or remove the policy.',
 };
 
 function GroupRow({ businessId, group, canEdit, setNotice }: {
@@ -203,7 +203,7 @@ function GroupRow({ businessId, group, canEdit, setNotice }: {
     mutationFn: () => clientUpdatesApi.removeGroupPolicy(businessId, group.id),
     onSuccess: (r) => {
       const n = (r.data?.data as { clearedQueued: number })?.clearedQueued ?? 0;
-      setNotice({ ok: true, text: `${group.name} no longer has a policy; its computers follow their site or business policy.${n ? ` ${n} automatic request${n === 1 ? '' : 's'} withdrawn.` : ''}` });
+      setNotice({ ok: true, text: `${group.name} no longer has a policy; its devices follow their site or customer policy.${n ? ` ${n} automatic request${n === 1 ? '' : 's'} withdrawn.` : ''}` });
       qc.invalidateQueries({ queryKey: ['client-update-policy'] }); qc.invalidateQueries({ queryKey: ['client-update-computers'] });
     },
     onError: (e) => setNotice({ ok: false, text: apiError(e).message }),
@@ -216,7 +216,7 @@ function GroupRow({ businessId, group, canEdit, setNotice }: {
           {group.name}{' '}
           <Badge variant="outline" className="ml-1">{group.kind === 'rule' ? 'Rule' : 'Static'}</Badge>
           {p && <Badge variant="secondary" className="ml-1">Priority {p.priority}</Badge>}
-          {p && group.members !== null && <span className="ml-2 text-xs text-muted-foreground">{group.members} computer{group.members === 1 ? '' : 's'} now</span>}
+          {p && group.members !== null && <span className="ml-2 text-xs text-muted-foreground">{group.members} device{group.members === 1 ? '' : 's'} now</span>}
         </div>
         {canEdit && (p
           ? <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}><Trash2 className="mr-1 h-4 w-4" />Remove policy</Button>
@@ -274,7 +274,7 @@ function PolicyForm({ businessId, siteId, groupId = null, current, defaultTz, ca
         <div className="space-y-1 md:w-96">
           <Label htmlFor={`${listId}-priority`}>Priority (1 first)</Label>
           <Input id={`${listId}-priority`} type="number" min={1} max={999} value={priority} disabled={disabled} onChange={(e) => setPriority(e.target.value)} placeholder="e.g. 10" />
-          <p className="text-xs text-muted-foreground">A computer in several groups with a policy follows the one with the lowest number. Two groups of this business cannot share a number.</p>
+          <p className="text-xs text-muted-foreground">A device in several groups with a policy follows the one with the lowest number. Two groups of this customer cannot share a number.</p>
         </div>
       )}
       <div className="space-y-1 md:w-96">
@@ -304,11 +304,11 @@ function PolicyForm({ businessId, siteId, groupId = null, current, defaultTz, ca
       {windows.length < 7 && <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => setWindows([...windows, { ...DEFAULT_WINDOW }])}><Plus className="mr-1 h-4 w-4" />Another window</Button>}
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={skipActiveSession} disabled={disabled} onChange={(e) => setSkipActiveSession(e.target.checked)} />
-        Skip a computer while a remote session is open on it (recommended — the install restarts RustDesk and ends the session)
+        Skip a device while a remote session is open on it (recommended — the install restarts RustDesk and ends the session)
       </label>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={skipLoggedOnUser} disabled={disabled} onChange={(e) => setSkipLoggedOnUser(e.target.checked)} />
-        Skip a computer while someone is logged on to it (an agent that does not report who is logged on is skipped too)
+        Skip a device while someone is logged on to it (an agent that does not report who is logged on is skipped too)
       </label>
       <div className="space-y-1 border-t pt-3 md:w-[32rem]">
         <Label htmlFor={`${listId}-agent`}>Keep agents up to date automatically</Label>
@@ -319,7 +319,7 @@ function PolicyForm({ businessId, siteId, groupId = null, current, defaultTz, ca
           <option value="OFF">Off — never update agents automatically</option>
         </select>
         <p className="text-xs text-muted-foreground">
-          When a computer’s agent is older than this server’s, its next check-in re-runs the installer (a signed agent runs its own verified update instead).
+          When a device’s agent is older than this server’s, its next check-in re-runs the installer (a signed agent runs its own verified update instead).
           Independent of the RustDesk checkbox above. Never during a remote session; at most a few attempts per release; paced across the platform.
           {askAgentMode ? 'Turning it on or to the window needs you to confirm it is you; turning it off does not.' : ''}
         </p>
@@ -335,7 +335,7 @@ function PolicyForm({ businessId, siteId, groupId = null, current, defaultTz, ca
 }
 
 /**
- * Settings → Client updates → Keep agents up to date automatically (0.36),
+ * Patching → Client updates → Keep agents up to date automatically (0.36),
  * the platform-wide half: Platform Admin only. Each business, site or device
  * group can opt out (or limit it to its window) in its policy below.
  */
@@ -356,12 +356,12 @@ function AgentAutoUpdateCard({ setNotice }: { setNotice: (n: { ok: boolean; text
   });
   return (
     <Card data-testid="agent-auto-update-settings">
-      <CardHeader><CardTitle className="text-sm">Keep agents up to date automatically — every business</CardTitle></CardHeader>
+      <CardHeader><CardTitle className="text-sm">Keep agents up to date automatically — every customer</CardTitle></CardHeader>
       <CardContent className="space-y-3 text-sm">
         {q.isError && <Notice n={{ ok: false, text: apiError(q.error).message }} />}
         {d && (
           <>
-            {!d.processOn && <Notice n={{ ok: false, text: 'Turned off on this server (AGENT_AUTO_UPDATE=off): no computer is asked to update, whatever is set here.' }} />}
+            {!d.processOn && <Notice n={{ ok: false, text: 'Turned off on this server (AGENT_AUTO_UPDATE=off): no device is asked to update, whatever is set here.' }} />}
             <label className="flex items-center gap-2 font-medium">
               <input type="checkbox" checked={d.enabled} disabled={save.isPending} onChange={(e) => save.mutate({ enabled: e.target.checked })} />
               Update outdated agents automatically (on by default)
@@ -370,8 +370,8 @@ function AgentAutoUpdateCard({ setNotice }: { setNotice: (n: { ok: boolean; text
               Standard Windows agents older than <span className="font-mono">{d.served.version}</span> re-run the installer at a check-in, as Update agent does
               {d.served.signedSha256 ? <>; signed agents not on the published build{d.served.signedVersion ? <> (<span className="font-mono">{d.served.signedVersion}</span>)</> : null} run their own verified update. A signed agent on the published build is current whatever release label it last recorded: the agent binary is the same across releases that did not change it</> : <>; no signed agent build is published, so signed agents are not compared</>}.
               Linux and macOS agents are read-only and are never updated from here. Each attempt downloads the RustDesk client again (about 40 MB).
-              With nothing set anywhere, every computer is updated. Turned off here, no computer is — whatever its business, site, group or own setting says.
-              Precedence below this switch: a computer’s own setting (its Agent card) → device group → site → business → this default.
+              With nothing set anywhere, every device is updated. Turned off here, no device is — whatever its customer, site, group or own setting says.
+              Precedence below this switch: a device’s own setting (its Agent card) → device group → site → customer → this default.
             </p>
             <div className="flex flex-wrap items-end gap-3">
               <div className="space-y-1">
@@ -379,7 +379,7 @@ function AgentAutoUpdateCard({ setNotice }: { setNotice: (n: { ok: boolean; text
                 <Input id="aau-per-hour" type="number" min={1} max={2000} className="w-32" placeholder={String(d.perHour)} value={perHour} onChange={(e) => setPerHour(e.target.value)} />
               </div>
               <div className="space-y-1">
-                <Label htmlFor="aau-attempts">Attempts per computer per release</Label>
+                <Label htmlFor="aau-attempts">Attempts per device per release</Label>
                 <Input id="aau-attempts" type="number" min={1} max={10} className="w-32" placeholder={String(d.maxAttempts)} value={maxAttempts} onChange={(e) => setMaxAttempts(e.target.value)} />
               </div>
               <Button type="button" variant="outline" disabled={save.isPending || (perHour === '' && maxAttempts === '')}
@@ -389,11 +389,11 @@ function AgentAutoUpdateCard({ setNotice }: { setNotice: (n: { ok: boolean; text
             </div>
             <p className="text-muted-foreground">
               Now: {d.pace.usedLastHour} of {d.pace.perHour} starts used in the last hour. Last 24 hours: {d.lastDay.started} started, {d.lastDay.updated} updated, {d.lastDay.open} still open.
-              Attempts are spaced 2 h and 8 h apart; after the last one a computer is shown as failing and is not asked again until the next release or someone clicks Update agent.
+              Attempts are spaced 2 h and 8 h apart; after the last one a device is shown as failing and is not asked again until the next release or someone clicks Update agent.
             </p>
             {d.failing.count > 0 && (
               <div className="space-y-1" data-testid="agent-auto-update-failing">
-                <p className="font-medium text-amber-700 dark:text-amber-400">{d.failing.count} computer{d.failing.count === 1 ? '' : 's'} failing to update automatically</p>
+                <p className="font-medium text-amber-700 dark:text-amber-400">{d.failing.count} device{d.failing.count === 1 ? '' : 's'} failing to update automatically</p>
                 <ul className="space-y-0.5 text-xs">
                   {d.failing.computers.map((c) => (
                     <li key={c.id}><Link href={`/endpoints/${c.id}#agent-card`} className="underline">{c.name}</Link>{c.business ? ` · ${c.business.name}` : ''} · agent {shownAgentVersion(c.versionView, c.agentVersion) ?? '—'} · {c.attempts} attempts, last {fmt(c.lastAt)}</li>
@@ -422,17 +422,17 @@ function Computers({ rows, error }: { rows: ComputerRow[] | null; error: string 
   const never = rows?.filter((r) => r.blocker?.permanent).length ?? 0;
   return (
     <Card>
-      <CardHeader><CardTitle className="text-sm">Computers</CardTitle></CardHeader>
+      <CardHeader><CardTitle className="text-sm">Devices</CardTitle></CardHeader>
       <CardContent className="space-y-2">
         {error && <Notice n={{ ok: false, text: error }} />}
-        {rows && never > 0 && <p className="text-sm text-amber-700 dark:text-amber-400">{never} computer{never === 1 ? '' : 's'} will never update automatically until someone fixes what is listed against {never === 1 ? 'it' : 'them'}.</p>}
-        {rows && rows.length === 0 && <p className="text-sm text-muted-foreground">No computers you can see in this business.</p>}
+        {rows && never > 0 && <p className="text-sm text-amber-700 dark:text-amber-400">{never} device{never === 1 ? '' : 's'} will never update automatically until someone fixes what is listed against {never === 1 ? 'it' : 'them'}.</p>}
+        {rows && rows.length === 0 && <p className="text-sm text-muted-foreground">No devices you can see in this customer.</p>}
         {rows && rows.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="border-b text-muted-foreground">
                 <tr>
-                  <th className="py-2 pr-3 text-left font-medium">Computer</th>
+                  <th className="py-2 pr-3 text-left font-medium">Device</th>
                   <th className="py-2 pr-3 text-left font-medium">Site</th>
                   <th className="py-2 pr-3 text-left font-medium">Policy</th>
                   <th className="py-2 pr-3 text-left font-medium">RustDesk</th>
@@ -453,7 +453,7 @@ function Computers({ rows, error }: { rows: ComputerRow[] | null; error: string 
                     <td className="py-2 pr-3" title={r.policy?.why}>
                       {!r.policy ? <span className="text-muted-foreground">None</span>
                         : r.policy.scope === 'group' ? <>Group {r.policy.group?.name} <span className="text-muted-foreground">(priority {r.policy.group?.priority})</span></>
-                          : r.policy.scope === 'site' ? 'Site override' : 'Business'}
+                          : r.policy.scope === 'site' ? 'Site override' : 'Customer'}
                       {r.policy?.alsoIn?.length ? <div className="text-muted-foreground">ahead of {r.policy.alsoIn.map((g) => `${g.name} (${g.priority})`).join(', ')}</div> : null}
                     </td>
                     <td className="py-2 pr-3 font-mono">{r.version ? `v${r.version}` : '—'}{r.queued?.targetVersion && <span className="text-muted-foreground"> → v{r.queued.targetVersion}</span>}</td>

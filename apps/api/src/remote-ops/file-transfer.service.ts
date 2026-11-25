@@ -256,12 +256,12 @@ export class FileTransferService implements OnModuleInit, OnModuleDestroy {
     if (direction === 'to_computer') {
       size = Number(body?.size);
       if (!Number.isSafeInteger(size) || size < 0) throw new BadRequestException({ code: 'FILES_SIZE_INVALID', message: 'The file size is not valid.' });
-      if (size > maxBytes) throw new BadRequestException({ code: 'FILES_TOO_LARGE', message: `This business allows files up to ${Math.floor(maxBytes / 1048576)} MB.`, maxBytes });
+      if (size > maxBytes) throw new BadRequestException({ code: 'FILES_TOO_LARGE', message: `This customer allows files up to ${Math.floor(maxBytes / 1048576)} MB.`, maxBytes });
       if (!isSha256(body?.sha256)) throw new BadRequestException({ code: 'FILES_SHA256_INVALID', message: 'The file\'s SHA-256 is missing or not valid.' });
       sha256 = body.sha256;
     }
     const overwrite = body?.overwrite === true;
-    if (direction === 'from_computer' && overwrite) throw new BadRequestException({ code: 'FILES_INVALID', message: 'Overwrite applies only to sending a file to the computer.' });
+    if (direction === 'from_computer' && overwrite) throw new BadRequestException({ code: 'FILES_INVALID', message: 'Overwrite applies only to sending a file to the device.' });
     assertFresh(freshMethod, { action: 'files.transfer', message: 'Confirm it is you to transfer a file. The agent reads and writes as SYSTEM.' });
 
     for (const t of await this.prisma.fileTransfer.findMany({ where: { endpointId: ep.id, state: { in: LIVE } }, select: SELECT })) {
@@ -329,7 +329,7 @@ export class FileTransferService implements OnModuleInit, OnModuleDestroy {
     if (!Number.isInteger(seq) || seq < 1) throw new BadRequestException({ code: 'FILES_CHUNK_INVALID', message: 'The chunk number is not valid.' });
     if (seq <= t.inSeq) return { seq, duplicate: true, inSeq: t.inSeq, ackSeq: t.ackSeq };
     if (seq !== t.inSeq + 1) throw new ConflictException({ code: 'FILES_CHUNK_ORDER', message: `Send chunk ${t.inSeq + 1} next.`, inSeq: t.inSeq });
-    if (seq - t.ackSeq > FILE_WINDOW_CHUNKS) throw new ConflictException({ code: 'FILES_WINDOW_FULL', message: 'The computer has not caught up yet. Send this chunk again shortly.', inSeq: t.inSeq, ackSeq: t.ackSeq });
+    if (seq - t.ackSeq > FILE_WINDOW_CHUNKS) throw new ConflictException({ code: 'FILES_WINDOW_FULL', message: 'The device has not caught up yet. Send this chunk again shortly.', inSeq: t.inSeq, ackSeq: t.ackSeq });
     const data = decodeChunk(body?.data, body?.sha256);
     if (!data || !chunkFits(seq, data.length, Number(t.size))) throw new BadRequestException({ code: 'FILES_CHUNK_INVALID', message: 'The chunk does not match its SHA-256 or the declared size.' });
     const ok = await this.prisma.$transaction(async (tx) => {
@@ -349,7 +349,7 @@ export class FileTransferService implements OnModuleInit, OnModuleDestroy {
    */
   async getChunk(actor: ActorContext, endpointId: string, tid: string, seqRaw: unknown, now = Date.now()) {
     const { t } = await this.mine(actor, endpointId, tid, 'from_computer', now);
-    if (t.state !== 'transferring' && t.state !== 'completed') throw new ConflictException({ code: 'FILES_NOT_READY', message: 'Nothing has arrived from the computer yet.', state: t.state, endReason: t.endReason });
+    if (t.state !== 'transferring' && t.state !== 'completed') throw new ConflictException({ code: 'FILES_NOT_READY', message: 'Nothing has arrived from the device yet.', state: t.state, endReason: t.endReason });
     const seq = Number(seqRaw);
     if (!Number.isInteger(seq) || seq < 1) throw new BadRequestException({ code: 'FILES_CHUNK_INVALID', message: 'The chunk number is not valid.' });
     if (seq > t.inSeq) throw new ConflictException({ code: 'FILES_NOT_READY', message: 'That chunk has not arrived yet.', state: t.state, inSeq: t.inSeq });

@@ -188,7 +188,7 @@ The whole lifecycle is described in [approved-actions.md](approved-actions.md).
 ## Alerts and tickets (0.29)
 
 rem0te can offer monitoring alerts to ClientSt0r so it opens a ticket, and show that ticket on the alert. Turn it
-on per business, or globally, in **Settings → Monitoring → Notifications → Offer alerts to ClientSt0r**, with a
+on per business, or globally, in **Monitoring → Monitoring policies → Notifications → Offer alerts to ClientSt0r**, with a
 severity floor (critical by default). Only alerts at or above it are sent. Nothing else is needed on the rem0te
 side: the peer's existing `eventsUrl` receives the alert events, and the existing organization mapping decides
 which business is which organization.

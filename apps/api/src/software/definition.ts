@@ -146,9 +146,9 @@ export interface RemovalHint {
 }
 
 const KIND_REASON: Partial<Record<RemovalKind, { code: RemovalHint['code']; reason: string }>> = {
-  office: { code: 'office', reason: 'Microsoft 365 / Office (Click-to-Run) has no silent uninstall the agent can run. Remove it in Settings → Apps on the computer, or with Microsoft\'s removal tool.' },
+  office: { code: 'office', reason: 'Microsoft 365 / Office (Click-to-Run) has no silent uninstall the agent can run. Remove it in Settings → Apps on the device, or with Microsoft\'s removal tool.' },
   driver: { code: 'driver', reason: 'A driver package is removed with Windows\' own driver tools (Device Manager), not by its uninstaller.' },
-  none: { code: 'interactive', reason: 'Its uninstaller is interactive only, of no form the agent can run silently; it would wait for someone at the computer to click through it.' },
+  none: { code: 'interactive', reason: 'Its uninstaller is interactive only, of no form the agent can run silently; it would wait for someone at the device to click through it.' },
 };
 
 /**
@@ -573,12 +573,12 @@ export function evaluateSoftwareGate(g: { ring: number; jobStatus: string | null
   if (!g.jobStatus) return { ok: false, reason: 'not_requested', detail: `Ring ${ring} has not been requested.` };
   if (['AWAITING_APPROVAL', 'APPROVED', 'DISPATCHED'].includes(g.jobStatus)) return { ok: false, reason: 'in_progress', detail: `Ring ${ring} is ${g.jobStatus.toLowerCase().replace(/_/g, ' ')}.` };
   if (['REJECTED', 'CANCELED', 'EXPIRED'].includes(g.jobStatus)) return { ok: false, reason: 'ring_not_run', detail: `Ring ${ring}'s plan was ${g.jobStatus.toLowerCase()}; request it again.` };
-  if (g.targets.some((t) => t.status === 'UNKNOWN' && !t.reconciled)) return { ok: false, reason: 'unreconciled', detail: `A computer in ring ${ring} has an uncertain outcome. Reconcile it first.` };
-  if (g.targets.some((t) => t.status === 'PENDING' || t.status === 'DISPATCHED')) return { ok: false, reason: 'in_progress', detail: `A computer in ring ${ring} has not answered yet.` };
+  if (g.targets.some((t) => t.status === 'UNKNOWN' && !t.reconciled)) return { ok: false, reason: 'unreconciled', detail: `A device in ring ${ring} has an uncertain outcome. Reconcile it first.` };
+  if (g.targets.some((t) => t.status === 'PENDING' || t.status === 'DISPATCHED')) return { ok: false, reason: 'in_progress', detail: `A device in ring ${ring} has not answered yet.` };
   const computers = g.targets.filter((t) => t.status !== 'CANCELED');
-  if (!computers.length) return { ok: false, reason: 'ring_not_run', detail: `No computer in ring ${ring} was reached.` };
+  if (!computers.length) return { ok: false, reason: 'ring_not_run', detail: `No device in ring ${ring} was reached.` };
   const failed = computers.filter((t) => t.status !== 'SUCCEEDED' || (t.result?.outcome !== 'no_change' && !effective(t, g.operation) && t.result?.outcome !== 'restart_required'));
-  if (failed.length > g.failureThreshold) return { ok: false, reason: 'too_many_failures', detail: `${failed.length} computer(s) in ring ${ring} failed; the threshold is ${g.failureThreshold}.` };
+  if (failed.length > g.failureThreshold) return { ok: false, reason: 'too_many_failures', detail: `${failed.length} device(s) in ring ${ring} failed; the threshold is ${g.failureThreshold}.` };
   if (ring === 0) {
     const c = computers[0];
     if (c.result?.outcome === 'no_change') return { ok: false, reason: 'canary_proved_nothing', detail: `The canary ${g.operation === 'install' ? 'already had it' : 'did not have it'}, so it proves nothing. Choose another canary.` };

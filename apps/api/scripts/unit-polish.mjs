@@ -74,9 +74,9 @@ section('Restart and update wording by platform');
     const s = P.restartPendingSentence(p);
     // The web sentence stands alone ("This computer …"); the API's sits inside a reason ("… the computer …").
     const w = WP.restartPendingSentence(p);
-    if (want ? w !== s : w !== 'This computer is waiting for a restart') bad.push(`web restart(${p}) = "${w}"`);
+    if (want ? w !== s : w !== 'This device is waiting for a restart') bad.push(`web restart(${p}) = "${w}"`);
     if (want && s !== `${want} is waiting for a restart`) bad.push(`restart(${p}) = "${s}"`);
-    if (!want && s !== 'the computer is waiting for a restart') bad.push(`restart(${p}) = "${s}"`);
+    if (!want && s !== 'the device is waiting for a restart') bad.push(`restart(${p}) = "${s}"`);
   }
   check(bad.length === 0, `${cases.length} platforms: the OS named, or "the computer" / "This computer"; API and web agree`, bad.join('; '));
   check(!/Windows/.test(P.restartPendingSentence('Linux')) && !/Windows/.test(P.restartPendingSentence('macOS')), 'Linux and macOS never read "Windows"');

@@ -141,7 +141,7 @@ export class SoftwareService {
   // ── The catalog ───────────────────────────────────────────────────────────
 
   async list(actor: ActorContext, businessId?: string, includeArchived = false) {
-    if (!actor.isPlatformAdmin && !this.acl.can(actor, CAP.COMPUTERS_VIEW)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'The software catalog needs the View computers permission.' });
+    if (!actor.isPlatformAdmin && !this.acl.can(actor, CAP.COMPUTERS_VIEW)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'The software catalog needs the View devices permission.' });
     const scope = this.acl.resolveScope(actor, businessId);
     const where: Prisma.SoftwareCatalogEntryWhereInput = {
       AND: [scope ? { OR: [{ scope: 'GLOBAL' }, { customerId: scope }] } : {}, includeArchived ? {} : { archivedAt: null }],
@@ -196,7 +196,7 @@ export class SoftwareService {
       if (!actor.isPlatformAdmin) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only a Platform Admin adds to the global catalog.' });
     } else {
       customerId = this.acl.requireScope(actor, d.businessId);
-      if (!this.canEdit(actor, { scope: 'BUSINESS', customerId })) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only this business\'s Business Owner or a Platform Admin changes its software catalog.' });
+      if (!this.canEdit(actor, { scope: 'BUSINESS', customerId })) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only this customer\'s Business Owner or a Platform Admin changes its software catalog.' });
       const biz = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { id: true, isArchived: true } });
       if (!biz || biz.isArchived) throw new NotFoundException('Business not found');
     }
@@ -409,7 +409,7 @@ export class SoftwareService {
 
   /** Search the copy of the winget community index. Reading it needs what reading the catalog needs. */
   async wingetSearch(actor: ActorContext, q: string | undefined, browse?: Record<string, unknown>) {
-    if (!actor.isPlatformAdmin && !this.acl.can(actor, CAP.COMPUTERS_VIEW)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'The software catalog needs the View computers permission.' });
+    if (!actor.isPlatformAdmin && !this.acl.can(actor, CAP.COMPUTERS_VIEW)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'The software catalog needs the View devices permission.' });
     if (browse && isBrowse(browse)) return this.wingetBrowse(actor, { ...browse, q });
     const s = (q ?? '').trim();
     const index = await this.index.status();
@@ -485,7 +485,7 @@ export class SoftwareService {
     // (another architecture, or over a pasted hash) would silently change what
     // every other computer of the business is told to install.
     if (own && own.version === r.version) {
-      throw new ConflictException({ code: 'ENTRY_PINS_ANOTHER_INSTALLER', message: `This catalog's ${own.packageId} ${own.version} entry pins ${own.architecture ? `the ${own.architecture} installer` : 'a pasted hash'}, not the ${r.pinned.architecture ?? 'chosen'} one this computer needs. Change the entry on Automation → Software catalog, or deploy it from there.` });
+      throw new ConflictException({ code: 'ENTRY_PINS_ANOTHER_INSTALLER', message: `This catalog's ${own.packageId} ${own.version} entry pins ${own.architecture ? `the ${own.architecture} installer` : 'a pasted hash'}, not the ${r.pinned.architecture ?? 'chosen'} one this device needs. Change the entry on Automation → Software catalog, or deploy it from there.` });
     }
     if (own) {
       const u = await this.prisma.softwareCatalogEntry.updateMany({
@@ -532,7 +532,7 @@ export class SoftwareService {
       if (!actor.isPlatformAdmin) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only a Platform Admin adds to the global catalog.' });
     } else {
       customerId = this.acl.requireScope(actor, d.businessId);
-      if (!this.canEdit(actor, { scope: 'BUSINESS', customerId })) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only this business\'s Business Owner or a Platform Admin changes its software catalog.' });
+      if (!this.canEdit(actor, { scope: 'BUSINESS', customerId })) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only this customer\'s Business Owner or a Platform Admin changes its software catalog.' });
       const biz = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { isArchived: true } });
       if (!biz || biz.isArchived) throw new NotFoundException('Business not found');
     }
@@ -620,8 +620,8 @@ export class SoftwareService {
       if (!actor.isPlatformAdmin) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only a Platform Admin adds to the global catalog.' });
     } else {
       biz = await this.catalogBusiness(actor, d.businessId);
-      if (!biz) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Name the business whose catalog this is.' });
-      if (!this.canEdit(actor, { scope: 'BUSINESS', customerId: biz.id })) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only this business\'s Business Owner or a Platform Admin changes its software catalog.' });
+      if (!biz) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Name the customer whose catalog this is.' });
+      if (!this.canEdit(actor, { scope: 'BUSINESS', customerId: biz.id })) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only this customer\'s Business Owner or a Platform Admin changes its software catalog.' });
     }
     // Once, before any manifest is read or anything is written.
     assertFresh(freshMethod, { action: 'software.catalog' });
@@ -705,7 +705,7 @@ export class SoftwareService {
     if (!st.possible) throw new ConflictException({ code: 'SOFTWARE_NOT_POSSIBLE', message: st.reason, fix: st.fix });
     const inv = await this.prisma.endpointInventory.findUnique({ where: { endpointId }, select: { software: true } });
     const prog = installedOf(inv?.software).find((x) => x.key === d.key && x.view === d.view && x.name === d.displayName);
-    if (!prog) throw new NotFoundException({ code: 'PROGRAM_NOT_IN_INVENTORY', message: 'This computer\'s last inventory does not list that program under that key.' });
+    if (!prog) throw new NotFoundException({ code: 'PROGRAM_NOT_IN_INVENTORY', message: 'This device\'s last inventory does not list that program under that key.' });
     const hint = removalHint(prog);
     if (hint.code === 'protected') throw new ConflictException({ code: 'PROTECTED_PROGRAM', message: hint.reason });
     if (!hint.possible) throw new ConflictException({ code: 'NO_SILENT_UNINSTALL', message: hint.reason });
@@ -732,8 +732,8 @@ export class SoftwareService {
    */
   private async build(actor: ActorContext, dto: z.infer<typeof CreateDeploymentDto>, single: boolean): Promise<SoftwareDeployment> {
     const all = dto.rings.flat();
-    if (new Set(all).size !== all.length) throw new BadRequestException({ code: 'BAD_RINGS', message: 'A computer can be in one ring only.' });
-    if (dto.rings[0].length !== 1) throw new BadRequestException({ code: 'BAD_RINGS', message: 'Ring 0 is the canary: exactly one computer.' });
+    if (new Set(all).size !== all.length) throw new BadRequestException({ code: 'BAD_RINGS', message: 'A device can be in one ring only.' });
+    if (dto.rings[0].length !== 1) throw new BadRequestException({ code: 'BAD_RINGS', message: 'Ring 0 is the canary: exactly one device.' });
     const e = await this.entry(actor, dto.entryId);
     if (e.archivedAt) throw new ConflictException({ code: 'ENTRY_ARCHIVED', message: 'This catalog entry is archived; it cannot be deployed.' });
     const action = ACTIONS[dto.operation];
@@ -744,7 +744,7 @@ export class SoftwareService {
       // 0.57 (§70): no install or uninstall on an unassigned computer.
       if (ep) assertAssigned(ep);
       if (!ep || !ep.customerId || ep.status === 'ARCHIVED' || !(await this.acl.canReachEndpoint(actor, ep))) throw new NotFoundException('Computer not found');
-      if (business && ep.customerId !== business) throw new BadRequestException({ code: 'BAD_TARGETS', message: 'A deployment names computers of one business only.' });
+      if (business && ep.customerId !== business) throw new BadRequestException({ code: 'BAD_TARGETS', message: 'A deployment names devices of one customer only.' });
       business = ep.customerId;
       if (e.scope === 'BUSINESS' && e.customerId !== ep.customerId) throw new NotFoundException('Catalog entry not found');
       // A later ring's computer only has to be ready when that ring is requested;
@@ -894,10 +894,10 @@ export class SoftwareService {
     }
     const members = (d.rings as unknown as Ring[])[ring].endpointIds;
     const excluded = new Map(dto.exclude.map((x) => [x.endpointId, x.why]));
-    for (const e of excluded.keys()) if (!members.includes(e)) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Only computers of this ring can be left out.' });
+    for (const e of excluded.keys()) if (!members.includes(e)) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Only devices of this ring can be left out.' });
     if (ring === 0 && excluded.size) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'The canary cannot be left out; make a new deployment with another canary.' });
     const endpointIds = members.filter((e) => !excluded.has(e));
-    if (!endpointIds.length) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Every computer of this ring is left out.' });
+    if (!endpointIds.length) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Every device of this ring is left out.' });
     const action = ACTIONS[d.operation as 'install' | 'uninstall'];
     for (const e of endpointIds) {
       const ep = (await this.actions.endpointFor(e))!;
@@ -929,7 +929,7 @@ export class SoftwareService {
     const dto = ReasonDto.safeParse(raw ?? {});
     if (!dto.success) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'A reason of at least 3 characters is required.' });
     const d = await this.scoped(actor, id);
-    if (!this.mayManage(actor, d)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever created the deployment, a Business Owner of this business or a Platform Admin can change it.' });
+    if (!this.mayManage(actor, d)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever created the deployment, a Business Owner of this customer or a Platform Admin can change it.' });
     const from = { pause: ['ACTIVE'], resume: ['PAUSED'], cancel: ['ACTIVE', 'PAUSED'] }[to];
     if (!from.includes(d.status)) throw new ConflictException({ code: 'NOT_ALLOWED_NOW', message: `The deployment is ${d.status.toLowerCase()}.` });
     let resumedOverJobId = d.resumedOverJobId;

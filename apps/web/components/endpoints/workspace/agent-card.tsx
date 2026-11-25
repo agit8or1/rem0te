@@ -44,15 +44,15 @@ const short = (v: string | null) => (v && /^[0-9a-f]{64}$/.test(v) ? `build ${v.
 function LocalUpgrade({ local, onCopy }: { local: { command: string; stuck: boolean }; onCopy: (t: string) => void }) {
   return (
     <details open={local.stuck} className={`border-t pt-3 text-xs ${local.stuck ? '' : 'text-muted-foreground'}`} data-testid="agent-local-upgrade" data-stuck={local.stuck ? 'true' : 'false'}>
-      <summary className="cursor-pointer font-medium text-foreground">{local.stuck ? 'Stopped checking in after its upgrade: fix it on the computer' : 'Upgrade on the computer itself'}</summary>
+      <summary className="cursor-pointer font-medium text-foreground">{local.stuck ? 'Stopped checking in after its upgrade: fix it on the device' : 'Upgrade on the device itself'}</summary>
       <div className="mt-2 space-y-1.5">
         {local.stuck && (
           <p className="rounded-md border border-amber-500/40 bg-amber-500/5 p-2" data-testid="agent-local-upgrade-stuck">
             It downloaded the upgrade to the full agent and has not checked in since, so nothing sent from here reaches it.
-            Run this once on the computer to finish the upgrade. It keeps the computer’s enrolment.
+            Run this once on the device to finish the upgrade. It keeps the device’s enrolment.
           </p>
         )}
-        <p>In PowerShell <span className="font-medium">as administrator</span> on the computer, paste and run:</p>
+        <p>In PowerShell <span className="font-medium">as administrator</span> on the device, paste and run:</p>
         <div className="flex items-start gap-2">
           <code className="block min-w-0 flex-1 break-all rounded bg-muted px-2 py-1.5 font-mono text-[11px] leading-snug" data-testid="agent-local-upgrade-command">{local.command}</code>
           <Button size="sm" variant="ghost" className="h-7 px-2" aria-label="Copy the upgrade command" onClick={() => onCopy(local.command)}>
@@ -61,7 +61,7 @@ function LocalUpgrade({ local, onCopy }: { local: { command: string; stuck: bool
         </div>
         <p className="text-muted-foreground">
           It downloads the signed agent this portal publishes, runs it only if it matches the published digest, and the agent
-          verifies everything else it installs. It takes about a minute; the computer reports the full agent within three.
+          verifies everything else it installs. It takes about a minute; the device reports the full agent within three.
           If it does not, <code>C:\ProgramData\Rem0te\Logs\install.log</code> says why.
         </p>
       </div>
@@ -86,7 +86,7 @@ function AutoUpdateSetting({ endpointId, u, canEdit }: { endpointId: string; u: 
     mutationFn: (mode: 'inherit' | 'on' | 'off') => endpointsApi.setAgentAutoUpdate(endpointId, mode),
     onSuccess: (_r, mode) => {
       qc.invalidateQueries({ queryKey: ['endpoint-agent', endpointId] });
-      toast({ title: 'Saved', description: mode === 'inherit' ? 'This computer follows its policies again.' : `Automatic agent updates are ${mode === 'on' ? 'on' : 'off'} for this computer, whatever its policies say.` });
+      toast({ title: 'Saved', description: mode === 'inherit' ? 'This device follows its policies again.' : `Automatic agent updates are ${mode === 'on' ? 'on' : 'off'} for this device, whatever its policies say.` });
     },
     onError: (e) => toast({ title: 'Not saved', description: (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'The request failed.', variant: 'destructive' }),
   });
@@ -94,7 +94,7 @@ function AutoUpdateSetting({ endpointId, u, canEdit }: { endpointId: string; u: 
   const platformOff = !st.platform.enabled || !st.platform.processOn;
   return (
     <div className="space-y-1" data-testid="agent-auto-update-setting" data-value={st.value} data-effective={st.effective}>
-      <label htmlFor={`aau-${endpointId}`} className="font-medium text-foreground">For this computer</label>
+      <label htmlFor={`aau-${endpointId}`} className="font-medium text-foreground">For this device</label>
       <select id={`aau-${endpointId}`} data-testid="agent-auto-update-select" className="w-full rounded-md border bg-background p-1.5 text-xs"
         value={st.value} disabled={!canEdit || set.isPending} onChange={(e) => set.mutate(e.target.value as 'inherit' | 'on' | 'off')}>
         <option value="inherit">{inherit}</option>
@@ -103,12 +103,12 @@ function AutoUpdateSetting({ endpointId, u, canEdit }: { endpointId: string; u: 
       </select>
       <p className="text-muted-foreground" data-testid="agent-auto-update-effective">
         Effective: <span className="font-medium text-foreground">{EFFECTIVE_LABEL[st.effective]}</span>
-        {platformOff ? (!st.platform.enabled ? ' — automatic agent updates are off for the whole platform (Settings → Client updates), which wins over this.' : ' — turned off on this server (AGENT_AUTO_UPDATE=off), which wins over this.')
-          : st.source === 'computer' ? ' — this computer’s own setting, over every policy.'
-            : st.source === 'policy' ? ` — from the ${st.inherited.from}.` : ' — the platform default: every computer updates its agent unless something here says otherwise.'}
+        {platformOff ? (!st.platform.enabled ? ' — automatic agent updates are off for the whole platform (Patching → Client updates), which wins over this.' : ' — turned off on this server (AGENT_AUTO_UPDATE=off), which wins over this.')
+          : st.source === 'computer' ? ' — this device’s own setting, over every policy.'
+            : st.source === 'policy' ? ` — from the ${st.inherited.from}.` : ' — the platform default: every device updates its agent unless something here says otherwise.'}
       </p>
       {!canEdit && <p className="text-muted-foreground">Changing it needs the computers:edit permission.</p>}
-      {canEdit && <p className="text-muted-foreground">{askSet ? 'Off takes effect at once. On and Inherit ask you to confirm it is you.' : 'A change takes effect at once.'} Business-wide: the business’s page or <Link className="underline" href="/settings/client-updates">Settings → Client updates</Link>.</p>}
+      {canEdit && <p className="text-muted-foreground">{askSet ? 'Off takes effect at once. On and Inherit ask you to confirm it is you.' : 'A change takes effect at once.'} Customer-wide: the customer’s page or <Link className="underline" href="/settings/client-updates">Patching → Client updates</Link>.</p>}
     </div>
   );
 }
@@ -135,7 +135,7 @@ function AutoUpdateBlock({ u, onCopy, endpointId, canEdit }: { u: AutoUpdateStat
         <p className="text-muted-foreground">Attempt {u.attempts.made} of {u.attempts.max}{u.attempts.lastAt ? `, last ${ago(u.attempts.lastAt)}` : ''}{u.target ? ` · to ${short(u.target)}` : ''}.</p>
       )}
       {u.state !== 'manual' && u.state !== 'unknown' && (
-        <p className="text-muted-foreground">Mode: {MODE_LABEL[u.mode]}{u.setting?.source === 'computer' ? (u.policy ? `, this computer’s own setting (window from the ${u.policy.name})` : ', this computer’s own setting') : u.policy ? `, from the ${u.policy.name}` : ' (the platform default)'}.</p>
+        <p className="text-muted-foreground">Mode: {MODE_LABEL[u.mode]}{u.setting?.source === 'computer' ? (u.policy ? `, this device’s own setting (window from the ${u.policy.name})` : ', this device’s own setting') : u.policy ? `, from the ${u.policy.name}` : ' (the platform default)'}.</p>
       )}
       {u.manual?.command && (
         <div className="flex items-start gap-2">
@@ -239,10 +239,10 @@ export function AgentCard({ endpointId, canEdit, alerts }: { endpointId: string;
             {(a.kind === 'signed' || a.lastUpdate) && (
               <Row label="Last update result">
                 {a.lastUpdate ? <span title={formatDate(a.lastUpdate.checkedAt)}>{a.lastUpdate.result || '—'} · {ago(a.lastUpdate.checkedAt)}</span>
-                  : <span className="text-muted-foreground">Not reported (signed builds before 0.34 do not report it; <code>rem0te-agent.exe status</code> on the computer shows it)</span>}
+                  : <span className="text-muted-foreground">Not reported (signed builds before 0.34 do not report it; <code>rem0te-agent.exe status</code> on the device shows it)</span>}
               </Row>
             )}
-            {a.reinstall.pending && <Row label="Queued">{a.reinstall.dispatched ? 'Handed to the computer; waiting for it to report back' : 'Waiting for the next check-in'}</Row>}
+            {a.reinstall.pending && <Row label="Queued">{a.reinstall.dispatched ? 'Handed to the device; waiting for it to report back' : 'Waiting for the next check-in'}</Row>}
             {a.updatesPaused && <p className="rounded-md border border-amber-500/40 bg-amber-500/5 p-2 text-xs">{a.updatesPaused}</p>}
 
             {a.autoUpdate && (
@@ -293,7 +293,7 @@ export function AgentCard({ endpointId, canEdit, alerts }: { endpointId: string;
                     <UpgradeButton view={up} onClick={actions.askMigrate} testId="agent-migrate" />
                     <UpgradeReason view={up} testId="agent-migration-blocked" />
                     {up.state === 'enabled' && (
-                      <p className="text-xs text-muted-foreground">Or let the automatic migration move it: <Link className="underline" href="/endpoints/full-agent">Full agent</Link> shows every step and where this computer is.</p>
+                      <p className="text-xs text-muted-foreground">Or let the automatic migration move it: <Link className="underline" href="/endpoints/full-agent">Full agent</Link> shows every step and where this device is.</p>
                     )}
                   </div>
                 )}

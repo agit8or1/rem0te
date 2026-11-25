@@ -85,8 +85,8 @@ export default function OffboardingCasePage() {
     enabled: !!c?.businessId && isPlatformAdmin,
     retry: false,
   });
-  const scopeName = !c ? '' : !c.businessId ? 'Every business'
-    : business?.name ?? (c.businessId === ownBusinessId ? businessName : null) ?? 'One business';
+  const scopeName = !c ? '' : !c.businessId ? 'Every customer'
+    : business?.name ?? (c.businessId === ownBusinessId ? businessName : null) ?? 'One customer';
 
   const polling = shouldPoll(c);
 
@@ -144,8 +144,8 @@ export default function OffboardingCasePage() {
               <CardTitle className="text-base">Credential rotation</CardTitle>
               <CardDescription>
                 {c.rotationSummary.total === 0
-                  ? 'No computer credentials were rotated in this offboarding.'
-                  : `${c.rotationSummary.confirmed} of ${c.rotationSummary.total} confirmed by the computer` +
+                  ? 'No device credentials were rotated in this offboarding.'
+                  : `${c.rotationSummary.confirmed} of ${c.rotationSummary.total} confirmed by the device` +
                     (c.rotationSummary.pending ? `, ${c.rotationSummary.pending} pending${c.rotationSummary.offlinePending ? ` (${c.rotationSummary.offlinePending} offline)` : ''}` : '') +
                     (c.rotationSummary.failed ? `, ${c.rotationSummary.failed} failed` : '') + '.'}
               </CardDescription>
@@ -156,7 +156,7 @@ export default function OffboardingCasePage() {
                   <table className="w-full text-sm">
                     <thead className="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
                       <tr>
-                        <th className="px-4 py-2 font-medium">Computer</th>
+                        <th className="px-4 py-2 font-medium">Device</th>
                         <th className="px-4 py-2 font-medium">Rotation</th>
                         <th className="px-4 py-2 font-medium">Connectivity</th>
                         <th className="px-4 py-2 font-medium">Staged</th>
@@ -182,8 +182,8 @@ export default function OffboardingCasePage() {
                           <td className="px-4 py-2 text-xs text-muted-foreground">{formatDate(r.stagedAt)}</td>
                           <td className="max-w-sm px-4 py-2 text-xs">
                             {r.state === 'failed' && <span className="text-destructive">{r.error ?? 'Could not stage the rotation.'} The old password still works.</span>}
-                            {r.state === 'pending' && <span className="text-muted-foreground">{r.note ?? 'Waiting for the computer to confirm. The old password still works until then.'}</span>}
-                            {r.state === 'confirmed' && <span className="text-muted-foreground">The computer applied the new password. The old one no longer works for new connections.</span>}
+                            {r.state === 'pending' && <span className="text-muted-foreground">{r.note ?? 'Waiting for the device to confirm. The old password still works until then.'}</span>}
+                            {r.state === 'confirmed' && <span className="text-muted-foreground">The device applied the new password. The old one no longer works for new connections.</span>}
                           </td>
                         </tr>
                       ))}

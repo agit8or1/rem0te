@@ -42,7 +42,7 @@ export function sessionWhat(s: Pick<MsaSession, 'mode' | 'permissions' | 'consen
   const extras = [p.clipboard && 'clipboard', p.files && 'file transfer', p.audio && 'audio'].filter(Boolean) as string[];
   return [
     s.mode === 'view' ? 'View only' : `Control${extras.length ? ` with ${extras.join(', ')}` : ''}`,
-    s.consent === 'required' ? 'the person at the computer must accept' : null,
+    s.consent === 'required' ? 'the person at the device must accept' : null,
     `up to ${s.maxMinutes} min`,
   ].filter(Boolean).join(' · ');
 }
@@ -80,7 +80,7 @@ function DisconnectButton({ s, onDone }: { s: MsaSession; onDone: () => void }) 
   const [asking, setAsking] = useState(false);
   const revoke = useMutation({
     mutationFn: () => msaSessionsApi.revokeGrant(s.grantId),
-    onSuccess: () => { setAsking(false); onDone(); toast({ title: 'Disconnect sent', description: 'The computer\'s agent ends the session when it receives the signed revocation. If it is offline, the session still ends at its time limit.' }); },
+    onSuccess: () => { setAsking(false); onDone(); toast({ title: 'Disconnect sent', description: 'The device\'s agent ends the session when it receives the signed revocation. If it is offline, the session still ends at its time limit.' }); },
     onError: (e: unknown) => toast({ title: 'Not disconnected', description: apiError(e).message, variant: 'destructive' }),
   });
   return (
@@ -91,7 +91,7 @@ function DisconnectButton({ s, onDone }: { s: MsaSession; onDone: () => void }) 
           <DialogHeader>
             <DialogTitle>Disconnect this session?</DialogTitle>
             <DialogDescription>
-              {technicianText(s)}&apos;s session ({sessionWhat(s)}) is revoked now. The computer&apos;s agent ends it when the signed revocation reaches it; nothing can extend it afterwards.
+              {technicianText(s)}&apos;s session ({sessionWhat(s)}) is revoked now. The device&apos;s agent ends it when the signed revocation reaches it; nothing can extend it afterwards.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -120,7 +120,7 @@ export function MsaSessionsList({ endpointId }: { endpointId: string }) {
   return (
     <div className="space-y-1.5 text-xs" data-testid="msa-sessions">
       <p className="font-medium">Managed sessions</p>
-      {data.sessions.length === 0 ? <p className="text-muted-foreground">No managed sessions on this computer yet.</p> : (
+      {data.sessions.length === 0 ? <p className="text-muted-foreground">No managed sessions on this device yet.</p> : (
         <ul className="divide-y rounded-md border">
           {data.sessions.map((s) => (
             <li key={s.grantId} className="space-y-1.5 px-2.5 py-2" data-state={s.state} data-live={s.timeline.live ? 'true' : 'false'}>
@@ -149,7 +149,7 @@ export function MsaSessionsList({ endpointId }: { endpointId: string }) {
 
 const WAIT_STEPS: { step: TimelineStep; label: string }[] = [
   { step: 'authorized', label: 'Authorized: the launch policy allowed it and the grant was signed' },
-  { step: 'received', label: 'Received by the computer\'s agent' },
+  { step: 'received', label: 'Received by the device\'s agent' },
   { step: 'applied', label: 'Applied: every setting read back' },
 ];
 
@@ -221,7 +221,7 @@ function ManagedConnectDialog(p: {
         <DialogHeader>
           <DialogTitle>Managed session</DialogTitle>
           <DialogDescription>
-            This computer is in Managed Secure Access: it connects through a short-lived session grant that its signed agent applies and checks. There is no permanent password to launch with.
+            This device is in Managed Secure Access: it connects through a short-lived session grant that its signed agent applies and checks. There is no permanent password to launch with.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2 text-sm">
@@ -241,7 +241,7 @@ function ManagedConnectDialog(p: {
               {s && <p className="text-xs" data-testid="msa-connect-status">{s.timeline.status}</p>}
               {s?.refused && <p className="text-destructive" data-testid="msa-connect-refused">{s.refused.message}</p>}
               {!seen.has('applied') && !ended && left !== null && (
-                <p className="text-xs text-muted-foreground">Waiting for the computer&apos;s agent: up to {left} s more. If it does not apply the grant in time, the grant is revoked and nothing connects.</p>
+                <p className="text-xs text-muted-foreground">Waiting for the device&apos;s agent: up to {left} s more. If it does not apply the grant in time, the grant is revoked and nothing connects.</p>
               )}
               {p.starting && <p className="text-xs text-muted-foreground">Asking the launch policy…</p>}
               {s && <p className="text-xs text-muted-foreground">{sessionWhat(s)}</p>}

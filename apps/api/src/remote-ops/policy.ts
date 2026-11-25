@@ -61,15 +61,15 @@ export interface OpenFacts {
  * the capability and the fresh confirmation were checked before.
  */
 export function openRefusal(f: OpenFacts): Refusal | null {
-  if (f.pooled) return { status: 403, code: 'ENDPOINT_UNASSIGNED', message: 'This computer is in the unassigned pool: adopt it into a business first.' };
-  if (!f.windows || !f.signed) return { status: 409, code: 'TERMINAL_SIGNED_AGENT_REQUIRED', message: 'A terminal needs a Windows computer running the signed (full) agent.' };
-  if (!f.deviceSecret) return { status: 409, code: 'TERMINAL_NO_DEVICE_SECRET', message: 'This computer has no device secret on record, so nothing it sends can be authenticated. Re-run its installer once.' };
+  if (f.pooled) return { status: 403, code: 'ENDPOINT_UNASSIGNED', message: 'This device is in the unassigned pool: adopt it into a customer first.' };
+  if (!f.windows || !f.signed) return { status: 409, code: 'TERMINAL_SIGNED_AGENT_REQUIRED', message: 'A terminal needs a Windows device running the signed (full) agent.' };
+  if (!f.deviceSecret) return { status: 409, code: 'TERMINAL_NO_DEVICE_SECRET', message: 'This device has no device secret on record, so nothing it sends can be authenticated. Re-run its installer once.' };
   const v = compareVersion(f.agentVersion, f.minAgent);
-  if (v === null || v < 0) return { status: 409, code: 'TERMINAL_AGENT_TOO_OLD', message: `A terminal needs the signed agent ${f.minAgent} or later; publish it and let the computer update.` };
-  if (f.paused) return { status: 403, code: 'CONTAINED', message: 'Remote access is paused by containment for this computer: no terminal was opened.' };
-  if (!f.online) return { status: 409, code: 'TERMINAL_OFFLINE', message: 'This computer is not reporting, so it cannot be asked to open a terminal. Try again once it checks in.' };
-  if (f.ownLive) return { status: 409, code: 'TERMINAL_ALREADY_OPEN', message: 'You already have a terminal open on this computer. End it first.' };
-  if (f.liveCount >= TERMINAL_LIVE_PER_COMPUTER) return { status: 409, code: 'TERMINAL_TOO_MANY', message: `At most ${TERMINAL_LIVE_PER_COMPUTER} terminals can be open on one computer.` };
+  if (v === null || v < 0) return { status: 409, code: 'TERMINAL_AGENT_TOO_OLD', message: `A terminal needs the signed agent ${f.minAgent} or later; publish it and let the device update.` };
+  if (f.paused) return { status: 403, code: 'CONTAINED', message: 'Remote access is paused by containment for this device: no terminal was opened.' };
+  if (!f.online) return { status: 409, code: 'TERMINAL_OFFLINE', message: 'This device is not reporting, so it cannot be asked to open a terminal. Try again once it checks in.' };
+  if (f.ownLive) return { status: 409, code: 'TERMINAL_ALREADY_OPEN', message: 'You already have a terminal open on this device. End it first.' };
+  if (f.liveCount >= TERMINAL_LIVE_PER_COMPUTER) return { status: 409, code: 'TERMINAL_TOO_MANY', message: `At most ${TERMINAL_LIVE_PER_COMPUTER} terminals can be open on one device.` };
   return null;
 }
 

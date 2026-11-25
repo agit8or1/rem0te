@@ -50,14 +50,14 @@ export default function BusinessesPage() {
         phone: form.phone || undefined,
       }),
     onSuccess: () => {
-      toast({ title: 'Business created' });
+      toast({ title: 'Customer created' });
       qc.invalidateQueries({ queryKey: ['businesses'] });
       setShowCreate(false);
       setForm({ name: '', code: '', email: '', phone: '' });
     },
     onError: (e: { response?: { data?: { message?: string } } }) =>
       toast({
-        title: 'Could not create business',
+        title: 'Could not create customer',
         description: e.response?.data?.message,
         variant: 'destructive',
       }),
@@ -68,15 +68,15 @@ export default function BusinessesPage() {
   return (
     <div className="p-6 space-y-6">
       <PageHeader
-        title="Businesses"
+        title="Customers"
         description={isPlatformAdmin
-          ? 'Customer organisations you manage. Each one owns its own computers, people and history.'
-          : 'Your business.'}
+          ? 'Customer organisations you manage. Each one owns its own devices, people and history.'
+          : 'Your customer.'}
       >
         {isPlatformAdmin && (
           <Button size="sm" onClick={() => setShowCreate(true)}>
             <Plus className="h-4 w-4 mr-2" />
-            Add Business
+            Add customer
           </Button>
         )}
       </PageHeader>
@@ -85,7 +85,7 @@ export default function BusinessesPage() {
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search businesses…"
+            placeholder="Search customers…"
             className="pl-9"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -103,7 +103,7 @@ export default function BusinessesPage() {
                 <th className="text-left px-4 py-3 font-medium">Name</th>
                 <th className="text-left px-4 py-3 font-medium">Code</th>
                 <th className="text-left px-4 py-3 font-medium">Email</th>
-                <th className="text-left px-4 py-3 font-medium">Computers</th>
+                <th className="text-left px-4 py-3 font-medium">Devices</th>
                 <th className="text-left px-4 py-3 font-medium">People</th>
                 <th className="text-left px-4 py-3 font-medium">Status</th>
                 <th className="text-left px-4 py-3 font-medium">Created</th>
@@ -113,7 +113,7 @@ export default function BusinessesPage() {
               {businesses.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="text-center py-8 text-muted-foreground">
-                    No businesses found.
+                    No customers found.
                   </td>
                 </tr>
               ) : (
@@ -151,11 +151,11 @@ export default function BusinessesPage() {
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add Business</DialogTitle>
+            <DialogTitle>Add customer</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="b-name">Business Name *</Label>
+              <Label htmlFor="b-name">Customer name *</Label>
               <Input
                 id="b-name"
                 value={form.name}

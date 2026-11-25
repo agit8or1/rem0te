@@ -20,7 +20,7 @@ export const MAX_RUNS_PER_OCCURRENCE = 3;
 export const SKIP_GRACE_MINUTES = 15;
 
 export const STATUS: Record<string, { label: string; variant: 'success' | 'warning' | 'outline' | 'destructive' | 'secondary' }> = {
-  AWAITING_APPROVAL: { label: 'Awaiting approval on the signer', variant: 'warning' },
+  AWAITING_APPROVAL: { label: 'Pending approval on the signer', variant: 'warning' },
   ACTIVE: { label: 'Active', variant: 'success' },
   REJECTED: { label: 'Rejected', variant: 'destructive' },
   REVOKED: { label: 'Revoked', variant: 'destructive' },
@@ -107,14 +107,14 @@ export function RecurrencePreview({ recurrence }: { recurrence: AutomationRecurr
 export function OfflineChoice({ value, onChange }: { value: AutomationOfflineInput; onChange: (v: AutomationOfflineInput) => void }) {
   return (
     <fieldset className="space-y-1.5 text-xs" data-testid="offline-choice">
-      <legend className="font-medium">If a computer is offline when it is due</legend>
+      <legend className="font-medium">If a device is offline when it is due</legend>
       <label className="flex items-start gap-2">
         <input type="radio" name="offline" className="mt-0.5" checked={value.mode === 'run_when_online'} onChange={() => onChange({ mode: 'run_when_online' })} />
         <span>Run it when it comes online, while the window is still open.</span>
       </label>
       <label className="flex items-start gap-2">
         <input type="radio" name="offline" className="mt-0.5" checked={value.mode === 'skip_if_offline'} onChange={() => onChange({ mode: 'skip_if_offline' })} />
-        <span>Skip it: only computers online at the start are named, and the plan expires after {SKIP_GRACE_MINUTES} minutes.</span>
+        <span>Skip it: only devices online at the start are named, and the plan expires after {SKIP_GRACE_MINUTES} minutes.</span>
       </label>
       <label className="flex items-start gap-2">
         <input type="radio" name="offline" className="mt-0.5" checked={value.mode === 'expire_after'} onChange={() => onChange({ mode: 'expire_after', hours: 4 })} />
@@ -126,7 +126,7 @@ export function OfflineChoice({ value, onChange }: { value: AutomationOfflineInp
           hours from the start of the window (even after it closes).
         </span>
       </label>
-      <p className="text-muted-foreground">This becomes the expiry signed into each run&apos;s plan: a computer that checks in after it is refused by its own agent.</p>
+      <p className="text-muted-foreground">This becomes the expiry signed into each run&apos;s plan: a device that checks in after it is refused by its own agent.</p>
     </fieldset>
   );
 }

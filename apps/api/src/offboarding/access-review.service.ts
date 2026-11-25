@@ -53,7 +53,7 @@ export class AccessReviewService {
       where: { isPlatformAdmin: true, status: 'ACTIVE' }, select: { id: true, firstName: true, lastName: true, email: true },
     });
     for (const u of admins) {
-      push({ userId: u.id, name: name(u), email: u.email, via: 'PLATFORM_ADMIN', detail: 'Platform Admin — every computer on this server', activeNow: true, temporary: false });
+      push({ userId: u.id, name: name(u), email: u.email, via: 'PLATFORM_ADMIN', detail: 'Platform Admin — every device on this server', activeNow: true, temporary: false });
     }
 
     const members = await this.prisma.membership.findMany({
@@ -76,7 +76,7 @@ export class AccessReviewService {
       if (isOwnerRole(m.role.type)) {
         push({
           userId: m.user.id, name: name(m.user), email: m.user.email, via: 'BUSINESS_OWNER',
-          detail: 'Business Owner — every computer in this business', activeNow: accountOk,
+          detail: 'Business Owner — every device in this customer', activeNow: accountOk,
           inactiveReason: accountOk ? undefined : 'account or membership disabled', temporary: false,
         });
         continue;
@@ -90,7 +90,7 @@ export class AccessReviewService {
           : !windowOk ? (g.startsAt && g.startsAt > now ? 'not started yet' : g.expiresAt && g.expiresAt <= now ? 'expired' : 'outside its schedule') : undefined;
         push({
           userId: m.user.id, name: name(m.user), email: m.user.email, via: 'COMPUTER_GRANT',
-          detail: 'Granted access to this computer', activeNow: !reason, inactiveReason: reason,
+          detail: 'Granted access to this device', activeNow: !reason, inactiveReason: reason,
           startsAt: g.startsAt?.toISOString() ?? null, expiresAt: g.expiresAt?.toISOString() ?? null,
           schedule: sched, temporary: !!g.expiresAt,
         });
@@ -98,7 +98,7 @@ export class AccessReviewService {
       if (endpoint.accessMode === 'COMPANY_WIDE' && canConnect && !g) {
         push({
           userId: m.user.id, name: name(m.user), email: m.user.email, via: 'COMPANY_WIDE',
-          detail: 'Computer is company-wide; everyone in the business with "connect" can reach it',
+          detail: 'Device is company-wide; everyone at the customer with "connect" can reach it',
           activeNow: accountOk, inactiveReason: accountOk ? undefined : 'account or membership disabled', temporary: false,
         });
       }

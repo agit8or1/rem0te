@@ -162,7 +162,7 @@ export function agentType(ep: Record<string, unknown>): AgentType {
       explanation: 'Reports inventory, monitoring and pending updates (read-only). Approved actions and patch deployment need the signed agent.',
     };
   }
-  return { kind: 'unknown', label: 'Agent unknown', explanation: 'This computer has not reported which agent it runs.' };
+  return { kind: 'unknown', label: 'Agent unknown', explanation: 'This device has not reported which agent it runs.' };
 }
 
 export const reportsInventory = (a: AgentType) => a.kind === 'signed' || a.kind === 'standard' || a.kind === 'unknown';
@@ -289,7 +289,7 @@ export function describeMonitor(kind: string, p: Record<string, unknown>): strin
 }
 
 export const SCOPE_LABEL = (k: string) =>
-  k === 'global' ? 'all computers' : ({ b: 'this business', s: 'this site', g: 'a device group', e: 'this computer' } as Record<string, string>)[k[0]] ?? k;
+  k === 'global' ? 'all devices' : ({ b: 'this customer', s: 'this site', g: 'a device group', e: 'this device' } as Record<string, string>)[k[0]] ?? k;
 
 /**
  * Where a monitor came from and what it beat, in words (0.35): "group Kiosks

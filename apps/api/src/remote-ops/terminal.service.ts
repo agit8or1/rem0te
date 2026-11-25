@@ -212,7 +212,7 @@ export class TerminalService implements OnModuleInit, OnModuleDestroy {
     if (!isShell(body?.shell)) throw new BadRequestException({ code: 'TERMINAL_INVALID', message: 'Choose cmd or PowerShell.' });
     const reason = cleanReason(body?.reason);
     if (!reason) throw new BadRequestException({ code: 'TERMINAL_REASON_REQUIRED', message: 'Give a reason (3 to 500 characters): it is recorded in the audit log.' });
-    assertFresh(freshMethod, { action: 'terminal.open', message: 'Confirm it is you to open a terminal. It runs as SYSTEM: full control of this computer.' });
+    assertFresh(freshMethod, { action: 'terminal.open', message: 'Confirm it is you to open a terminal. It runs as SYSTEM: full control of this device.' });
 
     // Settle what is live first, so an expired session does not count.
     for (const s of await this.prisma.terminalSession.findMany({ where: { endpointId: ep.id, state: { in: LIVE } }, select: SESSION_SELECT })) {
@@ -251,7 +251,7 @@ export class TerminalService implements OnModuleInit, OnModuleDestroy {
       });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-        throw new ConflictException({ code: 'TERMINAL_ALREADY_OPEN', message: 'You already have a terminal open on this computer. End it first.' });
+        throw new ConflictException({ code: 'TERMINAL_ALREADY_OPEN', message: 'You already have a terminal open on this device. End it first.' });
       }
       throw e;
     }
@@ -359,7 +359,7 @@ export class TerminalService implements OnModuleInit, OnModuleDestroy {
   async transcript(actor: ActorContext, endpointId: string, sid: string) {
     const ep = await this.visible(actor, endpointId, PLATFORM_CAP.COMPUTERS_TERMINAL);
     const s = await this.sessionOf(ep.id, sid);
-    if (!s.retained) throw new NotFoundException({ code: 'TERMINAL_NO_TRANSCRIPT', message: 'No transcript was kept for this session: transcripts are off for this business.' });
+    if (!s.retained) throw new NotFoundException({ code: 'TERMINAL_NO_TRANSCRIPT', message: 'No transcript was kept for this session: transcripts are off for this customer.' });
     const rows = await this.prisma.terminalTranscriptChunk.findMany({
       where: { sessionId: s.id }, orderBy: [{ createdAt: 'asc' }, { dir: 'asc' }, { seq: 'asc' }], take: 5_000,
       select: { dir: true, seq: true, stream: true, data: true, createdAt: true },

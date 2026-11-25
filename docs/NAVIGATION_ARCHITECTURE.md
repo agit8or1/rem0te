@@ -87,7 +87,7 @@ From the left: the drawer button (phones) or the collapse toggle
 **customer context**, the search button (Ctrl/Cmd+K), quick actions, favourites,
 the critical-alerts bell, chat, tasks, help, and the profile menu.
 
-- **Customer context.** A technician switches the business they work in (the
+- **Customer context.** A technician switches the customer they work in (the
   0.20 cookie, as before). A Platform Admin can *keep a customer in view*: the
   choice is stored (`contextBusinessId`) and offered on the header and the
   customer's page. It is a label and a shortcut to that customer's devices; it
@@ -107,20 +107,20 @@ the critical-alerts bell, chat, tasks, help, and the profile menu.
 Ctrl+K (Cmd+K on a Mac) or the search button. With nothing typed it shows
 recent items and quick actions. Typing searches, at once:
 
-- **The server** (`GET /search`), as before for computers, customers, sites,
+- **The server** (`GET /search`), as before for devices, customers, sites,
   people and alerts, plus two groups new in 0.87:
   - **Scripts** — the script library's own gate (`anyRight`), its list rule
     (`libraryWhere` with `listScope`) with the name AND-ed, and `viewOf` on
     every row, so a reviewer-only person sees only scripts they may see.
   - **Policies** — patch policies and automation schedules (not restart
     windows), each through its detail page's own `scoped()`; a non-admin's
-    candidates are their own business's only. Needs `computers:view`.
+    candidates are their own customer's only. Needs `computers:view`.
 - **Pages** — `allPages(ctx)`, labels and keywords, at most six.
 
 Every server group starts from its list page's where builder, so the palette
 can never show a record the list would not (§28, §96). `e2e-nav-prefs.mjs` and
-`e2e-ui.mjs` check that Business B's computers, customer, script, patch policy
-and schedule never reach Business A's owner, user or technician, by a shared
+`e2e-ui.mjs` check that Customer B's devices, customer record, script, patch policy
+and schedule never reach Customer A's owner, user or technician, by a shared
 word or by B's exact name, while a Platform Admin finds them.
 
 ## Favourites and recent items
@@ -181,7 +181,7 @@ provider is set (owner decision 3b). See
 | `apps/web/scripts/unit-nav-model.mjs` (CI) | Every leaf is a page; no duplicates; nine groups agreeing with the API and 0104; every pre-0.87 URL in the migration table is reachable and in the group it says; Standard mode hides no page; role visibility; the 1080p budget |
 | `apps/api/scripts/unit-navigation.mjs` (CI) | The closed lists, the page and record reference rules, the strict request bodies |
 | `apps/api/scripts/e2e-nav-prefs.mjs` (port 4101, `run-e2e.sh`) | Preferences, favourites, caps, own rows only, losing access hides, recent items, nothing stored is a name, not audited, search scripts and policies isolated |
-| `apps/web/scripts/e2e-ui.mjs` (CI) | Collapse and its persistence after a reload with the browser copy cleared, the flyout, the palette with no other business, favourites, the drawer, every old route, standalone |
+| `apps/web/scripts/e2e-ui.mjs` (CI) | Collapse and its persistence after a reload with the browser copy cleared, the flyout, the palette with no other customer, favourites, the drawer, every old route, standalone |
 | `scripts/check-security-invariants.mjs` §96 | The rules above, statically |
 
 ## What it looks like

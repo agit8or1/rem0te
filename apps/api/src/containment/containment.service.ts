@@ -100,7 +100,7 @@ export class ContainmentService {
     let setBy: 'msp' | 'customer';
     let customer: { id: string; tenantId: string } | null = null;
     if (scope === 'global') {
-      if (businessId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'A global pause names no business.' });
+      if (businessId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'A global pause names no customer.' });
       if (!this.isMsp(actor)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'A global write pause is set by a Platform Admin or a technician manager.' });
       setBy = 'msp';
     } else {
@@ -135,7 +135,7 @@ export class ContainmentService {
     if (!p || p.clearedAt) throw new NotFoundException('No active pause with that id');
     if (p.setBy === 'customer') {
       // The customer's own suspension. The MSP cannot lift it.
-      if (!p.customerId || !this.isOwnerOf(actor, p.customerId)) throw new ForbiddenException({ code: 'CUSTOMER_SUSPENSION', message: 'The business suspended this itself. Only a Business Owner of that business can lift it.' });
+      if (!p.customerId || !this.isOwnerOf(actor, p.customerId)) throw new ForbiddenException({ code: 'CUSTOMER_SUSPENSION', message: 'The customer suspended this itself. Only a Business Owner of that customer can lift it.' });
     } else {
       if (!this.isMsp(actor)) {
         if (p.customerId && this.isOwnerOf(actor, p.customerId)) throw new ForbiddenException({ code: 'MSP_SUSPENSION', message: 'Your MSP set this suspension. Ask them to lift it.' });

@@ -82,7 +82,7 @@ export function CancelTask({ jobId, onDone }: { jobId: string; onDone?: () => vo
   const m = useMutation({
     mutationFn: () => actionsApi.cancel(jobId),
     onSuccess: () => {
-      toast({ title: 'Canceled', description: 'Nothing was handed to the computer.' });
+      toast({ title: 'Canceled', description: 'Nothing was handed to the device.' });
       void qc.invalidateQueries({ queryKey: ['tasks'] });
       void qc.invalidateQueries({ queryKey: ['endpoint-patches'] });
       onDone?.();

@@ -9,7 +9,7 @@ import * as tls from 'node:tls';
 import { validAddress, validJail } from './parsers';
 
 /**
- * Everything Admin → Security does to this host, in one closed list (0.74,
+ * Everything Security → Server security does to this host, in one closed list (0.74,
  * §84). Nothing else in the security module spawns a process, and nothing
  * here builds a command from a string: each command is a fixed argument
  * array, and the few that take a value (a jail, an address, a unit) check it

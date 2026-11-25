@@ -16,7 +16,7 @@ import { apiError } from '@/components/security-controls/shared';
 import { reauthSuffix, useAsks } from '@/lib/confirm-policy';
 
 /**
- * Settings → Security → Containment (0.28).
+ * Security → Containment (0.28).
  *
  * Stop writes — for everyone, or for one business — while an incident is
  * looked at. Setting a pause is one click and needs no re-authentication;
@@ -131,7 +131,7 @@ export default function ContainmentPage() {
       <Link href="/settings" className="inline-flex items-center text-sm text-muted-foreground hover:underline">
         <ArrowLeft className="mr-1 h-4 w-4" />Settings
       </Link>
-      <PageHeader title="Containment" description="Stop writes while an incident is investigated — for every business, or one. Viewing and the audit log keep working." />
+      <PageHeader title="Containment" description="Stop writes while an incident is investigated — for every customer, or one. Viewing and the audit log keep working." />
       {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
       {notice && (
         <div className={`rounded-md border p-3 text-sm ${notice.ok ? 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100' : 'border-destructive/40 bg-destructive/10 text-destructive'}`}>{notice.text}</div>
@@ -147,9 +147,9 @@ export default function ContainmentPage() {
                 <div key={p.id} className="rounded-md border border-red-300 p-3 dark:border-red-900">
                   <div className="flex flex-wrap items-center gap-2">
                     <OctagonPause className="h-4 w-4 text-red-600" />
-                    <strong>{p.scope === 'global' ? 'Every business' : p.businessName ?? p.businessId}</strong>
+                    <strong>{p.scope === 'global' ? 'Every customer' : p.businessName ?? p.businessId}</strong>
                     {p.kinds.map((k) => <Badge key={k} variant="secondary">{label(k)}</Badge>)}
-                    <Badge variant="outline">{p.setBy === 'customer' ? 'set by the business' : 'set by the MSP'}</Badge>
+                    <Badge variant="outline">{p.setBy === 'customer' ? 'set by the customer' : 'set by the MSP'}</Badge>
                     {p.setById === data.you && <Badge variant="outline">you set this</Badge>}
                   </div>
                   <p className="mt-1">{p.reason}</p>
@@ -166,7 +166,7 @@ export default function ContainmentPage() {
                         <Button size="sm" variant="ghost" onClick={() => setClearing(null)}>Cancel</Button>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        {p.setBy === 'customer' ? 'Only an owner of this business can lift a suspension it set itself.' : 'Someone other than whoever set it must lift it.'}
+                        {p.setBy === 'customer' ? 'Only an owner of this customer can lift a suspension it set itself.' : 'Someone other than whoever set it must lift it.'}
                       </p>
                     </div>
                   ) : (
@@ -183,25 +183,25 @@ export default function ContainmentPage() {
               <CardContent className="space-y-3 text-sm">
                 <p className="text-muted-foreground">
                   Takes effect at once and needs no re-authentication. {ownBusinessOnly
-                    ? <>As an owner of {businessName ?? 'this business'}, you can suspend it; only an owner of it can lift that — your MSP cannot.</>
+                    ? <>As an owner of {businessName ?? 'this customer'}, you can suspend it; only an owner of it can lift that — your MSP cannot.</>
                     : <>Lifting needs someone other than you.</>}
                 </p>
                 {data.may.global && (
                   <div className="flex flex-wrap gap-4">
-                    <label className="flex items-center gap-2"><input type="radio" checked={scope === 'business'} onChange={() => setScope('business')} />One business</label>
-                    <label className="flex items-center gap-2"><input type="radio" checked={scope === 'global'} onChange={() => setScope('global')} />Every business (global write pause)</label>
+                    <label className="flex items-center gap-2"><input type="radio" checked={scope === 'business'} onChange={() => setScope('business')} />One customer</label>
+                    <label className="flex items-center gap-2"><input type="radio" checked={scope === 'global'} onChange={() => setScope('global')} />Every customer (global write pause)</label>
                   </div>
                 )}
                 {scope === 'business' && data.may.business === 'any' && (
                   <div className="space-y-1">
-                    <Label htmlFor="ct-business">Business</Label>
+                    <Label htmlFor="ct-business">Customer</Label>
                     <select id="ct-business" className="w-full rounded-md border bg-background p-2 md:w-96" value={target} onChange={(e) => setTarget(e.target.value)}>
                       <option value="">Choose…</option>
                       {(businesses ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                     </select>
                   </div>
                 )}
-                {scope === 'business' && ownBusinessOnly && <p>Business: <strong>{businessName ?? businessId}</strong></p>}
+                {scope === 'business' && ownBusinessOnly && <p>Customer: <strong>{businessName ?? businessId}</strong></p>}
                 <fieldset className="space-y-1">
                   <legend className="mb-1 font-medium">Stop</legend>
                   {KINDS.map((k) => (
@@ -277,7 +277,7 @@ export default function ContainmentPage() {
                   <tbody>
                     {data.history.map((p) => (
                       <tr key={p.id} className="border-t align-top">
-                        <td className="py-1 pr-3">{p.scope === 'global' ? 'Every business' : p.businessName ?? p.businessId}</td>
+                        <td className="py-1 pr-3">{p.scope === 'global' ? 'Every customer' : p.businessName ?? p.businessId}</td>
                         <td className="pr-3">{p.kinds.map(label).join(', ')}</td>
                         <td className="pr-3">{p.reason}</td>
                         <td className="pr-3">{fmt(p.createdAt)}</td>

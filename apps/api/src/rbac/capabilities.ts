@@ -166,75 +166,75 @@ export const CAPABILITY_GROUPS: {
   {
     group: 'Computers',
     items: [
-      { key: CAP.COMPUTERS_VIEW, label: 'View computers', description: 'See the computers belonging to this business.' },
-      { key: CAP.COMPUTERS_CONNECT, label: 'Remote connect', description: 'Start a remote session to a computer they can see.' },
-      { key: CAP.COMPUTERS_ADD, label: 'Add computers', description: 'Create enrollment links and add new computers.' },
-      { key: CAP.COMPUTERS_REMOVE, label: 'Remove/revoke computers', description: 'Archive computers and revoke their access.' },
-      { key: CAP.COMPUTERS_EDIT, label: 'Rename/edit computers', description: 'Rename, tag and re-organise computers.' },
-      { key: CAP.COMPUTERS_EVENT_LOGS, label: 'Read event logs', description: "Fetch Windows event log entries from a computer they can see, including the Security log." },
+      { key: CAP.COMPUTERS_VIEW, label: 'View devices', description: 'See the devices belonging to this customer.' },
+      { key: CAP.COMPUTERS_CONNECT, label: 'Remote connect', description: 'Start a remote session to a device they can see.' },
+      { key: CAP.COMPUTERS_ADD, label: 'Add devices', description: 'Create enrollment links and add new devices.' },
+      { key: CAP.COMPUTERS_REMOVE, label: 'Remove/revoke devices', description: 'Archive devices and revoke their access.' },
+      { key: CAP.COMPUTERS_EDIT, label: 'Rename/edit devices', description: 'Rename, tag and re-organise devices.' },
+      { key: CAP.COMPUTERS_EVENT_LOGS, label: 'Read event logs', description: "Fetch Windows event log entries from a device they can see, including the Security log." },
     ],
   },
   {
     group: 'Support',
     items: [
-      { key: CAP.QUICK_CONNECT, label: 'Use Quick Connect', description: 'Connect to a one-off computer using an ID and password the remote person reads out.' },
+      { key: CAP.QUICK_CONNECT, label: 'Use Quick Connect', description: 'Connect to a one-off device using an ID and password the remote person reads out.' },
       { key: CAP.SESSIONS_VIEW, label: 'View active sessions', description: 'See sessions currently in progress.' },
-      { key: CAP.HISTORY_VIEW, label: 'View session history', description: 'See past sessions for this business.' },
+      { key: CAP.HISTORY_VIEW, label: 'View session history', description: 'See past sessions for this customer.' },
       { key: CAP.SUPPORT_REQUESTS, label: 'Handle support requests', description: 'See the support request queue, claim requests, hand them off and close them.' },
-      { key: CAP.TICKETS_CREATE, label: 'Create PSA tickets', description: "Send an event-log entry or alert from a computer they can see to the business's PSA (or the MSP's) as a ticket. Event-log entries also need Read event logs." },
-      { key: CAP.CHAT_SEND, label: 'Chat with the person at a computer', description: "Open a chat window on a Windows computer they can see, write in it and end it. The window shows the business name and their own name. Anyone who can see the computer can read its transcripts." },
+      { key: CAP.TICKETS_CREATE, label: 'Create PSA tickets', description: "Send an event-log entry or alert from a device they can see to the customer's PSA (or the MSP's) as a ticket. Event-log entries also need Read event logs." },
+      { key: CAP.CHAT_SEND, label: 'Chat with the person at a device', description: "Open a chat window on a Windows device they can see, write in it and end it. The window shows the customer name and their own name. Anyone who can see the device can read its transcripts." },
     ],
   },
   {
     group: 'Users',
     items: [
-      { key: CAP.USERS_VIEW, label: 'View business users', description: 'See the other people in this business.' },
+      { key: CAP.USERS_VIEW, label: 'View business users', description: 'See the other people at this customer.' },
       { key: CAP.USERS_MANAGE, label: 'Manage business users', description: 'Invite, disable and remove business users, and set their permissions.' },
     ],
   },
   {
     group: 'Audit',
     items: [
-      { key: CAP.AUDIT_VIEW, label: 'View business audit log', description: "See this business's audit history." },
+      { key: CAP.AUDIT_VIEW, label: 'View customer audit log', description: "See this customer's audit history." },
     ],
   },
   {
     group: 'Integration',
     items: [
-      { key: CAP.TICKET_ANALYSIS, label: 'Ticket analysis (ClientSt0r)', description: 'Submit read-only ticket analysis from ClientSt0r for this business and read the staff-only findings, and (with Rename/edit computers) ask ClientSt0r for a computer\'s AI summary from its redacted notes and sessions. Grants no remote access and no actions.' },
+      { key: CAP.TICKET_ANALYSIS, label: 'Ticket analysis (ClientSt0r)', description: 'Submit read-only ticket analysis from ClientSt0r for this customer and read the staff-only findings, and (with Rename/edit devices) ask ClientSt0r for a device\'s AI summary from its redacted notes and sessions. Grants no remote access and no actions.' },
     ],
   },
   {
     group: 'Monitoring',
     items: [
-      { key: CAP.ALERTS_VIEW, label: 'See and work alerts', description: 'See monitoring alerts for the computers they can see, and acknowledge or resolve them.' },
-      { key: CAP.MONITORING_CONFIGURE, label: 'Configure monitoring', description: 'Add and change monitors and maintenance windows for this business. Who gets notified is set by a Business Owner.' },
+      { key: CAP.ALERTS_VIEW, label: 'See and work alerts', description: 'See monitoring alerts for the devices they can see, and acknowledge or resolve them.' },
+      { key: CAP.MONITORING_CONFIGURE, label: 'Configure monitoring', description: 'Add and change monitors and maintenance windows for this customer. Who gets notified is set by a Business Owner.' },
     ],
   },
   {
     group: 'Actions',
     items: [
-      { key: CAP.ACTIONS_REQUEST, label: 'Request approved actions', description: 'Ask for a catalog action (such as starting the Print Spooler) on a computer they can reach. Nothing runs until people on the approval roster approve it with their passkeys; this permission never approves.' },
+      { key: CAP.ACTIONS_REQUEST, label: 'Request approved actions', description: 'Ask for a catalog action (such as starting the Print Spooler) on a device they can reach. Nothing runs until people on the approval roster approve it with their passkeys; this permission never approves.' },
     ],
   },
   {
     group: 'Backups',
     items: [
-      { key: CAP.BACKUPS_VIEW, label: 'See backup status', description: "See what is backed up, each job's completion, integrity check and restore test (kept apart), recovery points, restore drills and RPO/RTO, for the computers they can see. Starts nothing." },
+      { key: CAP.BACKUPS_VIEW, label: 'See backup status', description: "See what is backed up, each job's completion, integrity check and restore test (kept apart), recovery points, restore drills and RPO/RTO, for the devices they can see. Starts nothing." },
     ],
   },
   {
     group: 'Automation',
     items: [
-      { key: CAP.SCRIPTS_AUTHOR, label: 'Write scripts', description: "Add scripts to this business's library, edit them (each edit is a new version) and submit versions for review. Never approves a run." },
+      { key: CAP.SCRIPTS_AUTHOR, label: 'Write scripts', description: "Add scripts to this customer's library, edit them (each edit is a new version) and submit versions for review. Never approves a run." },
       { key: CAP.SCRIPTS_REVIEW, label: 'Review scripts', description: "Approve or reject someone else's script version. Never one they wrote or edited. Approving needs a fresh sign-in, and runs nothing; with this permission they can also propose an approved version to the approval signer's allowlist, which its own approvers decide." },
     ],
   },
   {
     group: 'Mobile devices',
     items: [
-      { key: CAP.MOBILE_VIEW, label: 'View mobile devices', description: "See this business's phones and tablets as its MDM provider reports them: model, OS, ownership, compliance and command history. Read-only; nothing can be sent to a device. A technician needs it on an assignment covering the whole business." },
-      { key: CAP.MOBILE_ACT, label: 'Lock mobile devices and use lost mode', description: "Lock this business's phones and tablets, and start or stop lost mode with a message and a contact number on the lock screen. Needs View mobile devices too. Lost mode only on a supervised iPhone or iPad, or a company-owned Android device. Never erases or wipes anything. A technician needs it on an assignment covering the whole business." },
+      { key: CAP.MOBILE_VIEW, label: 'View mobile devices', description: "See this customer's phones and tablets as its MDM provider reports them: model, OS, ownership, compliance and command history. Read-only; nothing can be sent to a device. A technician needs it on an assignment covering the whole customer." },
+      { key: CAP.MOBILE_ACT, label: 'Lock mobile devices and use lost mode', description: "Lock this customer's phones and tablets, and start or stop lost mode with a message and a contact number on the lock screen. Needs View mobile devices too. Lost mode only on a supervised iPhone or iPad, or a company-owned Android device. Never erases or wipes anything. A technician needs it on an assignment covering the whole customer." },
     ],
   },
 ];

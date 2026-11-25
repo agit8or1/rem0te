@@ -26,7 +26,7 @@ export interface TaskView {
 export interface TaskList { inFlight: number; scheduled: number; overdue: number; checkedAt: string; pollMs: number; tasks: TaskView[]; total?: number }
 
 export const STATE_LABEL: Record<TaskState, string> = {
-  scheduled: 'Scheduled', awaiting_approval: 'Waiting for approval', queued: 'Queued', held: 'Held', handed_out: 'Handed to the computer', running: 'Running',
+  scheduled: 'Scheduled', awaiting_approval: 'Pending approval', queued: 'Queued', held: 'Held', handed_out: 'Handed to the device', running: 'Running',
   succeeded: 'Succeeded', restart_required: 'Restart required', failed: 'Failed', refused: 'Refused', not_executed: 'Not executed', uncertain: 'Uncertain',
   canceled: 'Canceled', expired: 'Expired',
 };

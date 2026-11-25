@@ -128,7 +128,7 @@ export function dualAgentWarning(
     signedSeenAt: f.signedSeenAt.toISOString(),
     legacySeenAt: f.legacySeenAt.toISOString(),
     legacyVersion: f.legacySeenVersion,
-    text: `Two agents are reporting from this computer: the signed agent, and an old standard heartbeat${v}. Rem0te ignores the standard one: it changes nothing on this computer's record and is handed nothing to install.`,
+    text: `Two agents are reporting from this device: the signed agent, and an old standard heartbeat${v}. Rem0te ignores the standard one: it changes nothing on this device's record and is handed nothing to install.`,
     fix: replaced
       ? 'The standard heartbeat has taken the signed one\'s place on the computer. A standard heartbeat from 0.51 or later hands over to the signed agent by itself; an older one cannot be told to. Run this in an elevated PowerShell on the computer: the signed agent reinstalls its own heartbeat and removes the standard leftovers.'
       : 'The signed agent removes the standard leftovers each time it installs or updates (Update agent above) and each time its tray host starts. To do it now, run this in an elevated PowerShell on the computer:',

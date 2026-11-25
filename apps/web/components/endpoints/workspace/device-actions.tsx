@@ -45,16 +45,16 @@ type Confirm = 'archive' | 'restore' | 'reinstall' | null;
 
 const CONFIRM_TEXT: Record<Exclude<Confirm, null>, { title: string; label: string; destructive: boolean; body: (name: string) => string }> = {
   archive: {
-    title: 'Archive this computer?', label: 'Archive computer', destructive: true,
-    body: (n) => `${n} leaves the device list and nobody can connect to it until it is restored. Its history is kept. Nothing is changed on the computer itself.`,
+    title: 'Archive this device?', label: 'Archive device', destructive: true,
+    body: (n) => `${n} leaves the device list and nobody can connect to it until it is restored. Its history is kept. Nothing is changed on the device itself.`,
   },
   restore: {
-    title: 'Restore this computer?', label: 'Restore computer', destructive: false,
+    title: 'Restore this device?', label: 'Restore device', destructive: false,
     body: (n) => `${n} returns to the device list and the people with access can connect to it again.`,
   },
   reinstall: {
     title: 'Reinstall the agent?', label: 'Queue reinstall', destructive: false,
-    body: (n) => `The installer re-runs on ${n} at its next heartbeat. It keeps the server settings, password and enrolment, replaces the agent and pulls the current RustDesk client. It is a software install on someone's computer.`,
+    body: (n) => `The installer re-runs on ${n} at its next heartbeat. It keeps the server settings, password and enrolment, replaces the agent and pulls the current RustDesk client. It is a software install on someone's device.`,
   },
 };
 
@@ -95,18 +95,18 @@ export function DeviceActions({
   const reinstallHref = `/endpoints/enroll?endpointId=${encodeURIComponent(endpointId)}${
     typeof ep.customerId === 'string' ? `&businessId=${encodeURIComponent(ep.customerId)}` : ''}`;
   const conn = connectivityFrom(ep);
-  const name = (ep.name as string) ?? 'This computer';
+  const name = (ep.name as string) ?? 'This device';
   const archived = ep.status === 'ARCHIVED';
   const rustdeskId = (ep.rustdeskNode as { rustdeskId?: string } | null)?.rustdeskId;
   const connectReason = archived
-    ? 'This computer is archived. Restore it from More first.'
-    : !rustdeskId ? 'This computer has not finished enrolment, so it has no RustDesk ID to connect to.' : null;
+    ? 'This device is archived. Restore it from More first.'
+    : !rustdeskId ? 'This device has not finished enrolment, so it has no RustDesk ID to connect to.' : null;
 
   const archive = useMutation({
     mutationFn: () => endpointsApi.archive(endpointId),
     onSuccess: () => {
       setConfirm(null);
-      toast({ title: 'Computer archived', description: 'Restore it from its page if that was a mistake.' });
+      toast({ title: 'Device archived', description: 'Restore it from its page if that was a mistake.' });
       router.push('/endpoints');
     },
     onError: (e) => toast({ title: 'Not archived', description: apiMessage(e, 'Failed to archive'), variant: 'destructive' }),
@@ -115,7 +115,7 @@ export function DeviceActions({
     mutationFn: () => endpointsApi.restore(endpointId),
     onSuccess: () => {
       setConfirm(null);
-      toast({ title: 'Computer restored' });
+      toast({ title: 'Device restored' });
       qc.invalidateQueries({ queryKey: ['endpoint', endpointId] });
     },
     onError: (e) => toast({ title: 'Not restored', description: apiMessage(e, 'Failed to restore'), variant: 'destructive' }),
@@ -124,7 +124,7 @@ export function DeviceActions({
     mutationFn: () => endpointsApi.reinstallAgent(endpointId),
     onSuccess: () => {
       setConfirm(null);
-      toast({ title: 'Reinstall queued', description: 'The installer re-runs on this computer at its next heartbeat.' });
+      toast({ title: 'Reinstall queued', description: 'The installer re-runs on this device at its next heartbeat.' });
       qc.invalidateQueries({ queryKey: ['endpoint-inventory', endpointId] });
     },
     onError: (e) => {
@@ -160,7 +160,7 @@ export function DeviceActions({
           <PlayCircle className="h-4 w-4 mr-1.5" />Connect
         </Button>
         {onTerminal && (
-          <Button size="sm" variant="outline" onClick={onTerminal} data-testid="action-terminal" title="A command prompt on this computer, in the background">
+          <Button size="sm" variant="outline" onClick={onTerminal} data-testid="action-terminal" title="A command prompt on this device, in the background">
             <SquareTerminal className="h-4 w-4 mr-1.5" />Terminal
           </Button>
         )}
@@ -228,11 +228,11 @@ export function DeviceActions({
                 <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Removes access</DropdownMenuLabel>
                 {archived ? (
                   <DropdownMenuItem onSelect={() => setConfirm('restore')}>
-                    <ArchiveRestore className="h-4 w-4 mr-2" />Restore computer…
+                    <ArchiveRestore className="h-4 w-4 mr-2" />Restore device…
                   </DropdownMenuItem>
                 ) : (
                   <DropdownMenuItem className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400" onSelect={() => setConfirm('archive')}>
-                    <Archive className="h-4 w-4 mr-2" />Archive computer…
+                    <Archive className="h-4 w-4 mr-2" />Archive device…
                   </DropdownMenuItem>
                 )}
               </>
@@ -242,7 +242,7 @@ export function DeviceActions({
         {a && up && <UpgradeButton view={up} onClick={agent!.askMigrate} testId="header-upgrade-full-agent" />}
         {a && a.kind === 'signed' && (
           <span className="inline-flex h-9 items-center gap-1.5 rounded-md border border-green-200 bg-green-50 px-3 text-sm font-medium text-green-900 dark:border-green-900 dark:bg-green-950/50 dark:text-green-100"
-            title="This computer runs the full (signed) agent: it installs only what the signed repository lists." data-testid="header-full-agent">
+            title="This device runs the full (signed) agent: it installs only what the signed repository lists." data-testid="header-full-agent">
             <ShieldCheck className="h-4 w-4" aria-hidden="true" />Full agent
           </span>
         )}
@@ -261,9 +261,9 @@ export function DeviceActions({
       {canLink && conn !== 'online' && (
         <p className="text-xs text-muted-foreground" data-testid="header-reinstall-hint">
           <span className="font-medium text-foreground">{connectivityLabel(conn, ep.lastSeenAt)}.</span>{' '}
-          If its agent stopped, was removed or the computer was rebuilt, reinstall it by hand:{' '}
+          If its agent stopped, was removed or the device was rebuilt, reinstall it by hand:{' '}
           <Link className="underline font-medium text-foreground" href={reinstallHref}>make a reinstall link for {name}</Link>.
-          It re-attaches to this computer and keeps its history and settings.
+          It re-attaches to this device and keeps its history and settings.
         </p>
       )}
       {reasons.length > 0 && (
@@ -278,7 +278,7 @@ export function DeviceActions({
       )}
       {a?.update.command && (
         <p className="text-xs text-muted-foreground break-all" data-testid="header-agent-command-text">
-          <span className="font-medium text-foreground">{a.update.label}</span> on the computer: <code className="rounded bg-muted px-1">{a.update.command}</code>
+          <span className="font-medium text-foreground">{a.update.label}</span> on the device: <code className="rounded bg-muted px-1">{a.update.command}</code>
         </p>
       )}
       {agent && <AgentActionDialogs actions={agent} />}

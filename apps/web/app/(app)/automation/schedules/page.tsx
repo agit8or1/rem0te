@@ -45,7 +45,7 @@ export default function SchedulesPage() {
     retry: false,
     refetchInterval: 30_000,
   });
-  if (!can(CAP.COMPUTERS_VIEW)) return <div className="p-6 text-sm text-muted-foreground">You need View computers to see automation schedules.</div>;
+  if (!can(CAP.COMPUTERS_VIEW)) return <div className="p-6 text-sm text-muted-foreground">You need View devices to see automation schedules.</div>;
   const ready = data?.readiness;
   return (
     <div className="space-y-4 p-4 sm:p-6">
@@ -54,9 +54,9 @@ export default function SchedulesPage() {
       </PageHeader>
       {isPlatformAdmin && (
         <div className="max-w-xs space-y-1">
-          <Label htmlFor="sched-biz" className="text-xs">Business</Label>
+          <Label htmlFor="sched-biz" className="text-xs">Customer</Label>
           <select id="sched-biz" className={selectClass} value={picked} onChange={(e) => setPicked(e.target.value)}>
-            <option value="">All businesses</option>
+            <option value="">All customers</option>
             {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </div>
@@ -65,8 +65,8 @@ export default function SchedulesPage() {
       {ready && !ready.sweep.enabled && <p className="rounded-md border p-3 text-xs" data-testid="schedule-sweep-off">The automation sweep is off on this server (AUTOMATION_SWEEP=off): no schedule asks for a run until it is turned back on.</p>}
       <div className="max-w-4xl rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
         <p>
-          A schedule names one approved library script (its exact SHA-256 and arguments) or one catalog package version, the computers or device group it runs on, when it runs, and what happens to a computer that is offline.
-          Two approvers who are not its author (and, for a script, did not write it) approve it once on the approval signer. Each run is then a separate signed plan, which the signer checks against the schedule: the right task, the right computers, inside the window, one run at a time.
+          A schedule names one approved library script (its exact SHA-256 and arguments) or one catalog package version, the devices or device group it runs on, when it runs, and what happens to a device that is offline.
+          Two approvers who are not its author (and, for a script, did not write it) approve it once on the approval signer. Each run is then a separate signed plan, which the signer checks against the schedule: the right task, the right devices, inside the window, one run at a time.
         </p>
         <p>Pausing stops it at once. Revoking the script on the allowlist, archiving the package, a containment pause on actions, or revoking the schedule stops every later run. Changing anything is a new revision, approved again.</p>
       </div>
@@ -108,7 +108,7 @@ export default function SchedulesPage() {
           )}
         </CardContent>
       </Card>
-      <p className="text-xs text-muted-foreground">Schedules have been tested against a simulated agent, not yet on a real Windows computer. Computers check in about every 3 minutes; a run is handed out at the first check-in inside its window.</p>
+      <p className="text-xs text-muted-foreground">Schedules have been tested against a simulated agent, not yet on a real Windows computer. Devices check in about every 3 minutes; a run is handed out at the first check-in inside its window.</p>
     </div>
   );
 }

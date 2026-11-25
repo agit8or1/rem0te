@@ -104,11 +104,11 @@ export function DevicePerformanceTab({ endpointId, onOpenTab }: { endpointId: st
         </p>
       </div>
 
-      {q.isError && <p className="text-sm text-destructive">Could not load the history for this computer.</p>}
+      {q.isError && <p className="text-sm text-destructive">Could not load the history for this device.</p>}
       {!d && !q.isError && <p className="text-sm text-muted-foreground">Loading…</p>}
       {nothing && (
         <p className="text-sm text-muted-foreground" data-testid="metric-empty">
-          No samples in this range. History starts with this computer&apos;s first heartbeat after the server was
+          No samples in this range. History starts with this device&apos;s first heartbeat after the server was
           upgraded to 0.33 — earlier heartbeats were not stored — and only from an agent that reports processor,
           memory and disk.
         </p>
@@ -118,7 +118,7 @@ export function DevicePerformanceTab({ endpointId, onOpenTab }: { endpointId: st
         <div className="grid gap-4 lg:grid-cols-2">
           <ChartCard title="Processor" s={cpu} testId="metric-cpu" />
           <ChartCard title="Memory used" s={mem} testId="metric-memory" />
-          <ChartCard title="System disk used" note="The volume the computer started from, every heartbeat." s={disk} testId="metric-disk" />
+          <ChartCard title="System disk used" note="The volume the device started from, every heartbeat." s={disk} testId="metric-disk" />
           {d.disks.volumes.map((v) => (
             <ChartCard
               key={v.drive}
@@ -170,7 +170,7 @@ export function DevicePerformanceTab({ endpointId, onOpenTab }: { endpointId: st
 
       <div className="space-y-1 text-[11px] text-muted-foreground">
         <p>
-          Shaded stretches are gaps: no samples arrived, because the computer was offline or its agent was not
+          Shaded stretches are gaps: no samples arrived, because the device was offline or its agent was not
           reporting. Nothing is drawn across them.
         </p>
         {d && <p>Every sample is kept {d.retention.rawHours} hours; hourly figures and volume samples {d.retention.hourlyDays} days.</p>}

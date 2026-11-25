@@ -129,7 +129,7 @@ const INACTIVE_REASON: Record<string, string> = {
   outside_schedule: 'Outside its weekly schedule right now',
   pending_approval: "Waiting for the Business Owner's approval",
   denied: 'Denied by the Business Owner',
-  business_disabled: 'The business is disabled or archived',
+  business_disabled: 'The customer is disabled or archived',
 };
 
 const APPROVAL_LABEL: Record<string, string> = {
@@ -186,7 +186,7 @@ function insideSchedule(s: Schedule | null | undefined, at = new Date()): boolea
 function assignmentStatus(a: Assignment): { label: string; className: string } {
   const now = new Date();
   if (a.revokedAt) return { label: 'Revoked', className: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400' };
-  if (a.approvalStatus === 'PENDING') return { label: 'Not active: awaiting approval', className: APPROVAL_STYLE.PENDING };
+  if (a.approvalStatus === 'PENDING') return { label: 'Not active: pending approval', className: APPROVAL_STYLE.PENDING };
   if (a.approvalStatus === 'DENIED') return { label: 'Not active: denied', className: APPROVAL_STYLE.DENIED };
   if (a.startsAt && now < new Date(a.startsAt)) return { label: 'Not started yet', className: SCHED_STYLE };
   if (a.expiresAt && now >= new Date(a.expiresAt)) return { label: 'Expired', className: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400' };
@@ -380,18 +380,18 @@ function ComputerPicker({ businessId, value, onChange }: { businessId: string; v
     enabled: !!businessId,
     retry: false,
   });
-  if (!businessId) return <p className="text-xs text-muted-foreground">Choose a business first.</p>;
-  if (isLoading) return <p className="text-xs text-muted-foreground">Loading computers…</p>;
+  if (!businessId) return <p className="text-xs text-muted-foreground">Choose a customer first.</p>;
+  if (isLoading) return <p className="text-xs text-muted-foreground">Loading devices…</p>;
   if (isError || !data) {
     return (
       <div className="space-y-1">
         <Textarea
-          rows={3} placeholder="One computer ID per line"
+          rows={3} placeholder="One device ID per line"
           value={value.join('\n')}
           onChange={(e) => onChange(e.target.value.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean))}
         />
         <p className="text-xs text-muted-foreground">
-          Your account cannot list this business&apos;s computers, so paste their IDs. The server rejects any ID that is not in the business.
+          Your account cannot list this customer&apos;s devices, so paste their IDs. The server rejects any ID that is not in the customer.
         </p>
       </div>
     );
@@ -399,9 +399,9 @@ function ComputerPicker({ businessId, value, onChange }: { businessId: string; v
   const shown = data.filter((e) => !q.trim() || `${e.name} ${e.hostname ?? ''}`.toLowerCase().includes(q.toLowerCase()));
   return (
     <div className="space-y-2">
-      <Input placeholder="Filter computers…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <Input placeholder="Filter devices…" value={q} onChange={(e) => setQ(e.target.value)} />
       <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-1">
-        {shown.length === 0 && <p className="p-2 text-xs text-muted-foreground">No computers.</p>}
+        {shown.length === 0 && <p className="p-2 text-xs text-muted-foreground">No devices.</p>}
         {shown.map((e) => {
           const on = value.includes(e.id);
           return (
@@ -423,7 +423,7 @@ function ComputerPicker({ businessId, value, onChange }: { businessId: string; v
 }
 
 const REVOKE_COPY =
-  'This stops new connections through Rem0te on their next request. It does not change any RustDesk password they already saw, and it does not end a session that is already open. To deal with passwords, use Offboarding or rotate the computer’s credential.';
+  'This stops new connections through Rem0te on their next request. It does not change any RustDesk password they already saw, and it does not end a session that is already open. To deal with passwords, use Offboarding or rotate the device’s credential.';
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
@@ -465,22 +465,22 @@ export default function TechniciansAdminPage() {
     <div className="space-y-6 p-6">
       <PageHeader
         title="Technicians"
-        description="MSP staff working in customer businesses: who can reach which business, with which permissions, and until when."
+        description="MSP staff working in customers: who can reach which customer, with which permissions, and until when."
       />
 
       {technician && (
         <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          You are working in {technician.businessName} as a technician. Switch back to your own account (business switcher, top left) to manage technician access; the server refuses changes made from a technician context.
+          You are working in {technician.businessName} as a technician. Switch back to your own account (customer switcher, top left) to manage technician access; the server refuses changes made from a technician context.
         </div>
       )}
 
       <Card>
         <CardContent className="space-y-1 p-4 text-sm text-muted-foreground">
           <p>
-            An assignment gives one person, or a group, access to <strong className="text-foreground">one</strong> business.
+            An assignment gives one person, or a group, access to <strong className="text-foreground">one</strong> customer.
             Access is re-checked on every request, so revoking, expiring or narrowing it applies to their very next action.
-            Access to one business never carries over to another.
+            Access to one customer never carries over to another.
           </p>
           <p>
             Removing access stops <em>new</em> connections through Rem0te. It does not change a RustDesk password they already saw,
@@ -558,7 +558,7 @@ function PeopleTab({ vocab, capLabels, isPlatformAdmin }: { vocab?: Vocabulary; 
                 <thead className="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th className="px-4 py-3 font-medium">Person</th>
-                    <th className="px-4 py-3 font-medium">Own business</th>
+                    <th className="px-4 py-3 font-medium">Own customer</th>
                     <th className="px-4 py-3 font-medium">Technician groups</th>
                     <th className="px-4 py-3 font-medium">Platform permissions</th>
                     <th className="px-4 py-3" />
@@ -623,7 +623,7 @@ function SourceLine({ s, capLabels }: { s: GrantSource; capLabels: Map<string, s
       <div className="flex flex-wrap items-center gap-1.5">
         <Badge variant="outline">{s.via === 'DIRECT' ? 'Assigned directly' : `Through group ${s.groupName ?? ''}`}</Badge>
         <Badge className={APPROVAL_STYLE[s.approval] ?? ''}>{APPROVAL_LABEL[s.approval] ?? s.approval}</Badge>
-        <span className="text-muted-foreground">{s.endpointIds ? `${s.endpointIds.length} selected computer(s)` : 'All computers'}</span>
+        <span className="text-muted-foreground">{s.endpointIds ? `${s.endpointIds.length} selected device(s)` : 'All devices'}</span>
       </div>
       <WhenBadges startsAt={s.startsAt} expiresAt={s.expiresAt} schedule={s.schedule} />
       <CapBadges caps={s.capabilities} labels={capLabels} />
@@ -644,8 +644,8 @@ function EffectiveDialog({ person, onClose, capLabels }: { person: Person | null
           <DialogTitle>Effective technician access</DialogTitle>
           <DialogDescription>
             {person ? `${personName(person)} · ${person.email}. ` : ''}
-            What counts right now. Several grants to the same business add up; one lapsing does not affect the others.
-            {person?.ownBusiness ? ` Their own business (${person.ownBusiness.name}) is not listed here.` : ''}
+            What counts right now. Several grants to the same customer add up; one lapsing does not affect the others.
+            {person?.ownBusiness ? ` Their own customer (${person.ownBusiness.name}) is not listed here.` : ''}
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
@@ -655,12 +655,12 @@ function EffectiveDialog({ person, onClose, capLabels }: { person: Person | null
             <>
               <section className="space-y-2">
                 <h3 className="text-sm font-semibold">Active now ({data?.businesses.length ?? 0})</h3>
-                {(data?.businesses ?? []).length === 0 && <p className="text-sm text-muted-foreground">No business reachable as a technician right now.</p>}
+                {(data?.businesses ?? []).length === 0 && <p className="text-sm text-muted-foreground">No customer reachable as a technician right now.</p>}
                 {(data?.businesses ?? []).map((b) => (
                   <div key={b.businessId} className="space-y-2 rounded-md border bg-muted/30 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="font-medium">{b.businessName}</span>
-                      <span className="text-xs text-muted-foreground">{b.endpointIds ? `${b.endpointIds.length} selected computer(s)` : 'All computers'}</span>
+                      <span className="text-xs text-muted-foreground">{b.endpointIds ? `${b.endpointIds.length} selected device(s)` : 'All devices'}</span>
                     </div>
                     <CapBadges caps={b.capabilities} labels={capLabels} />
                     <div className="text-xs font-medium text-muted-foreground">Because of:</div>
@@ -716,7 +716,7 @@ function PlatformPermissionsDialog({
         <DialogHeader>
           <DialogTitle>Platform permissions</DialogTitle>
           <DialogDescription>
-            {person ? `${personName(person)}. ` : ''}These are not Platform Admin and grant no access to any business by themselves.
+            {person ? `${personName(person)}. ` : ''}These are not Platform Admin and grant no access to any customer by themselves.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-1">
@@ -820,7 +820,7 @@ function AssignmentsTab({ vocab, capLabels, isPlatformAdmin }: { vocab?: Vocabul
                 <thead className="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th className="px-4 py-3 font-medium">Who</th>
-                    <th className="px-4 py-3 font-medium">Business</th>
+                    <th className="px-4 py-3 font-medium">Customer</th>
                     <th className="px-4 py-3 font-medium">Permissions</th>
                     <th className="px-4 py-3 font-medium">When</th>
                     <th className="px-4 py-3 font-medium">Approval</th>
@@ -848,7 +848,7 @@ function AssignmentsTab({ vocab, capLabels, isPlatformAdmin }: { vocab?: Vocabul
                         <td className="px-4 py-3">
                           <div>{a.customer.name}</div>
                           <div className="text-xs text-muted-foreground">
-                            {a.endpointIds.length ? `${a.endpointIds.length} selected computer(s)` : 'All computers'}
+                            {a.endpointIds.length ? `${a.endpointIds.length} selected device(s)` : 'All devices'}
                           </div>
                         </td>
                         <td className="max-w-[18rem] px-4 py-3"><CapBadges caps={a.capabilities} labels={capLabels} /></td>
@@ -996,10 +996,10 @@ function CreateAssignmentDialog({
   const problem = (() => {
     if (f.target === 'user' && !f.userId) return 'Choose a person.';
     if (f.target === 'group' && !f.groupId) return 'Choose a group.';
-    if (!businessId) return 'Choose a business.';
+    if (!businessId) return 'Choose a customer.';
     if (!presetChoice) return 'Loading access levels…';
     if (custom && f.capabilities.length === 0 && !(f.target === 'group' && (group?.capabilities.length ?? 0) > 0)) return 'Choose at least one permission.';
-    if (!f.whole && f.endpointIds.length === 0) return 'Pick at least one computer, or choose the whole business.';
+    if (!f.whole && f.endpointIds.length === 0) return 'Pick at least one device, or choose the whole customer.';
     if (f.startsAt && f.expiresAt && new Date(f.expiresAt) <= new Date(f.startsAt)) return 'The end must be after the start.';
     if (f.scheduled) return scheduleProblem(f.schedule);
     return null;
@@ -1021,9 +1021,9 @@ function CreateAssignmentDialog({
     onSuccess: (res) => {
       const pending = res.data?.data?.approvalStatus === 'PENDING';
       toast({
-        title: pending ? 'Assignment created: waiting for approval' : 'Assignment created',
+        title: pending ? 'Assignment created: pending approval' : 'Assignment created',
         description: pending
-          ? "This business requires approval. The assignment grants nothing until its Business Owner approves it."
+          ? "This customer requires approval. The assignment grants nothing until its Business Owner approves it."
           : undefined,
       });
       qc.invalidateQueries({ queryKey: ['technicians'] });
@@ -1037,7 +1037,7 @@ function CreateAssignmentDialog({
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>New technician assignment</DialogTitle>
-          <DialogDescription>Access to one business. Recorded in the audit log.</DialogDescription>
+          <DialogDescription>Access to one customer. Recorded in the audit log.</DialogDescription>
         </DialogHeader>
         <div className="max-h-[65vh] space-y-4 overflow-y-auto pr-1">
           <div className="flex gap-2">
@@ -1060,7 +1060,7 @@ function CreateAssignmentDialog({
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">Platform Admins are not listed: they already reach every business.</p>
+              <p className="text-xs text-muted-foreground">Platform Admins are not listed: they already reach every customer.</p>
             </div>
           ) : (
             <div className="space-y-1.5">
@@ -1079,9 +1079,9 @@ function CreateAssignmentDialog({
           )}
 
           <div className="space-y-1.5">
-            <Label>Business</Label>
+            <Label>Customer</Label>
             <Select value={f.businessId} onValueChange={(v) => setF({ ...f, businessId: v, businessIdManual: '', endpointIds: [] })}>
-              <SelectTrigger><SelectValue placeholder="Choose a business" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Choose a customer" /></SelectTrigger>
               <SelectContent>
                 {businesses.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
               </SelectContent>
@@ -1089,11 +1089,11 @@ function CreateAssignmentDialog({
             {!isPlatformAdmin && (
               <>
                 <Input
-                  placeholder="…or paste a business ID" value={f.businessIdManual}
+                  placeholder="…or paste a customer ID" value={f.businessIdManual}
                   onChange={(e) => setF({ ...f, businessIdManual: e.target.value, endpointIds: [] })}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Only a Platform Admin can list every business. The list above shows businesses already seen in assignments and memberships.
+                  Only a Platform Admin can list every customer. The list above shows customers already seen in assignments and memberships.
                 </p>
               </>
             )}
@@ -1112,13 +1112,13 @@ function CreateAssignmentDialog({
             <p className="text-xs text-muted-foreground">
               New technicians start at L1. No preset grants Remote connect or credential access: interactive control is only
               ever a temporary, independently approved grant. Presets are managed under{' '}
-              <Link href="/settings/security/technician-access" className="underline underline-offset-2">Settings → Security → Technician Access</Link>.
+              <Link href="/settings/security/technician-access" className="underline underline-offset-2">Security → Technician access</Link>.
             </p>
           </div>
 
           {custom && (
             <div className="space-y-1.5">
-              <Label>Permissions in that business</Label>
+              <Label>Permissions in that customer</Label>
               {f.target === 'group' && group && group.capabilities.length > 0 && f.capabilities.length === 0 && (
                 <p className="text-xs text-muted-foreground">Nothing chosen: the group&apos;s {group.capabilities.length} default permission(s) will be copied.</p>
               )}
@@ -1127,10 +1127,10 @@ function CreateAssignmentDialog({
           )}
 
           <div className="space-y-1.5">
-            <Label>Computers</Label>
+            <Label>Devices</Label>
             <div className="flex gap-2">
-              <Button type="button" size="sm" variant={f.whole ? 'default' : 'outline'} onClick={() => setF({ ...f, whole: true })}>Whole business</Button>
-              <Button type="button" size="sm" variant={!f.whole ? 'default' : 'outline'} onClick={() => setF({ ...f, whole: false })}>Specific computers</Button>
+              <Button type="button" size="sm" variant={f.whole ? 'default' : 'outline'} onClick={() => setF({ ...f, whole: true })}>Whole customer</Button>
+              <Button type="button" size="sm" variant={!f.whole ? 'default' : 'outline'} onClick={() => setF({ ...f, whole: false })}>Specific devices</Button>
             </div>
             {!f.whole && <ComputerPicker businessId={businessId} value={f.endpointIds} onChange={(v) => setF({ ...f, endpointIds: v })} />}
           </div>
@@ -1175,7 +1175,7 @@ function CreateAssignmentDialog({
           </div>
 
           <p className="text-xs text-muted-foreground">
-            If the business requires approval for technician access, this assignment is created as pending and grants nothing until its Business Owner approves it.
+            If the customer requires approval for technician access, this assignment is created as pending and grants nothing until its Business Owner approves it.
           </p>
         </div>
         <DialogFooter className="items-center">
@@ -1384,8 +1384,8 @@ function ApprovalsTab({
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
         {isPlatformAdmin
-          ? 'Pending requests across every business. Normally the Business Owner decides; as Platform Admin you can too.'
-          : "Only a business's own Business Owner (or a Platform Admin) can approve technician access to it, so this list shows only requests you may decide."}
+          ? 'Pending requests across every customer. Normally the Business Owner decides; as Platform Admin you can too.'
+          : "Only a customer's own Business Owner (or a Platform Admin) can approve technician access to it, so this list shows only requests you may decide."}
       </p>
       {approvals.length === 0 ? (
         <Card><CardContent className="p-8 text-center text-sm text-muted-foreground">Nothing waiting for a decision.</CardContent></Card>
@@ -1412,7 +1412,7 @@ function ApprovalsTab({
                     </div>
                   </div>
                   {a.reason && <p className="rounded bg-muted/50 p-2 text-xs">“{a.reason}”</p>}
-                  <div className="text-xs text-muted-foreground">{a.endpointIds.length ? `${a.endpointIds.length} selected computer(s)` : 'All computers'}</div>
+                  <div className="text-xs text-muted-foreground">{a.endpointIds.length ? `${a.endpointIds.length} selected device(s)` : 'All devices'}</div>
                   <WhenBadges startsAt={a.startsAt} expiresAt={a.expiresAt} schedule={describeSchedule(a.schedule)} />
                   <CapBadges caps={a.capabilities} labels={capLabels} />
                 </CardContent>
@@ -1461,8 +1461,8 @@ function DecisionDialog({
   const problem = (() => {
     if (!approving || !a) return null;
     if (caps.length === 0) return 'Approving with no permissions grants nothing; deny instead.';
-    if (!wholeBusiness && eps.length === 0) return 'Keep at least one computer, or deny.';
-    if (wholeBusiness && narrowComputers && eps.length === 0) return 'Pick at least one computer, or keep the whole business.';
+    if (!wholeBusiness && eps.length === 0) return 'Keep at least one device, or deny.';
+    if (wholeBusiness && narrowComputers && eps.length === 0) return 'Pick at least one device, or keep the whole customer.';
     if (expires && a.expiresAt && new Date(expires) > new Date(a.expiresAt)) return 'Approval can only shorten the requested window.';
     return null;
   })();
@@ -1496,7 +1496,7 @@ function DecisionDialog({
           <DialogTitle>{approving ? 'Approve request' : 'Deny request'}</DialogTitle>
           <DialogDescription>
             {a ? `${a.user ? personName(a.user) : `Group ${a.group?.name}`} → ${a.customer.name}. ` : ''}
-            {approving ? 'You can narrow what was asked for (fewer permissions, fewer computers, an earlier end) but not widen it.' : 'The request grants nothing.'}
+            {approving ? 'You can narrow what was asked for (fewer permissions, fewer devices, an earlier end) but not widen it.' : 'The request grants nothing.'}
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
@@ -1507,11 +1507,11 @@ function DecisionDialog({
                 <CapabilityPicker groups={vocab.capabilityGroups} value={caps} onChange={setCaps} allowed={a.capabilities} />
               </div>
               <div className="space-y-1.5">
-                <Label>Computers</Label>
+                <Label>Devices</Label>
                 {wholeBusiness ? (
                   <>
                     <button type="button" onClick={() => setNarrowComputers(!narrowComputers)} className="flex items-center gap-2 text-sm">
-                      <CheckBox on={narrowComputers} />Requested the whole business. Limit to specific computers
+                      <CheckBox on={narrowComputers} />Requested the whole customer. Limit to specific devices
                     </button>
                     {narrowComputers && <ComputerPicker businessId={a.customerId} value={eps} onChange={setEps} />}
                   </>

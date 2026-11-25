@@ -1,9 +1,9 @@
 # Background terminal
 
 *0.77.0 "Conduit".* A Platform Admin can open a **cmd** or **PowerShell**
-prompt on a Windows computer without a screen-sharing session. Nothing appears
-on the computer's screen. The shell runs as **SYSTEM**, which means **full
-control of the computer**. The console says so wherever a terminal can be
+prompt on a Windows device without a screen-sharing session. Nothing appears
+on the device's screen. The shell runs as **SYSTEM**, which means **full
+control of the device**. The console says so wherever a terminal can be
 opened.
 
 This is a deliberate exception to rules Rem0te has kept since 0.26, made at the
@@ -17,33 +17,33 @@ lists exactly what changed. Read it before turning anything on.
 | | Open a terminal, see its output, type | See that a terminal was opened | End someone's terminal |
 |---|---|---|---|
 | Platform Admin | yes | yes | yes (revoke) |
-| Business Owner | **no** | yes, on their computers | yes (revoke) |
-| Business User with *Edit computers* | **no** | yes | yes (revoke) |
-| Business User without it | no | yes, with *View computers* | no |
-| MSP technician | **no** | yes, on assigned computers | no |
+| Business Owner | **no** | yes, on their devices | yes (revoke) |
+| Business User with *Edit devices* | **no** | yes | yes (revoke) |
+| Business User without it | no | yes, with *View devices* | no |
+| MSP technician | **no** | yes, on assigned devices | no |
 
 **Only a Platform Admin holds the `computers:terminal` capability.** It is not
-a business capability, for these reasons:
+a customer capability, for these reasons:
 
 - A Business Owner does not get it. An owner's capabilities are the whole
-  business list.
+  customer list.
 - No grant can carry it. That covers a Business User grant, a technician
   assignment or preset, and an SSO mapping. The server drops it from anything
   stored, and the Users page offers no checkbox for it.
 
-A Business Owner decides who in the business may connect. If owners could also
-grant a SYSTEM shell on every computer, default-deny would become a setting the
-business could switch off. Letting a Platform Admin delegate the terminal to a
+A Business Owner decides who in the customer may connect. If owners could also
+grant a SYSTEM shell on every device, default-deny would become a setting the
+customer could switch off. Letting a Platform Admin delegate the terminal to a
 named person, with its own audit trail, is [planned](#planned).
 
 The person who opens a terminal is its only technician. Nobody else sees its
 output or can type into it, not even another Platform Admin. Anyone else who
-can see the computer sees that the terminal exists: who opened it, the shell,
+can see the device sees that the terminal exists: who opened it, the shell,
 the reason, when, and the byte counts.
 
 ## Opening one
 
-Open the computer and go to the **Terminal** tab, or **Tools → Terminal → Open
+Open the device and go to the **Terminal** tab, or **Tools → Terminal → Open
 a terminal**. Then:
 
 1. Choose **PowerShell** or **Command Prompt**.
@@ -56,31 +56,31 @@ a terminal**. Then:
    - A Platform Admin can turn it off there. Turning it off asks for a fresh
      confirmation first (`confirm.relax`), like turning off any other function.
 
-The computer must meet all of these, or the server refuses the terminal and
+The device must meet all of these, or the server refuses the terminal and
 says why:
 
 | Refusal | Why |
 |---|---|
-| `ENDPOINT_UNASSIGNED` | the computer is in the unassigned pool: adopt it first |
+| `ENDPOINT_UNASSIGNED` | the device is in the unassigned pool: adopt it first |
 | `TERMINAL_SIGNED_AGENT_REQUIRED` | not Windows, or not the signed (full) agent |
-| `TERMINAL_NO_DEVICE_SECRET` | the computer never authenticated with a device secret |
+| `TERMINAL_NO_DEVICE_SECRET` | the device never authenticated with a device secret |
 | `TERMINAL_AGENT_TOO_OLD` | the agent is older than **0.77.0** |
-| `CONTAINED` | a `remote` containment pause covers the business |
-| `TERMINAL_OFFLINE` | the computer is not reporting |
+| `CONTAINED` | a `remote` containment pause covers the customer |
+| `TERMINAL_OFFLINE` | the device is not reporting |
 | `TERMINAL_ALREADY_OPEN` | you already have a terminal open on it |
 | `TERMINAL_TOO_MANY` | three terminals are already open on it |
 
-## How it reaches the computer, and how long it takes
+## How it reaches the device, and how long it takes
 
-The computer opens no port and listens on nothing. Every connection goes out
-from the computer to the server:
+The device opens no port and listens on nothing. Every connection goes out
+from the device to the server:
 
 1. The signed agent's heartbeat runs every three minutes. While a terminal is
-   waiting for the computer, the heartbeat's answer says `remotePoll: true`.
+   waiting for the device, the heartbeat's answer says `remotePoll: true`.
    This is the only change to the heartbeat. Older agents ignore it.
 2. The heartbeat then starts `rem0te-agent.exe remote-worker`. Only one worker
    runs at a time.
-3. The worker long-polls `POST /api/v1/remote/agent/poll` with the computer's
+3. The worker long-polls `POST /api/v1/remote/agent/poll` with the device's
    device secret. The server holds each poll for up to 20 seconds and answers
    as soon as there is work.
 4. The worker starts the shell, sends what it prints to
@@ -101,7 +101,7 @@ same long-poll pattern on its own route.
 
 ## The shell
 
-The shell is one of these two, started by absolute path from the computer's own
+The shell is one of these two, started by absolute path from the device's own
 System32. The arguments are fixed:
 
 ```
@@ -146,7 +146,7 @@ pseudo-console:
 | One input | 4,096 bytes | the server and the worker |
 | One output frame | 16,384 bytes, 16 frames a post | the server and the worker |
 | A whole session | 1 MB in, 8 MB out | the server and the worker |
-| Live terminals | one per technician per computer, three per computer | the server (and a unique index) |
+| Live terminals | one per technician per device, three per device | the server (and a unique index) |
 | Server unreachable | the worker ends every shell after **90 seconds** | the worker |
 
 **What moves the idle clock.** Only your input, or **Keep alive**, moves it.
@@ -172,10 +172,10 @@ looking:
 - **End session** from the list of sessions is a revocation, recorded as
   `TERMINAL_REVOKED`. It is available to:
   - a Platform Admin;
-  - the business's own member with *Edit computers*, who did not open it and
+  - the customer's own member with *Edit devices*, who did not open it and
     could not.
 - Ending never asks for a fresh confirmation.
-- **Containment.** A `remote` pause (*Settings → Security → Containment*,
+- **Containment.** A `remote` pause (*Security → Containment*,
   labelled "remote connections and chat") refuses new terminals. It also ends
   live terminals the next time anything touches them, at most 30 seconds later
   through the sweep. The session ends with `paused` and its worker kills the
@@ -188,8 +188,8 @@ looking:
 
 **Always**, in the audit log:
 
-- who opened the session, the computer, the business, the shell and the reason;
-- when it started on the computer;
+- who opened the session, the device, the customer, the shell and the reason;
+- when it started on the device;
 - who ended it, and why;
 - how long it lasted;
 - the bytes typed and printed.
@@ -204,7 +204,7 @@ frames:
 The API and the agent log neither. A test in the end-to-end suite checks the
 audit rows, the API's log and the worker's log for it.
 
-**Transcripts** are a per-business setting, **off by default**.
+**Transcripts** are a per-customer setting, **off by default**.
 
 - **Who changes it.** Only a Platform Admin. The change is audited as
   `REMOTE_OPS_SETTINGS_CHANGED`.
@@ -219,7 +219,7 @@ Set it with `PUT /api/v1/remote-ops/settings/:businessId` (`{
 "terminalTranscripts": true, "transcriptDays": 30 }`).
 
 `TERMINAL_SWEEP=off` stops the sweep. It is a test switch and must not be set
-in production. Admin → Security lists it among the off switches.
+in production. Security → Server security lists it among the off switches.
 
 ## What it reverses, and what still holds
 
@@ -237,12 +237,12 @@ Everything else still holds, and `check-security-invariants.mjs` §87 checks it:
 
 - **Who.** A Platform Admin only. Opening needs a fresh confirmation by
   default, a reason, and scope through the ordinary visibility rule.
-- **Which computers.** An assigned Windows computer running the signed agent
-  0.77.0 or later, with a device secret and reporting. A pooled computer is
+- **Which devices.** An assigned Windows device running the signed agent
+  0.77.0 or later, with a device secret and reporting. A pooled device is
   refused (§70).
 - **Authentication.** Every agent call checks the device secret before
   anything else, then Windows and the signed agent, then the pool.
-- **Transport.** Outbound only. Nothing listens on the computer.
+- **Transport.** Outbound only. Nothing listens on the device.
 - **The exec site.** There is one, with two possible executables at absolute
   System32 paths and constant arguments, inside a Job Object.
 - **Limits.** The same in the server, the database and the agent. The agent
@@ -255,13 +255,13 @@ approval signer is not involved in a terminal and gains no new power.
 
 ## Before turning it on: publish the agent first
 
-The terminal needs the **signed agent 0.77.0** on the computer. The server
+The terminal needs the **signed agent 0.77.0** on the device. The server
 refuses an older agent (`TERMINAL_AGENT_TOO_OLD`), so nothing happens until
-computers have updated:
+devices have updated:
 
 1. Deploy the server.
 2. Publish the agent: `sudo rem0te-signed-publish` on the release host.
-3. Let computers take the update. They do this through their daily check, or
+3. Let devices take the update. They do this through their daily check, or
    *Update agent* on the Agent card.
 
 Nothing else needs configuring. The heartbeat starts the worker only while a
@@ -279,7 +279,7 @@ terminal is waiting.
   The end-to-end suite (`e2e-terminal.mjs`) drives the routes against the
   agent's own worker code (`rem0te-remote-sim`). It covers:
   - default deny for an owner, a user and a technician;
-  - cross-business refusal;
+  - cross-customer refusal;
   - the step-up;
   - every refusal;
   - the device secret;

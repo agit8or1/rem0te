@@ -292,7 +292,7 @@ async function reportPagesChecks(page, who) {
   await visit(page, '/reports/software-compliance');
   await page.waitForFunction(() => !/Loading…/.test(document.querySelector('main')?.innerText ?? ''), null, { timeout: 15_000 }).catch(() => {});
   const sc = await page.evaluate(() => ({ text: (document.querySelector('main')?.innerText ?? '').slice(0, 1500), table: !!document.querySelector('main table') }));
-  check(!/could not be loaded|not available to you/i.test(sc.text) && (sc.table || /has no entries for this view|No Windows computers in this view/.test(sc.text)) && /Unknown is a coverage gap/.test(sc.text), 'Software compliance shows its table (or says there is nothing to report)', sc.text.slice(0, 300));
+  check(!/could not be loaded|not available to you/i.test(sc.text) && (sc.table || /has no entries for this view|No Windows devices in this view/.test(sc.text)) && /Unknown is a coverage gap/.test(sc.text), 'Software compliance shows its table (or says there is nothing to report)', sc.text.slice(0, 300));
   if (who === 'user') {
     const h = await visit(page, '/reports/schedules');
     const txt = await page.evaluate(() => document.querySelector('main')?.innerText ?? '');

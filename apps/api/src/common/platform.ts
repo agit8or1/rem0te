@@ -39,7 +39,7 @@ export function readOnlyAgentRefusal(platform: string | null | undefined, what: 
   return {
     code: os === 'Linux' ? 'LINUX_AGENT_READ_ONLY' : 'MACOS_AGENT_READ_ONLY',
     message: `${what} is not available on ${os}: the ${os} agent only reports, and acts on nothing the server sends. ` +
-      'Do it on the computer itself (re-run the installer to reinstall or change the password).',
+      'Do it on the device itself (re-run the installer to reinstall or change the password).',
   };
 }
 
@@ -69,5 +69,5 @@ export function osName(platform: string | null | undefined): 'Windows' | 'Linux'
  */
 export function restartPendingSentence(platform: string | null | undefined): string {
   const os = osName(platform);
-  return os ? `${os} is waiting for a restart` : 'the computer is waiting for a restart';
+  return os ? `${os} is waiting for a restart` : 'the device is waiting for a restart';
 }

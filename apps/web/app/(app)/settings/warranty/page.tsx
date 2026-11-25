@@ -17,7 +17,7 @@ import { apiError } from '@/components/security-controls/shared';
 import { reauthSuffix, useAsks } from '@/lib/confirm-policy';
 
 /**
- * Settings → Warranty (0.56): the vendor warranty lookups. Platform Admin
+ * Administration → Warranty (0.56): the vendor warranty lookups. Platform Admin
  * only; saving asks for fresh authentication unless the warranty.settings
  * confirmation is off. Each lookup is off until it is switched on here, and
  * the credential is write-only: the page shows only that one is set and its
@@ -26,17 +26,17 @@ import { reauthSuffix, useAsks } from '@/lib/confirm-policy';
 type Vendor = WarrantyVendorView['vendor'];
 const HELP: Record<Vendor, { what: string; creds: string; clientId?: string; keyId?: string; secret: string; standIn?: boolean }> = {
   dell: {
-    what: 'Dell TechDirect warranty API (v5). Each lookup sends the computer’s Dell service tag to Dell (apigtwb2c.us.dell.com).',
+    what: 'Dell TechDirect warranty API (v5). Each lookup sends the device’s Dell service tag to Dell (apigtwb2c.us.dell.com).',
     creds: 'A client id and client secret from Dell TechDirect (techdirect.dell.com → APIs), with the warranty API approved for your account. Approval can take a few days.',
     clientId: 'Client id', secret: 'Client secret',
   },
   lenovo: {
-    what: 'Lenovo warranty API (v2.5). Each lookup sends the computer’s Lenovo serial number to Lenovo (supportapi.lenovo.com).',
+    what: 'Lenovo warranty API (v2.5). Each lookup sends the device’s Lenovo serial number to Lenovo (supportapi.lenovo.com).',
     creds: 'A ClientID token issued by Lenovo — ask your Lenovo account representative or partner programme for warranty API access.',
     secret: 'ClientID token',
   },
   hp: {
-    what: 'HP Inc. Warranty API (batch jobs). Each lookup sends the computer’s HP serial number to HP (warranty.api.hp.com) as a one-serial job, then reads the result. HP servers (ProLiant and the like) are HPE’s, not HP’s, and are not looked up.',
+    what: 'HP Inc. Warranty API (batch jobs). Each lookup sends the device’s HP serial number to HP (warranty.api.hp.com) as a one-serial job, then reads the result. HP servers (ProLiant and the like) are HPE’s, not HP’s, and are not looked up.',
     creds: 'An app key and secret from the HP Developer Portal. Create an account at developers.hp.com, submit the CSS API enrolment form (developers.hp.com/css-enroll), wait for HP to confirm the Warranty API is enabled on your account (HP may involve your HP account manager), then create an app with the Warranty API and copy its API key and secret here.',
     clientId: 'API key', secret: 'API secret', standIn: true,
   },
@@ -75,9 +75,9 @@ function VendorCard({ v, onSaved, onError }: { v: WarrantyVendorView; onSaved: (
       <CardHeader><CardTitle className="flex items-center gap-2 text-sm">{v.label} {v.enabled ? <Badge>on</Badge> : <Badge variant="outline">off</Badge>}</CardTitle></CardHeader>
       <CardContent className="space-y-3 text-sm">
         <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
-          Switching this on sends serial numbers to {v.label}: the serial (and nothing else about the computer — no name, model, business, user or address) of every {v.label} computer, at most once every 30 days each.
+          Switching this on sends serial numbers to {v.label}: the serial (and nothing else about the device — no name, model, customer, user or address) of every {v.label} device, at most once every 30 days each.
         </p>
-        {h.standIn && <p className="rounded-md border p-2 text-xs text-muted-foreground" data-testid={`warranty-standin-${v.vendor}`}>New in 0.61: this lookup has been tested only against a stand-in that follows {v.label}’s published examples, never against {v.label} itself. Use Check now on one computer first and read the result.</p>}
+        {h.standIn && <p className="rounded-md border p-2 text-xs text-muted-foreground" data-testid={`warranty-standin-${v.vendor}`}>New in 0.61: this lookup has been tested only against a stand-in that follows {v.label}’s published examples, never against {v.label} itself. Use Check now on one device first and read the result.</p>}
         <p className="text-muted-foreground">{h.what}</p>
         <p className="text-muted-foreground"><span className="font-medium text-foreground">You need:</span> {h.creds}</p>
         <label className="flex items-center gap-2"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />Look up {v.label} warranties</label>
@@ -118,7 +118,7 @@ export default function WarrantySettingsPage() {
   return (
     <div className="max-w-4xl space-y-4 p-4 md:p-6">
       <Link href="/settings" className="inline-flex items-center text-sm text-muted-foreground hover:underline"><ArrowLeft className="mr-1 h-4 w-4" />Settings</Link>
-      <PageHeader title="Warranty" description="Automatic hardware warranty lookups from the vendor. Off unless switched on here; warranty dates can always be entered by hand on a computer's Hardware card." />
+      <PageHeader title="Warranty" description="Automatic hardware warranty lookups from the vendor. Off unless switched on here; warranty dates can always be entered by hand on a device's Hardware card." />
       {notice && <div className={`rounded-md border p-3 text-sm ${notice.ok ? 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100' : 'border-destructive/40 bg-destructive/10 text-destructive'}`}>{notice.text}</div>}
       {error ? <p className="text-sm text-muted-foreground">{apiError(error).message}</p> : null}
       {data && (
@@ -126,11 +126,11 @@ export default function WarrantySettingsPage() {
           <Card>
             <CardContent className="space-y-1 pt-6 text-sm text-muted-foreground">
               <p>
-                When a lookup is on, this server asks the vendor about at most {data.sweep.perHour} computers an hour, each at most once every {data.sweep.intervalDays} days
-                (a failure that may pass is asked again after a day). A date entered by hand is never overwritten. A business under an
-                integration containment pause is not looked up.{data.sweep.enabled ? '' : ' The lookup sweep is off in this API process (WARRANTY_SWEEP=off); “Check now” on a computer still works.'}
+                When a lookup is on, this server asks the vendor about at most {data.sweep.perHour} devices an hour, each at most once every {data.sweep.intervalDays} days
+                (a failure that may pass is asked again after a day). A date entered by hand is never overwritten. A customer under an
+                integration containment pause is not looked up.{data.sweep.enabled ? '' : ' The lookup sweep is off in this API process (WARRANTY_SWEEP=off); “Check now” on a device still works.'}
               </p>
-              <p>Each computer with no warranty date says why on its Warranty &amp; support card and in <Link href="/reports/warranty" className="underline">Reports → Warranty</Link>.</p>
+              <p>Each device with no warranty date says why on its Warranty &amp; support card and in <Link href="/reports/warranty" className="underline">Reports → Warranty</Link>.</p>
             </CardContent>
           </Card>
           {data.vendors.map((v) => (
@@ -142,7 +142,7 @@ export default function WarrantySettingsPage() {
               {data.manualOnly.map((m) => (
                 <p key={m.vendor} className="text-muted-foreground"><span className="font-medium text-foreground">{m.label}.</span> {m.reason}</p>
               ))}
-              <p className="text-xs text-muted-foreground">For these, enter the dates on the computer’s Warranty &amp; support card; its support links open the vendor’s own warranty page.</p>
+              <p className="text-xs text-muted-foreground">For these, enter the dates on the device’s Warranty &amp; support card; its support links open the vendor’s own warranty page.</p>
             </CardContent>
           </Card>
         </>

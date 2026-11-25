@@ -46,14 +46,14 @@ export default function WarrantyReportPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <PageHeader title="Warranty" description="Hardware warranty end dates across the computers you can see: what has expired, what ends soon, and what has no date." />
-      {!allowed ? <Refused error={{ response: { status: 403, data: { message: 'The warranty report needs the View computers permission.' } } }} /> : (
+      <PageHeader title="Warranty" description="Hardware warranty end dates across the devices you can see: what has expired, what ends soon, and what has no date." />
+      {!allowed ? <Refused error={{ response: { status: 403, data: { message: 'The warranty report needs the View devices permission.' } } }} /> : (
         <>
           <FilterBar facets={data?.facets} filters={filters} set={set} report="warranty" params={params} disabled={!t?.total} />
           {error ? <Refused error={error} /> : null}
           {data && <Definition><p>{data.definition} <Generated at={data.generatedAt} />.</p></Definition>}
           {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
-          {t && t.total === 0 && <Empty>No computers in this view.</Empty>}
+          {t && t.total === 0 && <Empty>No devices in this view.</Empty>}
           {t && t.total > 0 && (
             <>
               <div className="grid gap-3 grid-cols-2 lg:grid-cols-4" data-testid="warranty-figures">
@@ -62,15 +62,15 @@ export default function WarrantyReportPage() {
                 <Figure label="Ends within 90 days" value={t.within90} tone={t.within90 ? 'warn' : undefined} hint="Includes the 30- and 60-day windows" />
                 <Figure label="Unknown" value={t.unknown} tone={t.unknown ? 'warn' : undefined} hint={`No date stored${t.unknownVirtual ? ` (${t.unknownVirtual} virtual machine${t.unknownVirtual === 1 ? '' : 's'}: no hardware warranty)` : ''}`} />
               </div>
-              <Section title="By business">
+              <Section title="By customer">
                 <Table
-                  head={['Business', 'Computers', 'Expired', 'Within 30 days', 'Within 60 days', 'Within 90 days', 'Running', 'Unknown']}
-                  empty="No businesses."
-                  rows={data!.byBusiness.map((b) => [b.business?.name ?? 'No business', b.total, b.expired, b.within30, b.within60, b.within90, b.active, b.unknown])}
+                  head={['Customer', 'Devices', 'Expired', 'Within 30 days', 'Within 60 days', 'Within 90 days', 'Running', 'Unknown']}
+                  empty="No customers."
+                  rows={data!.byBusiness.map((b) => [b.business?.name ?? 'No customer', b.total, b.expired, b.within30, b.within60, b.within90, b.active, b.unknown])}
                 />
               </Section>
               {t.unknown - t.unknownVirtual > 0 && (
-                <Section title="No warranty date: why" note={data!.missingTotal > data!.missing.length ? `Showing ${data!.missing.length} of ${data!.missingTotal}; the export has every computer` : undefined}>
+                <Section title="No warranty date: why" note={data!.missingTotal > data!.missing.length ? `Showing ${data!.missing.length} of ${data!.missingTotal}; the export has every device` : undefined}>
                   <div className="mb-3 flex flex-wrap gap-2 text-xs" data-testid="warranty-gap-counts">
                     {WARRANTY_GAPS.filter((g) => g !== 'virtual' && t.unknownBy[g]).map((g) => (
                       <span key={g} className="rounded-md border px-2 py-1" data-reason={g}>{WARRANTY_GAP_LABEL[g]}: {t.unknownBy[g]}</span>
@@ -78,13 +78,13 @@ export default function WarrantyReportPage() {
                   </div>
                   {t.unknownBy.not_configured > 0 && (
                     <p className="mb-3 text-sm" data-testid="warranty-gap-settings-hint">
-                      {t.unknownBy.not_configured} computer{t.unknownBy.not_configured === 1 ? '' : 's'} could be looked up automatically if the vendor&apos;s lookup were switched on{' '}
-                      {isPlatformAdmin ? <>in <Link href="/settings/warranty" className="underline">Settings → Warranty</Link>.</> : '— a Platform Admin sets this up in Settings → Warranty.'}
+                      {t.unknownBy.not_configured} device{t.unknownBy.not_configured === 1 ? '' : 's'} could be looked up automatically if the vendor&apos;s lookup were switched on{' '}
+                      {isPlatformAdmin ? <>in <Link href="/settings/warranty" className="underline">Administration → Warranty</Link>.</> : '— a Platform Admin sets this up in Administration → Warranty.'}
                     </p>
                   )}
                   <Table
-                    head={['Computer', 'Business · site', 'Hardware', 'Why there is no date']}
-                    empty="Every computer in this view has a warranty date."
+                    head={['Device', 'Customer · site', 'Hardware', 'Why there is no date']}
+                    empty="Every device in this view has a warranty date."
                     rows={data!.missing.map((d) => [
                       <Link key="d" href={`/endpoints/${d.device.id}`} className="font-medium hover:underline">{d.device.name}</Link>,
                       where(d.business, d.site),
@@ -94,9 +94,9 @@ export default function WarrantyReportPage() {
                   />
                 </Section>
               )}
-              <Section title="Expired or ending within 90 days" note={data!.devicesTotal > data!.devices.length ? `Showing ${data!.devices.length} of ${data!.devicesTotal}; the export has every computer` : undefined}>
+              <Section title="Expired or ending within 90 days" note={data!.devicesTotal > data!.devices.length ? `Showing ${data!.devices.length} of ${data!.devicesTotal}; the export has every device` : undefined}>
                 <Table
-                  head={['Computer', 'Business · site', 'Hardware', 'Warranty', 'Ends', 'Days left', 'Coverage', 'Source']}
+                  head={['Device', 'Customer · site', 'Hardware', 'Warranty', 'Ends', 'Days left', 'Coverage', 'Source']}
                   empty="Nothing in this view has expired or ends within 90 days."
                   rows={data!.devices.map((d) => [
                     <Link key="d" href={`/endpoints/${d.device.id}`} className="font-medium hover:underline">{d.device.name}</Link>,

@@ -594,7 +594,7 @@ export class RustdeskService {
     const endpointName = RustdeskService.cmdSafe(opts.endpointName) || 'computer';
     const peerId = RustdeskService.cmdSafe(opts.peerId).replace(/ /g, '');
     if (!PEER_ID_RE.test(peerId)) {
-      throw new BadRequestException('This computer has no valid RustDesk ID to connect to.');
+      throw new BadRequestException('This device has no valid RustDesk ID to connect to.');
     }
     const pwB64 = Buffer.from(password ?? '', 'utf8').toString('base64');
 

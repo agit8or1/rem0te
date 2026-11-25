@@ -88,7 +88,7 @@ check('a null figure is not a sample', !I.carriesLiveSample({ cpuLoadPercent: nu
 
 // ── the Agent card's warning ──────────────────────────────────────────────────
 const w = I.dualAgentWarning({ updateChannel: 'signed', signedSeenAt: ago(2 * MIN), legacySeenAt: ago(MIN), legacySeenVersion: '0.46.0' }, NOW);
-check('warning: both seen recently', !!w && /^Two agents are reporting from this computer: /.test(w.text) && /0\.46\.0/.test(w.text) && w.command === I.STANDARD_RETIRE_COMMAND, JSON.stringify(w));
+check('warning: both seen recently', !!w && /^Two agents are reporting from this device: /.test(w.text) && /0\.46\.0/.test(w.text) && w.command === I.STANDARD_RETIRE_COMMAND, JSON.stringify(w));
 check('warning: the command is the installed signed agent\'s own update', /rem0te-agent\.exe" update$/.test(I.STANDARD_RETIRE_COMMAND) && !/irm|iex|http/i.test(I.STANDARD_RETIRE_COMMAND));
 const w2 = I.dualAgentWarning({ updateChannel: 'signed', signedSeenAt: ago(5 * H), legacySeenAt: ago(MIN), legacySeenVersion: null }, NOW);
 check('warning: says when the standard one has taken over', !!w2 && /taken the signed one's place/.test(w2.fix));

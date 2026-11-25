@@ -68,7 +68,7 @@ export default function ScriptPage() {
   return (
     <div className="p-4 md:p-6">
       <BackLink />
-      <PageHeader title={s.name} description={`${s.scope === 'global' ? 'Global script' : `Script for ${s.businessName ?? 'this business'}`} · added ${formatDate(s.createdAt)}${s.createdBy ? ` by ${s.createdBy.name}` : ''}`}>
+      <PageHeader title={s.name} description={`${s.scope === 'global' ? 'Global script' : `Script for ${s.businessName ?? 'this customer'}`} · added ${formatDate(s.createdAt)}${s.createdBy ? ` by ${s.createdBy.name}` : ''}`}>
         {v?.you.canEdit && !editing && <Button size="sm" variant="outline" onClick={() => setEditing(true)}><Pencil className="h-4 w-4 mr-1" />Edit as a new version</Button>}
       </PageHeader>
       <ScriptRunNotice />

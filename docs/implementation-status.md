@@ -50,7 +50,7 @@ It supersedes the Phase 0 audit below, which is kept as the 0.54 record.
 | 8 | 0.82.0: alert automation under a signer-approved remediation policy | no | yes |
 
 In flight: **#183, 0.73.1** (wire-fixture compatibility for the standard and POSIX agents) and **#185, 0.74.0
-*Bastion*** (*Admin → Security* posture checks for the portal host). Merged: **0.73.0 *Warden*** (Managed Secure
+*Bastion*** (*Security → Server security* posture checks for the portal host). Merged: **0.73.0 *Warden*** (Managed Secure
 Access step 5: Connect through grants, revocation, session evidence, behind `MSA_GRANTS`, off).
 
 ## Phase 0 — audit of v0.54.0 (main 12a8350) — historical

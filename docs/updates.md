@@ -6,23 +6,23 @@ separately, from different places, and confusing them wastes time.
 | What | Where | Restart blast radius |
 |---|---|---|
 | **Rem0te itself** | Updates page → *Check for updates* | API + web restart; sessions in flight are unaffected |
-| **RustDesk clients on endpoints** | Updates → *RustDesk Clients*, or automatically in a window: Settings → *Client updates* | Per-endpoint, applied on its next heartbeat (automatic ones only inside the business's update window) |
-| **RustDesk server (hbbs/hbbr)** | Updates → *RustDesk Server* | **Every endpoint reads offline for ~30s** |
+| **RustDesk clients on devices** | Updates → *RustDesk Clients*, or automatically in a window: Settings → *Client updates* | Per-device, applied on its next heartbeat (automatic ones only inside the customer's update window) |
+| **RustDesk server (hbbs/hbbr)** | Updates → *RustDesk Server* | **Every device reads offline for ~30s** |
 
 All three live at **/about** in the UI, reachable from the sidebar as
-**Settings → Updates** (Platform Admin only). Automatic client updates are set
-per business at **Settings → Client updates**, by that business's owner, a
-technician with `computers:edit` over the whole business, or the MSP. The running version is also in the sidebar
+**Administration → Updates** (Platform Admin only). Automatic client updates are set
+per customer at **Patching → Client updates**, by that customer's owner, a
+technician with `computers:edit` over the whole customer, or the MSP. The running version is also in the sidebar
 footer and on the About page, for everyone signed in — "which version are you
 on?" is the first question asked about every problem.
 
 Two more things can be out of date and are **not** on that page. The **Rem0te
-agent** on a managed computer keeps itself up to date (0.36, on by default — see
+agent** on a managed device keeps itself up to date (0.36, on by default — see
 [The Rem0te agent: automatic updates](#the-rem0te-agent-automatic-updates-036)),
-and can still be updated by hand from the computer's Agent card with *Update
+and can still be updated by hand from the device's Agent card with *Update
 agent* — staging a client upgrade will not do it, because that skips any
-endpoint already on the latest client, which is usually most of them.
-And **Windows updates pending on an endpoint**. Those belong to the machine, not to this
+device already on the latest client, which is usually most of them.
+And **Windows updates pending on a device**. Those belong to the machine, not to this
 platform, and Rem0te reports them without installing them — see
 [inventory.md](inventory.md).
 
@@ -49,73 +49,73 @@ maintenance window, not during a deploy.
 
 ---
 
-## RustDesk clients on endpoints
+## RustDesk clients on devices
 
-**Updates → RustDesk Clients** lists every managed endpoint with its installed
+**Updates → RustDesk Clients** lists every managed device with its installed
 RustDesk version against the latest release, and stages upgrades per machine or
 for everything that is behind.
 
 ### How staging works
 
-There is no push channel to an endpoint, and inventing one would mean a second
+There is no push channel to a device, and inventing one would mean a second
 protocol to secure. This reuses the credential-rotation channel already in
 place:
 
-1. You stage an upgrade. The endpoint's record gets a target version.
-2. On its next heartbeat (~3 minutes) the endpoint is told to re-run the
+1. You stage an upgrade. The device's record gets a target version.
+2. On its next heartbeat (~3 minutes) the device is told to re-run the
    installer, which is idempotent and pins the version this server serves.
-3. The endpoint reports its version on the following heartbeat. When it matches
+3. The device reports its version on the following heartbeat. When it matches
    the target, the staging clears.
 
 Consequences worth knowing:
 
 - **A failed install retries rather than being lost** — the target stays set
-  until the endpoint actually reports that version.
-- **An endpoint will not reinstall more than once every 30 minutes.** Without
+  until the device actually reports that version.
+- **A device will not reinstall more than once every 30 minutes.** Without
   that floor, any install that did not land on exactly the target version
   became a ~40 MB download every three minutes, indefinitely.
-- **Endpoints that have never reported a version show as *Unknown*, not
+- **Devices that have never reported a version show as *Unknown*, not
   *Outdated*.** Flagging every pre-v0.8.2 machine as out of date would be pure
   noise.
 
 ### Automatic updates in a window (0.32)
 
-Staging by hand applies on the next heartbeat, whatever the time. A business
+Staging by hand applies on the next heartbeat, whatever the time. A customer
 can instead let the server do it, outside working hours:
-**Settings → Client updates** (`/settings/client-updates`).
+**Patching → Client updates** (`/settings/client-updates`).
 
 | Setting | Default | Meaning |
 |---|---|---|
 | On / off | **Off** | Nothing is queued automatically until it is turned on |
 | Update window | — | Days of the week, a start and an end, in a stated IANA time zone (e.g. `Europe/London`). Up to 7 windows, each at least 30 minutes |
-| Skip a computer with an open session | **On** | The install restarts RustDesk, which ends the session |
-| Skip a computer with someone logged on | Off | When on, an agent that does not report who is logged on is skipped too — unknown is not "nobody" |
+| Skip a device with an open session | **On** | The install restarts RustDesk, which ends the session |
+| Skip a device with someone logged on | Off | When on, an agent that does not report who is logged on is skipped too — unknown is not "nobody" |
 
-A **site** can have its own policy. It replaces the business policy for that
-site's computers entirely, including being off when the business is on.
+A **site** can have its own policy. It replaces the customer policy for that
+site's devices entirely, including being off when the customer is on.
 
 A **device group** (0.35) can have one too, with a **priority** (1 first). A
-group policy beats a site override, which beats the business policy; a
-computer in several groups with a policy follows the lowest number, and two
-group policies of a business cannot share one. Membership is evaluated at each
-decision — a computer that leaves a rule group follows its site or business
+group policy beats a site override, which beats the customer policy; a
+device in several groups with a policy follows the lowest number, and two
+group policies of a customer cannot share one. Membership is evaluated at each
+decision — a device that leaves a rule group follows its site or customer
 policy at the next sweep and heartbeat. Turning a group policy on, and
 removing one, need fresh authentication, and a group that carries a policy
 cannot be deleted. The **Device groups** card lists them in precedence order
-with their current member counts; the **Policy** column of the Computers table
-and the computer's own page say which policy governs each computer and why.
+with their current member counts; the **Policy** column of the Devices table
+and the device's own page say which policy governs each device and why.
 See [Device-group policies](group-policies.md).
 
-![Settings → Client updates for one business: its policy, a site's override, a device-group policy and each computer's state](screenshots/guide/client-updates.png)
+![Patching → Client updates for one customer: its policy, a site's override, a device-group policy and each device's state](screenshots/guide/client-updates.png)
 
-1. **Business** — the policy is per business.
+1. **Customer** — the policy is per customer.
 2. **The sweep notice** — shown when this server has `CLIENT_UPDATE_SWEEP=off`: policies are saved, nothing is queued.
-3. **The business policy** — on or off, the windows and their zone, the two skip rules.
-4. **A site override** — replaces the business policy for that site's computers.
+3. **The customer policy** — on or off, the windows and their zone, the two skip rules.
+4. **A site override** — replaces the customer policy for that site's devices.
 5. **A device-group policy** (0.35) — here Harbor's *Remote depots*, priority 10, updating nightly; it beats the site
-   override and the business policy for its members (see [group-policies.md](group-policies.md)).
-6. **Auto, waiting** — a computer the policy will update in its next window, with the reason it is held if one applies.
-7. **Not automatic** — a computer no policy covers, or one whose policy is off.
+   override and the customer policy for its members (see [group-policies.md](group-policies.md)).
+6. **Auto, waiting** — a device the policy will update in its next window, with the reason it is held if one applies.
+7. **Not automatic** — a device no policy covers, or one whose policy is off.
 
 **The window.** Same rules as every other weekly window in Rem0te
 (`rbac/schedule.ts`): days are 0 = Sunday … 6 = Saturday, times are wall-clock
@@ -129,20 +129,20 @@ read 01:xx. The page shows when the window next opens and closes.
 
 **The sweep** (`client-updates/client-update-sweep.service.ts`) runs every
 `CLIENT_UPDATE_SWEEP_SECONDS` (default 120). For each enabled policy whose
-window is open *now*, it queues that scope's computers through the same
-`updateRequestedAt` path a click on Update uses, marked **POLICY**. A computer
+window is open *now*, it queues that scope's devices through the same
+`updateRequestedAt` path a click on Update uses, marked **POLICY**. A device
 is queued only if it is Windows, not archived, online, has a device secret,
 has reported a RustDesk version older than the target (the version pin, else
 the latest release), has nothing queued already, has no staged-rollout job
 and — per the policy — no open session and nobody logged on. At most
-`CLIENT_UPDATE_SWEEP_BATCH` (default 25) computers are queued per sweep, across
-every business, so a fleet is spread over successive sweeps. Outside the
+`CLIENT_UPDATE_SWEEP_BATCH` (default 25) devices are queued per sweep, across
+every customer, so a fleet is spread over successive sweeps. Outside the
 window it queues nothing. `CLIENT_UPDATE_SWEEP=off` turns it off in that
 process; run scratch and capture APIs with it off, because it acts on every
 enabled policy in the database.
 
 **The heartbeat** hands a POLICY request out only inside the window, and,
-when the policy says so, not during an open session (the endpoint's own
+when the policy says so, not during an open session (the device's own
 session count, a confirmed session, or a launch in the last two hours never
 confirmed or closed — the same evidence staged rollouts use) or with someone
 logged on. Otherwise it is withheld and the reason recorded, so the console
@@ -150,19 +150,19 @@ can say *auto, waiting for the window* or *waiting: a remote session is open*.
 
 **A request made by hand still goes immediately.** Clicking Update marks it
 **MANUAL**, with who clicked, and the next heartbeat carries it as before.
-Clicking Update on a computer the policy queued turns it into a manual
-request. The Updates page, the computer's page and Settings → Client updates
+Clicking Update on a device the policy queued turns it into a manual
+request. The Updates page, the device's page and Patching → Client updates
 all say which kind each queued update is, and who queued a manual one.
 Requests staged before 0.32 are recorded as manual.
 
 **Turning a policy off withdraws** the POLICY requests it queued that have not
 completed; manual requests are left alone. So does removing a site override
-or a group policy when what governs those computers next is off.
+or a group policy when what governs those devices next is off.
 
 **Every sweep re-checks what is queued (0.36).** Each POLICY request records
 the policy that queued it. On every tick, before queuing anything, the sweep
-works out which policy governs each queued computer *now* — group membership
-as it is this tick — in every business, including one with no policy on and
+works out which policy governs each queued device *now* — group membership
+as it is this tick — in every customer, including one with no policy on and
 one under an `updates` pause (withdrawing installs nothing):
 
 | Now | What happens | Audit |
@@ -173,74 +173,74 @@ one under an `updates` pause (withdrawing installs nothing):
 | queued before 0.36 (no policy recorded) and a policy that is on governs it | that policy is recorded; nothing else changes | — |
 
 Each entry records the reason — `no_longer_applies` (the policy is still
-there and on, but no longer governs the computer), `policy_off`,
+there and on, but no longer governs the device), `policy_off`,
 `policy_removed`, or `no_policy_recorded` — with the policy it came from and
 the one it moved to. Before 0.36 only a policy save re-checked queued requests,
-so a computer that left a group kept its request queued, held by the heartbeat
+so a device that left a group kept its request queued, held by the heartbeat
 as *the update policy that queued it is now off*, until someone next saved a
-policy in its business.
+policy in its customer.
 
-**Containment.** An `updates` pause (global, or for the business) stops the
+**Containment.** An `updates` pause (global, or for the customer) stops the
 sweep queuing anything there and the heartbeat handing anything out, as it
 already did for manual requests and rollouts.
 
 **Who can change a policy.** It makes the server re-run an installer on every
-computer in the business without anyone clicking Update, so:
+device in the customer without anyone clicking Update, so:
 
-- a **Business Owner**, for their own business only;
+- a **Business Owner**, for their own customer only;
 - a **technician** whose assignment grants `computers:edit` over the *whole*
-  business — an assignment limited to named computers cannot set a policy that
+  customer — an assignment limited to named devices cannot set a policy that
   reaches all of them;
 - the **MSP** (Platform Admin, or `technicians:manage` when not acting as a
   technician).
 
 A Business User cannot, whatever they hold: they may see only some of the
-business's computers and the policy reaches all of them. Turning a policy on,
+customer's devices and the policy reaches all of them. Turning a policy on,
 saving one that stays on, or removing a site override needs fresh
 authentication (`STEP_UP_REQUIRED`, action `updates.schedule`); turning one
 off never does. Anyone with `computers:view` can read the policy and the
-computer list, for the computers they can see.
+device list, for the devices they can see.
 
 **Audit.** Every change is `CLIENT_UPDATE_POLICY_CHANGED` with the policy
 before and after, the window in words, and how many requests it withdrew. Every
-computer the sweep queues is `CLIENT_UPDATE_AUTO_QUEUED`, with no actor, the
+device the sweep queues is `CLIENT_UPDATE_AUTO_QUEUED`, with no actor, the
 policy, and the from/to versions.
 
-**Computers that will never update automatically** are listed with the reason:
+**Devices that will never update automatically** are listed with the reason:
 not Windows, never authenticated with a device secret (re-run the installer on
 the machine once), or never reported a RustDesk version (an agent older than
-0.8.2 — see below). An offline computer is not "never": it is queued when it
+0.8.2 — see below). An offline device is not "never": it is queued when it
 is next online inside the window.
 
 ### The pre-v0.8.2 trap
 
 Only installers from v0.8.2 onward report a RustDesk version, *and* only those
 understand the staged-upgrade instruction in the heartbeat response. An older
-endpoint can therefore be staged for an upgrade it will never apply, and the
+device can therefore be staged for an upgrade it will never apply, and the
 staging will never clear.
 
 Those machines need the installer re-run — which they need anyway, for the
 service-config fix in v0.8.2. From v0.15.0 that can be done from the console
-with *Reinstall agent* on the computer's Overview tab, provided the machine has
+with *Reinstall agent* on the device's Overview tab, provided the machine has
 authenticated with a device secret; one that never has needs a single local
 run first. See [inventory.md](inventory.md). See [clients.md](clients.md#managed-installer-rem0te-devices-add-device).
 
-Archived computers are skipped when an update is staged.
+Archived devices are skipped when an update is staged.
 
 > **Before 0.19.0 an update could lock a Windows machine out.** Re-running
-> the installer on a computer first enrolled before 0.18.22 lost its device
+> the installer on a device first enrolled before 0.18.22 lost its device
 > secret, so every heartbeat after that was refused and the machine showed
 > offline. The installer no longer does this. Machines it already happened to
 > can be recovered from the console. See
-> [troubleshooting.md](troubleshooting.md#a-computer-went-offline-right-after-update-or-reinstall-agent).
+> [troubleshooting.md](troubleshooting.md#a-device-went-offline-right-after-update-or-reinstall-agent).
 
 ---
 
 ## The Rem0te agent: automatic updates (0.36)
 
-**On by default.** When a Windows computer's agent is older than what this
+**On by default.** When a Windows device's agent is older than what this
 server serves, the server asks it to update itself at a check-in — paced across
-the platform, inside the business's policy, a bounded number of times. Nobody
+the platform, inside the customer's policy, a bounded number of times. Nobody
 has to click *Update agent*. Code: `apps/api/src/agent-auto-update/`
 (`schedule.ts` holds every decision, unit-tested on its own).
 
@@ -258,18 +258,18 @@ which is what the pace below is for.
 agent is built reproducibly and carries no version of its own, so a release
 that changes nothing in the agent publishes **the same binary** under a new
 release label: `windows/rem0te-agent.exe` was byte-identical from 0.63.0
-through 0.68.3. A computer records a release label only at its once-a-day
+through 0.68.3. A device records a release label only at its once-a-day
 update check, and when the binary it would install is the one it already
-runs, nothing moves that label. So a signed computer is **current when it
+runs, nothing moves that label. So a signed device is **current when it
 runs the published agent binary, whatever release label it last recorded**,
 and the console shows it at the published release (the `custom.version` the
 release recorded in the signed targets), with the recorded label as detail —
-"0.69.0 · installed as 0.67.0; the same agent". A signed computer on another
+"0.69.0 · installed as 0.67.0; the same agent". A signed device on another
 binary shows its recorded label and *update due*. A standard, Linux or macOS
-agent, a signed agent that has not reported its build, and any computer when
+agent, a signed agent that has not reported its build, and any device when
 no signed agent is published, show the recorded label exactly as before. This
 is display only: automatic updates still compare the reported build with the
-published one (above), and nothing about when or whether a computer is asked
+published one (above), and nothing about when or whether a device is asked
 changed. The stored `agentVersion` is unchanged; the API adds `versionView`
 (`agentVersionView` on the device record) beside it, and the device list and
 agent coverage CSVs carry *Agent version* (shown), *Agent version recorded*
@@ -283,7 +283,7 @@ acts on — nothing new has to be installed first:
 | Standard, 0.15.0 and later | `reinstallAgent` | 0.15.0 | the current `windows.ps1`, as *Update agent* does |
 | Standard, 0.13.x–0.14.x (no version reported, but a device secret) | `updateRustdesk` | 0.11.0 | the same installer: those heartbeats re-run it on that flag alone |
 | Signed | `reinstallAgent` | 0.24 | `rem0te-agent.exe update`, which installs only what signed metadata lists |
-| Standard, older than 0.13.0 (no device secret) | — | — | **update manually**: nothing such a computer says is believed and nothing is handed to it; re-run the installer with an enrolment token from *Add device* (the Agent card gives the command) |
+| Standard, older than 0.13.0 (no device secret) | — | — | **update manually**: nothing such a device says is believed and nothing is handed to it; re-run the installer with an enrolment token from *Add device* (the Agent card gives the command) |
 | Linux, macOS | — | — | **update manually**: those agents are read-only by design and act on no flag (invariants §24, §32); the Agent card gives the `curl … \| sudo bash` command |
 
 Production's 0.30.1 and 0.18.25 agents are both in the first row. The table was
@@ -296,89 +296,89 @@ between installer runs.
 
 - **One attempt hands the flag out for 20 minutes** — shorter than the agent's
   own 30-minute floor, so an attempt is at most one installer run.
-- **Then it waits an hour** for the computer to report the new version, and
+- **Then it waits an hour** for the device to report the new version, and
   backs off: attempt 2 no sooner than 2 hours after attempt 1, attempt 3 no
   sooner than 8 hours after attempt 2.
-- **After the last attempt (3 by default, 1–10) it stops** and the computer is
+- **After the last attempt (3 by default, 1–10) it stops** and the device is
   shown **Auto-update failing** on its Agent card and in the settings card's
   failing list. It is not asked again until the next release (a new target
   starts from zero) or someone clicks *Update agent* (which also resets it).
 - **A global pace**: at most *N* attempts start per hour across the whole
   platform (default 120, 1–2,000), counted from the history table under a
-  database lock, so it holds across API processes. 5,000 outdated computers
+  database lock, so it holds across API processes. 5,000 outdated devices
   take about 42 hours at the default.
 
 **Holds** — nothing goes out, and the Agent card says which: an *updates*
-containment pause (business or global); a staged rollout owning the computer;
+containment pause (customer or global); a staged rollout owning the device;
 another request that re-runs the installer already queued (a RustDesk client
 update, *Update agent*, a move to the signed agent — each updates the agent
 too); a remote session open (the install restarts RustDesk); outside the
 policy's window when the policy says *only inside the window*; someone logged on
-when that policy also skips computers with a user; and the pace.
+when that policy also skips devices with a user; and the pace.
 
 **Settings.**
 
-- **Platform:** Settings → Client updates → *Keep agents up to date
-  automatically — every business* (Platform Admin): on/off, starts per hour,
-  attempts per computer per release. `GET`/`PUT /admin/agent-auto-update`.
+- **Platform:** Patching → Client updates → *Keep agents up to date
+  automatically — every customer* (Platform Admin): on/off, starts per hour,
+  attempts per device per release. `GET`/`PUT /admin/agent-auto-update`.
   A change needs fresh authentication and is audited as
   `AGENT_AUTO_UPDATE_SETTINGS_CHANGED` (before and after).
-- **Per business, site or device group:** the client-update policy's *Keep
+- **Per customer, site or device group:** the client-update policy's *Keep
   agents up to date automatically*: *Any time, paced* (the default), *Only
   inside this policy's window*, *Off*, or (site and group) *Inherit*. The most
-  specific policy that sets one decides — group, then site, then business — and
+  specific policy that sets one decides — group, then site, then customer — and
   one left on *Inherit* passes to the next. It is independent of the RustDesk
   checkbox. Changing it to anything but *Off* needs fresh authentication;
   opting out never does. Audited as `CLIENT_UPDATE_POLICY_CHANGED`, with
   `agentMode` in before and after.
-  **On the business's own page (0.46)** the *Automatic agent updates* card
-  sets the same business-level mode: *Inherit global (On)*, *On*, *Off* or
-  *In maintenance window*. It writes only the business policy's agent mode
+  **On the customer's own page (0.46)** the *Automatic agent updates* card
+  sets the same customer-level mode: *Inherit global (On)*, *On*, *Off* or
+  *In maintenance window*. It writes only the customer policy's agent mode
   (`PUT /client-updates/policy/agent-mode`), with the same people, fresh
   authentication and audit as above. It never changes the RustDesk checkbox:
-  a business with no policy gets one created with RustDesk updates **off** and
+  a customer with no policy gets one created with RustDesk updates **off** and
   the default night window (22:00–05:00 UTC). Windows, sites and groups are on
-  Settings → Client updates.
-- **Per computer (0.46):** the Agent card's *For this computer* selector —
+  Patching → Client updates.
+- **Per device (0.46):** the Agent card's *For this device* selector —
   *Inherit (currently: On, from …)*, *On* or *Off* (`Endpoint.agentAutoUpdate`,
   `PUT /endpoints/:id/agent/auto-update`). It beats every policy:
   - **Off** never updates this agent automatically, whatever its group, site
-    or business say. It also stops an attempt already open, and keeps the
-    computer out of the automatic move to the signed agent below.
+    or customer say. It also stops an attempt already open, and keeps the
+    device out of the automatic move to the signed agent below.
   - **On** turns any policy opt-out into *any time, paced*. A *maintenance
     window* set by the policy that would otherwise govern is kept: On
-    overrides an opt-out, it does not take a computer out of its window.
+    overrides an opt-out, it does not take a device out of its window.
   - **Inherit** follows the policies, as before.
 
-  It needs `computers:edit` on that computer. *On*, and *Inherit* (which may
+  It needs `computers:edit` on that device. *On*, and *Inherit* (which may
   turn it back on), need fresh authentication; *Off* never does. Every change
   is audited as `AGENT_AUTO_UPDATE_COMPUTER_SET`, with before and after.
 
-  ![The Agent card's Automatic updates block, with the computer set to On](screenshots/guide/agent-auto-update-computer.png)
+  ![The Agent card's Automatic updates block, with the device set to On](screenshots/guide/agent-auto-update-computer.png)
 
   1. **Automatic updates** — the state (*Up to date*, *Update queued*, *Opted out*…) and why.
-  2. **For this computer** — *Inherit*, *On* or *Off*; here *On*.
+  2. **For this device** — *Inherit*, *On* or *Off*; here *On*.
   3. **Effective** — what applies and where it comes from. The demo server runs with `AGENT_AUTO_UPDATE=off`,
-     so it says *Off* and that the server switch wins over the computer's *On*, as it does.
+     so it says *Off* and that the server switch wins over the device's *On*, as it does.
 
-  ![A business's page: the Automatic agent updates card, set to On](screenshots/guide/agent-auto-update-business.png)
+  ![A customer's page: the Automatic agent updates card, set to On](screenshots/guide/agent-auto-update-business.png)
 
-  1. **For this business** — *Inherit global*, *On*, *Off* or *In maintenance window*; here *On*.
-  2. **Effective for this business** — *Off* on the demo server, for the same reason.
+  1. **For this customer** — *Inherit global*, *On*, *Off* or *In maintenance window*; here *On*.
+  2. **Effective for this customer** — *Off* on the demo server, for the same reason.
 - **Precedence**, top wins: the platform switch and `AGENT_AUTO_UPDATE=off`
-  (either off means nothing is updated) → the computer's own setting → device
-  group → site → business → the platform default, **On**. With nothing set
-  anywhere every computer updates, including a new business's new computer.
+  (either off means nothing is updated) → the device's own setting → device
+  group → site → customer → the platform default, **On**. With nothing set
+  anywhere every device updates, including a new customer's new device.
 - **Per process:** `AGENT_AUTO_UPDATE=off` stops it in this API process
   (`scripts/run-e2e.sh` and the browser suite set it).
 - **Canary first is not built.** The client-update machinery has no canary
-  notion to reuse cheaply; a cautious business can set *Off* on its business
+  notion to reuse cheaply; a cautious customer can set *Off* on its customer
   policy and *Any time* on a pilot device group's policy, which has the same
   effect by hand.
 
 **Records.** Each attempt is an `AgentAutoUpdateAttempt` row with no requester —
-the computer's *Automatic update history* on its Agent card — and is **not** an
-audit entry: one per computer per release would bury a log that can never be
+the device's *Automatic update history* on its Agent card — and is **not** an
+audit entry: one per device per release would bury a log that can never be
 pruned. The settings and the policies that cause them are audited.
 
 **The signed agent's own check.** Before 0.36 a signed agent updated only when
@@ -395,49 +395,49 @@ today wherever a signed build is published.
 **The device list** has *Agent: Agent outdated* (`agent=outdated`): standard
 Windows agents reporting an older version, and signed agents not on the
 published build. An agent that reports no version is under *No agent report*,
-not here — it cannot be told from a RustDesk-only computer.
+not here — it cannot be told from a RustDesk-only device.
 
 **Evidence: I** (`e2e-agent-auto-update.mjs` through the real heartbeat route,
 `unit-agent-auto-update.mjs`, the generated PowerShell parsed and the signed
 self-check run under pwsh against a stub agent). It has not run on a real
-Windows computer.
+Windows device.
 
 ## The Rem0te agent: moving to the signed agent automatically (0.37)
 
 **On by default** once a signed agent is published: standard Windows agents are
 moved to the signed agent without anyone pressing *Upgrade to full agent* —
-one computer first (the canary), the rest only after it has reported the
+one device first (the canary), the rest only after it has reported the
 published build for a soak (default 60 minutes) with no failed update, paced by
 the same per-hour number as automatic updates above. The same opt-out applies:
-a computer set to *Off* on its Agent card (0.46), or a business, site or
+a device set to *Off* on its Agent card (0.46), or a customer, site or
 device-group policy whose agent mode is *Off*, opts its
-computers out of this too, and *Window* holds them to the window. A failure
+devices out of this too, and *Window* holds them to the window. A failure
 halts it, with its reason, until a Platform Admin resumes or restarts it. In
 **Signed only** it does nothing.
 
-Every move is an ordinary per-computer migration request (the same nonce and
-the same fixed script); nothing new runs on a computer. The whole process —
-signing set up, a signed agent published, the timestamp kept fresh, computers
+Every move is an ordinary per-device migration request (the same nonce and
+the same fixed script); nothing new runs on a device. The whole process —
+signing set up, a signed agent published, the timestamp kept fresh, devices
 moved — is on **Devices → Full agent**, with the command for each step that is
-not done. Details: [update-signing.md](update-signing.md#moving-computers-automatically-037).
+not done. Details: [update-signing.md](update-signing.md#moving-devices-automatically-037).
 `AUTO_MIGRATION_SWEEP=off` stops it in one API process.
 
-## One computer, one agent (0.51)
+## One device, one agent (0.51)
 
-Once a computer's signed agent has reported, it **stays signed** for seven
+Once a device's signed agent has reported, it **stays signed** for seven
 days after its last signed heartbeat (`signedSeenAt`), whatever else reports
 from it. Before 0.51 every authenticated report rewrote the update channel,
 and the signed install script's own check-ins (*Register*, *Test-Registered*)
-say no channel. So a signed computer read *legacy* for a moment and was handed
+say no channel. So a signed device read *legacy* for a moment and was handed
 standard things: a `standard_pre015` automatic update, a queued reinstall, the
 old migration again. Its signed tray host was refused as well
 (`TRAY_KEY_REQUIRED`).
 
-From 0.51, on a signed computer:
+From 0.51, on a signed device:
 
 - **The installer's own check-ins** change nothing about the agent and get no
   flag. They still get `rustdeskRegistered`. No automatic update starts from
-  an installer check-in on any computer.
+  an installer check-in on any device.
 - **A leftover standard heartbeat** (a standard `heartbeat.ps1` still running)
   gets nothing and writes no agent field. It is recorded (`legacySeenAt`,
   audited as `AGENT_DUAL_REPORT` at most once a day) and answered
@@ -445,7 +445,7 @@ From 0.51, on a signed computer:
   agent's own `update` (at most every 30 minutes, and only when a signed build
   is installed). The signed agent reinstalls its heartbeat and removes the
   standard leftovers. A standard heartbeat older than 0.51 cannot be told; the
-  Agent card says *Two agents are reporting from this computer* and gives the
+  Agent card says *Two agents are reporting from this device* and gives the
   command to run.
 - **The signed agent removes the standard leftovers** after every successful
   install, update or migration, and when its tray host starts. By exact name,
@@ -454,7 +454,7 @@ From 0.51, on a signed computer:
   `Rem0teHeartbeat` task is never deleted: the signed installer has just
   rewritten it.
 
-A computer that really went back to the standard agent is standard again
+A device that really went back to the standard agent is standard again
 seven days after its last signed heartbeat.
 
 **Evidence: I** (`e2e-dual-agent.mjs` through the real heartbeat, tray and
@@ -473,16 +473,16 @@ All of this is described in [update-signing.md](update-signing.md).
 
 ## Staged rollouts (v0.20)
 
-**Settings → Client rollouts** controls **which** version, **when**, to
+**Patching → Client rollouts** controls **which** version, **when**, to
 **whom**, and what counts as done. One-click staging above is still there for
-a single machine. While a computer has a rollout job, the rollout owns its
+a single machine. While a device has a rollout job, the rollout owns its
 updates and one-click staging does not also fire.
 
 ### Supported version pin
 
 *Supported version pin* makes every installer, Connect script and Quick
 Connect download install exactly that RustDesk version instead of the latest
-release. An exact `x.y.z` only. Clear it to go back to latest. Endpoints
+release. An exact `x.y.z` only. Clear it to go back to latest. Devices
 running an agent older than 0.20.0 ignore the pin, and a rollout that sees one
 install something newer marks that job failed (see below) rather than retrying.
 
@@ -492,14 +492,14 @@ Creating one resolves, up front:
 
 - **The exact version and artifact.** The target and the SHA-256 of
   `rustdesk-<v>-x86_64.exe` are fetched from GitHub and stored. The installer
-  an endpoint fetches for its job installs that version with that digest,
+  a device fetches for its job installs that version with that digest,
   never "latest". If GitHub publishes no digest, the rollout is refused unless
   you allow **signature-only**, in which case the installer requires a valid
   Authenticode signature instead. That is weaker: any signature Windows
   reports as valid is accepted, and the signer is logged but not pinned.
-- **The targets.** Specific computers, whole businesses, or both. Both means
-  only the listed computers that are in the listed businesses. Neither means
-  **every** managed computer. A computer is
+- **The targets.** Specific devices, whole customers, or both. Both means
+  only the listed devices that are in the listed customers. Neither means
+  **every** managed device. A device is
   **skipped** with a reason if it is not Windows (staged updates are
   Windows-only), has no device secret, is already on the target, would need a
   downgrade, or is already in another rollout for the same component.
@@ -515,13 +515,13 @@ serve its own agent.
 |---|---|
 | Requested | created; waiting for its batch, window, backoff or an idle session |
 | Dispatched | handed out in one heartbeat response; a concurrent heartbeat cannot dispatch it twice |
-| Installing | the endpoint fetched the installer for this job's nonce |
+| Installing | the device fetched the installer for this job's nonce |
 | Awaiting verification | an **authenticated** heartbeat reports the approved version |
 | Succeeded | version reported, plus hbbs registration, or registration recorded as *unavailable* (not independently verified) |
 | Failed | attempts exhausted, or an outcome retrying cannot fix |
 | Canceled / Skipped | operator, or nothing to do |
 
-- **Deferral.** A job waits while the endpoint reports an incoming RustDesk
+- **Deferral.** A job waits while the device reports an incoming RustDesk
   session, while a session on it is confirmed, outside the maintenance window,
   and (by default) while a recent launch on it has not been confirmed or
   closed.
@@ -530,15 +530,15 @@ serve its own agent.
   backoff up to *max attempts*, then fails. Nothing re-runs an installer on
   every heartbeat.
 - **Newer than approved fails at once**, without retrying. It means the
-  endpoint's agent predates the pin.
+  device's agent predates the pin.
 - **The failure threshold pauses the rollout.** It is checked on every failure
   and again before each new batch, so a failed pilot stops the fleet.
 - **Cancel** stops jobs that have not been dispatched. A dispatched job cannot
   be recalled, because the installer may already be running. It is marked
-  canceled and no longer tracked, so check that computer's reported version
+  canceled and no longer tracked, so check that device's reported version
   afterwards.
 
-Each computer's page shows its update history with the evidence for every step.
+Each device's page shows its update history with the evidence for every step.
 
 ### Recovery (there is no rollback)
 
@@ -548,13 +548,13 @@ rollback. If a version misbehaves:
 1. **Pause** the rollout (or cancel it). Nothing further is dispatched.
 2. **Set the version pin** to the last good version, so nothing newly installed
    or re-run picks up the bad one.
-3. For an affected computer: **uninstall RustDesk on it first**, then re-run
+3. For an affected device: **uninstall RustDesk on it first**, then re-run
    the Rem0te installer, which installs the pinned version and keeps the
    enrolment. The installer only ever upgrades. With a newer RustDesk present
    it leaves it alone, so *Reinstall agent* by itself does not downgrade. The
    uninstall needs someone at the machine, or a tool other than RustDesk:
    uninstalling RustDesk over a RustDesk session ends that session.
-4. Check the computer's **Test connection** panel (Diagnostics tab): registration, version and
+4. Check the device's **Test connection** panel (Diagnostics tab): registration, version and
    heartbeat.
 
 **Agents on the signed chain (0.24)** work differently:
@@ -602,10 +602,10 @@ and the relay to anyone who found the host.
 ### The restart window
 
 > hbbs holds its online-peer map **in memory only**. Restarting it empties that
-> map, and every endpoint reads as offline until it re-registers — about 30
+> map, and every device reads as offline until it re-registers — about 30
 > seconds. A Connect attempted inside that window fails with *"the target
 > device is offline or does not exist"* and looks exactly like a broken
-> endpoint.
+> device.
 
 Do not upgrade mid-session. After upgrading, wait half a minute before
 believing anything the online dots tell you, and confirm with:
@@ -641,7 +641,7 @@ peer database. Losing `id_ed25519` invalidates every configured client.
 ## See also
 
 - [clients.md](clients.md) — which client is which
-- [inventory.md](inventory.md) — pending Windows updates on an endpoint, and
+- [inventory.md](inventory.md) — pending Windows updates on a device, and
   the rest of what the agent collects
 - [connecting.md](connecting.md) — the connect paths and their failure modes
 - [setup.md](setup.md) — installation and operations

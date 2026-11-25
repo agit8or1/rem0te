@@ -357,7 +357,7 @@ async function all() {
   check(r.status === 404 || r.status === 403, 'Business B cannot read A1 (or its groups)', msg(r));
   let threw = null;
   try { await prisma.endpointGroupMember.create({ data: { endpointGroupId: gA.id, endpointId: b1.id } }); } catch (e) { threw = String(e.message); }
-  check(threw && /not in the group's business/.test(threw) && (await prisma.endpointGroupMember.count({ where: { endpointId: b1.id } })) === 0,
+  check(threw && /not in the group's customer/.test(threw) && (await prisma.endpointGroupMember.count({ where: { endpointId: b1.id } })) === 0,
     'a direct database insert of B1 into A’s group is refused by the trigger (migration 0049)', threw ?? 'it was inserted');
   r = await list(S.ownerB, { groupId: gA.id });
   check(r.status === 200 && r.data.total === 0, 'Business B filtering on A’s group finds nothing (the filter never widens)');
@@ -425,7 +425,7 @@ async function all() {
     const okN = rs.filter((x) => x.ok).length, limited = rs.filter((x) => x.code === 'FLEET_LIMIT');
     const after = new Set((await prisma.privilegedActivity.findMany({ where: { identity: `user:${ownerA.id}` }, select: { endpointId: true } })).map((x) => x.endpointId));
     check(r.status === 200 && okN === 40 - seenBefore.size && limited.length === 42 - okN, `the member limit is 40 distinct computers: ${seenBefore.size} already used, ${okN} queued, ${limited.length} refused FLEET_LIMIT`, msg(r));
-    check(after.size === 40 && /limit on distinct computers/.test(limited[0]?.reason ?? ''), 'exactly 40 distinct computers admitted, and the refusal says why', `${after.size}`);
+    check(after.size === 40 && /limit on distinct devices/.test(limited[0]?.reason ?? ''), 'exactly 40 distinct computers admitted, and the refusal says why', `${after.size}`);
     check(await prisma.identityPause.count({ where: { identity: `user:${ownerA.id}`, clearedAt: null } }) === 0, 'nobody is paused: the guard was never asked past its limit');
   }
 

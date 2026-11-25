@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Admin → Security (rewritten in 0.74). Platform Admin only.
+ * Security → Server security (rewritten in 0.74). Platform Admin only.
  *
  * Every panel shows three states apart: what was read and is fine, what was
  * read and is not, and what could not be read. "Could not be read" is always
@@ -12,7 +12,7 @@
  *
  * Settings that live elsewhere are linked, not repeated: Confirm it is you
  * (Settings), audit integrity (Containment), signed releases (Update
- * signing), SSO and break-glass (Admin → SSO), API keys.
+ * signing), SSO and break-glass (Security → Single sign-on), API keys.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -231,10 +231,10 @@ function OverviewTab() {
           <p className="font-medium text-foreground">Kept elsewhere, not repeated here</p>
           <p>
             Which actions ask you to confirm it is you: <Link className="underline" href="/settings">Settings → Confirm it is you</Link>.
-            {' '}Audit integrity and containment: <Link className="underline" href="/settings/security/containment">Settings → Security → Containment</Link>.
+            {' '}Audit integrity and containment: <Link className="underline" href="/settings/security/containment">Security → Containment</Link>.
             {' '}Signed agent releases: <Link className="underline" href="/settings/security/update-signing">Update signing</Link>.
-            {' '}Single sign-on and break-glass accounts: <Link className="underline" href="/admin/sso">Admin → SSO</Link>.
-            {' '}API keys: <Link className="underline" href="/settings/api-keys">Settings → API keys</Link>.
+            {' '}Single sign-on and break-glass accounts: <Link className="underline" href="/admin/sso">Security → Single sign-on</Link>.
+            {' '}API keys: <Link className="underline" href="/settings/api-keys">Administration → API keys</Link>.
           </p>
         </CardContent>
       </Card>

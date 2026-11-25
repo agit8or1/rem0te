@@ -111,7 +111,7 @@ export function ContextSelector() {
           <DropdownMenuLabel className="text-xs text-muted-foreground">Working in</DropdownMenuLabel>
           <DropdownMenuItem onClick={() => choose(user.ownBusinessId ?? null)} className="gap-2">
             {!technician ? <Check className="h-4 w-4" /> : <span className="w-4" />}
-            {user.ownBusinessId ? (user.business?.name && !technician ? user.business.name : 'My own business') : 'My account'}
+            {user.ownBusinessId ? (user.business?.name && !technician ? user.business.name : 'My own customer') : 'My account'}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           {assignedBusinesses.map((b) => (

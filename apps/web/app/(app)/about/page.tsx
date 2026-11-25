@@ -118,7 +118,7 @@ function UpdatePanel({ isPlatformAdmin }: { isPlatformAdmin: boolean }) {
       <CardHeader>
         <CardTitle className="text-sm flex items-center gap-2">
           <ArrowUpCircle className="h-4 w-4" />
-          Software Update
+          Software update
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -185,7 +185,7 @@ function UpdatePanel({ isPlatformAdmin }: { isPlatformAdmin: boolean }) {
             ) : (
               <Button onClick={startUpdate} size="sm">
                 <ArrowUpCircle className="h-3.5 w-3.5 mr-1.5" />
-                Apply Update
+                Apply update
               </Button>
             )}
           </div>
@@ -239,7 +239,7 @@ function ChangelogPanel({ isPlatformAdmin }: { isPlatformAdmin: boolean }) {
       <CardHeader>
         <CardTitle className="text-sm flex items-center gap-2">
           <GitBranch className="h-4 w-4" />
-          Release History
+          Release history
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -323,7 +323,7 @@ export default function AboutPage() {
             <span className="text-muted-foreground">Node.js</span>
             <span className="font-mono text-xs">{data?.nodeVersion ?? '…'}</span>
 
-            <span className="text-muted-foreground">Server Uptime</span>
+            <span className="text-muted-foreground">Server uptime</span>
             <span className="font-mono text-xs">{data?.uptime ? uptime(data.uptime) : '…'}</span>
           </div>
 
@@ -444,7 +444,7 @@ export default function AboutPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-sm flex items-center gap-2">
-            <Package className="h-4 w-4" /> Technology Stack
+            <Package className="h-4 w-4" /> Technology stack
           </CardTitle>
         </CardHeader>
         <CardContent>

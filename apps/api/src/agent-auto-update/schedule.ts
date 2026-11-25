@@ -352,7 +352,7 @@ export const REASON_TEXT: Record<Reason, string> = {
   no_target: 'The server cannot say what to update to (no readable version.json, or no signed build published).',
   version_unparsed: 'The agent reports a version that is not a dotted number, so it cannot be compared.',
   no_signed_build_reported: 'The signed agent has not reported which build it runs.',
-  platform_off: 'Automatic agent updates are off for the whole platform (Settings → Client updates), whatever this computer or its business is set to.',
+  platform_off: 'Automatic agent updates are off for the whole platform (Patching → Client updates), whatever this computer or its business is set to.',
   process_off: 'Automatic agent updates are turned off on this server (AGENT_AUTO_UPDATE=off).',
   policy_off: 'This computer’s update policy opts out of automatic agent updates.',
   computer_off: 'This computer is set to Off for automatic agent updates (its own setting, on this Agent card), whatever its policies say.',

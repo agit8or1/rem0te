@@ -47,7 +47,7 @@ type NodeState = {
  *     per computer per release would bury the log. The settings and the
  *     per-business opt-outs that cause them are audited when they change.
  *   - card: what the Agent card says, from the same decide().
- *   - getSettings / putSettings: Settings → Client updates, Platform Admin,
+ *   - getSettings / putSettings: Patching → Client updates, Platform Admin,
  *     fresh authentication to change, audited before and after.
  */
 @Injectable()
@@ -398,7 +398,7 @@ export class AgentAutoUpdateService {
       });
     }
     const w = await this.prisma.endpoint.updateMany({ where: { id: endpointId, agentAutoUpdate: ep.agentAutoUpdate }, data: { agentAutoUpdate: value } });
-    if (w.count !== 1) throw new ConflictException({ code: 'CHANGED', message: 'This computer’s setting changed while the request ran; nothing was changed. Reload and try again.' });
+    if (w.count !== 1) throw new ConflictException({ code: 'CHANGED', message: 'This device’s setting changed while the request ran; nothing was changed. Reload and try again.' });
     await this.audit.log({
       tenantId: ep.tenantId ?? undefined, customerId: ep.customerId ?? undefined, actorId: actor.userId, actorIp: actor.ip,
       action: 'AGENT_AUTO_UPDATE_COMPUTER_SET', resource: 'endpoint', resourceId: endpointId,

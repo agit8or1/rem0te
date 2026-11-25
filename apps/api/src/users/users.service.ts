@@ -303,7 +303,7 @@ export class UsersService {
 
     if (membership.role.type === RoleType.BUSINESS_OWNER) {
       throw new BadRequestException(
-        'A Business Owner already holds every business permission — permissions apply to Business Users.',
+        'A Business Owner already holds every customer permission — permissions apply to Business Users.',
       );
     }
 
@@ -428,7 +428,7 @@ export class UsersService {
     if (!user) throw new NotFoundException('User not found');
     // 0.59: a break-glass account is a Platform Admin by definition (0080's CHECK).
     if (!enabled && user.breakGlass) {
-      throw new BadRequestException('This is a break-glass account. Clear break-glass under Settings → Single sign-on first.');
+      throw new BadRequestException('This is a break-glass account. Clear break-glass under Security → Single sign-on first.');
     }
 
     const updated = await this.prisma.user.update({

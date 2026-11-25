@@ -16,7 +16,7 @@ import { apiError } from '@/components/security-controls/shared';
 import { confirmSentence, reauthSuffix, useAsks } from '@/lib/confirm-policy';
 
 /**
- * Settings → Backups (0.82 Wharf; docs/backups.md, docs/st0r-push-contract.md).
+ * Administration → Backup connections (0.82 Wharf; docs/backups.md, docs/st0r-push-contract.md).
  *
  * Setting up St0r's push for one business, step by step: create the
  * connection (its token shown once, with a copy button), what to give St0r
@@ -122,12 +122,12 @@ export default function BackupSettingsPage() {
   return (
     <div className="max-w-4xl space-y-4 p-4 md:p-6" data-testid="backup-settings">
       <Link href="/settings" className="inline-flex items-center text-sm text-muted-foreground hover:underline"><ArrowLeft className="mr-1 h-4 w-4" />Settings</Link>
-      <PageHeader title="Backups" description="Connect a business's St0r so it pushes backup status to Rem0te. Rem0te only reads what St0r sends: nothing here starts a backup, a restore, a drill or a failover." />
+      <PageHeader title="Backups" description="Connect a customer's St0r so it pushes backup status to Rem0te. Rem0te only reads what St0r sends: nothing here starts a backup, a restore, a drill or a failover." />
 
       <div className="flex flex-wrap items-center gap-2">
-        <Label htmlFor="bs-biz" className="text-sm">Business</Label>
+        <Label htmlFor="bs-biz" className="text-sm">Customer</Label>
         <select id="bs-biz" className="h-9 max-w-full rounded-md border bg-background px-2 text-sm" value={biz} onChange={(e) => { setBiz(e.target.value); setFresh(null); setNote(null); }} data-testid="backup-settings-business">
-          <option value="">Pick a business…</option>
+          <option value="">Pick a customer…</option>
           {(businesses.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>
       </div>
@@ -136,7 +136,7 @@ export default function BackupSettingsPage() {
       {q.error ? <p className="text-sm text-destructive">{apiError(q.error).message}</p> : null}
       {q.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
 
-      {d && !biz && <p className="text-sm text-muted-foreground">Pick a business to set up its St0r push. Each business has its own connection and token, and the token decides which business a push writes to.</p>}
+      {d && !biz && <p className="text-sm text-muted-foreground">Pick a customer to set up its St0r push. Each customer has its own connection and token, and the token decides which customer a push writes to.</p>}
 
       {d && biz && (
         <>
@@ -149,7 +149,7 @@ export default function BackupSettingsPage() {
                     <p className="text-muted-foreground">Created {when(st0r.createdAt)}. Token ends in <span className="font-mono">…{st0r.pushTokenLast4}</span>{st0r.tokenRotatedAt ? `, rotated ${when(st0r.tokenRotatedAt)}` : ''}.</p>
                   ) : (
                     <>
-                      <p className="text-muted-foreground">This makes the push token for this business. It is shown <strong>once</strong>: Rem0te keeps only its SHA-256. {confirmSentence(ask)}</p>
+                      <p className="text-muted-foreground">This makes the push token for this customer. It is shown <strong>once</strong>: Rem0te keeps only its SHA-256. {confirmSentence(ask)}</p>
                       <Button size="sm" disabled={create.isPending} onClick={() => create.mutate()} data-testid="backup-create-st0r">{`Create St0r connection${reauthSuffix(ask)}`}</Button>
                     </>
                   )}
@@ -199,10 +199,10 @@ export default function BackupSettingsPage() {
                   <p className="text-xs text-muted-foreground">St0r pushes as backups finish, and its recent state at least every 15 minutes. Re-sending is always safe: every item is keyed by St0r&apos;s own id, and a finished job is never put back to running.</p>
                 </Step>
 
-                <Step n={5} title="Add backup monitors, and link assets to computers" testId="backup-step-after">
+                <Step n={5} title="Add backup monitors, and link assets to devices" testId="backup-step-after">
                   <p className="text-muted-foreground">
                     Alerts need a <em>Backup stale</em>, <em>Backup failed</em>, <em>Restore drill failed</em> or <em>RPO exceeded</em> monitor in{' '}
-                    <Link href="/settings/monitoring" className="underline">Settings → Monitoring</Link>. They are raised on the computer an asset is linked to.
+                    <Link href="/settings/monitoring" className="underline">Monitoring → Monitoring policies</Link>. They are raised on the device an asset is linked to.
                     An asset whose name St0r reports differently can be linked by hand on <Link href="/backups" className="underline">Backups</Link>.
                   </p>
                 </Step>
@@ -213,7 +213,7 @@ export default function BackupSettingsPage() {
           <Card data-testid="backup-settings-connections">
             <CardHeader><CardTitle className="text-sm">Connections</CardTitle></CardHeader>
             <CardContent className="space-y-3 text-sm">
-              {live.length === 0 && <p className="text-muted-foreground">No connection for this business yet.</p>}
+              {live.length === 0 && <p className="text-muted-foreground">No connection for this customer yet.</p>}
               {live.map((c) => (
                 <div key={c.id} className="min-w-0 space-y-2 rounded-md border p-3" data-testid="backup-connection" data-connection={c.id}>
                   <div className="flex flex-wrap items-center gap-2">
@@ -223,7 +223,7 @@ export default function BackupSettingsPage() {
                   </div>
                   <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
                     <div><dt className="inline text-muted-foreground">Last push: </dt><dd className="inline">{when(c.lastSyncAt)}</dd></div>
-                    <div><dt className="inline text-muted-foreground">Assets: </dt><dd className="inline" data-testid="backup-connection-assets">{c.assetCount} ({c.linkedCount} linked to a computer)</dd></div>
+                    <div><dt className="inline text-muted-foreground">Assets: </dt><dd className="inline" data-testid="backup-connection-assets">{c.assetCount} ({c.linkedCount} linked to a device)</dd></div>
                     <div><dt className="inline text-muted-foreground">{c.transport === 'push' ? 'Token' : 'Credential'}: </dt><dd className="inline font-mono">…{c.pushTokenLast4 ?? c.credentialLast4 ?? '—'}</dd></div>
                     <div><dt className="inline text-muted-foreground">Created: </dt><dd className="inline">{when(c.createdAt)}{c.tokenRotatedAt ? ` · rotated ${when(c.tokenRotatedAt)}` : ''}</dd></div>
                   </dl>
@@ -249,7 +249,7 @@ export default function BackupSettingsPage() {
 
           {d.capabilities && (
             <Card data-testid="backup-settings-capabilities">
-              <CardHeader><CardTitle className="text-sm">What works for this business</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-sm">What works for this customer</CardTitle></CardHeader>
               <CardContent className="space-y-2 text-sm">
                 {d.capabilities.map((c) => (
                   <div key={c.key} className="flex min-w-0 flex-col gap-1 border-b pb-2 last:border-b-0 sm:flex-row sm:items-start sm:gap-3" data-capability={c.key} data-state={c.state}>

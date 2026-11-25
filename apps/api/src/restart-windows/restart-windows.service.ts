@@ -309,7 +309,7 @@ export class RestartWindowsService implements OnModuleInit, OnModuleDestroy {
         display: { updates: [], deployment: null, policy: { id: p.id, name: doc.name.slice(0, 120), digest: p.digest } },
         underPolicy: { policyId: p.id, digest: p.digest, evidence: null, kind: 'automation' },
       });
-      await this.prisma.restartWindowAttempt.update({ where: { id: row.id }, data: { jobId: job.id, code: 'signed', message: `Restart plan signed; the computer picks it up by ${notAfter.toISOString()} and restarts ${RESTART_WINDOW_DELAY_MINUTES} minutes later.` } });
+      await this.prisma.restartWindowAttempt.update({ where: { id: row.id }, data: { jobId: job.id, code: 'signed', message: `Restart plan signed; the device picks it up by ${notAfter.toISOString()} and restarts ${RESTART_WINDOW_DELAY_MINUTES} minutes later.` } });
       if ((p.lastProposal as { code?: string } | null)?.code) await this.prisma.automationPolicy.update({ where: { id: p.id }, data: { lastProposal: Prisma.DbNull } });
     } catch (e) {
       const b = (e as { getResponse?: () => { code?: string; signerCode?: string | null; message?: string } }).getResponse?.();
@@ -395,7 +395,7 @@ export class RestartWindowsService implements OnModuleInit, OnModuleDestroy {
     const pending = this.policyView(s.pendingPolicy, now);
     const why = s.mode === 'off' ? null
       : !s.policy ? 'its restart window is gone'
-        : s.policy.status === 'AWAITING_APPROVAL' ? 'it is waiting for approval on the approval signer'
+        : s.policy.status === 'AWAITING_APPROVAL' ? 'it is pending approval on the approval signer'
           : s.policy.status === 'REJECTED' ? 'it was rejected on the approval signer'
             : s.policy.status === 'REVOKED' ? 'it was revoked'
               : s.policy.status === 'EXPIRED' || (s.policy.expiresAt !== null && s.policy.expiresAt <= now) ? 'it expired; set it again (Change, then Save)'
@@ -453,7 +453,7 @@ export class RestartWindowsService implements OnModuleInit, OnModuleDestroy {
     if (!ep) throw new NotFoundException('Computer not found');
     const pending = await this.restartRequired(endpointId);
     if (!ep.customerId) {
-      return { endpointId, own: null, effective: null, notInForce: [], text: 'This computer is in no business, so no restart window applies to it.', restartPending: pending, attempts: [], may: { edit: false, reason: 'Assign the computer to a business first.' }, readiness: await this.readiness(), patchPolicy: null };
+      return { endpointId, own: null, effective: null, notInForce: [], text: 'This device is in no customer, so no restart window applies to it.', restartPending: pending, attempts: [], may: { edit: false, reason: 'Assign the device to a customer first.' }, readiness: await this.readiness(), patchPolicy: null };
     }
     const rows = await this.settingsOf(ep.customerId);
     const groupIds = rows.filter((r) => r.scope === 'group' && r.groupId).map((r) => r.groupId!);
@@ -553,7 +553,7 @@ export class RestartWindowsService implements OnModuleInit, OnModuleDestroy {
     }
 
     // A window can make computers restart: confirm it is you (restart.window), whoever you are.
-    assertFresh(freshMethod, { action: 'restart.window', message: 'Setting a restart window lets computers be restarted automatically. Confirm it is you.' });
+    assertFresh(freshMethod, { action: 'restart.window', message: 'Setting a restart window lets devices be restarted automatically. Confirm it is you.' });
     const w = PolicyWindow.parse(dto.window);
     const first = nextOccurrence(now, w, dto.expiresInDays ? new Date(now.getTime() + dto.expiresInDays * 86_400_000) : undefined);
     if (!first) this.bad('WINDOW_NEVER_OPENS', 'This window never opens before the restart window would expire.');
@@ -637,7 +637,7 @@ export class RestartWindowsService implements OnModuleInit, OnModuleDestroy {
     if (!dto.success) this.bad('INVALID_REQUEST', 'reason: at least 3 characters, if given.');
     const s = await this.prisma.restartWindowSetting.findFirst({ where, include: { policy: true, pendingPolicy: true } });
     if (!s) throw new NotFoundException({ code: 'NO_SETTING', message: 'There is no restart window setting here to remove.' });
-    if (scope !== 'business') assertFresh(freshMethod, { action: 'restart.window', message: 'Removing this setting hands its computers to the restart window above it, which may restart them. Confirm it is you.' });
+    if (scope !== 'business') assertFresh(freshMethod, { action: 'restart.window', message: 'Removing this setting hands its devices to the restart window above it, which may restart them. Confirm it is you.' });
     const withdrawn = await this.withdraw(s, `restart window removed by ${actor.email ?? actor.userId}`);
     await this.prisma.restartWindowSetting.delete({ where: { id: s.id } });
     await this.audit.log({
@@ -697,7 +697,7 @@ export class RestartWindowsService implements OnModuleInit, OnModuleDestroy {
     const name = (ep.hostname ?? ep.name).slice(0, 64);
     const dec = await this.access.evaluateAction(actor, ep, 'high');
     if (!dec.ok) throw new ForbiddenException({ code: dec.reason.toUpperCase(), message: `${name}: ${dec.message}` });
-    if (!ep.rustdeskNode?.rustdeskId || !ep.rustdeskNode.agentSecretHash) throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: `${name}: this computer has no enrolled device identity.` });
+    if (!ep.rustdeskNode?.rustdeskId || !ep.rustdeskNode.agentSecretHash) throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: `${name}: this device has no enrolled device identity.` });
     return { ep, name, computers: { kind: 'computers' as const, computers: [{ endpointId: ep.id, hostname: name, rustdeskId: ep.rustdeskNode.rustdeskId, deviceSecretSha256: ep.rustdeskNode.agentSecretHash }] } };
   }
 
@@ -738,7 +738,7 @@ export class RestartWindowsService implements OnModuleInit, OnModuleDestroy {
     if (!parsed.success) this.bad('INVALID_REQUEST', parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
     const dto = parsed.data!;
     if (new Set(dto.endpointIds).size !== dto.endpointIds.length) this.bad('INVALID_REQUEST', 'A computer is named twice.');
-    if (dto.mode === 'inherit') assertFresh(freshMethod, { action: 'restart.window', message: 'Removing these computers\' own settings hands them to the restart window above, which may restart them. Confirm it is you.' });
+    if (dto.mode === 'inherit') assertFresh(freshMethod, { action: 'restart.window', message: 'Removing these devices\' own settings hands them to the restart window above, which may restart them. Confirm it is you.' });
     const results: { endpointId: string; ok: boolean; code?: string; reason?: string }[] = [];
     for (const id of dto.endpointIds) {
       try {

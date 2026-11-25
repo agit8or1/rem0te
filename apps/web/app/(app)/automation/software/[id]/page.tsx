@@ -48,9 +48,9 @@ export default function SoftwareEntryPage() {
   return (
     <div className="space-y-4 p-4 md:p-6">
       <Link href="/automation/software" className="text-xs text-muted-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3 w-3" />Software catalog</Link>
-      <PageHeader title={`${e.name} ${e.version}`} description={`${e.packageId} · ${e.scope === 'global' ? 'global catalog' : e.businessName ?? 'business catalog'} · revision ${e.revision}`}>
+      <PageHeader title={`${e.name} ${e.version}`} description={`${e.packageId} · ${e.scope === 'global' ? 'global catalog' : e.businessName ?? 'customer catalog'} · revision ${e.revision}`}>
         <div className="flex flex-wrap gap-2">
-          {!e.archivedAt && !deploying && <Button size="sm" onClick={() => { setDeploying(true); setEditing(false); }}><Rocket className="h-4 w-4 mr-1" />Deploy to computers</Button>}
+          {!e.archivedAt && !deploying && <Button size="sm" onClick={() => { setDeploying(true); setEditing(false); }}><Rocket className="h-4 w-4 mr-1" />Deploy to devices</Button>}
           {!e.archivedAt && <Button size="sm" variant="outline" asChild><Link href={`/automation/schedules/new?entry=${e.id}${e.businessId ? `&business=${e.businessId}` : ''}`} data-testid="software-schedule-link">On a schedule…</Link></Button>}
           {e.canEdit && !e.archivedAt && !editing && <Button size="sm" variant="outline" onClick={() => { setEditing(true); setDeploying(false); }}>Edit</Button>}
         </div>
@@ -177,9 +177,9 @@ function DeployBuilder({ entry, onCancel }: { entry: Entry; onCancel: () => void
           </div>
           {entry.scope === 'global' && isPlatformAdmin && (
             <div className="space-y-1">
-              <Label htmlFor="sd-biz" className="text-xs">Business</Label>
+              <Label htmlFor="sd-biz" className="text-xs">Customer</Label>
               <select id="sd-biz" className={selectClass} value={picked} onChange={(e) => { setPicked(e.target.value); setRingOf({}); }}>
-                <option value="">Choose a business…</option>
+                <option value="">Choose a customer…</option>
                 {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
             </div>
@@ -187,10 +187,10 @@ function DeployBuilder({ entry, onCancel }: { entry: Entry; onCancel: () => void
         </div>
 
         <div className="space-y-1">
-          <p className="text-xs font-medium">Rings — ring 0 is one canary computer; rings 1–4 hold up to 25 each. Computers of one business only.</p>
-          {!businessId ? <p className="text-xs text-muted-foreground">Choose a business first.</p>
-            : isLoading ? <p className="text-xs text-muted-foreground">Loading computers…</p>
-            : computers.length === 0 ? <p className="text-xs text-muted-foreground">This business has no computers you can see.</p>
+          <p className="text-xs font-medium">Rings — ring 0 is one canary device; rings 1–4 hold up to 25 each. Devices of one customer only.</p>
+          {!businessId ? <p className="text-xs text-muted-foreground">Choose a customer first.</p>
+            : isLoading ? <p className="text-xs text-muted-foreground">Loading devices…</p>
+            : computers.length === 0 ? <p className="text-xs text-muted-foreground">This customer has no devices you can see.</p>
             : (
               <div className="max-h-96 overflow-auto space-y-1">
                 {computers.map((c) => (
@@ -208,15 +208,15 @@ function DeployBuilder({ entry, onCancel }: { entry: Entry; onCancel: () => void
             )}
           {Object.values(ringOf).some((r) => r !== '') && (
             <p className={`text-xs ${ringsOk ? 'text-muted-foreground' : 'text-destructive'}`}>
-              {ringsOk ? rings.map((r, i) => `${i === 0 ? 'canary' : `ring ${i}`}: ${r.length}`).join(' · ') : 'Ring 0 must be exactly one computer, and no ring may be empty or larger than 25.'}
+              {ringsOk ? rings.map((r, i) => `${i === 0 ? 'canary' : `ring ${i}`}: ${r.length}`).join(' · ') : 'Ring 0 must be exactly one device, and no ring may be empty or larger than 25.'}
             </p>
           )}
-          <p className="text-xs text-muted-foreground">Each computer is checked when you create the deployment, and again when its ring is requested: Windows, a signed agent that supports software plans, software not managed by Configuration Manager or Intune, and your access to higher-risk requests. The canary must be online now.</p>
+          <p className="text-xs text-muted-foreground">Each device is checked when you create the deployment, and again when its ring is requested: Windows, a signed agent that supports software plans, software not managed by Configuration Manager or Intune, and your access to higher-risk requests. The canary must be online now.</p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl">
           <div className="space-y-1"><Label htmlFor="sd-soak" className="text-xs">Soak between rings (hours, 0–168)</Label><Input id="sd-soak" type="number" min={0} max={168} value={soakHours} onChange={(e) => setSoakHours(Number(e.target.value))} /></div>
-          <div className="space-y-1"><Label htmlFor="sd-thr" className="text-xs">Failed computers allowed per ring</Label><Input id="sd-thr" type="number" min={0} max={25} value={failureThreshold} onChange={(e) => setFailureThreshold(Number(e.target.value))} /></div>
+          <div className="space-y-1"><Label htmlFor="sd-thr" className="text-xs">Failed devices allowed per ring</Label><Input id="sd-thr" type="number" min={0} max={25} value={failureThreshold} onChange={(e) => setFailureThreshold(Number(e.target.value))} /></div>
           <div className="space-y-1"><Label htmlFor="sd-win" className="text-xs">Window each ring may run in (hours, 1–24)</Label><Input id="sd-win" type="number" min={1} max={24} value={windowHours} onChange={(e) => setWindowHours(Number(e.target.value))} /></div>
         </div>
 

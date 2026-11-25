@@ -48,7 +48,7 @@ class DeviceClassDto { @IsIn(Object.values(DeviceClass)) deviceClass!: DeviceCla
 class ManagedDto { @IsBoolean() managed!: boolean }
 
 /**
- * Settings → Security → Technician Access, the Security Features catalog,
+ * Security → Technician access, the Security Features catalog,
  * and the technician's own temporary-access requests.
  *
  * Every mutation needs fresh authentication (step-up), whatever step-up

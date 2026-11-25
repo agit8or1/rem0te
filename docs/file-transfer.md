@@ -1,9 +1,9 @@
 # Background file transfer
 
-*0.78.0 "Courier".* A Platform Admin can send a file to a Windows computer, or
+*0.78.0 "Courier".* A Platform Admin can send a file to a Windows device, or
 fetch one from it, without a screen-sharing session. Nothing appears on the
-computer's screen. The agent reads and writes the file as **SYSTEM**, which
-means **full control of the computer**: it can write anywhere on a local drive
+device's screen. The agent reads and writes the file as **SYSTEM**, which
+means **full control of the device**: it can write anywhere on a local drive
 and read any file there. The console says so wherever a transfer can be
 started.
 
@@ -17,23 +17,23 @@ holds](#what-it-reverses-and-what-still-holds) lists exactly what changed.
 | | Send a file | Fetch a file | See that a transfer happened | Cancel someone's transfer |
 |---|---|---|---|---|
 | Platform Admin | yes | yes | yes | yes (revoke) |
-| Business Owner | **no** | **no** | yes, on their computers | yes (revoke) |
-| Business User with *Edit computers* | **no** | **no** | yes | yes (revoke) |
-| Business User without it | no | no | yes, with *View computers* | no |
-| MSP technician | **no** | **no** | yes, on assigned computers | no |
+| Business Owner | **no** | **no** | yes, on their devices | yes (revoke) |
+| Business User with *Edit devices* | **no** | **no** | yes | yes (revoke) |
+| Business User without it | no | no | yes, with *View devices* | no |
+| MSP technician | **no** | **no** | yes, on assigned devices | no |
 
 Sending and fetching are **two capabilities**, `computers:files_upload` and
 `computers:files_download`. Both are platform-only, like `computers:terminal`:
 
-- They are not business capabilities, so a Business Owner does not hold them.
+- They are not customer capabilities, so a Business Owner does not hold them.
 - No grant can carry them. That covers a Business User grant, a technician
   assignment or preset, and an SSO mapping. The server drops them from
   anything stored.
 
 The reason is the same as the terminal's. Writing a file as SYSTEM is enough
-to run anything on the computer, and reading as SYSTEM reaches every user's
-files and the registry hives. If a business could grant that, default-deny
-would be a setting the business could switch off. They are two capabilities so
+to run anything on the device, and reading as SYSTEM reaches every user's
+files and the registry hives. If a customer could grant that, default-deny
+would be a setting the customer could switch off. They are two capabilities so
 that, when delegation is added ([planned](#planned)), fetching logs can be
 given without the power to write.
 
@@ -43,9 +43,9 @@ chunks or read them.
 
 ## Starting one
 
-On the computer's **Files** tab (or *Tools → Terminal and files*), give:
+On the device's **Files** tab (or *Tools → Terminal and files*), give:
 
-- **A path.** An absolute local path on the computer, such as
+- **A path.** An absolute local path on the device, such as
   `C:\Windows\Temp\setup.msi`. See [Paths](#paths).
 - **A reason.** 3 to 500 characters. It goes into the audit log.
 - **Overwrite** (sending only). Off by default. Without it, a file that is
@@ -58,34 +58,34 @@ server with the request.
 Then:
 
 1. The server checks the request in this order:
-   1. the computer is in scope, with the direction's capability (404 if not);
+   1. the device is in scope, with the direction's capability (404 if not);
    2. the path rule, the reason, and for a send, the size (within the
-      business's limit) and the SHA-256 (400);
+      customer's limit) and the SHA-256 (400);
    3. a fresh confirmation, when *Settings → Confirm it is you* asks for
       `files.transfer`. **It is off by default.** A Platform Admin can turn
       it on there.
-   4. the computer itself (below).
+   4. the device itself (below).
 2. The request is written to the audit log (`FILE_TRANSFER_REQUESTED`, with
    the path, size, SHA-256 and reason), and only then does the transfer exist.
 
 | Refusal | Code |
 |---|---|
-| The computer is in the unassigned pool | `403 ENDPOINT_UNASSIGNED` |
+| The device is in the unassigned pool | `403 ENDPOINT_UNASSIGNED` |
 | Not Windows, or not the signed (full) agent | `409 FILES_SIGNED_AGENT_REQUIRED` |
 | No device secret on record | `409 FILES_NO_DEVICE_SECRET` |
 | The agent is older than 0.78.0 | `409 FILES_AGENT_TOO_OLD` |
 | A `remote` containment pause | `403 CONTAINED` |
 | Not reporting | `409 FILES_OFFLINE` |
-| Two transfers already running on that computer | `409 FILES_TOO_MANY` |
+| Two transfers already running on that device | `409 FILES_TOO_MANY` |
 | A path the rule refuses | `400 FILES_PATH_REFUSED` |
-| Larger than the business allows | `400 FILES_TOO_LARGE` |
+| Larger than the customer allows | `400 FILES_TOO_LARGE` |
 
-## How it reaches the computer, and how long it takes
+## How it reaches the device, and how long it takes
 
 The bytes go through the server: browser → server → agent for a send, and
 agent → server → browser for a fetch. The agent never accepts a connection.
 
-- **Starting.** A waiting transfer makes the computer's next heartbeat
+- **Starting.** A waiting transfer makes the device's next heartbeat
   answer `remotePoll`, which starts the remote worker
   (`rem0te-agent.exe remote-worker`). That is the same worker and long-poll
   as the terminal, and it does not depend on `MSA_GRANTS`. The heartbeat runs
@@ -123,7 +123,7 @@ The rule refuses:
 - a component ending in a dot or a space;
 - control characters and `< > " | ? *`.
 
-On the computer, the agent also:
+On the device, the agent also:
 
 - **Drives.** Accepts only a fixed or removable drive; a network drive, a
   RAM disk or a CD is refused.
@@ -151,15 +151,15 @@ does not match is never offered.
 
 | | Value | Where |
 |---|---|---|
-| Largest file | **100 MB** by default, per business, **1 MB to 2 GB** | `fileMaxMb`; 0095 CHECK; the agent's 2 GiB ceiling |
+| Largest file | **100 MB** by default, per customer, **1 MB to 2 GB** | `fileMaxMb`; 0095 CHECK; the agent's 2 GiB ceiling |
 | Chunk | 512 KiB | TS, Go, 0095 CHECK |
 | Chunks waiting on the server | 8 | TS, 0095 CHECK |
 | A transfer in all | 60 minutes | TS, Go, 0095 CHECK; the agent stops at its own limit |
 | Without progress | 10 minutes | the server's sweep, and every read |
-| Running on one computer | 2 | TS, Go |
+| Running on one device | 2 | TS, Go |
 | A finished fetch's chunks | kept 15 minutes for the browser, then deleted | the sweep |
 
-A Platform Admin sets the size limit per business with
+A Platform Admin sets the size limit per customer with
 `PUT /api/v1/remote-ops/settings/:businessId` (`{ "fileMaxMb": 500 }`). It is
 audited (`REMOTE_OPS_SETTINGS_CHANGED`).
 
@@ -169,8 +169,8 @@ A transfer ends as:
 
 - **completed**, once the agent has verified the hash;
 - **cancelled**, by its technician;
-- **revoked**, by a Platform Admin or the business's own member with *Edit
-  computers*;
+- **revoked**, by a Platform Admin or the customer's own member with *Edit
+  devices*;
 - **paused**, by a `remote` containment pause, which also refuses new
   transfers;
 - **expired**, at the 60-minute limit;
@@ -178,7 +178,7 @@ A transfer ends as:
 - one of the agent's codes (`exists`, `no_folder`, `reparse_point`,
   `hash_mismatch` and the rest).
 
-Cancelling never asks for a fresh confirmation. On the computer, a send that
+Cancelling never asks for a fresh confirmation. On the device, a send that
 ends early deletes its temporary file; nothing is left half-written.
 
 ## What is kept
@@ -213,10 +213,10 @@ it:
 
 - **Who.** A Platform Admin only, sending and fetching separately, with a
   reason and scope through the ordinary visibility rule.
-- **Which computers.** An assigned Windows computer running the signed agent
+- **Which devices.** An assigned Windows device running the signed agent
   0.78.0 or later, with a device secret and reporting.
 - **Authentication.** Every agent call checks the device secret before
-  anything else. Another computer's secret reaches nothing.
+  anything else. Another device's secret reaches nothing.
 - **No process.** The file code runs no process and opens no socket. The
   worker still listens on nothing.
 - **Containment.** The `remote` pause refuses new transfers and ends live
@@ -226,12 +226,12 @@ it:
 
 ## Before turning it on: publish the agent first
 
-File transfer needs the **signed agent 0.78.0** on the computer. The server
+File transfer needs the **signed agent 0.78.0** on the device. The server
 refuses an older agent (`FILES_AGENT_TOO_OLD`):
 
 1. Deploy the server.
 2. Publish the agent: `sudo rem0te-signed-publish` on the release host.
-3. Let computers take the update.
+3. Let devices take the update.
 
 ## Evidence
 
@@ -248,7 +248,7 @@ refuses an older agent (`FILES_AGENT_TOO_OLD`):
   `e2e-files.mjs` drives the routes against the agent's own worker code
   (`rem0te-remote-sim -files-root`). It covers:
   - default deny;
-  - cross-business refusal;
+  - cross-customer refusal;
   - the step-up when the key asks;
   - every refusal;
   - a three-chunk send whose file on disk has the declared hash;

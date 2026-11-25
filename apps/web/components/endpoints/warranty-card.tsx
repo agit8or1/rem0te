@@ -105,8 +105,8 @@ export function WarrantyCard({ endpointId }: { endpointId: string }) {
             <p><span className="font-medium">No warranty date</span> <span className="text-muted-foreground">· {WARRANTY_GAP_LABEL[data.gap.reason]}</span></p>
             <p className="text-xs text-muted-foreground">{data.gap.text}</p>
             {data.gap.settings && (isPlatformAdmin
-              ? <Link href="/settings/warranty" className="text-xs underline" data-testid="warranty-gap-settings">Open Settings → Warranty</Link>
-              : <p className="text-xs text-muted-foreground">Ask a Platform Admin: lookups are set up in Settings → Warranty.</p>)}
+              ? <Link href="/settings/warranty" className="text-xs underline" data-testid="warranty-gap-settings">Open Administration → Warranty</Link>
+              : <p className="text-xs text-muted-foreground">Ask a Platform Admin: lookups are set up in Administration → Warranty.</p>)}
           </div>
         ) : null}
         {l.lastAttemptAt && l.lastResult && l.lastResult !== 'OK' && w.endsAt && <p className="text-xs text-muted-foreground">Last vendor lookup {new Date(l.lastAttemptAt).toLocaleString()}: {lookupResultText(l.lastResult)} ({l.lastResult}).</p>}

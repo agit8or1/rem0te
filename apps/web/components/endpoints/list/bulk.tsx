@@ -88,7 +88,7 @@ export function BulkBar({
       const refused = r.results.filter((x) => !x.ok);
       toast({
         title: windowMode === 'off' ? 'No automatic restarts' : 'Inherit restart window',
-        description: `${r.results.length - refused.length} of ${r.results.length} done.${refused.length ? ` Refused: ${refused.slice(0, 3).map((x) => `${selected.get(x.endpointId) ?? 'a computer'} — ${x.reason}`).join('; ')}${refused.length > 3 ? '…' : ''}` : ''}`,
+        description: `${r.results.length - refused.length} of ${r.results.length} done.${refused.length ? ` Refused: ${refused.slice(0, 3).map((x) => `${selected.get(x.endpointId) ?? 'a device'} — ${x.reason}`).join('; ')}${refused.length > 3 ? '…' : ''}` : ''}`,
         variant: refused.length ? 'destructive' : undefined,
       });
       setWindowOpen(false);
@@ -142,7 +142,7 @@ export function BulkBar({
             </SelectContent>
           </Select>
           <Button size="sm" variant="outline" className="h-8" disabled={!groupId || !!busy} onClick={() => run('group.add')}
-            title={target ? 'Copies the computers that match the rule now into that static group; later matches are not added.' : undefined}>
+            title={target ? 'Copies the devices that match the rule now into that static group; later matches are not added.' : undefined}>
             {spin('group.add') ?? <FolderPlus className="h-4 w-4 mr-1.5" />}{target ? 'Copy into' : 'Add'}
           </Button>
           {!target && (
@@ -154,32 +154,32 @@ export function BulkBar({
         </>
       )}
       <Button size="sm" variant="outline" className="h-8" disabled={!!busy} onClick={() => run('inventory.refresh')}
-        title="Asks each computer to re-collect its inventory and re-check its pending updates (Windows Update, or the Linux or macOS package list) on its next heartbeat (up to three minutes). Counts toward your limit on distinct computers.">
+        title="Asks each device to re-collect its inventory and re-check its pending updates (Windows Update, or the Linux or macOS package list) on its next heartbeat (up to three minutes). Counts toward your limit on distinct devices.">
         {spin('inventory.refresh') ?? <RefreshCw className="h-4 w-4 mr-1.5" />}Refresh inventory
       </Button>
       {isPlatformAdmin && (
         <Button size="sm" variant="outline" className="h-8" disabled={!!busy} onClick={() => run('client.update')}
-          title="Queues a RustDesk client update for each computer that is behind, on its next heartbeat. Archived, Linux and contained computers are refused.">
+          title="Queues a RustDesk client update for each device that is behind, on its next heartbeat. Archived, Linux and contained devices are refused.">
           {spin('client.update') ?? <UploadCloud className="h-4 w-4 mr-1.5" />}Queue client update
         </Button>
       )}
       {canEdit && (
         <>
           <Button size="sm" variant="outline" className="h-8" disabled={!!busy} onClick={() => run('agent.update')}
-            title="Re-runs the current standard installer on each standard Windows computer (signed agents: checks the signed repository now). Keeps the enrolment and RustDesk settings. Linux and macOS are refused: re-run their installer on the computer.">
+            title="Re-runs the current standard installer on each standard Windows device (signed agents: checks the signed repository now). Keeps the enrolment and RustDesk settings. Linux and macOS are refused: re-run their installer on the device.">
             {spin('agent.update') ?? <Wrench className="h-4 w-4 mr-1.5" />}Update agent
           </Button>
           <Button size="sm" variant="outline" className="h-8" disabled={!!busy} onClick={() => setMigrateOpen(true)}
-            title={`Moves each standard Windows computer to the full (signed) agent. Needs ${askMigrate ? 'a fresh sign-in and ' : ''}a reason; each computer is checked on its own.`}>
+            title={`Moves each standard Windows device to the full (signed) agent. Needs ${askMigrate ? 'a fresh sign-in and ' : ''}a reason; each device is checked on its own.`}>
             <ShieldCheck className="h-4 w-4 mr-1.5" />Upgrade to full agent…
           </Button>
           <Button size="sm" variant="outline" className="h-8" disabled={!!busy} onClick={() => setRestartOpen(true)} data-testid="bulk-restart"
-            title="Requests an approved restart (windows.reboot.schedule) for each Windows computer, now or at a time. Each is its own signed plan, checked on its own. At most 200.">
+            title="Requests an approved restart (windows.reboot.schedule) for each Windows device, now or at a time. Each is its own signed plan, checked on its own. At most 200.">
             <Power className="h-4 w-4 mr-1.5" />Schedule restart…
           </Button>
           {!target && (
             <Button size="sm" variant="outline" className="h-8" disabled={!!busy} onClick={() => setWindowOpen(true)} data-testid="bulk-restart-window"
-              title="Set these computers to no automatic restarts, or back to inheriting their restart window (device group or business). A window itself is set on the business page or a computer's Patches tab.">
+              title="Set these devices to no automatic restarts, or back to inheriting their restart window (device group or customer). A window itself is set on the customer page or a device's Patches tab.">
               <Power className="h-4 w-4 mr-1.5" />Restart window…
             </Button>
           )}
@@ -190,15 +190,15 @@ export function BulkBar({
           <DialogHeader>
             <DialogTitle>Restart window for {selected.size} device{selected.size === 1 ? '' : 's'}</DialogTitle>
             <DialogDescription>
-              A computer&apos;s own setting wins over its device group&apos;s and its business&apos;s. Each computer is checked on its own and
-              recorded in the audit log. To give computers a window, set it on their business, a device group, or a computer&apos;s Patches tab.
+              A device&apos;s own setting wins over its device group&apos;s and its customer&apos;s. Each device is checked on its own and
+              recorded in the audit log. To give devices a window, set it on their customer, a device group, or a device&apos;s Patches tab.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 text-sm">
             <label className="flex items-start gap-2"><input type="radio" name="bulk-window" checked={windowMode === 'off'} onChange={() => setWindowMode('off')} data-testid="bulk-restart-window-off" />
-              <span><strong>No automatic restarts</strong> — nothing restarts these computers on its own. Takes effect at once.</span></label>
+              <span><strong>No automatic restarts</strong> — nothing restarts these devices on its own. Takes effect at once.</span></label>
             <label className="flex items-start gap-2"><input type="radio" name="bulk-window" checked={windowMode === 'inherit'} onChange={() => setWindowMode('inherit')} data-testid="bulk-restart-window-inherit" />
-              <span><strong>Inherit</strong> — remove each computer&apos;s own setting, so its device group&apos;s or business&apos;s window applies. {askWindow ? 'This can let them restart, so it asks you to confirm it is you.' : ''}</span></label>
+              <span><strong>Inherit</strong> — remove each device&apos;s own setting, so its device group&apos;s or customer&apos;s window applies. {askWindow ? 'This can let them restart, so it asks you to confirm it is you.' : ''}</span></label>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setWindowOpen(false)} disabled={busy === 'restart.window'}>Cancel</Button>
@@ -211,10 +211,10 @@ export function BulkBar({
           <DialogHeader>
             <DialogTitle>{target ? `Schedule a restart of the devices in ${target.name}?` : `Schedule a restart of ${selected.size} device${selected.size === 1 ? '' : 's'}?`}</DialogTitle>
             <DialogDescription>
-              Each computer gets its own approved restart plan, exactly as if it were requested from its Actions tab: in signed mode each one
-              awaits approval on the approval signer; in direct mode it is signed at once. Computers that cannot take it (offline for too long,
+              Each device gets its own approved restart plan, exactly as if it were requested from its Actions tab: in signed mode each one
+              awaits approval on the approval signer; in direct mode it is signed at once. Devices that cannot take it (offline for too long,
               not on the signed agent, another restart already open, a containment pause) are refused one by one with the reason. A group is
-              resolved now, as you see it, and at most 200 computers.
+              resolved now, as you see it, and at most 200 devices.
             </DialogDescription>
           </DialogHeader>
           <RestartOptions id="bulk-restart" value={restartOpts} onChange={setRestartOpts} zones={{}} />
@@ -235,9 +235,9 @@ export function BulkBar({
           <DialogHeader>
             <DialogTitle>{target ? `Upgrade the devices in ${target.name} to full agent?` : `Upgrade ${selected.size} device${selected.size === 1 ? '' : 's'} to full agent?`}</DialogTitle>
             <DialogDescription>
-              The full agent is the signed agent. Each standard Windows computer is handed, once, the portal’s migration script. It downloads the signed agent,
+              The full agent is the signed agent. Each standard Windows device is handed, once, the portal’s migration script. It downloads the signed agent,
               checks it against the digest the signed repository publishes, and runs <code>migrate</code>, which keeps the
-              enrolment, device secret and RustDesk configuration. After that the computer runs only signed code. Computers
+              enrolment, device secret and RustDesk configuration. After that the device runs only signed code. Devices
               that cannot be moved are refused one by one with the reason.{askMigrate ? ' You will be asked to confirm it is you.' : ''}
             </DialogDescription>
           </DialogHeader>
@@ -276,10 +276,10 @@ export function BulkResultDialog({ result, onClose }: { result: BulkResponse | n
             {result?.target ? `On “${result.target.name}”: ${result.target.resolved} device${result.target.resolved === 1 ? '' : 's'} when the request ran. ` : ''}
             {result ? `${result.succeeded} of ${result.requested} done${unchanged.length ? ` (${unchanged.length} needed nothing)` : ''}; ${result.refused} refused.` : ''}
             {result?.action === 'inventory.refresh' && result.succeeded ? ' Each one collects on its next heartbeat, up to three minutes away.' : ''}
-            {result?.action === 'client.update' && result.succeeded ? ' Each queued update goes on that computer’s next heartbeat.' : ''}
-            {result?.action === 'agent.update' && result.succeeded ? ' Each one runs on that computer’s next heartbeat.' : ''}
+            {result?.action === 'client.update' && result.succeeded ? ' Each queued update goes on that device’s next heartbeat.' : ''}
+            {result?.action === 'agent.update' && result.succeeded ? ' Each one runs on that device’s next heartbeat.' : ''}
             {result?.action === 'agent.migrate' && result.succeeded ? ' Follow them on Devices → Agent migrations.' : ''}
-            {result?.action === 'restart.schedule' && result.succeeded ? ' Follow them on Automation → Tasks; until a restart reaches its computer it can be canceled there.' : ''}
+            {result?.action === 'restart.schedule' && result.succeeded ? ' Follow them on Automation → Tasks; until a restart reaches its device it can be canceled there.' : ''}
           </DialogDescription>
         </DialogHeader>
         {refused.length > 0 ? (
@@ -340,9 +340,9 @@ export function GroupsDialog({
         <DialogHeader>
           <DialogTitle>Device groups</DialogTitle>
           <DialogDescription>
-            Groups of one business’s computers, for filtering the list and acting on them together. A <strong>static</strong> group
-            holds the computers put in it; a <strong>rule</strong> group holds whichever computers match its rule right now, worked out
-            each time — make one with Views → Save filters as a rule group. A computer can be in several groups of its business.
+            Groups of one customer’s devices, for filtering the list and acting on them together. A <strong>static</strong> group
+            holds the devices put in it; a <strong>rule</strong> group holds whichever devices match its rule right now, worked out
+            each time — make one with Views → Save filters as a rule group. A device can be in several groups of its customer.
             Groups grant no access to anything. Changes are recorded in the audit log.
           </DialogDescription>
         </DialogHeader>
@@ -385,7 +385,7 @@ export function GroupsDialog({
                   )}
                   <Button size="sm" variant="ghost" aria-label={`Rename ${g.name}`} disabled={busy} onClick={() => setEditing({ id: g.id, name: g.name })}><Pencil className="h-3.5 w-3.5" /></Button>
                   <Button size="sm" variant="ghost" aria-label={`Delete ${g.name}`} disabled={busy}
-                    onClick={() => { if (window.confirm(`Delete the group “${g.name}”? Its computers stay where they are${g.kind === 'rule' ? '' : '; they just leave the group'}.`)) act(() => deviceGroupsApi.remove(g.id), 'Group deleted'); }}>
+                    onClick={() => { if (window.confirm(`Delete the group “${g.name}”? Its devices stay where they are${g.kind === 'rule' ? '' : '; they just leave the group'}.`)) act(() => deviceGroupsApi.remove(g.id), 'Group deleted'); }}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </>
@@ -402,8 +402,8 @@ export function GroupsDialog({
         ) : (
           <p className="text-xs text-muted-foreground">
             {businessId === undefined && businessLabel === null
-              ? 'Pick a business filter first: a group belongs to one business.'
-              : 'Groups are managed by a Business Owner, a technician with computers:edit over the whole business, or the MSP.'}
+              ? 'Pick a customer filter first: a group belongs to one customer.'
+              : 'Groups are managed by a Business Owner, a technician with computers:edit over the whole customer, or the MSP.'}
           </p>
         )}
         <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button></DialogFooter>

@@ -214,7 +214,7 @@ export function nextStep(r: RolloutRow, canary: CanaryFacts | null, now: Date, s
     case 'choosing_canary':
       return { do: 'choose_canary' };
     case 'canary': {
-      if (!canary || !canary.exists) return { do: 'halt', code: 'canary_gone', reason: 'The canary computer was removed or archived before it reported the signed agent.' };
+      if (!canary || !canary.exists) return { do: 'halt', code: 'canary_gone', reason: 'The canary device was removed or archived before it reported the signed agent.' };
       if (canary.requestCancelledByPerson) return { do: 'halt', code: 'canary_cancelled', reason: 'Someone cancelled the canary\'s migration request.' };
       if (onBuild(canary, r.targetSha256)) return { do: 'confirm' };
       if (failedSince(canary, r.canaryRequestedAt)) {
@@ -232,7 +232,7 @@ export function nextStep(r: RolloutRow, canary: CanaryFacts | null, now: Date, s
       return { do: 'wait', until: new Date(asked + CANARY_CONFIRM_MS), text: 'Waiting for the canary to report the signed agent on the published build.' };
     }
     case 'soaking': {
-      if (!canary || !canary.exists) return { do: 'halt', code: 'canary_gone', reason: 'The canary computer was removed or archived during the soak.' };
+      if (!canary || !canary.exists) return { do: 'halt', code: 'canary_gone', reason: 'The canary device was removed or archived during the soak.' };
       if (!onBuild(canary, r.targetSha256)) {
         return { do: 'halt', code: 'canary_left_build', reason: 'The canary stopped reporting the published signed build during the soak.' };
       }

@@ -184,7 +184,7 @@ export class DiagnosticsService {
       checks.push({
         key: 'agent_heartbeat', label: 'Rem0te agent heartbeat', location: 'endpoint', status: 'unavailable',
         source: 'Agent heartbeat (every 3 minutes)', observedAt: null,
-        summary: 'This computer\'s agent has never checked in.',
+        summary: 'This device\'s agent has never checked in.',
         nextSteps: ['Run the Rem0te installer on the computer.'], actions: [],
       });
     } else {
@@ -209,7 +209,7 @@ export class DiagnosticsService {
         checks.push({
           key: 'agent_identity', label: 'Agent identity (device secret)', location: 'endpoint', status: 'fail',
           source: 'Rem0te enrolment record', observedAt: nowIso,
-          summary: 'This computer enrolled before device secrets existed. Its heartbeats only refresh online status; no credential rotation or update can be delivered to it.',
+          summary: 'This device enrolled before device secrets existed. Its heartbeats only refresh online status; no credential rotation or update can be delivered to it.',
           nextSteps: ['Re-run the installer on the computer with a fresh enrolment link.'], actions: [],
         });
       } else if (node.candidateSecretHash && node.candidateSecretSeenAt &&
@@ -227,7 +227,7 @@ export class DiagnosticsService {
         checks.push({
           key: 'agent_identity', label: 'Agent identity (device secret)', location: 'endpoint', status: 'pass',
           source: 'Rem0te enrolment record', observedAt: nowIso,
-          summary: 'Heartbeats from this computer authenticate with its device secret.', nextSteps: [], actions: [],
+          summary: 'Heartbeats from this device authenticate with its device secret.', nextSteps: [], actions: [],
         });
       }
 
@@ -252,7 +252,7 @@ export class DiagnosticsService {
         checks.push({
           key: 'rustdesk_presence', label: 'RustDesk registration (live)', location: 'server', status: 'unavailable',
           source: 'hbbs OnlineRequest from the Rem0te server', observedAt: nowIso,
-          summary: 'Rem0te could not ask hbbs which computers are registered, so RustDesk reachability is unknown.',
+          summary: 'Rem0te could not ask hbbs which devices are registered, so RustDesk reachability is unknown.',
           nextSteps: ['If hbbs runs on another host, set HBBS_PRESENCE_HOST so the API can query it.'], actions: [],
         });
       } else {
@@ -276,7 +276,7 @@ export class DiagnosticsService {
       const want = await this.rustdesk.pinnedOrLatestVersion();
       const rv = node.version;
       checks.push({
-        key: 'rustdesk_version', label: 'RustDesk version on the computer', location: 'endpoint',
+        key: 'rustdesk_version', label: 'RustDesk version on the device', location: 'endpoint',
         status: !rv ? 'unavailable' : compareVersions(rv, want) >= 0 ? 'pass' : 'warn',
         source: 'Agent heartbeat (file version of rustdesk.exe)', observedAt: node.lastSeenAt?.toISOString() ?? null,
         summary: !rv ? 'Not reported.' : `${rv} installed; the supported version is ${want}.` +
@@ -314,7 +314,7 @@ export class DiagnosticsService {
       if (node.rdSessionsObservedAt) {
         const fresh = now.getTime() - node.rdSessionsObservedAt.getTime() <= HEARTBEAT_FRESH_MIN * 60_000;
         checks.push({
-          key: 'endpoint_sessions', label: 'Incoming RustDesk sessions on the computer', location: 'endpoint',
+          key: 'endpoint_sessions', label: 'Incoming RustDesk sessions on the device', location: 'endpoint',
           status: fresh ? 'info' : 'stale',
           source: 'Agent heartbeat (RustDesk connection-manager processes)', observedAt: node.rdSessionsObservedAt.toISOString(),
           summary: `${node.rdSessionsActive ?? 0} incoming session(s) at last report.`, nextSteps: [], actions: [],
@@ -324,7 +324,7 @@ export class DiagnosticsService {
       checks.push({
         key: 'rustdesk_presence', label: 'RustDesk registration (live)', location: 'endpoint', status: 'unavailable',
         source: 'Rem0te enrolment record', observedAt: null,
-        summary: 'This computer has no RustDesk ID recorded yet.', nextSteps: ['Finish enrolment by running the installer.'], actions: [],
+        summary: 'This device has no RustDesk ID recorded yet.', nextSteps: ['Finish enrolment by running the installer.'], actions: [],
       });
     }
 
@@ -360,12 +360,12 @@ export class DiagnosticsService {
       where: { userId, submittedAt: { not: null } },
       orderBy: { submittedAt: 'desc' },
     });
-    const action = { id: 'run_technician_check', label: 'Check this computer (download read-only helper)', changesConfiguration: false };
+    const action = { id: 'run_technician_check', label: 'Check this device (download read-only helper)', changesConfiguration: false };
     if (!last?.submittedAt || now.getTime() - last.submittedAt.getTime() > TECH_REPORT_MAX_H * 3600_000) {
       return [{
-        key: 'tech_report', label: 'Your computer (technician side)', location: 'technician', status: 'unavailable',
+        key: 'tech_report', label: 'Your device (technician side)', location: 'technician', status: 'unavailable',
         source: 'Technician helper script', observedAt: last?.submittedAt?.toISOString() ?? null,
-        summary: 'A web page cannot inspect your computer\'s RustDesk installation. Run the read-only helper to check it (Windows).',
+        summary: 'A web page cannot inspect your device\'s RustDesk installation. Run the read-only helper to check it (Windows).',
         nextSteps: ['Download and run the helper, then refresh this panel.'], actions: [action],
       }];
     }
@@ -380,7 +380,7 @@ export class DiagnosticsService {
     const out: DiagnosticCheck[] = [];
 
     out.push({
-      key: 'tech_install', label: 'RustDesk on your computer', location: 'technician',
+      key: 'tech_install', label: 'RustDesk on your device', location: 'technician',
       status: st(!!(r.installed || r.portableCached), 'warn'), source: src, observedAt: at,
       summary: r.installed ? `Installed at ${String(r.installedPath)} (${String(r.installedVersion || 'version unknown')}).`
         : r.portableCached ? `Not installed; Rem0te's portable copy (${String(r.portableVersion || 'version unknown')}) is cached and Connect will use it.`

@@ -1,5 +1,5 @@
 /**
- * Server security (0.74): the parsers behind Admin → Security.
+ * Server security (0.74): the parsers behind Security → Server security.
  *
  * Pure: no imports, no I/O. Each takes the text a command printed or a file
  * held and returns what it says, or null when it cannot tell. "Cannot tell"

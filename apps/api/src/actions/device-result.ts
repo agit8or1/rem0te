@@ -113,11 +113,11 @@ export function openDeviceStatement(kind: 'result' | 'scan', blob: unknown, trus
   const what = kind === 'result' ? 'result' : 'scan';
   const env = DeviceSigned.safeParse(blob);
   if (!env.success) return { ok: false, code: 'result_signature_invalid', message: `The ${what}'s signature is not a device signature.` };
-  if (env.data.key !== trustedKey) return { ok: false, code: 'result_wrong_device', message: `The ${what} is signed by a key other than the one approved for this computer.` };
+  if (env.data.key !== trustedKey) return { ok: false, code: 'result_wrong_device', message: `The ${what} is signed by a key other than the one approved for this device.` };
   const pub = publicKey(trustedKey);
   const bytes = Buffer.from(env.data.statement, 'base64');
   const ok = !!pub && edVerify(null, Buffer.concat([Buffer.from(kind === 'result' ? RESULT_PREFIX : SCAN_PREFIX, 'utf8'), bytes]), pub, Buffer.from(env.data.sig, 'base64'));
-  if (!ok) return { ok: false, code: 'result_signature_invalid', message: `The ${what}'s signature does not verify under this computer's key.` };
+  if (!ok) return { ok: false, code: 'result_signature_invalid', message: `The ${what}'s signature does not verify under this device's key.` };
   let json: unknown;
   try { json = JSON.parse(bytes.toString('utf8')); } catch { return { ok: false, code: 'result_signature_invalid', message: `The signed ${what} does not parse.` }; }
   const st = (kind === 'result' ? ResultStatement : ScanStatement).safeParse(json);

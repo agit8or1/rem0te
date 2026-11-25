@@ -1,5 +1,5 @@
 /**
- * Settings → Backups (0.82 Wharf): what the setup page says. Pure — no
+ * Administration → Backup connections (0.82 Wharf): what the setup page says. Pure — no
  * imports but ./model — and unit-tested by apps/api/scripts/unit-backup-setup.mjs.
  *
  *   - the push address St0r is given, built from the public address setting;
@@ -71,7 +71,7 @@ export interface SetupFacts {
   addressOk: boolean;
 }
 
-/** Every capability on Settings → Backups, in the four states, for one business. */
+/** Every capability on Administration → Backup connections, in the four states, for one business. */
 export function capabilityStates(f: SetupFacts): Capability[] {
   const reported = !!f.st0r?.lastSyncAt;
   return [
@@ -94,14 +94,14 @@ export function capabilityStates(f: SetupFacts): Capability[] {
       note: 'A successful job is never shown as verified; only a real (not simulated) drill of that job\'s own recovery point verifies it.',
     },
     {
-      key: 'link.computers', label: 'Assets linked to computers',
+      key: 'link.computers', label: 'Assets linked to devices',
       state: f.assets === 0 ? 'requires_setup' : 'available',
       note: f.assets === 0 ? 'Assets appear after St0r reports.' : `${f.linkedAssets} of ${f.assets} linked. Link the rest on the Backups page.`,
     },
     {
       key: 'alerts', label: 'Backup alerts (stale, failed, drill failed, RPO exceeded)',
       state: f.backupMonitors > 0 ? 'available' : 'requires_setup',
-      note: f.backupMonitors > 0 ? `${f.backupMonitors} backup monitor(s) apply.` : 'Add a backup monitor in Settings → Monitoring. An alert is raised only on a linked asset.',
+      note: f.backupMonitors > 0 ? `${f.backupMonitors} backup monitor(s) apply.` : 'Add a backup monitor in Monitoring → Monitoring policies. An alert is raised only on a linked asset.',
     },
     { key: 'comet', label: 'Comet Backup', state: 'planned', note: 'Roadmap 4.4: read-only, with a Comet API token, on a public DNS name with valid TLS. Creating a Comet connection is refused until then.' },
     { key: 'drill.start', label: 'Start a restore drill from Rem0te', state: 'planned', note: 'Roadmap 4.5. Drills are St0r\'s; Rem0te shows them.' },

@@ -77,7 +77,7 @@ function attentionItems(
   // A computer heartbeating with a secret the server does not hold looks
   // offline and ignores every request — that outranks everything else.
   if (inv?.secretMismatch) {
-    items.push({ key: 'secret', tone: 'critical', icon: KeyRound, label: 'Heartbeats refused', detail: 'new device secret', tab: 'overview', title: 'This computer is calling in with a device secret the server does not hold. Review it on the Overview tab.' });
+    items.push({ key: 'secret', tone: 'critical', icon: KeyRound, label: 'Heartbeats refused', detail: 'new device secret', tab: 'overview', title: 'This device is calling in with a device secret the server does not hold. Review it on the Overview tab.' });
   }
 
   // Alerts. `alerts` is null when the viewer may not see them; say nothing then.

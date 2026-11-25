@@ -140,7 +140,7 @@ export function ToolsPanel({
 }) {
   const { facts, titles, loading } = useToolFacts(endpointId, ep, patches, perms, open);
   const tools = deviceTools(endpointId, facts);
-  const name = (ep.name as string) ?? 'this computer';
+  const name = (ep.name as string) ?? 'this device';
   // Closed without picking: focus goes back to the Tools button. After a pick,
   // the opened tab places the focus (the check's Run button, the action).
   const picked = useRef(false);

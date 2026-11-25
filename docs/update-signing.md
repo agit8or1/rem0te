@@ -31,9 +31,9 @@ sudo rem0te-signed-status                                    # any time
 
 Setup runs the first publish itself, but the portal doesn't see the repository until the API restarts with
 `UPDATE_REPO_DIR` set (`--apply-env` adds it to `/etc/reboot-remote/api.env`; without it, setup prints the line to
-add). **Within a minute of that restart the automatic migration asks its first computer, the canary**, because it is
-on by default ([Moving computers automatically](#moving-computers-automatically-037)). To hold it, turn it off on
-**Devices → Full agent** before the restart, or put `AUTO_MIGRATION_SWEEP=off` in `api.env`. To move computers by
+add). **Within a minute of that restart the automatic migration asks its first device, the canary**, because it is
+on by default ([Moving devices automatically](#moving-devices-automatically-037)). To hold it, turn it off on
+**Devices → Full agent** before the restart, or put `AUTO_MIGRATION_SWEEP=off` in `api.env`. To move devices by
 hand instead, see [Moving existing agents](#moving-existing-agents).
 
 ### What each command does
@@ -199,7 +199,7 @@ portal host, readable only by `rem0te-release`. The root keys then move to offli
 `rem0te-signed-export-root`. The targets, snapshot and timestamp keys stay on the host so publishing and the daily
 timestamp can run.
 
-**Signing that approves a job,** such as a fix that changes something on an endpoint, is a different key hierarchy. It
+**Signing that approves a job,** such as a fix that changes something on a device, is a different key hierarchy. It
 belongs to a later milestone and never appears in this repository. **Portal administration,** meaning sessions and
 passkeys, can't sign anything at all.
 
@@ -299,7 +299,7 @@ Run these on the release machine, from the release tag.
 
 **Keep the timestamp fresh.** It expires after 7 days. Run `rem0te-release refresh -repo … -timestamp-key …` at least
 every 3 days on the signer host, then sync. The easy way does this daily with `rem0te-timestamp-refresh.timer`. If it lapses, every agent refuses updates, which is the intended failure
-mode. Settings → Security → Update Signing warns 48 hours before any role expires.
+mode. Security → Update signing warns 48 hours before any role expires.
 
 ## Portal configuration
 
@@ -323,7 +323,7 @@ as `reboot` (see *The trade-off* above).
 
 ## Containment of the legacy path
 
-Settings → Security → Update Signing has two settings:
+Security → Update signing has two settings:
 
 | Setting | Legacy agents | `windows.ps1` | Changing it |
 |---|---|---|---|
@@ -331,7 +331,7 @@ Settings → Security → Update Signing has two settings:
 | **Signed only** | Get no reinstall or update trigger from the heartbeat | A refusal that runs nothing | Takes effect at once |
 | **Signed only + portal migration** | Get the reinstall trigger only | A short script that downloads the signed agent, checks it against the digest the portal pins, and runs `migrate` | Turning portal migration on needs review |
 
-From 0.34 one computer can also be moved from the console (*Moving existing agents → One computer from the console*).
+From 0.34 one device can also be moved from the console (*Moving existing agents → One device from the console*).
 That is allowed in **Legacy allowed** and **Signed only + portal migration**, and refused in **Signed only**; it never
 changes the mode.
 
@@ -343,7 +343,7 @@ Notes on these settings:
 - The **Windows agents** table on the same page lists every legacy agent, and every signed agent still behind the
   current root. The channel is self-reported, and it only ever reduces what the portal hands an agent.
 
-## New computers get the full agent (0.39)
+## New devices get the full agent (0.39)
 
 Once a signed agent is published, **Add device** installs it directly, with nothing to upgrade later. Both ways of
 installing from that page do:
@@ -352,7 +352,7 @@ installing from that page do:
   unexpired enrolment token, that route serves a short script instead of the standard installer. The script
   downloads `windows/rem0te-agent.exe` by its published digest into a fresh directory locked to SYSTEM and
   Administrators, checks the SHA-256, and only then runs `rem0te-agent.exe install --portal <portal> --token <token>`.
-  The agent verifies the installer, RustDesk and the tray against signed metadata and claims the computer with the
+  The agent verifies the installer, RustDesk and the tray against signed metadata and claims the device with the
   token. The script never calls `exit`, so the window stays open with its output.
 - **The download link** (`windows.exe?token=…`), which has served the signed agent binary itself since 0.24.
 - **The .msi** (`windows.msi[?token=…]`, 0.65), which carries the published `windows/rem0te-agent.exe` unchanged in
@@ -361,7 +361,7 @@ installing from that page do:
   see [deployment.md](deployment.md#windows-installer-package-msi-065).
 
 Without a token the route is unchanged, because an existing standard agent's reinstall carries none. Moving those
-computers is the migration's job, canary first. An unknown, expired or claimed token gets the standard installer
+devices is the migration's job, canary first. An unknown, expired or claimed token gets the standard installer
 script, which then can't claim anything.
 
 ## Moving existing agents
@@ -386,16 +386,16 @@ the file's own SHA-256 is its name.
 
 **Locally:** run the same command from an elevated prompt.
 
-**Locally, from the computer's page (0.38).** On a standard Windows agent, **Overview → Agent** has *Upgrade on the
-computer itself*: one line to paste into PowerShell run as administrator on that computer, with a copy button. It is
+**Locally, from the device's page (0.38).** On a standard Windows agent, **Overview → Agent** has *Upgrade on the
+device itself*: one line to paste into PowerShell run as administrator on that device, with a copy button. It is
 built from the signed agent the repository publishes now. It downloads that build by its digest into a fresh
 directory locked to SYSTEM and Administrators, runs `migrate --portal <this portal>` only if the SHA-256 matches, and
 the agent verifies everything else against signed metadata. It is the same check as the portal-served migration
 script, without that script's `exit`, which would close the window and its output. It is offered in every portal
-mode, including *Signed only*, because nothing is served to the computer: a person runs it. It needs a published
-signed agent and a portal address, and anyone who can see the computer can see it (it holds no secret).
+mode, including *Signed only*, because nothing is served to the device: a person runs it. It needs a published
+signed agent and a portal address, and anyone who can see the device can see it (it holds no secret).
 
-When a computer fetched a migration and has not checked in since, the block opens by itself and says so: the console
+When a device fetched a migration and has not checked in since, the block opens by itself and says so: the console
 cannot reach it, so this is the way back. That was every migration under 0.37.1–0.37.2 (see
 [troubleshooting](troubleshooting.md)).
 
@@ -403,68 +403,68 @@ cannot reach it, so this is the way back. That was every migration under 0.37.1�
 - That one run trusts the portal, exactly as every legacy run already does.
 - Use it when GPO or Intune isn't available, and only while you trust the portal.
 
-**Through the portal, one computer from the console (0.34).** Open the computer and press **Upgrade to full agent**
+**Through the portal, one device from the console (0.34).** Open the device and press **Upgrade to full agent**
 (the full agent is the signed agent), give a reason, and confirm it is you. From 0.37 the button sits at the top of
-the computer's page, beside Connect, for anyone with *computers:edit*, as well as on the **Overview → Agent** card; the
+the device's page, beside Connect, for anyone with *computers:edit*, as well as on the **Overview → Agent** card; the
 **Agent out of date** chip opens it too. Both places use the same request, dialog, fresh sign-in and audit entry. On a
 standard Windows agent it is always shown: when the server will not offer it (no signed release published, no device
 secret, *Signed only*, updates paused, a rollout running) it is disabled, with the reason beside it, what to do, and a
 link to **Devices → Full agent**. While a request is open it reads *Upgrade requested — waiting for check-in*. A signed
-agent shows **Full agent** instead; Linux and macOS show the installer command to re-run on the computer. For several at
+agent shows **Full agent** instead; Linux and macOS show the installer command to re-run on the device. For several at
 once, select them on **Devices → All devices** and use **Upgrade to full agent…** (at most 200 per request; each
-computer is decided on its own and refused with its reason). Follow them on **Devices → Agent migrations**
+device is decided on its own and refused with its reason). Follow them on **Devices → Agent migrations**
 (`/endpoints/agent-migrations`).
 
 What happens:
-- The request names that computer. Its next authenticated heartbeat — and no other computer's — is handed the
+- The request names that device. Its next authenticated heartbeat — and no other device's — is handed the
   reinstall flag with a one-off nonce (`mig_…`).
 - The standard agent fetches `windows.ps1?updateNonce=<nonce>`. For an open request that serves the same migration
   script as *Signed only + portal migration*, pinned to the digest of `windows/rem0te-agent.exe` in the signed targets
   the portal serves **at that moment**. The script downloads that file, refuses it if the digest differs, and runs
   `migrate`, which keeps the enrolment, device secret and RustDesk configuration. It stages the binary in a new,
   randomly named directory locked to SYSTEM and Administrators.
-- The request completes when the computer's heartbeat reports the signed channel. It is **held**, not handed out,
-  while an `updates` containment pause applies, while a staged rollout owns the computer, if the portal is moved to
+- The request completes when the device's heartbeat reports the signed channel. It is **held**, not handed out,
+  while an `updates` containment pause applies, while a staged rollout owns the device, if the portal is moved to
   **Signed only** in the meantime (the nonce then serves a script that runs nothing), or if no signed agent is
-  published. A request handed out over two hours ago whose computer still reports the standard agent shows as **Not
+  published. A request handed out over two hours ago whose device still reports the standard agent shows as **Not
   confirmed**: the standard agent doesn't report the script's exit code. From 0.34 its heartbeat does report what
   `rem0te-agent.exe` last wrote to `agent-status.json`, so a failed `migrate` shows its result on the card.
 - An agent older than 0.20 ignores the nonce and simply reinstalls the current standard agent; the request stays open
   and the next attempt, 30 minutes later, migrates it.
 
 The preconditions, each refused with its own reason: a signed repository is configured and lists the signed agent
-(*No signed release is published …*); the computer is a Windows standard agent with a device secret, not archived;
+(*No signed release is published …*); the device is a Windows standard agent with a device secret, not archived;
 the portal has an https public address or a relay host; the portal is not in **Signed only**; no `updates` pause
-applies; no staged rollout is running on it. It needs **computers:edit** on that computer (the same as **Reinstall
+applies; no staged rollout is running on it. It needs **computers:edit** on that device (the same as **Reinstall
 agent**), a fresh sign-in, and a reason, which is audited (`AGENT_MIGRATION_REQUESTED`; also
 `AGENT_MIGRATION_COMPLETED`, `AGENT_MIGRATION_CANCELLED`, and `DEVICE_BULK_ACTION` for a selection).
 
 **Why this needs no second person, when turning on portal migration does.** A standard agent already trusts the
 portal completely: anyone who can press *Reinstall agent* on it can make the portal run its installer there as
-SYSTEM. Migrating that one computer is one more such run, of a fixed script whose only inputs are the portal's address
+SYSTEM. Migrating that one device is one more such run, of a fixed script whose only inputs are the portal's address
 and the digest the offline-signed repository lists. It gives a compromised portal nothing it didn't already have
 over that machine, and leaves the machine where the portal has *less* power: afterwards it runs only code signed by
 keys the portal never holds. Turning on portal migration is different: it decides what **every** legacy agent is
 handed, including ones nobody asked about, which is why it goes to review.
 
 **Why it is refused in Signed only.** In that mode you have contained the legacy agents: the portal hands them nothing
-to run. A per-computer migration is a portal-served script run on a legacy agent — exactly what the mode withholds,
+to run. A per-device migration is a portal-served script run on a legacy agent — exactly what the mode withholds,
 and what turning on portal migration puts to review. Allowing it would let one person reopen, machine by machine, the
 path the mode closed. In Signed only, migrate locally or through GPO/Intune, or ask for portal migration. That the
 script itself is harmless today doesn't change this: what the mode contains is the legacy agent running whatever the
 portal serves.
 
 To check a machine afterwards, run `rem0te-agent.exe status`. It prints the pin, the trust-root version and the
-result of the last update. From 0.34 the heartbeat also reports that last result and its time, and the computer's
+result of the last update. From 0.34 the heartbeat also reports that last result and its time, and the device's
 **Agent** card shows them; signed builds published before 0.34 don't report it.
 
 **Updating an agent that already runs.** The Agent card's **Update agent** re-runs the current standard installer on a
 standard agent (the existing reinstall: same permission, same audit, refused under an `updates` pause and in Signed
 only). On a signed agent the same button is **Check for update now**: the agent runs `rem0te-agent.exe update`, which
 installs only what the signed repository lists. Linux and macOS agents act on nothing the portal sends, so the card
-gives the command to re-run on the computer instead.
+gives the command to re-run on the device instead.
 
-## Moving computers automatically (0.37)
+## Moving devices automatically (0.37)
 
 From 0.37 the portal moves standard Windows agents to the signed agent by itself, once a signed agent is published.
 **Devices → Full agent** (`/endpoints/full-agent`) shows the whole process as four steps, each with its live state and,
@@ -478,18 +478,18 @@ when it is not done, the command that does it:
 3. **Timestamp kept fresh** — when the timestamp the portal serves expires, with a warning under 48 hours. The timer
    `rem0te-timestamp-refresh.timer` re-signs it daily, but the portal can't see that timer: the step reads only the
    expiry of what it serves, and says so. `sudo rem0te-signed-status` shows the timer itself.
-4. **Computers moved** — how many of the computers you can see are standard, moving, signed, held (and why), or not
+4. **Devices moved** — how many of the devices you can see are standard, moving, signed, held (and why), or not
    eligible (Linux, macOS), the automatic migration's state, and a list with a link to each.
 
-The page is under **Devices**, for anyone with **View computers**. Each computer's **Agent** card and **Settings →
-Security → Update signing** link to it. Its counts come only from computers you can see; the repository, the mode and
+The page is under **Devices**, for anyone with **View devices**. Each device's **Agent** card and **Settings →
+Security → Update signing** link to it. Its counts come only from devices you can see; the repository, the mode and
 the rollout's state are platform-wide. The canary is named only to people who can see it, and the fleet-wide progress
 only to Platform Admins.
 
 **How it moves them: canary first.** The automatic migration runs one rollout per published build:
 
-- **One canary.** It picks one eligible computer that is checking in now, the most recently heard from, and makes an
-  ordinary per-computer migration request for it. This is the same row, nonce, `windows.ps1?updateNonce=` script and
+- **One canary.** It picks one eligible device that is checking in now, the most recently heard from, and makes an
+  ordinary per-device migration request for it. This is the same row, nonce, `windows.ps1?updateNonce=` script and
   heartbeat hand-out as **Upgrade to full agent** (see *Moving existing agents* above), made by the system with no
   requester.
 - **Confirmed only on the published build.** The canary must report the signed channel *and* the published build's
@@ -500,33 +500,33 @@ only to Platform Admins.
 - **A soak.** After confirmation the canary must keep reporting that build for the soak (default 60 minutes, 15–1440)
   with no failed update result, and check in once more after the soak ends. Anything else halts the rollout. Nothing
   else moves during the soak.
-- **Then the rest, paced.** At most the automatic-update pace (Settings → Client updates, *per hour*, default 120)
-  automatic requests start in any hour, counting the canary, and at most 50 in one pass. A computer is skipped while
+- **Then the rest, paced.** At most the automatic-update pace (Patching → Client updates, *per hour*, default 120)
+  automatic requests start in any hour, counting the canary, and at most 50 in one pass. A device is skipped while
   an `updates` containment pause applies, while a staged rollout owns it, while its update policy opts it out of
-  automatic agent updates (agent mode *Off* on the business, site or device-group policy; in *Window* mode, outside
+  automatic agent updates (agent mode *Off* on the customer, site or device-group policy; in *Window* mode, outside
   the window), while it is not checking in, if a person cancelled a move for it, or for any reason **Upgrade to full
   agent** would refuse it. That last check is the same precondition function, run again when the request is written.
-- **A new build** starts a new rollout with a new canary for the computers still on the standard agent. Computers
+- **A new build** starts a new rollout with a new canary for the devices still on the standard agent. Devices
   already on the signed agent are never migrated again: they update themselves (0.36).
 - **Halted** stays halted. A Platform Admin can **Resume**, which asks the same canary again with its clocks from now,
   or **Restart with another canary**. The old canary isn't picked again for that build. Neither skips the canary.
 
-**Refused exactly as per-computer migration is.** In **Signed only**, with or without portal migration, the automatic
+**Refused exactly as per-device migration is.** In **Signed only**, with or without portal migration, the automatic
 migration does nothing. Without portal migration, the portal hands standard agents nothing to run, which is what a
-per-computer migration is refused for. With it, every standard agent is already handed the migration at each check-in.
-Containment holds it at the request and again at the heartbeat. Nothing new runs on a computer, and nothing writes the
+per-device migration is refused for. With it, every standard agent is already handed the migration at each check-in.
+Containment holds it at the request and again at the heartbeat. Nothing new runs on a device, and nothing writes the
 update-trust mode.
 
 **Settings.** On the Full agent page, a Platform Admin can set the mode (`canary_then_all`, the default, or `off`) and the soak.
 Turning it on, or shortening the soak, needs a fresh sign-in. Turning it off, or lengthening the soak, doesn't: stopping
 must always be easy. Every change is audited with before and after (`AGENT_AUTO_MIGRATION_SETTINGS_CHANGED`). So are
 the rollout's steps, as the system: `AGENT_AUTO_MIGRATION_CANARY_CHOSEN`, `…_CANARY_CONFIRMED`, `…_ROLLING`,
-`…_HALTED`, and `…_RESUMED` / `…_RESTARTED` with the admin. The per-computer requests aren't audit entries. They are
+`…_HALTED`, and `…_RESUMED` / `…_RESTARTED` with the admin. The per-device requests aren't audit entries. They are
 `AgentMigration` rows marked automatic, shown on the Agent card, on **Agent migrations** and on the Full agent page,
 like 0.36's automatic-update attempts. `AUTO_MIGRATION_SWEEP=off` stops the sweep in one API process, and every test
 stack sets it. `AUTO_MIGRATION_SWEEP_SECONDS` (default 60) sets how often it runs.
 
-**What has not been proven.** The signed agent and the tray have not run on real Windows. The first computer the
+**What has not been proven.** The signed agent and the tray have not run on real Windows. The first device the
 automatic migration moves is the first time, which is why the rest wait for it. Watch the canary's **Agent** card. If
 the rollout halts, run `rem0te-agent.exe status` on the canary before resuming.
 
@@ -554,7 +554,7 @@ are refused by the signed pause and install only what signed metadata lists:
   `C:\ProgramData\Rem0te\update-check.next`; the first sighting only
   schedules, and a due time more than two days out (a clock that jumped) is
   rescheduled rather than acted on. This is in the signed `windows/install.ps1`
-  that writes the heartbeat, so **it reaches a computer only after a signed
+  that writes the heartbeat, so **it reaches a device only after a signed
   release built from 0.36 is published with the owner's keys** and installed
   there. A compromised portal can withhold the permission (no worse than
   today) or grant it, which runs only signed code.
@@ -592,8 +592,8 @@ The Go tests rehearse:
 ## Publishing a signed pause
 
 From 0.28 the repository can carry `control/pause.json`, a pause signed with the same targets key as everything
-else. Agents on a 0.28+ signed build read it from the signed targets and **refuse approved actions** for the businesses
-or computers it names, and optionally **refuse the update command** everywhere. The portal mirrors it like any
+else. Agents on a 0.28+ signed build read it from the signed targets and **refuse approved actions** for the customers
+or devices it names, and optionally **refuse the update command** everywhere. The portal mirrors it like any
 target, so it cannot forge, alter or quietly drop it. It is the containment layer that holds when the portal itself
 may be compromised. See [Containment](containment.md).
 
@@ -611,7 +611,7 @@ rem0te-release pause-file -out pause.json -none
 `release` refuses a `control/pause.json` that does not parse as `rem0te-pause/1`. An agent that sees it listed but
 can't fetch or parse it treats every action and the update command as paused. Withholding a *newer* pause only works
 until the signed timestamp expires (7 days by default), after which agents refuse the repository altogether. An
-update pause can't be narrowed to a business: the update command runs before the agent knows which business it serves.
+update pause can't be narrowed to a customer: the update command runs before the agent knows which customer it serves.
 
 ## Recovery
 

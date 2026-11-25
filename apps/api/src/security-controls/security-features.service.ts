@@ -44,7 +44,7 @@ export class SecurityFeaturesService {
     if (actor.isPlatformAdmin) return businessId || null;
     if ((actor.platformPermissions ?? []).includes(PLATFORM_PERM.TECHNICIANS_MANAGE)) return businessId || null;
     if (actor.businessId && isOwnerRole(actor.roleType)) {
-      if (businessId && businessId !== actor.businessId) throw new ForbiddenException('Only your own business');
+      if (businessId && businessId !== actor.businessId) throw new ForbiddenException('Only your own customer');
       return actor.businessId;
     }
     throw new ForbiddenException('Security configuration is visible to Platform Admins, technician managers and Business Owners');
@@ -77,7 +77,7 @@ export class SecurityFeaturesService {
     // endpoint does — the endpoint rows below are counted separately.
     out['attended-consent'] = {
       state: c.attendedConsent === 'required' ? 'Required for preset launches' : 'Not required',
-      detail: `Portal policy for ${where}. Members, custom assignments and Platform Admins are never asked: computers installed by Rem0te accept the permanent password.`,
+      detail: `Portal policy for ${where}. Members, custom assignments and Platform Admins are never asked: devices installed by Rem0te accept the permanent password.`,
       source: 'portal-policy',
     };
     out['unattended'] = {
@@ -106,7 +106,7 @@ export class SecurityFeaturesService {
     ]);
     const enforcement = { state: reporting ? `${reporting} of ${total} computers report it` : `No computer reports it (0 of ${total})`, detail: 'Endpoint.sessionEnforcement, as reported by agents. Without a report the launch is refused.', source: 'endpoint-reports' as const };
     out['view-only'] = enforcement;
-    out['input-control'] = { ...enforcement, detail: 'Control needs an activated temporary grant and, when consent is required, an endpoint that reports consent enforcement.' };
+    out['input-control'] = { ...enforcement, detail: 'Control needs an activated temporary grant and, when consent is required, a device that reports consent enforcement.' };
 
     // Session evidence: what the last 30 days actually produced, by how it
     // was established. Counted, not inferred.
@@ -120,7 +120,7 @@ export class SecurityFeaturesService {
     ]);
     out['session-evidence'] = {
       state: launched ? `${confirmed} of ${launched} launches confirmed, ${measured} measured` : 'No launches in 30 days',
-      detail: `Last 30 days, ${where}. ${unknown} ended as Status unknown. Confirmed = the endpoint agent or the technician reported a connection.`,
+      detail: `Last 30 days, ${where}. ${unknown} ended as Status unknown. Confirmed = the device agent or the technician reported a connection.`,
       source: 'endpoint-reports',
     };
 
@@ -151,7 +151,7 @@ export class SecurityFeaturesService {
     const counts = jobs.map((g) => `${g._count._all} ${g.status.toLowerCase().replace(/_/g, ' ')}`).join(', ');
     out['approved-actions'] = {
       state: signer ? `Signer configured · ${supporting} of ${total} computers support it` : 'No approval signer configured',
-      detail: `Last 30 days, ${where}: ${counts || 'no requests'}. Support is what signed agents report; whether a given plan runs is decided on the computer.`,
+      detail: `Last 30 days, ${where}: ${counts || 'no requests'}. Support is what signed agents report; whether a given plan runs is decided on the device.`,
       source: 'endpoint-reports',
     };
 
@@ -163,7 +163,7 @@ export class SecurityFeaturesService {
     const dCounts = deployments.map((g) => `${g._count._all} ${g.status.toLowerCase()}`).join(', ');
     out['staged-patching'] = {
       state: signer ? `${patchSupporting} of ${total} computers can install approved updates` : 'No approval signer configured',
-      detail: `Last 30 days, ${where}: ${dCounts ? `deployments ${dCounts}` : 'no deployments'}. Support is what signed agents report; each computer still asks Windows Update itself before installing.`,
+      detail: `Last 30 days, ${where}: ${dCounts ? `deployments ${dCounts}` : 'no deployments'}. Support is what signed agents report; each device still asks Windows Update itself before installing.`,
       source: 'endpoint-reports',
     };
 
@@ -175,7 +175,7 @@ export class SecurityFeaturesService {
     ]);
     out['monitoring'] = {
       state: mRules ? `${mRules} monitor${mRules === 1 ? '' : 's'} in effect · ${mOpen} active alert${mOpen === 1 ? '' : 's'}` : 'No monitors configured',
-      detail: `${mSup ? `${mSup} maintenance window${mSup === 1 ? '' : 's'} open now. ` : ''}Settings → Monitoring.`,
+      detail: `${mSup ? `${mSup} maintenance window${mSup === 1 ? '' : 's'} open now. ` : ''}Monitoring → Monitoring policies.`,
       source: 'portal-policy',
     };
 
@@ -186,7 +186,7 @@ export class SecurityFeaturesService {
     });
     out['containment'] = {
       state: pauses.length ? `${pauses.length} active pause${pauses.length === 1 ? '' : 's'}${pauses.some((p) => p.scope === 'GLOBAL') ? ' (including a global one)' : ''}` : 'Nothing paused',
-      detail: pauses.length ? `Paused: ${[...new Set(pauses.flatMap((p) => p.kinds))].join(', ')}. Settings → Security → Containment.` : `Signer layer ${signer ? 'available (signer configured)' : 'unavailable (no signer configured)'}. Agent layer: a signed control/pause.json, published from the release machine.`,
+      detail: pauses.length ? `Paused: ${[...new Set(pauses.flatMap((p) => p.kinds))].join(', ')}. Security → Containment.` : `Signer layer ${signer ? 'available (signer configured)' : 'unavailable (no signer configured)'}. Agent layer: a signed control/pause.json, published from the release machine.`,
       source: 'portal-policy',
     };
     // The audit chain: what the last verification found. Platform-wide.

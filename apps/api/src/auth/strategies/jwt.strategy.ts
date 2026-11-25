@@ -131,7 +131,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         capabilities = membership.capabilities ?? [];
         if (!isPlatformAdmin && membership.customer &&
             (!membership.customer.isActive || membership.customer.isArchived)) {
-          throw new UnauthorizedException('This business is disabled');
+          throw new UnauthorizedException('This customer is disabled');
         }
       } else if (!isPlatformAdmin) {
         roleType = null;
@@ -180,7 +180,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         // A disabled or archived business locks out its own users immediately.
         if (!isPlatformAdmin && membership.customer) {
           if (!membership.customer.isActive || membership.customer.isArchived) {
-            throw new UnauthorizedException('This business is disabled');
+            throw new UnauthorizedException('This customer is disabled');
           }
         }
       }
@@ -199,7 +199,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     if (noMembership && !isPlatformAdmin && extras.assignedBusinessIds.length === 0 &&
         extras.platformPermissions.length === 0) {
-      throw new UnauthorizedException('Your access to this business is no longer active');
+      throw new UnauthorizedException('Your access to this customer is no longer active');
     }
 
     if (extras.technician) {

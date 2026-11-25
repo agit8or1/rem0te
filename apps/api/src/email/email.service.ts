@@ -379,7 +379,7 @@ export class EmailService {
     const uniq = [...new Set(ids)];
     const n = uniq.length ? await this.prisma.emailRecipient.count({ where: { id: { in: uniq }, scopeKey, verifiedAt: { not: null } } }) : 0;
     if (n !== uniq.length) {
-      throw new BadRequestException({ code: 'RECIPIENT_NOT_CONFIRMED', message: 'Every email recipient must be a confirmed address of this business (Settings → Monitoring → Email recipients).' });
+      throw new BadRequestException({ code: 'RECIPIENT_NOT_CONFIRMED', message: 'Every email recipient must be a confirmed address of this business (Monitoring → Monitoring policies → Email recipients).' });
     }
     return uniq;
   }

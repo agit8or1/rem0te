@@ -1021,7 +1021,7 @@ async function addDevice(page, f, vp, label) {
   await go(page, '/endpoints/enroll');
   await noSideScroll(page, `${label} Add device`);
   await page.locator('#ad-business').selectOption(f.A.id);
-  await page.getByRole('radio', { name: /Everyone in the business/ }).check();
+  await page.getByRole('radio', { name: /Everyone at the customer/ }).check();
   await page.locator('[data-testid="place-next"]').click();
   await page.getByRole('radio', { name: /Windows/ }).first().check();
   const before = await prisma.deviceClaimToken.count({ where: { customerId: f.A.id } });
@@ -1436,7 +1436,7 @@ async function falsePositiveUi(page, f, vp, label) {
   await go(page, '/alerts/quality');
   await page.getByTestId('q-totals').waitFor({ timeout: 20_000 }).catch(() => {});
   const totals = await page.getByTestId('q-totals').innerText().catch(() => '');
-  check(/False-positive reports/.test(totals) && /Rules awaiting approval/.test(totals), `${label}: False Positives & Rule Improvements shows its totals`, totals.replace(/\s+/g, ' ').slice(0, 200));
+  check(/False-positive reports/.test(totals) && /Rules pending approval/.test(totals), `${label}: False Positives & Rule Improvements shows its totals`, totals.replace(/\s+/g, ' ').slice(0, 200));
   if (fpProposed) {
     // Proposing converted the recommendation; the rule waits in the rules list, unapproved.
     const row = page.getByTestId('q-rule-row').filter({ hasText: 'disk-errors' }).first();
@@ -1507,7 +1507,7 @@ async function mapMarkers(page, label) {
   const tip = page.locator('[data-testid="dashboard-map"] .bg-popover');
   await tip.waitFor({ timeout: 5_000 }).catch(() => {});
   const tipText = (await tip.innerText().catch(() => '')).replace(/\s+/g, ' ');
-  check(tipText.includes(GEO.silent.city) && /1 computer · 0 online · 1 agent silent/.test(tipText),
+  check(tipText.includes(GEO.silent.city) && /1 device · 0 online · 1 agent silent/.test(tipText),
     `${label}: hovering it says "1 computer · 0 online · 1 agent silent"`, tipText);
   await cleanCheck(page, `${label} map markers`);
 }
@@ -2145,7 +2145,7 @@ async function chatTab(page, f, vp, label) {
   r = await device.reply(ep, conv?.id, answer);
   const reply = page.locator('[data-testid="chat-message"]').filter({ hasText: answer });
   await reply.waitFor({ timeout: 15_000 }).catch(() => {});
-  check(r.status === 200 && await reply.isVisible() && /\(at the computer\)/.test(await reply.innerText().catch(() => '')) && await reply.locator('b').count() === 0,
+  check(r.status === 200 && await reply.isVisible() && /\(at the device\)/.test(await reply.innerText().catch(() => '')) && await reply.locator('b').count() === 0,
     `${label}: the person's reply appears, signed from the computer, as text (no HTML)`, `HTTP ${r.status} ${await reply.innerText().catch(() => '')}`);
   await shot(page, `${label}-chat`);
   await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
@@ -2399,7 +2399,7 @@ async function msaReadinessUi(page, f, vp, theme, label) {
   const h1 = await page.locator('main h1').first().innerText().catch(() => '');
   const note = await page.getByTestId('msa-fleet-note').innerText().catch(() => '');
   const compat = Number((await page.getByTestId('msa-count-compatible').innerText().catch(() => '0')).split('\n')[0]);
-  check(h1 === 'Remote access readiness' && /nothing has changed on any computer/.test(note) && compat >= 1 && await page.locator('[data-testid^="msa-count-"]').count() === 4,
+  check(h1 === 'Remote access readiness' && /nothing has changed on any device/.test(note) && compat >= 1 && await page.locator('[data-testid^="msa-count-"]').count() === 4,
     `${label}: Remote access readiness opens from the card: the note, four counts, Compatible ≥ 1`, JSON.stringify({ h1, note, compat }));
   await page.getByTestId('msa-count-compatible').click();
   await page.waitForFunction(() => {
@@ -2491,7 +2491,7 @@ async function backupsUi(page, f, vp, theme, label) {
   await linkSel.waitFor({ timeout: 10_000 }).catch(() => {});
   await page.waitForFunction((id) => !!document.querySelector(`[data-testid="backups-link-select"] option[value="${id}"]`), f.backups.ep.id, { timeout: 10_000 }).catch(() => {});
   const linkOpts = await linkSel.locator('option').allInnerTexts().catch(() => []);
-  check(linkOpts.some((o) => o.includes(`BKP-${sfx}-FS`)) && linkOpts.some((o) => /Not a computer/.test(o)) && linkOpts.some((o) => /Automatic/.test(o)), `${label}: "Link to computer" offers the business's computers, "not a computer" and automatic`, JSON.stringify(linkOpts));
+  check(linkOpts.some((o) => o.includes(`BKP-${sfx}-FS`)) && linkOpts.some((o) => /Not a device/.test(o)) && linkOpts.some((o) => /Automatic/.test(o)), `${label}: "Link to computer" offers the business's computers, "not a computer" and automatic`, JSON.stringify(linkOpts));
   if (vp === 'phone') await noSideScroll(page, `${label} Backups link control`);
   await row.getByRole('button', { name: 'Cancel' }).click().catch(() => {});
   await themeCheck(page, theme, `${label} Backups`);
@@ -2523,7 +2523,7 @@ async function backupSettingsUi(page, f, vp, theme, label) {
   check(/Create the St0r connection/.test(steps) && /Send a test push \(dry run\)/.test(steps) && /Token ends in/.test(steps) && /St0r push contract/.test(steps), `${label}: the five steps, the token's last four, and the contract`, steps.slice(0, 300));
   const conn = page.getByTestId('backup-connection').first();
   const connText = await conn.innerText().catch(() => '');
-  check(/1 \(1 linked to a computer\)/.test(connText) && await page.getByTestId('backup-rotate').count() === 1 && await page.getByTestId('backup-revoke').count() === 1,
+  check(/1 \(1 linked to a device\)/.test(connText) && await page.getByTestId('backup-rotate').count() === 1 && await page.getByTestId('backup-revoke').count() === 1,
     `${label}: the connection shows its assets, and Rotate and Revoke`, connText.slice(0, 300));
   const states = await page.locator('[data-testid="backup-settings-capabilities"] [data-capability]').evaluateAll((els) => els.map((e) => [e.getAttribute('data-capability'), e.getAttribute('data-state')]));
   const st = Object.fromEntries(states);
@@ -2636,7 +2636,7 @@ async function rollbackDisplays(page, f, vp, theme, label) {
   check(jn.rollback === 'inverse' && jn.repeat === 'safe' && /Uninstall/.test(jn.text), `${label}: a job shows its action's rollback and repeatability`, JSON.stringify(jn));
   const tally = page.getByTestId('job-tally').first();
   const tt = await tally.innerText();
-  check(await tally.getAttribute('data-partial') === 'true' && /Partial/.test(tt) && /Of 3 computers: 1 succeeded, 1 failed, 1 refused by the computer\./.test(tt),
+  check(await tally.getAttribute('data-partial') === 'true' && /Partial/.test(tt) && /Of 3 devices: 1 succeeded, 1 failed, 1 refused by the device\./.test(tt),
     `${label}: a plan over three computers shows Partial and how each stands, from the computer that succeeded`, tt);
   if (vp === 'phone') {
     const w = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, vw: innerWidth }));
@@ -2660,7 +2660,7 @@ async function terminalPanel(page, f, vp, theme, label) {
   await go(page, `/endpoints/${ep.id}?tab=terminal`);
   await page.getByTestId('terminal-tab').waitFor({ timeout: 15_000 });
   const warn = await page.getByTestId('terminal-identity').innerText();
-  check(/SYSTEM — full control of this computer/.test(warn), `${label}: the Terminal tab says SYSTEM — full control of this computer`, warn.slice(0, 200));
+  check(/SYSTEM — full control of this device/.test(warn), `${label}: the Terminal tab says SYSTEM — full control of this computer`, warn.slice(0, 200));
   await page.getByTestId('terminal-reason').fill(`UI check ${vp} ${theme}`);
   await page.context().setExtraHTTPHeaders({ 'x-forwarded-for': ip() });
   await page.getByTestId('terminal-open-button').click();
@@ -2715,7 +2715,7 @@ async function filesPanel(page, f, vp, theme, label) {
   await go(page, `/endpoints/${ep.id}?tab=files`);
   await page.getByTestId('files-tab').waitFor({ timeout: 15_000 });
   const warn = await page.getByTestId('files-identity').innerText();
-  check(/SYSTEM — full control of this computer/.test(warn), `${label}: the Files tab says SYSTEM — full control of this computer`, warn.slice(0, 200));
+  check(/SYSTEM — full control of this device/.test(warn), `${label}: the Files tab says SYSTEM — full control of this computer`, warn.slice(0, 200));
   const confirmIfAsked = async () => {
     const dlg = stepUpDialog(page);
     if (await dlg.waitFor({ timeout: 3_000 }).then(() => true).catch(() => false)) {
@@ -2737,7 +2737,7 @@ async function filesPanel(page, f, vp, theme, label) {
   const down = await prisma.fileTransfer.findFirst({ where: { endpointId: ep.id, direction: 'from_computer' }, orderBy: { createdAt: 'desc' } });
   check(await card.getAttribute('data-state') === 'pending' && down?.state === 'pending' && down.technicianId === f.admin.id && down.path === 'C:\\Windows\\Logs\\CBS\\CBS.log',
     `${label}: a fetch is asked for and waits for the computer`, `${await card.getAttribute('data-state').catch(() => null)} ${down?.state}`);
-  check(/next check-in/.test(await card.getByTestId('files-progress-state').innerText()) && /Fetching from the computer/.test(await card.innerText()),
+  check(/next check-in/.test(await card.getByTestId('files-progress-state').innerText()) && /Fetching from the device/.test(await card.innerText()),
     `${label}: the progress card says the direction and that it starts at the next check-in`);
 
   // Send.
@@ -2754,7 +2754,7 @@ async function filesPanel(page, f, vp, theme, label) {
   const body = Buffer.from(`ui check ${vp} ${theme}\n`);
   check(up?.state === 'pending' && up.sha256 === createHash('sha256').update(body).digest('hex') && Number(up.size) === body.length,
     `${label}: a send declares the size and the SHA-256 the browser computed`, `${up?.state} ${up?.sha256}`);
-  check(/Sending to the computer/.test(await upCard.innerText().catch(() => '')), `${label}: the send shows its direction`);
+  check(/Sending to the device/.test(await upCard.innerText().catch(() => '')), `${label}: the send shows its direction`);
   await themeCheck(page, theme, `${label} Files tab`);
   if (vp === 'phone') await noSideScroll(page, `${label} Files tab`);
   await shot(page, `${label}-files`);
@@ -3432,7 +3432,7 @@ async function patchingApprovalModes(page, f, vp, label) {
       }
       await testFirst.check();
       const staged = await page.locator('[data-testid="pol-staging"]').innerText();
-      check(/One computer installs first/.test(staged) && /Soak between rings/.test(await page.locator('main').innerText()),
+      check(/One device installs first/.test(staged) && /Soak between rings/.test(await page.locator('main').innerText()),
         `${label} (${mode}): ticking "Test on one computer first" brings back the canary, the rings and the soak`, staged.slice(0, 200));
       if (vp === 'phone') await noSideScroll(page, `${label} patch policy (${mode})`);
       await shot(page, `${label}-patch-policy-${mode}`);

@@ -31,9 +31,9 @@ export const emailDriver: PsaDriver = {
 
   async ready(row, deps) {
     const r = row.emailRecipientId ? await deps.prisma.emailRecipient.findFirst({ where: { id: row.emailRecipientId, scopeKey: row.scopeKey } }) : null;
-    if (!r) return { ok: false, reason: 'The PSA\'s support address was removed. Pick another under Settings → PSA / ticketing.' };
+    if (!r) return { ok: false, reason: 'The PSA\'s support address was removed. Pick another under Administration → PSA / ticketing.' };
     if (!r.verifiedAt) return { ok: false, reason: 'The PSA\'s support address has not been confirmed yet: open the confirmation email that arrived as a ticket and follow its link.' };
-    if (!(await deps.email.status()).enabled) return { ok: false, reason: 'Outbound email is off (Settings → Email).' };
+    if (!(await deps.email.status()).enabled) return { ok: false, reason: 'Outbound email is off (Administration → Email).' };
     return { ok: true };
   },
 

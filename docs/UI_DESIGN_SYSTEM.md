@@ -137,3 +137,51 @@ and smooth scrolling everywhere.
 
 Lucide (`lucide-react`), 18 px in the menu, `aria-hidden` beside a visible
 label and named (`aria-label`) when alone.
+
+## Words
+
+From 0.87.1 the console uses one word for each thing (UX_ROADMAP.md P1-1,
+owner decision 1a). The words are what a person reads; codes, routes, API
+fields, database models, audit action names and the ClientSt0r contract keep
+their names (`businessId`, `/endpoints`, `computers:view`, `BUSINESS_OWNER`).
+
+| Say | Not | Means |
+|---|---|---|
+| **Customer** | business, company, organisation | One of the MSP's clients: its devices, sites, people and settings |
+| **Device** | computer, endpoint, machine | A Windows, macOS or Linux machine Rem0te manages. Phones and tablets are **mobile devices** |
+| **Site** | location, office | A place within a customer |
+| **Device group** | computer group | A static or rule-based set of a customer's devices |
+| **Pending approval** | awaiting approval, waiting for approval | A request, policy or rule no approver has decided yet |
+| **Critical alert** | P1, sev 1 | An alert at the Critical severity |
+| **Maintenance window** | quiet hours, suppression | Hours set aside for work: monitoring holds notifications in one, and client updates install only inside one. It is not containment |
+| **Restart pending** | needs reboot, reboot pending | The OS reports it needs a restart. An update's result keeps Windows' own words, *restart required* |
+| **Platform Admin** | super admin, root | The MSP's administrator, across every customer |
+
+Kept on purpose, each for its reason:
+
+- **Business Owner** and **Business User**, the role names: they are stored
+  (`User.role`), mapped from SSO groups and named in the audit log and the
+  security documents. Renaming them is its own decision.
+- **Computer name**, **Computer Management**, **Computer Configuration**,
+  **Domain Computers**, **Apple Business Manager**, **line-of-business app**,
+  **Software Update** (macOS): other vendors' names.
+- **A real Windows computer** in "has not yet run on a real Windows
+  computer": an evidence statement about a physical machine, repeated word for
+  word by the API, the approval signer and the security invariants.
+- **Your own computer** and *Set up this computer for Connect*: the
+  technician's own workstation, which Rem0te does not manage.
+- **API endpoint**, **token endpoint**: an HTTP endpoint, not a device.
+- The pages for the person at the device (`/download`, `/quick`, the tray and
+  `/assist`) say *computer*: that person is not signed in to the console, and
+  "customer" is what they are, not what they read.
+
+**Sentence case** for every label, button, heading and menu entry: *Add
+customer*, *Save changes*, *Network / ports*. Product and feature names keep
+their capitals: *Quick Connect*, *RustDesk*, *Windows Update*, *Managed Secure
+Access*. A sentence that sends someone somewhere uses the menu they see:
+*Security → Containment*, not *Settings → Security → Containment*.
+
+`apps/web/scripts/check-terminology.mjs` (CI) fails on *business*, *computer*
+or *endpoint* in any text the console shows, and on a retired menu path; the
+kept phrases and the files it leaves alone are listed in it, each with its
+reason.

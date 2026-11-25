@@ -89,13 +89,13 @@ export function DeviceOverviewTab({
     <div className="space-y-4">
       <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
         <SummaryCard title="Assignment" icon={Building2}>
-          <Row label="Business">{customer?.name ?? '—'}</Row>
+          <Row label="Customer">{customer?.name ?? '—'}</Row>
           <Row label="Site">{site?.name ?? '—'}</Row>
           <Row label="Groups">
             <div className="flex flex-wrap gap-1 justify-end" data-testid="device-groups">
               {groups.length ? groups.map((g) => (
                 <Link key={g.id} href={groupHref(g.id)} data-group-kind={g.kind ?? 'static'} className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  title={g.kind === 'rule' ? `Rule group: this computer matches its rule now. Opens the device list filtered by ${g.name}.` : `Opens the device list filtered by ${g.name}.`}>
+                  title={g.kind === 'rule' ? `Rule group: this device matches its rule now. Opens the device list filtered by ${g.name}.` : `Opens the device list filtered by ${g.name}.`}>
                   <Badge variant={g.kind === 'rule' ? 'outline' : 'secondary'} className="text-xs hover:underline">{g.name}{g.kind === 'rule' ? ' · rule' : ''}</Badge>
                 </Link>
               )) : '—'}

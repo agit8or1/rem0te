@@ -77,7 +77,7 @@ export default function AuditPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <PageHeader title="Audit Log" description="Immutable activity trail" />
+      <PageHeader title="Audit log" description="Immutable activity trail" />
 
       <div className="flex gap-3 flex-wrap">
         <Input

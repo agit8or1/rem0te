@@ -54,7 +54,7 @@ export class TemporaryAccessService {
     const controls = await this.controls.effective(ep.customerId);
     const duration = Math.max(5, Math.min(p.durationMinutes, controls.maxSessionMinutes));
     const open = await this.prisma.temporaryAccessRequest.findFirst({ where: { userId: actor.userId, endpointId: ep.id, mode: p.mode, status: 'PENDING' } });
-    if (open) throw new ConflictException('You already have a pending request for this computer');
+    if (open) throw new ConflictException('You already have a pending request for this device');
     const row = await this.prisma.temporaryAccessRequest.create({
       data: { userId: actor.userId, customerId: ep.customerId, endpointId: ep.id, mode: p.mode, reason: p.reason.slice(0, 500), durationMinutes: duration },
     });

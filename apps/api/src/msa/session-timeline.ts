@@ -94,7 +94,7 @@ export function sessionTimeline(r: TimelineRow, now = Date.now()): Timeline {
     }
     case 'revoked':
       push('revoked', r.revokedAt, `Revoked (${r.revokeReason ?? 'revoked'}).`);
-      if (r.endedAt) steps.push({ step: 'revoked', label: 'Ended on the computer', at: iso(r.endedAt), note: r.outcome ? `The agent ended the session (${r.outcome}).` : 'The agent ended the session.' });
+      if (r.endedAt) steps.push({ step: 'revoked', label: 'Ended on the device', at: iso(r.endedAt), note: r.outcome ? `The agent ended the session (${r.outcome}).` : 'The agent ended the session.' });
       current = 'revoked';
       status = r.endedAt ? 'Revoked — ended on the computer' : (r.appliedAt ? 'Revoked — waiting for the agent to end it (offline: it ends at the session limit)' : 'Revoked before it was applied');
       break;

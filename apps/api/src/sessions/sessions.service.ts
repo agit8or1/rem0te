@@ -172,7 +172,7 @@ export class SessionsService {
           action: 'SESSION_LAUNCHED', resource: 'support_session',
           meta: { endpointId: endpoint.id, denied: 'no_access' },
         });
-        throw new ForbiddenException('You do not have access to this computer');
+        throw new ForbiddenException('You do not have access to this device');
       }
     }
 

@@ -1,6 +1,6 @@
 # Server sizing
 
-*Added in 0.33; heartbeat figures re-measured in 0.34; the automatic-snapshot cost measured in 0.36.* How big a server to give Rem0te for 50, 250, 1,000 and 5,000 computers, and why.
+*Added in 0.33; heartbeat figures re-measured in 0.34; the automatic-snapshot cost measured in 0.36.* How big a server to give Rem0te for 50, 250, 1,000 and 5,000 devices, and why.
 
 Every figure here is labelled:
 
@@ -12,11 +12,11 @@ Every figure here is labelled:
   behaviour. Nothing labelled estimated was observed on a real fleet.
 
 Nothing here has been observed on a production fleet of these sizes. The largest measured run was 5,000
-synthetic computers (0.34).
+synthetic devices (0.34).
 
 ## The short answer
 
-| Computers | vCPU | RAM | Disk (SSD) | PostgreSQL | Notes |
+| Devices | vCPU | RAM | Disk (SSD) | PostgreSQL | Notes |
 |---|---|---|---|---|---|
 | 50 | 2 | 2 GB | 20 GB | same host, defaults | Anything that runs Ubuntu 22.04 runs this |
 | 250 | 2 | 4 GB | 40 GB | same host, `shared_buffers` 512 MB | |
@@ -25,21 +25,21 @@ synthetic computers (0.34).
 
 The disk column is for a year of history with room for backups and client downloads; the database part of it is
 far smaller (see *Database growth*). Relay bandwidth depends on concurrent remote sessions, not on the number of
-computers, and is sized separately.
+devices, and is sized separately.
 
-## Heartbeats: the load that scales with computers
+## Heartbeats: the load that scales with devices
 
 The Windows agent heartbeats every **3 minutes** (`Rem0teHeartbeat` scheduled task). That is the only work every
-enrolled computer does all the time.
+enrolled device does all the time.
 
-| Computers | Heartbeats per second (estimated: N ÷ 180) | API CPU for them (estimated from the measured ≈ 35 ms each; ≈ 50 ms at 5,000) |
+| Devices | Heartbeats per second (estimated: N ÷ 180) | API CPU for them (estimated from the measured ≈ 35 ms each; ≈ 50 ms at 5,000) |
 |---|---|---|
 | 50 | 0.3 | 1% of one core |
 | 250 | 1.4 | 5% of one core |
 | 1,000 | 5.6 | 20% of one core |
 | 5,000 | 27.8 | 1.4 cores |
 
-Per steady-state heartbeat (nothing due; measured in 0.34, 1,000 computers, rounds after warm-up, load average
+Per steady-state heartbeat (nothing due; measured in 0.34, 1,000 devices, rounds after warm-up, load average
 3–11; 0.33's figures in brackets):
 
 | What | Measured |
@@ -53,28 +53,28 @@ Per steady-state heartbeat (nothing due; measured in 0.34, 1,000 computers, roun
 | **Throughput of one API process** | **61–83 /s at 4 in flight; 109–136 /s at 16 in flight** (61–71 /s in the run at load average 10) [18–23 /s; 34–41 /s] |
 | API memory (RSS) | ≈ 300 MB idle, 415–510 MB under this load |
 
-At 5,000 computers (measured, 16 in flight, two rounds, load average 6–7): **49–72 heartbeats a second at 46–51 ms
+At 5,000 devices (measured, 16 in flight, two rounds, load average 6–7): **49–72 heartbeats a second at 46–51 ms
 of API CPU each**, p50 190–245 ms, RSS ≈ 575 MB. The 0.33 build on the same host and fleet, immediately after (load
 average 11–15): 26–34 a second at 84–118 ms.
 
-A heartbeat inserts nothing in steady state: it updates the computer's node, endpoint and live-state rows. The
+A heartbeat inserts nothing in steady state: it updates the device's node, device and live-state rows. The
 growth comes from the work it hands out (inventory every 6 hours, update scans every 12 hours) and from people.
 
-### 5,000 computers on one API process
+### 5,000 devices on one API process
 
-5,000 computers need 27.8 heartbeats a second, sustained. In 0.33 one API process measured 18–41 a second, which
+5,000 devices need 27.8 heartbeats a second, sustained. In 0.33 one API process measured 18–41 a second, which
 fit without headroom. Most of that cost was one thing: **every heartbeat ran a `sqlite3` process** to ask hbbs's
-peer table whether the computer's RustDesk ID had ever registered (`peerRegisteredWithHbbs`). The query was
+peer table whether the device's RustDesk ID had ever registered (`peerRegisteredWithHbbs`). The query was
 trivial; starting a process for it was not, and it cost the Node process as much again as the child.
 
 Since 0.34 one `sqlite3` reads the whole peer table at most once every `HBBS_PEER_CACHE_SECONDS` (default 10,
 clamped to 1–30) and every heartbeat in between answers from memory — one process per 10 seconds instead of 28 a
 second. The answer cannot be staler than that window; an unreadable database still answers *unknown* (see
-[architecture.md](architecture.md)). Measured at 5,000 computers, one process did 49–72 heartbeats a second: 1.8–2.6×
+[architecture.md](architecture.md)). Measured at 5,000 devices, one process did 49–72 heartbeats a second: 1.8–2.6×
 what 5,000 need, on a host that was busy with other work.
 
 That headroom is for the steady state. After an outage every agent comes back within the same few minutes, and a
-computer's first heartbeat with its inventory costs ≈ 77 ms of API CPU (**measured** at 5,000 in 0.34), so a fleet
+device's first heartbeat with its inventory costs ≈ 77 ms of API CPU (**measured** at 5,000 in 0.34), so a fleet
 reconnecting at once is still worth watching: heartbeat latency is in the API log. More than 5,000 has not been
 measured.
 
@@ -84,40 +84,40 @@ and the web process, not the API's single event loop.
 
 ### First contact and inventory
 
-A computer's first heartbeat and its first inventory (a synthetic 150-application list) cost ≈ 110–125 ms of API
-CPU together in 0.33 and ≈ 77 ms in 0.34 at 5,000 computers (**measured**), and the inventory upload took 55–125 ms. The inventory request is ≈ 14 KB of JSON
-(**measured** for 150 applications). Enrolling a few hundred computers in an hour is not a sizing concern; a mass
-re-install across 5,000 computers is, for the same reason as above.
+A device's first heartbeat and its first inventory (a synthetic 150-application list) cost ≈ 110–125 ms of API
+CPU together in 0.33 and ≈ 77 ms in 0.34 at 5,000 devices (**measured**), and the inventory upload took 55–125 ms. The inventory request is ≈ 14 KB of JSON
+(**measured** for 150 applications). Enrolling a few hundred devices in an hour is not a sizing concern; a mass
+re-install across 5,000 devices is, for the same reason as above.
 
 
 ### Chat (0.34)
 
-Chat adds almost nothing per computer. A heartbeat from a signed agent that can chat makes one more indexed lookup:
-is a chat open here? It uses the partial unique index on open conversations. Other computers do no extra work.
+Chat adds almost nothing per device. A heartbeat from a signed agent that can chat makes one more indexed lookup:
+is a chat open here? It uses the partial unique index on open conversations. Other devices do no extra work.
 
 An **open** chat adds a long-poll: one request every 25 s or less while the window is up, each a few indexed
 queries. While the poll is held the API keeps a timer and re-reads the database every 10 s; it holds no database
 connection. Fifty chats open at once come to about two requests a second, small next to 27.8 heartbeats a second at
-5,000 computers. `CHAT_MAX_WAITERS` (default 500) caps how many polls are held at once; past it, polls are answered at
+5,000 devices. `CHAT_MAX_WAITERS` (default 500) caps how many polls are held at once; past it, polls are answered at
 once and the agent backs off. The held polls live in the API process, which is one more reason it runs as a single
 process. These are **estimates** from the code path; chat has not been load-tested
 ([chat.md](chat.md#capacity)).
 
 ### Automatic snapshots (0.35)
 
-From 0.35 the server asks each current Windows computer for its process list, service list and network adapters on
+From 0.35 the server asks each current Windows device for its process list, service list and network adapters on
 its own ([diagnostics.md](diagnostics.md#automatic-snapshots)): every 6 hours per key by default, and every 5 minutes
-for a key whose tab someone has open. The request rides on the heartbeat the computer already sends; there is no
+for a key whose tab someone has open. The request rides on the heartbeat the device already sends; there is no
 sweep over the fleet.
 
 | What | Figure |
 |---|---|
 | Stored size of one snapshot (**computed** by `unit-snapshot-schedule.mjs` from the real sanitiser, rows shaped like a desktop's) | processes (250) ≈ 35 KB, services (280) ≈ 41 KB, adapters (4) ≈ 2 KB; each capped at 128 KB |
-| Uploads at 5,000 computers, every 6 h (**estimated**) | 3 × 4 × 5,000 = 60,000 a day: **0.7 a second**, beside the 27.8 heartbeats a second |
+| Uploads at 5,000 devices, every 6 h (**estimated**) | 3 × 4 × 5,000 = 60,000 a day: **0.7 a second**, beside the 27.8 heartbeats a second |
 | Data uploaded and written (**estimated**) | ≈ 1.6 GB a day |
-| Kept (**estimated**) | one completed automatic run per key per computer: ≈ 78 KB × 5,000 ≈ **400 MB**, flat |
+| Kept (**estimated**) | one completed automatic run per key per device: ≈ 78 KB × 5,000 ≈ **400 MB**, flat |
 | Extra work per heartbeat when nothing is due (**measured** in 0.36, below) | 0.35 as shipped: ≈ 3 more database transactions per heartbeat (≈ 30–31 against ≈ 27–28 with snapshots off). From 0.36: none — the same ≈ 26–28 as with snapshots off |
-| After an upgrade or an outage | every computer is due at once; `SNAPSHOT_MAX_PER_MINUTE` (default 120) spreads 15,000 runs at 5,000 computers over ≈ 2 hours (2 uploads a second) |
+| After an upgrade or an outage | every device is due at once; `SNAPSHOT_MAX_PER_MINUTE` (default 120) spreads 15,000 runs at 5,000 devices over ≈ 2 hours (2 uploads a second) |
 
 Processes every hour instead would be 120,000 uploads and ≈ 4 GB a day for a list that is out of date within minutes
 of being taken; that is why it has the open-tab interval instead.
@@ -125,7 +125,7 @@ of being taken; that is why it has the open-tab interval instead.
 #### Measured in 0.36
 
 0.35 shipped with the per-heartbeat cost estimated, not measured. 0.36 re-ran `bench-heartbeat.mjs` with automatic
-snapshots on (`BENCH_SNAPSHOTS=on`, the default): during warm-up every synthetic computer is asked for, and
+snapshots on (`BENCH_SNAPSHOTS=on`, the default): during warm-up every synthetic device is asked for, and
 answers, all three keys with desktop-sized results (250 processes, 280 services, 4 adapters), and the steady-state
 rounds then measure heartbeats with nothing due. 16 in flight, three rounds each, on the shared host at load average
 4–12 (2026-11-12):
@@ -146,24 +146,24 @@ The transaction count is the steady figure; CPU and throughput moved with the ho
 difference being measured, so read them as a range, not a comparison. Every round asked for no snapshot (the
 *asked* column was 0 throughout), so the difference is purely the cost of deciding nothing was due.
 
-**What regressed, and the fix.** In 0.35 every authenticated heartbeat from an eligible computer ran three reads to
-decide whether a snapshot was due: the endpoint, its node, and a grouped query over its snapshot runs — about three
+**What regressed, and the fix.** In 0.35 every authenticated heartbeat from an eligible device ran three reads to
+decide whether a snapshot was due: the device, its node, and a grouped query over its snapshot runs — about three
 more transactions and, on the quieter runs, roughly 3–4 ms of API CPU per heartbeat, against the 1–2 ms 0.35
 estimated. Almost every one of those heartbeats concluded *nothing is due*, because a key is due every 6 hours and a
-computer heartbeats every 3 minutes. From 0.36 the API remembers, per computer and in memory only, when the soonest
+device heartbeats every 3 minutes. From 0.36 the API remembers, per device and in memory only, when the soonest
 key falls due (capped at an hour) and skips the three reads until then. Anything that would make a key due sooner
 ends the window at once: a tab being opened (checked on every heartbeat, from memory), a result arriving, a run
 expiring, a change to the intervals. The one thing it cannot see is a row changed in the database behind the API's
 back (by hand, or by the retention sweep); that is picked up when the window ends, at most an hour later. With
 snapshots on, a steady-state heartbeat now costs what it did with them off. `SNAPSHOT_QUIET=off` restores the 0.35
-behaviour, which is what the row above measures. The map holds at most 50,000 computers and is emptied if it
-reaches that; a restart empties it too, which costs one full check per computer.
+behaviour, which is what the row above measures. The map holds at most 50,000 devices and is emptied if it
+reaches that; a restart empties it too, which costs one full check per device.
 
 Warm-up with snapshots on (**measured**, 0.35 build): the result upload averaged 47–83 ms at 1,000 and 76–79 ms at
-5,000, and the first heartbeat, inventory and three snapshots together cost ≈ 194–205 ms of API CPU per computer
+5,000, and the first heartbeat, inventory and three snapshots together cost ≈ 194–205 ms of API CPU per device
 (≈ 100–124 ms without the snapshots). That is the cost the `SNAPSHOT_MAX_PER_MINUTE` pacer spreads out after an
 upgrade. A stored snapshot measured 4,776 bytes per row (heap plus indexes) for the bench's results, whose payloads
-are smaller than a real desktop's; the ≈ 78 KB per computer above is the computed figure for real ones.
+are smaller than a real desktop's; the ≈ 78 KB per device above is the computed figure for real ones.
 
 ## Database growth
 
@@ -172,10 +172,10 @@ services write (5,000 for diagnostics), inserted and rolled back in one transact
 
 | Table | What a row is | Bytes per row (measured) |
 |---|---|---|
-| `Endpoint` | one per computer | 531 |
-| `RustdeskNode` | one per computer | 634 |
-| `EndpointEnrollment` | one per computer | 274 |
-| `EndpointInventory` | one per computer, overwritten each pass; 150 applications | 4,266 (of which the software list ≈ 2,600) |
+| `Endpoint` | one per device | 531 |
+| `RustdeskNode` | one per device | 634 |
+| `EndpointEnrollment` | one per device | 274 |
+| `EndpointInventory` | one per device, overwritten each pass; 150 applications | 4,266 (of which the software list ≈ 2,600) |
 | `EndpointCommand` | an inventory, update-scan, event-log or diagnostic instruction | 472 |
 | `EndpointChange` | one inventory difference (software version, disk, …) | 196 |
 | `ActivityLog` | one audit entry (browser user agent, ~100 B of metadata) | 551, plus ≈ 209 once sealed (**estimated** from the sealer's three fields) |
@@ -194,19 +194,19 @@ keeps growing.
 
 ### What grows, and how fast (estimated)
 
-| Source | Rate assumed | Per computer per year |
+| Source | Rate assumed | Per device per year |
 |---|---|---|
 | Automatic collections (`EndpointCommand`) | 4 inventories + 2 update scans a day (the 6 h / 12 h cadences in `endpoint-inventory.service.ts`) | ≈ 1.0 MB |
 | Inventory changes (`EndpointChange`) | 2 a day (software updates) | ≈ 0.15 MB |
 | Remote sessions | 2 a month, each 1 session + ~6 events + ~4 audit entries | ≈ 0.11 MB |
 | Monitor alerts | 2 a month, each 1 alert + 3 events | ≈ 0.02 MB |
 | Diagnostics | 1 a month at 4 KB | ≈ 0.05 MB |
-| **Total** | | **≈ 1.3 MB per computer per year** |
+| **Total** | | **≈ 1.3 MB per device per year** |
 
-So roughly: 50 computers ≈ 70 MB a year, 250 ≈ 330 MB, 1,000 ≈ 1.3 GB, 5,000 ≈ 6.5 GB, plus the fixed ≈ 6 KB per
-computer. That is the rate *without* retention (every release before 0.34). With the 0.34 defaults the
+So roughly: 50 devices ≈ 70 MB a year, 250 ≈ 330 MB, 1,000 ≈ 1.3 GB, 5,000 ≈ 6.5 GB, plus the fixed ≈ 6 KB per
+device. That is the rate *without* retention (every release before 0.34). With the 0.34 defaults the
 history levels off (**estimated** from the rates above and the windows): commands at 90 days' worth (≈ 0.25 MB per
-computer), changes at 400 days' (≈ 0.16 MB), alerts and diagnostics at a few tens of KB, so a computer's pruned
+device), changes at 400 days' (≈ 0.16 MB), alerts and diagnostics at a few tens of KB, so a device's pruned
 history settles at about **0.45 MB** after its first year. Remote sessions and their audit entries (≈ 0.11 MB a
 year) are kept, and grow, as does every other audit entry. See [data-retention.md](data-retention.md) for the windows and how to change them. Your rates will differ: a fleet with heavy software churn, frequent diagnostics or many sessions grows
 faster. Measure your own with:
@@ -222,9 +222,9 @@ FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC LIMIT 15;
 |---|---|---|
 | Audit chain (0.28) | every audit row gains its hash and sealed references; an `AuditCheckpoint` every 15 minutes | ≈ 0.2 KB more per audit row; checkpoints ≈ 35,000 a year, a few MB |
 | Monitor alerts | `MonitorAlert` + `MonitorAlertEvent`; one open alert per problem (partial unique index), so a problem that persists counts occurrences on its open alert rather than adding rows | ≈ 1 KB per alert with its events |
-| Scheduled client updates | one `CLIENT_UPDATE_AUTO_QUEUED` audit entry per computer each time a policy queues an update | ≈ 0.76 KB × computers per client release |
+| Scheduled client updates | one `CLIENT_UPDATE_AUTO_QUEUED` audit entry per device each time a policy queues an update | ≈ 0.76 KB × devices per client release |
 | Report exports | one `REPORT_EXPORTED` audit entry per CSV; the CSV itself is streamed and not stored | ≈ 0.76 KB per export |
-| Metric history | **does not exist.** CPU, memory and disk are latest values on the computer's row, overwritten each heartbeat | none |
+| Metric history | **does not exist.** CPU, memory and disk are latest values on the device's row, overwritten each heartbeat | none |
 | Chat (0.34) | `ChatConversation` + `ChatMessage`; two audit rows per chat (start, end) and one per prune pass that deleted anything | ≈ 0.3 KB per message plus the text; deleted 400 days after the chat ends |
 
 ## PostgreSQL
@@ -234,11 +234,11 @@ FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC LIMIT 15;
   the web process and maintenance at every size here; add `?connection_limit=` to `DATABASE_URL` only if the
   database is shared.
 - **Memory.** `shared_buffers` at about 25% of RAM on a dedicated database host, or 512 MB – 2 GB on a shared one.
-  The whole working set at 5,000 computers (the per-computer rows, about 30 MB, plus recent history) fits in memory.
+  The whole working set at 5,000 devices (the per-device rows, about 30 MB, plus recent history) fits in memory.
 - **Write load.** ≈ 24 commits and 4 row updates per heartbeat (**measured**): ≈ 670 commits a second at 5,000
-  computers. Those updates rewrite the same rows over and over, so leave autovacuum on; the rows a heartbeat updates
+  devices. Those updates rewrite the same rows over and over, so leave autovacuum on; the rows a heartbeat updates
   are small. Put the database on SSD.
-- **Backups** grow with the history above. `pg_dump` of a 1,000-computer, one-year database is in the low gigabytes
+- **Backups** grow with the history above. `pg_dump` of a 1,000-device, one-year database is in the low gigabytes
   (**estimated**).
 
 ## RustDesk: hbbs and hbbr
@@ -251,12 +251,12 @@ The ID server (hbbs) and relay (hbbr) are separate programs; Rem0te only reads h
   of a few hundred packets a second and well under 1 Mbit/s (**estimated**). hbbs CPU and memory are negligible next
   to the API at every size here.
 - **hbbr** carries a session only when the two ends cannot connect directly. Its bandwidth is **per concurrent
-  relayed session**, not per computer: an office desktop session is typically a few hundred kbit/s to 2 Mbit/s, and
+  relayed session**, not per device: an office desktop session is typically a few hundred kbit/s to 2 Mbit/s, and
   full-screen video or high resolution several times that (**estimated**, from RustDesk's codec behaviour). Size the
   uplink as *peak concurrent technicians × relayed share × 2 Mbit/s*, with headroom. Ten technicians fully relayed
   is ≈ 20 Mbit/s.
 - **The API's own traffic** is small: ≈ 1.5 KB per heartbeat on the wire (**estimated**: the measured 820 B of JSON
-  plus headers and TLS), ≈ 0.35 Mbit/s at 5,000 computers, plus ≈ 14 KB per inventory every 6 hours. Client
+  plus headers and TLS), ≈ 0.35 Mbit/s at 5,000 devices, plus ≈ 14 KB per inventory every 6 hours. Client
   downloads (the RustDesk installer, tens of MB each) dominate during a rollout.
 
 ## Re-measuring
@@ -271,6 +271,6 @@ DATABASE_URL=postgresql://…/rem0te_bench_test \
   node scripts/bench-heartbeat.mjs
 ```
 
-It creates synthetic computers with bound device secrets and a scratch hbbs peer database (so the shared `sqlite3`
+It creates synthetic devices with bound device secrets and a scratch hbbs peer database (so the shared `sqlite3`
 peer read runs as it would in production, without touching the real one), warms them up with one inventory each, measures
 steady-state heartbeats, prints table sizes, and removes its fixtures. It needs `sqlite3` installed.

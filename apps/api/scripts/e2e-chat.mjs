@@ -331,7 +331,7 @@ async function all() {
   let okRest = already >= 20 && already < 30;
   for (let i = already; i < 30; i++) okRest = okRest && (await reply(pc1, c4.id, `${MARK} v${i}`)).status === 200;
   r = await reply(pc1, c4.id, `${MARK} v30`);
-  check(okRest && r.status === 429 && /from one computer/.test(r.body?.message ?? ''), `and 30 a minute from one computer across chats: a new chat does not reset it (${already} already this minute)`, msg(r));
+  check(okRest && r.status === 429 && /from one device/.test(r.body?.message ?? ''), `and 30 a minute from one computer across chats: a new chat does not reset it (${already} already this minute)`, msg(r));
 
   section('The person closes the window');
   r = await poll(pc1, { conversationId: c4.id, state: 'user_closed', noWait: true });

@@ -1,6 +1,6 @@
-# Server security (Admin → Security)
+# Server security (Security → Server security)
 
-**Admin → Security** is a Platform Admin's view of the server Rem0te runs on and of
+**Security → Server security** is a Platform Admin's view of the server Rem0te runs on and of
 Rem0te's own safeguards. It reads this server as the API's service user (`reboot`),
 reports what it found, and makes a small number of audited changes through the
 commands the installer's sudoers already grants. Nobody else can open it: every
@@ -105,9 +105,9 @@ Readings are cached for a few minutes; the refresh button reads again.
   else (counts only).
 - **Platform Admins and break-glass accounts**: how many, and whether each
   break-glass account has both an authenticator and a passkey. Managed at
-  [Admin → SSO](/admin/sso).
+  [Security → Single sign-on](/admin/sso).
 - **API keys**: active keys with no expiry, or unused for 90 days.
-- **Audit chain**: the same verifier as *Settings → Security → Containment*, and
+- **Audit chain**: the same verifier as *Security → Containment*, and
   whether the off-host export is configured and working.
 - **Sign-in lockout** is on.
 - **Stored but never enforced access rules** (below).
@@ -121,7 +121,7 @@ Readings are cached for a few minutes; the refresh button reads again.
 **API process**
 
 - **`MSA_GRANTS`**: shown as information while it is off, as it ships.
-- **`NODE_ENV=test`** is critical: it lets test-only loopback endpoints through.
+- **`NODE_ENV=test`** is critical: it lets test-only loopback devices through.
 - **Off switches**: any `*_SWEEP`, `*_SEALER` or other test switch set to `off` in
   the API's environment. `STALE_SWEEP=off`, `SSO_SESSION_SWEEP=off` and
   `AUDIT_SEALER=off` are critical in production; each says what it stops.
@@ -172,7 +172,7 @@ Every acceptance is kept, open or closed (`GET
 | A break-glass account without both an authenticator and a passkey | It breaks the rule break-glass exists under. |
 | The audit chain does not verify | Entries were changed or lost: an incident, not a risk. |
 | SSH accepts empty passwords | Never deliberate on a server. |
-| `NODE_ENV` is not `production` | Test-only endpoints and a host fixture are admitted. |
+| `NODE_ENV` is not `production` | Test-only devices and a host fixture are admitted. |
 | A `*_SWEEP` / `*_SEALER` / test switch is `off` | Each silently stops a safety job; they exist for test stacks. |
 | A TLS certificate (each site) | Expired, untrusted or failing renewal breaks every agent and browser. |
 

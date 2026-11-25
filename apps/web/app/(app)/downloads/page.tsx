@@ -46,7 +46,7 @@ export default function DownloadsPage() {
     <div className="p-6 space-y-6">
       <PageHeader
         title="Technician client"
-        description="RustDesk clients for the computer you connect from."
+        description="RustDesk clients for the device you connect from."
       />
 
       {!data?.configured && (
@@ -78,11 +78,11 @@ export default function DownloadsPage() {
             asks rustdesk.com&apos;s public servers instead, is told the ID does not exist, and
             reports{' '}
             <em>&ldquo;the target device is offline or does not exist&rdquo;</em> — about a
-            computer that is online and perfectly reachable.
+            device that is online and perfectly reachable.
           </p>
           <p className="text-foreground">
             <strong>You usually do not need this page.</strong> Clicking{' '}
-            <strong>Connect</strong> on a computer hands you a file that uses the RustDesk
+            <strong>Connect</strong> on a device hands you a file that uses the RustDesk
             already on your machine — or fetches a portable copy once — configures it, and
             opens the session. Nothing is installed, and no setup is needed in advance.
           </p>

@@ -20,7 +20,7 @@ export type Zones = { site?: string | null; viewer?: string | null };
 export function zoneOptions(z: Zones): { tz: string; label: string }[] {
   const out: { tz: string; label: string }[] = [];
   const add = (tz: string | null | undefined, label: string) => { if (tz && !out.some((o) => o.tz === tz)) out.push({ tz, label: `${tz} (${label})` }); };
-  add(z.site, 'the computer’s site');
+  add(z.site, 'the device’s site');
   add(z.viewer, 'your profile');
   add(browserTimeZone(), 'this browser');
   add('UTC', 'UTC');
@@ -65,7 +65,7 @@ export function ScheduleChoice({ id, value, onChange, zones, maxDays = 14, nowLa
         <p className="text-xs" data-testid="schedule-policy-window">
           <button type="button" className="underline disabled:no-underline disabled:text-muted-foreground" disabled={!!openingWhy} data-testid="schedule-use-policy-window"
             onClick={() => { onChange({ ...value, mode: 'schedule', local: localAt(value.timeZone, new Date(opening.at)) }); onUsePolicyWindow?.(Math.max(1, Math.min(24, Math.floor(opening.hours)))); }}>
-            Start at the next opening of this computer&apos;s patch policy window
+            Start at the next opening of this device&apos;s patch policy window
           </button>{' '}
           <span className="text-muted-foreground">({describeOccurrence(policyWindow, policyWindow.timezone)}{openingWhy ? `; ${openingWhy}` : ''})</span>
         </p>
@@ -86,8 +86,8 @@ export function ScheduleChoice({ id, value, onChange, zones, maxDays = 14, nowLa
             </select>
           </div>
           <p className="text-xs text-muted-foreground sm:col-span-2">
-            {value.local.replace('T', ' ')} in <strong>{value.timeZone}</strong>. Nothing is handed to the computer before then; it starts at the
-            computer’s first check-in after it (about every 3 minutes) and runs within the window. Up to {maxDays} days ahead. Until it starts you can
+            {value.local.replace('T', ' ')} in <strong>{value.timeZone}</strong>. Nothing is handed to the device before then; it starts at the
+            device’s first check-in after it (about every 3 minutes) and runs within the window. Up to {maxDays} days ahead. Until it starts you can
             cancel it. Scheduling has been tested against a simulated agent, not yet on a real Windows computer.
           </p>
         </div>

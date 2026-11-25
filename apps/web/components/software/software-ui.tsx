@@ -146,7 +146,7 @@ export function DetectionEditor({ value, onChange }: { value: SoftwareDetection;
   const problem = detectionProblem(value);
   return (
     <div className="space-y-2 rounded-md border p-3" data-detection-editor>
-      <p className="text-xs font-medium">Detection rule — how a computer tells whether this is installed</p>
+      <p className="text-xs font-medium">Detection rule — how a device tells whether this is installed</p>
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <div className="space-y-1 sm:col-span-2">
           <Label htmlFor="det-kind" className="text-xs">Look at</Label>
@@ -206,7 +206,7 @@ export function DetectionEditor({ value, onChange }: { value: SoftwareDetection;
       </div>
       <p className={`text-xs ${problem ? 'text-destructive' : 'text-muted-foreground'}`}>{problem ?? describeDetection(value)}.</p>
       <p className="text-xs text-muted-foreground">
-        The software compliance report can read a display-name rule from the inventory&apos;s installed-software list; the other two kinds are known only once a software plan has run on the computer.
+        The software compliance report can read a display-name rule from the inventory&apos;s installed-software list; the other two kinds are known only once a software plan has run on the device.
       </p>
     </div>
   );
@@ -295,7 +295,7 @@ export function EntryForm({ entry, you, businesses, onDone }: {
     !VERSION_RE.test(version.trim()) ? 'The version is the exact winget package version (e.g. 24.08).' : null,
     source === 'admin_pasted' && !SHA256_RE.test(pasted.trim().toLowerCase()) ? 'A pasted SHA-256 is 64 hexadecimal characters.' : null,
     detectionProblem(detection),
-    !entry && scope === 'business' && !businessId ? 'Choose the business.' : null,
+    !entry && scope === 'business' && !businessId ? 'Choose the customer.' : null,
   ].filter(Boolean) as string[];
 
   return (
@@ -321,14 +321,14 @@ export function EntryForm({ entry, you, businesses, onDone }: {
           <div className="space-y-1">
             <Label htmlFor="se-scope" className="text-xs">Catalog</Label>
             <select id="se-scope" className={selectClass} value={scope} onChange={(e) => setScope(e.target.value as 'business' | 'global')}>
-              <option value="business">One business</option>
-              <option value="global">Global (every business)</option>
+              <option value="business">One customer</option>
+              <option value="global">Global (every customer)</option>
             </select>
           </div>
         )}
         {!entry && scope === 'business' && businesses && businesses.length > 0 && (
           <div className="space-y-1">
-            <Label htmlFor="se-biz" className="text-xs">Business</Label>
+            <Label htmlFor="se-biz" className="text-xs">Customer</Label>
             <select id="se-biz" className={selectClass} value={businessId} onChange={(e) => setBusinessId(e.target.value)}>
               <option value="">Choose…</option>
               {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
@@ -338,7 +338,7 @@ export function EntryForm({ entry, you, businesses, onDone }: {
       </div>
 
       <div className="space-y-2 rounded-md border p-3">
-        <p className="text-xs font-medium">Installer SHA-256 — what every computer will check the downloaded installer against</p>
+        <p className="text-xs font-medium">Installer SHA-256 — what every device will check the downloaded installer against</p>
         <div className="flex flex-wrap gap-4 text-xs">
           <label className="flex items-center gap-1"><input type="radio" checked={source === 'winget_pkgs'} onChange={() => setSource('winget_pkgs')} />From the winget-pkgs manifest</label>
           <label className="flex items-center gap-1"><input type="radio" checked={source === 'admin_pasted'} onChange={() => setSource('admin_pasted')} />Paste it myself</label>
@@ -374,7 +374,7 @@ export function EntryForm({ entry, you, businesses, onDone }: {
             <Label htmlFor="se-sha" className="text-xs">Installer SHA-256 (64 hex characters)</Label>
             <Input id="se-sha" className="font-mono" maxLength={64} value={pasted} onChange={(e) => setPasted(e.target.value.trim())} />
             <p className="text-xs text-muted-foreground">
-              Recorded as pasted by you, with no manifest behind it. Each computer still refuses an installer whose hash differs, and also refuses one whose hash is not in the manifest winget downloads beside it.
+              Recorded as pasted by you, with no manifest behind it. Each device still refuses an installer whose hash differs, and also refuses one whose hash is not in the manifest winget downloads beside it.
             </p>
           </div>
         )}
@@ -428,7 +428,7 @@ export function DeploymentList({ rows, empty }: { rows: DeploymentSummary[]; emp
             <strong className="break-all">{d.name}</strong>
             <Badge variant={DEPLOYMENT_STATUS[d.status] ?? 'outline'}>{d.status.toLowerCase()}</Badge>
             <Badge variant="outline">{d.operation}</Badge>
-            {d.single && <Badge variant="outline">one computer</Badge>}
+            {d.single && <Badge variant="outline">one device</Badge>}
             <span className="text-xs text-muted-foreground">{d.single ? '' : `rings of ${d.rings.join(', ')} · `}{formatDate(d.createdAt)}</span>
           </div>
           {d.lastRing !== null && <p className="text-xs text-muted-foreground mt-1">{d.lastRing === 0 ? (d.single ? 'Plan' : 'Canary') : `Ring ${d.lastRing}`}: {d.lastRingStatus?.toLowerCase().replace(/_/g, ' ')}</p>}

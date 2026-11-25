@@ -1,12 +1,12 @@
 # Connecting
 
 How a click in Rem0te becomes a remote desktop session, what each path needs to
-be true, and why the most common failure blames the wrong computer.
+be true, and why the most common failure blames the wrong device.
 
 If you are here because of *"Failed to connect: the target device is offline or
 does not exist"*, skip to [When it fails](#when-it-fails) — but read
 [The thing that surprises everyone](#the-thing-that-surprises-everyone) first,
-because that message is usually about the computer you are sitting at.
+because that message is usually about the device you are sitting at.
 
 ---
 
@@ -25,8 +25,8 @@ Rem0te does not carry remote-desktop traffic. RustDesk does. Rem0te decides
 Two independent notions of "online" follow from this, and they are the source
 of most confusion:
 
-- **Rem0te's online dot** is an HTTP heartbeat from the endpoint every ~3
-  minutes. The API marks an endpoint offline after ~10 minutes without one.
+- **Rem0te's online dot** is an HTTP heartbeat from the device every ~3
+  minutes. The API marks a device offline after ~10 minutes without one.
 - **RustDesk's idea of online** is a live registration with hbbs. hbbs holds
   that map **in memory only**.
 
@@ -40,20 +40,20 @@ UI shows a green dot next to a machine that RustDesk will tell you is offline.
 
 There are three, and they are not equivalent.
 
-![Connect, on a computer you have access to](screenshots/guide/tech-03-connect.png)
+![Connect, on a device you have access to](screenshots/guide/tech-03-connect.png)
 
-1. **Devices → My devices** — the computers this account may connect to. Platform Admins
+1. **Devices → My devices** — the devices this account may connect to. Platform Admins
    and Business Owners get the full list under **Devices**.
 2. **Connect** — downloads the script described below.
 
 ### 1. The Connect button — a downloaded script
 
 Clicking **Connect** asks you to confirm it is you when the launch carries the
-computer's password (step-up, `credential.reveal` — once per 10 minutes), then
+device's password (step-up, `credential.reveal` — once per 10 minutes), then
 hands you one file, named for the target machine. The password is in that file
 and nowhere else: the browser never receives it, and releasing it is recorded as
 a reveal (0.30.1). It uses
-the RustDesk already on the computer — or fetches a portable copy once into
+the RustDesk already on the device — or fetches a portable copy once into
 `%LOCALAPPDATA%\Rem0te` — points it at this server, then opens the session
 with the password applied. It deletes itself afterwards, because it carries a
 live credential.
@@ -71,7 +71,7 @@ what the alternative could not do:
 > field for a server address.** There is no way to carry
 > "use `remote.example.net`" in the link. A stock client asks `rustdesk.com`
 > instead, is told the ID is unknown, and reports *"the target device is
-> offline or does not exist"* about a computer that is online.
+> offline or does not exist"* about a device that is online.
 
 Once a machine has run the script once its RustDesk is configured, so a plain
 `rustdesk://` link would work there from then on.
@@ -99,24 +99,24 @@ which RustDesk reads on first run.
 
 ## The thing that surprises everyone
 
-> The Connect button uses the RustDesk on **your** computer, with **your**
-> computer's server settings.
+> The Connect button uses the RustDesk on **your** device, with **your**
+> device's server settings.
 
 A stock RustDesk — a fresh install, or an auto-update that replaced a
 preconfigured build — points at `rustdesk.com`'s public rendezvous servers.
-Your endpoint IDs do not exist there. RustDesk asks, is told the ID is unknown,
+Your device IDs do not exist there. RustDesk asks, is told the ID is unknown,
 and reports:
 
 > *Failed to connect: the target device is offline or does not exist.*
 
-The endpoint is online. The server is fine. The client you clicked from was
+The device is online. The server is fine. The client you clicked from was
 never told where to look.
 
 **This is why Connect hands you a script instead of a link.** The script
 configures the client before connecting, so it works the first time on a
 machine that has never seen this server.
 
-If you would rather prepare a machine in advance, **Remote Support → Technician client** →
+If you would rather prepare a machine in advance, **Remote support → Technician client** →
 *Set up this computer for Connect* does the configuration on its own. See
 [clients.md](clients.md).
 
@@ -132,33 +132,33 @@ the evidence behind it and nothing more:
 |---|---|---|
 | Launch requested | a credential was released for this session | the server |
 | Launcher acknowledged | the launcher redeemed its token, or the Connect script checked in | the server |
-| Client opened | RustDesk started on the technician's computer. **Not** a connection | the launcher or Connect script |
-| Connection confirmed | a RustDesk connection is running on the remote computer, and this is the only launch it can belong to; or the technician said so (recorded as theirs) | the endpoint's agent (0.20.0+), or the technician |
+| Client opened | RustDesk started on the technician's device. **Not** a connection | the launcher or Connect script |
+| Connection confirmed | a RustDesk connection is running on the remote device, and this is the only launch it can belong to; or the technician said so (recorded as theirs) | the device's agent (0.20.0+), or the technician |
 | Disconnected / ended | the connection ended (measured), the technician completed it (reported), or a timeout (inferred) | the agent, technician or timeout |
 | Failed / Canceled | reported failure before any confirmation / technician | |
 | Status unknown | no confirming or failing signal arrived in time: 30 minutes after a launch, 12 hours after a client opened | timeout |
 
 **Duration is shown only when it was measured**: a confirmed start and an
-observed end, both from the endpoint. Otherwise it reads *unknown* and the
+observed end, both from the device. Otherwise it reads *unknown* and the
 session says how the times it has were obtained. A finished session cannot be
 reopened; a late event is recorded but changes nothing. Confirmation from the
-endpoint needs an agent from 0.20.0, which counts RustDesk's incoming
+device needs an agent from 0.20.0, which counts RustDesk's incoming
 connection processes (`rustdesk.exe --cm`). This is a heuristic: it cannot tell
 two simultaneous incoming sessions apart, so with more than one open launch
-for a computer it confirms neither.
+for a device it confirms neither.
 
 ## Test connection (v0.20)
 
-Every computer has a **Test connection** panel, on its **Diagnostics** tab (0.31; **Diagnose** in the header opens it). It runs read-only checks and
-says, for each, what was found, where the problem is (server, endpoint or your
-computer) and what to do:
+Every device has a **Test connection** panel, on its **Diagnostics** tab (0.31; **Diagnose** in the header opens it). It runs read-only checks and
+says, for each, what was found, where the problem is (server, device or your
+device) and what to do:
 
 - **Server**: RustDesk settings configured; hbbs (21116), hbbr (21117) and
   the NAT test port (21115) reachable.
-- **Endpoint**: the agent's last heartbeat and device secret; agent and
+- **Device**: the agent's last heartbeat and device secret; agent and
   RustDesk versions; live registration with hbbs; stored credential state;
   incoming sessions.
-- **Your computer**: *Check my computer* downloads a read-only helper `.cmd`.
+- **Your device**: *Check my device* downloads a read-only helper `.cmd`.
   It reports this machine's RustDesk install, version, server address and key,
   and whether it can reach the server. The result appears in the panel.
 
@@ -181,21 +181,21 @@ sudo deploy/scripts/hbbs-probe.py <rustdesk-id>
 
 | Verdict | Means | Do this |
 |---|---|---|
-| `ONLINE` | hbbs found the peer and returned a connection path. **The server and the endpoint are both fine.** | The problem is the client you are connecting *from* — go to step 2. |
+| `ONLINE` | hbbs found the peer and returned a connection path. **The server and the device are both fine.** | The problem is the client you are connecting *from* — go to step 2. |
 | `OFFLINE` | hbbs knows the ID but has no live registration right now. | Step 3. |
 | `ID_NOT_EXIST` | hbbs has never seen this ID. | Step 4. |
 | `LICENSE_MISMATCH` | The key does not match the one hbbs was started with. | Step 5. |
 
 ### 2. `ONLINE`, but Connect still fails — fix the technician's client
 
-Nothing is wrong with the endpoint. Your RustDesk is talking to someone else's
+Nothing is wrong with the device. Your RustDesk is talking to someone else's
 rendezvous server.
 
 1. **Quit RustDesk completely** — from the system tray, not just the window. A
    running client will not pick up a configuration change.
 2. Click **Connect** again and run the file it gives you. It reapplies the
    configuration every time, so a client that drifted gets corrected.
-3. If that still fails, Rem0te → **Remote Support → Technician client** → *Set up this computer for
+3. If that still fails, Rem0te → **Remote support → Technician client** → *Set up this device for
    Connect*, and watch its output — it prints which RustDesk it found.
 
 If it still fails, confirm what the client thinks: RustDesk → **Settings →
@@ -212,18 +212,18 @@ that folder before reinstalling.
   The online-peer map is in memory; a restart empties it and clients
   re-register on their next cycle. Any `rustdesk-server` upgrade or
   `systemctl restart rustdesk-hbbs` opens that window. Wait, probe again.
-- Otherwise the endpoint's RustDesk is not running, or the machine is off, or
+- Otherwise the device's RustDesk is not running, or the machine is off, or
   it has lost its route to port 21116. Check whether the Rem0te heartbeat is
-  still arriving (the endpoint's **Last seen**). Heartbeat arriving but hbbs
+  still arriving (the device's **Last seen**). Heartbeat arriving but hbbs
   offline means RustDesk specifically is stopped or misconfigured on that
   machine.
 
 ### 4. `ID_NOT_EXIST`
 
-hbbs has never seen this ID, so the endpoint is registering somewhere else —
+hbbs has never seen this ID, so the device is registering somewhere else —
 usually `rustdesk.com`.
 
-Re-run the Rem0te installer on the endpoint. Installs from before **v0.8.2**
+Re-run the Rem0te installer on the device. Installs from before **v0.8.2**
 wrote the RustDesk service config to a path the service never reads, leaving it
 on defaults pointing at the public servers while every check passed. That fix
 only lands by reinstalling.
@@ -242,10 +242,10 @@ configured before that moment is now wrong and must be reconfigured.
 
 ### 6. Connected, but the password is rejected
 
-Rem0te stores the endpoint's permanent password encrypted and hands it to the
+Rem0te stores the device's permanent password encrypted and hands it to the
 client in the `rustdesk://` link. It desyncs if someone ran
-`rustdesk --password` on the endpoint by hand. Stage a credential rotation from
-the endpoint's page, or re-run the installer.
+`rustdesk --password` on the device by hand. Stage a credential rotation from
+the device's page, or re-run the installer.
 
 ---
 
@@ -282,8 +282,8 @@ It sends a real `PunchHoleRequest` and decodes the reply. Exit status is 0 for
 | 21118 | TCP | hbbs WebSocket (`/ws/id`) |
 | 21119 | TCP | hbbr WebSocket (`/ws/relay`) |
 
-**Port 21116 needs UDP as well as TCP.** Endpoint registration is UDP; a
-firewall that forwards only TCP produces endpoints that appear briefly and then
+**Port 21116 needs UDP as well as TCP.** Device registration is UDP; a
+firewall that forwards only TCP produces devices that appear briefly and then
 go offline.
 
 ### RustDesk over 443 only

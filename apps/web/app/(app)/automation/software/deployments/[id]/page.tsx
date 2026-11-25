@@ -116,7 +116,7 @@ export default function SoftwareDeploymentPage() {
   return (
     <div className="space-y-4 p-4 md:p-6">
       <Link href={d.entryId ? `/automation/software/${d.entryId}` : '/automation/software'} className="text-xs text-muted-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3 w-3" />{d.entryId ? 'Catalog entry' : 'Software catalog'}</Link>
-      <PageHeader title={d.name} description={`${d.operation === 'install' ? 'Install' : 'Uninstall'} · created ${formatDate(d.createdAt)}${d.single ? ' · one computer' : ` · soak ${d.soakHours} h · ${plural(d.failureThreshold, 'failure')} allowed per ring`} · ${d.windowHours} h window`}>
+      <PageHeader title={d.name} description={`${d.operation === 'install' ? 'Install' : 'Uninstall'} · created ${formatDate(d.createdAt)}${d.single ? ' · one device' : ` · soak ${d.soakHours} h · ${plural(d.failureThreshold, 'failure')} allowed per ring`} · ${d.windowHours} h window`}>
         <div className="flex gap-2 items-center">
           <Badge variant={DEPLOYMENT_STATUS[d.status] ?? 'outline'}>{d.status.toLowerCase()}</Badge>
           {d.status === 'ACTIVE' && <Button size="sm" variant="outline" onClick={() => setChanging('pause')}>Pause</Button>}
@@ -131,7 +131,7 @@ export default function SoftwareDeploymentPage() {
             <p className="text-xs">
               {changing === 'pause' ? 'Pausing stops further rings being requested. A plan already approved still runs.'
                 : changing === 'resume' ? 'Resuming lets the next ring be requested again; a ring that tripped the failure threshold may be retried.'
-                : 'Cancelling stops every plan of this deployment that has not reached a computer. Anything already delivered runs to its own result.'}
+                : 'Cancelling stops every plan of this deployment that has not reached a device. Anything already delivered runs to its own result.'}
             </p>
             <Label htmlFor="sw-why" className="text-xs">Why {changing} it? (recorded in the audit log)</Label>
             <Textarea id="sw-why" rows={2} maxLength={300} value={why} onChange={(e) => setWhy(e.target.value)} />
@@ -175,7 +175,7 @@ export default function SoftwareDeploymentPage() {
         <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Next</CardTitle></CardHeader>
         <CardContent className="space-y-3 text-sm">
           <p data-next-why>{d.next.why}</p>
-          {directDone && <p className="text-xs" data-testid="direct-approved">{directDone}. It runs when the computers next check in.</p>}
+          {directDone && <p className="text-xs" data-testid="direct-approved">{directDone}. It runs when the devices next check in.</p>}
           {requested && (
             <p className="text-xs">
               Requested. <a className="underline inline-flex items-center gap-1" href={requested} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3 w-3" />Open the approval page</a> — two people on the approval roster approve it there with a passkey; you cannot approve your own request.
@@ -184,7 +184,7 @@ export default function SoftwareDeploymentPage() {
           {d.next.canRequest && nextRing && (
             <>
               <p className="text-xs text-muted-foreground">
-                Requests {nextRing.canary ? (d.single ? 'the plan' : 'the canary') : `ring ${nextRing.ring}`} ({plural(nextRing.computers.length, 'computer')}) as one signed plan. Each computer re-checks the parameters, downloads the installer with winget, hashes it and refuses anything but the pinned SHA-256. Computers are never restarted.
+                Requests {nextRing.canary ? (d.single ? 'the plan' : 'the canary') : `ring ${nextRing.ring}`} ({plural(nextRing.computers.length, 'computer')}) as one signed plan. Each device re-checks the parameters, downloads the installer with winget, hashes it and refuses anything but the pinned SHA-256. Devices are never restarted.
               </p>
               {!nextRing.canary && (
                 <div className="space-y-1">
@@ -195,8 +195,8 @@ export default function SoftwareDeploymentPage() {
                       <Input className="h-8 text-xs" maxLength={200} placeholder="included" aria-label={`Leave out ${c.hostname ?? c.endpointId}: why`} value={exclude[c.endpointId] ?? ''} onChange={(e) => setExclude((m) => ({ ...m, [c.endpointId]: e.target.value }))} />
                     </div>
                   ))}
-                  {badExclusion && <p className="text-xs text-destructive">A reason to leave a computer out is at least 3 characters.</p>}
-                  {excludedAll && <p className="text-xs text-destructive">Every computer of this ring is left out.</p>}
+                  {badExclusion && <p className="text-xs text-destructive">A reason to leave a device out is at least 3 characters.</p>}
+                  {excludedAll && <p className="text-xs text-destructive">Every device of this ring is left out.</p>}
                 </div>
               )}
               <div className="grid gap-3 sm:grid-cols-[1fr_200px]">
@@ -229,14 +229,14 @@ function RingCard({ r, single, onChanged }: { r: Ring; single: boolean; onChange
   return (
     <Card data-ring={r.ring}>
       <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0 gap-2 flex-wrap">
-        <CardTitle className="text-sm">{single ? 'The computer' : r.canary ? 'Ring 0 — canary' : `Ring ${r.ring}`}</CardTitle>
+        <CardTitle className="text-sm">{single ? 'The device' : r.canary ? 'Ring 0 — canary' : `Ring ${r.ring}`}</CardTitle>
         <div className="flex items-center gap-2 text-xs">
           {r.job && <Badge variant="outline">{words(r.job.status)}</Badge>}
           <Badge variant={r.gate.ok ? 'success' : r.gate.reason === 'not_requested' ? 'outline' : 'warning'}>{r.gate.ok ? 'passed' : words(r.gate.reason)}</Badge>
           {r.job?.status === 'AWAITING_APPROVAL' && !r.job.direct && (
             <Button size="sm" variant="outline" asChild><a href={r.job.approvalUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5 mr-1" />Approval page</a></Button>
           )}
-          {r.job?.direct && <Badge variant="outline" title="Signed at the request: the business is in direct mode on the approval signer">direct mode</Badge>}
+          {r.job?.direct && <Badge variant="outline" title="Signed at the request: the customer is in direct mode on the approval signer">direct mode</Badge>}
         </div>
       </CardHeader>
       <CardContent className="space-y-2 text-xs">
@@ -247,7 +247,7 @@ function RingCard({ r, single, onChanged }: { r: Ring; single: boolean; onChange
           <table className="w-full text-xs">
             <thead>
               <tr className="text-left text-muted-foreground">
-                <th className="py-1 pr-2 font-medium">Computer</th>
+                <th className="py-1 pr-2 font-medium">Device</th>
                 <th className="py-1 pr-2 font-medium">Status</th>
                 <th className="py-1 pr-2 font-medium">Outcome</th>
                 <th className="py-1 pr-2 font-medium">What it reported</th>
@@ -302,7 +302,7 @@ function Reconcile({ jobId, endpointId, onDone }: { jobId: string; endpointId: s
   if (!open) return <Button size="sm" variant="outline" className="h-6 mt-1 text-[11px]" onClick={() => setOpen(true)}>Reconcile</Button>;
   return (
     <div className="mt-1 space-y-1 rounded-md border border-destructive/40 p-2 max-w-xs">
-      <p>Uncertain: the computer did not finish reporting. It will not run again. Check Programs and Features on the computer, then record what you found.</p>
+      <p>Uncertain: the device did not finish reporting. It will not run again. Check Programs and Features on the device, then record what you found.</p>
       <div className="flex flex-wrap gap-2">
         {(['installed', 'not_installed', 'other'] as const).map((f) => (
           <label key={f} className="flex items-center gap-1"><input type="radio" checked={found === f} onChange={() => setFound(f)} />{words(f)}</label>

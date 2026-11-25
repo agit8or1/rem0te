@@ -11,7 +11,7 @@ export default function EndpointsPage() {
   const { can } = usePermissions();
   return (
     <div className="p-6 space-y-4">
-      <PageHeader title="Devices" description="Every enrolled device in the businesses you can see.">
+      <PageHeader title="Devices" description="Every enrolled device in the customers you can see.">
         {/* One way in (0.32): the guided flow. It replaced "Enroll Client"
             and the "Generate Enrollment Link" modal, which minted a token with
             no business, site or OS and could not tell you when it was used. */}

@@ -80,11 +80,11 @@ export class ClientUpdatesService {
     if (requested && !ID.test(requested)) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'businessId is not an id' });
     if (this.isMsp(a) && !a.isPlatformAdmin) {
       const b = requested ?? a.businessId;
-      if (!b) throw new BadRequestException({ code: 'BUSINESS_REQUIRED', message: 'Pick a business.' });
+      if (!b) throw new BadRequestException({ code: 'BUSINESS_REQUIRED', message: 'Pick a customer.' });
       return b;
     }
     const s = this.acl.resolveScope(a, requested);
-    if (!s) throw new BadRequestException({ code: 'BUSINESS_REQUIRED', message: 'Pick a business.' });
+    if (!s) throw new BadRequestException({ code: 'BUSINESS_REQUIRED', message: 'Pick a customer.' });
     return s;
   }
 
@@ -187,7 +187,7 @@ export class ClientUpdatesService {
       may: { edit: refusal === null, reason: refusal },
       sweep: { enabled: process.env.CLIENT_UPDATE_SWEEP !== 'off' },
       // 0.46: what a business with no agent mode inherits — the platform switch (on
-      // by default). Read-only here; Settings → Client updates changes it (Platform Admin).
+      // by default). Read-only here; Patching → Client updates changes it (Platform Admin).
       agentAuto: {
         platformEnabled: (await this.prisma.platformSettings.findUnique({ where: { id: 'singleton' }, select: { agentAutoUpdateEnabled: true } }))?.agentAutoUpdateEnabled ?? true,
         processOn: process.env.AGENT_AUTO_UPDATE !== 'off',
@@ -295,7 +295,7 @@ export class ClientUpdatesService {
   }
 
   private priorityTaken(priority: number) {
-    return new ConflictException({ code: 'PRIORITY_TAKEN', message: `Another device-group policy in this business already has priority ${priority}. Each needs its own, so a computer in both groups is decided by it.` });
+    return new ConflictException({ code: 'PRIORITY_TAKEN', message: `Another device-group policy in this customer already has priority ${priority}. Each needs its own, so a device in both groups is decided by it.` });
   }
 
   async putPolicy(a: ActorContext, raw: unknown, fresh: Fresh) {
@@ -317,7 +317,7 @@ export class ClientUpdatesService {
     // 0.35: another business's group is the same 404 as a made-up id.
     const group = groupId ? await this.groups.groupForPolicy(customerId, groupId) : null;
     const priority = input.priority ?? null;
-    if (group && priority === null) throw new BadRequestException({ code: 'PRIORITY_REQUIRED', message: 'A device-group policy needs a priority (1 first): it decides between two groups a computer is in.' });
+    if (group && priority === null) throw new BadRequestException({ code: 'PRIORITY_REQUIRED', message: 'A device-group policy needs a priority (1 first): it decides between two groups a device is in.' });
     if (!group && priority !== null) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Only a device-group policy has a priority.' });
     if (group && await this.prisma.clientUpdatePolicy.findFirst({ where: { customerId, priority, groupId: { not: null, notIn: [group.id] } }, select: { id: true } })) throw this.priorityTaken(priority!);
     if (input.enabled && !fresh('updates.schedule')) throw new FreshAuthNeeded('updates.schedule');
@@ -385,7 +385,7 @@ export class ClientUpdatesService {
     if (before) {
       // Conditional on the mode this request read: a concurrent save is not overwritten.
       const w = await this.prisma.clientUpdatePolicy.updateMany({ where: { id: before.id, agentMode: was }, data: { agentMode: input.agentMode, updatedById: a.userId } });
-      if (w.count !== 1) throw new ConflictException({ code: 'CHANGED', message: 'The business policy changed while the request ran; nothing was changed. Reload and try again.' });
+      if (w.count !== 1) throw new ConflictException({ code: 'CHANGED', message: 'The customer policy changed while the request ran; nothing was changed. Reload and try again.' });
       after = (await this.prisma.clientUpdatePolicy.findUnique({ where: { id: before.id } }))!;
     } else {
       try {
@@ -398,7 +398,7 @@ export class ClientUpdatesService {
         });
       } catch (e) {
         // The partial unique index (0033): another request created the row first.
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw new ConflictException({ code: 'CHANGED', message: 'The business policy changed while the request ran; nothing was changed. Reload and try again.' });
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw new ConflictException({ code: 'CHANGED', message: 'The customer policy changed while the request ran; nothing was changed. Reload and try again.' });
         throw e;
       }
     }
@@ -470,7 +470,7 @@ export class ClientUpdatesService {
       select: { id: true, customerId: true, siteId: true, site: { select: { id: true, name: true } } },
     });
     if (!ep) throw new NotFoundException('Computer not found');
-    if (!ep.customerId) return { policy: null, considered: [], text: 'This computer is not in a business, so no update policy applies.' };
+    if (!ep.customerId) return { policy: null, considered: [], text: 'This device is not in a customer, so no update policy applies.' };
     const policies = await this.prisma.clientUpdatePolicy.findMany({ where: { customerId: ep.customerId } });
     const m = await this.membershipFor(policies, [ep.id]);
     const res = resolvePolicy(policies, { id: ep.id, customerId: ep.customerId, siteId: ep.siteId, groupIds: m.groupsOf(ep.id) });

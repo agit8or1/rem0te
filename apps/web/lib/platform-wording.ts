@@ -41,5 +41,5 @@ export function updateSourcePhrase(platform: unknown): string {
 /** "Windows is waiting for a restart" / "Linux is …" / "This computer is …". */
 export function restartPendingSentence(platform: unknown): string {
   const os = osName(platform);
-  return os ? `${os} is waiting for a restart` : 'This computer is waiting for a restart';
+  return os ? `${os} is waiting for a restart` : 'This device is waiting for a restart';
 }

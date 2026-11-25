@@ -1,10 +1,10 @@
 # Containment
 
-rem0te 0.28 can **stop writes** while an incident is looked at, for every business or for one. It also keeps a
+rem0te 0.28 can **stop writes** while an incident is looked at, for every customer or for one. It also keeps a
 **tamper-evident audit log** that can be checked against a copy kept off the host. Viewing, reports and the audit
 log keep working during a pause.
 
-Settings → Security → **Containment** is where pauses are set and lifted. While one applies to you, a red strip at
+Security → **Containment** is where pauses are set and lifted. While one applies to you, a red strip at
 the top of every page says what is stopped and why. (The dashboard, which is sized to fit the window, takes the
 strip's height off its own from 0.36, so the strip never makes it scroll.)
 
@@ -19,7 +19,7 @@ strip's height off its own from 0.36, so the strip never makes it scroll.)
 | **Outbound email** (`notifications`, 0.34) | Every email: alert emails, scheduled reports (the period is recorded *blocked*, not sent later), confirmation links (`403 CONTAINED`) and test emails. **Not** alert webhooks | The one send path every email goes through ([email.md](email.md)) |
 
 A refusal in the portal is `403` with code `CONTAINED` and the pause's reason. It is checked **after** access, so
-nobody outside a business learns that it is suspended.
+nobody outside a customer learns that it is suspended.
 
 What a pause does not do: it doesn't end a remote session already running, or stop an agent that has already
 started an action, and it doesn't hide anything. It also doesn't touch **monitoring**: alerts keep being raised and
@@ -27,13 +27,13 @@ notified during a pause, because that is when you most want them — except by e
 email (0.34).
 
 **Alert webhooks are not paused, by decision.** The *notifications* pause stops email and nothing else. Webhook
-destinations are systems the MSP or the business configured as its own (an on-call tool, a chat channel), and an
+destinations are systems the MSP or the customer configured as its own (an on-call tool, a chat channel), and an
 incident is when they matter most. This was reconsidered and kept in 0.36.1. If a webhook destination itself is the
-problem — it should not receive alerts any more — **remove it from its notification policy** (Settings → Monitoring →
+problem — it should not receive alerts any more — **remove it from its notification policy** (Monitoring → Monitoring policies →
 Notifications, which needs a fresh sign-in); a pause is not the tool for that.
 
 The reverse holds too. A **maintenance window** ([monitoring](monitoring.md#maintenance-windows)) only holds
-*notifications* — who is told about an alert. It never pauses writes and never stops anything reaching a computer.
+*notifications* — who is told about an alert. It never pauses writes and never stops anything reaching a device.
 The two are separate on purpose: one is planned quiet, the other is an incident brake, and neither can be used as
 the other.
 
@@ -41,9 +41,9 @@ the other.
 
 | Pause | Set by | Lifted by |
 |---|---|---|
-| **Global** (every business) | A Platform Admin or a technician manager | One of them **who did not set it**, with fresh authentication |
-| **Business, by the MSP** | A Platform Admin or a technician manager | One of them who did not set it, with fresh authentication. The business cannot lift it |
-| **Business, by the business itself** | A Business Owner of that business | **Only** a Business Owner of that business, with fresh authentication. The MSP cannot lift it |
+| **Global** (every customer) | A Platform Admin or a technician manager | One of them **who did not set it**, with fresh authentication |
+| **Customer, by the MSP** | A Platform Admin or a technician manager | One of them who did not set it, with fresh authentication. The customer cannot lift it |
+| **Customer, by the customer itself** | A Business Owner of that customer | **Only** a Business Owner of that customer, with fresh authentication. The MSP cannot lift it |
 
 Setting needs no re-authentication: stopping should be one click. Lifting widens what can happen, so it does.
 Technicians cannot see or change containment.
@@ -68,7 +68,7 @@ other two layers are what hold.
 
 ### The approval signer
 
-While it holds a pause for a business, or a global one, the signer refuses new plans for it (`paused`) and refuses
+While it holds a pause for a customer, or a global one, the signer refuses new plans for it (`paused`) and refuses
 every approval decision, including one already in progress. Lifting the portal's pause does **not** lift the
 signer's copy. Check it, then lift it on the signer host:
 
@@ -104,15 +104,15 @@ hash(n) = sha256( hash(n-1) + "\n" + canonical(entry n) )        hash(0) = 64 ze
 ```
 
 The entry covers its sequence number, id, time, action, IP address, user agent, resource, metadata, and the
-tenant, business and user it named. A sequence number that never committed (a failed insert) is declared in
+tenant, customer and user it named. A sequence number that never committed (a failed insert) is declared in
 the next entry, so any **other** gap is a deletion.
 
 - **Guarded.** A database trigger refuses any change to a sealed entry. The one exception is clearing a reference
-  when a user or business is deleted. The original ids are sealed into the entry.
+  when a user or customer is deleted. The original ids are sealed into the entry.
 - **Verified.** The chain is recomputed at start-up and hourly, and on demand from Containment → Audit log
   integrity. A break logs `AUDIT CHAIN BROKEN` and writes an `AUDIT_CHAIN_ALERT` entry.
 - **Exported.** Sealed entries stream off the host as NDJSON (`rem0te-audit-export/1`) to a file and/or an HTTPS
-  endpoint. A failed delivery is retried, so a sink must accept a line it already has.
+  device. A failed delivery is retried, so a sink must accept a line it already has.
 - **Checkpointed.** Every 15 minutes the head is recorded, Ed25519-signed if a key is configured, and exported with
   the entries.
 
@@ -153,7 +153,7 @@ trusted. To turn both on:
    AUDIT_EXPORT_FILE=/var/log/rem0te-audit/export.ndjson     # and/or AUDIT_EXPORT_URL=https://…
    ```
 4. **Restart** the API (`sudo systemctl restart reboot-remote-api`). Within one checkpoint interval
-   (`AUDIT_CHECKPOINT_INTERVAL_SECONDS`, 15 minutes by default) **Settings → Security → Containment** (audit integrity) shows
+   (`AUDIT_CHECKPOINT_INTERVAL_SECONDS`, 15 minutes by default) **Security → Containment** (audit integrity) shows
    checkpoints as signed, and the sink starts receiving entries.
 5. **Verify from elsewhere**, with the public key from step 1 saved as `audit-checkpoint.pub`:
    `node dist/cli/rem0te-audit.js verify-export export.ndjson --pub audit-checkpoint.pub` (below).
@@ -162,7 +162,7 @@ trusted. To turn both on:
    signature which does not verify under the key is.
 
 Entries are insert-only from the moment they are written (0.30.1): the database refuses any change to an entry's
-content, sealed or not, except setting its business, tenant or actor to nothing when those are deleted.
+content, sealed or not, except setting its customer, tenant or actor to nothing when those are deleted.
 
 ### Configuration
 

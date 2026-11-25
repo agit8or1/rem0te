@@ -349,7 +349,7 @@ export class ReportsService {
       take: ALERT_ROWS_MAX + 1,
     });
     if (rows.length > ALERT_ROWS_MAX) {
-      throw new BadRequestException({ code: 'REPORT_TOO_LARGE', message: `More than ${ALERT_ROWS_MAX} alerts were raised in this period. Choose a shorter period or one business.` });
+      throw new BadRequestException({ code: 'REPORT_TOO_LARGE', message: `More than ${ALERT_ROWS_MAX} alerts were raised in this period. Choose a shorter period or one customer.` });
     }
     return rows;
   }
@@ -424,7 +424,7 @@ export class ReportsService {
       take: ALERT_ROWS_MAX + 1,
     });
     if (rows.length > ALERT_ROWS_MAX) {
-      throw new BadRequestException({ code: 'REPORT_TOO_LARGE', message: `More than ${ALERT_ROWS_MAX} offline alerts fall in this period. Choose a shorter period or one business.` });
+      throw new BadRequestException({ code: 'REPORT_TOO_LARGE', message: `More than ${ALERT_ROWS_MAX} offline alerts fall in this period. Choose a shorter period or one customer.` });
     }
     const earliest = await this.prisma.monitorAlert.aggregate({ where: { AND: [base, { kind: 'OFFLINE' }] }, _min: { firstSeenAt: true } });
 
@@ -654,7 +654,7 @@ export class ReportsService {
       .sort((a, b) => gapOrder(a) - gapOrder(b) || a.device.name.localeCompare(b.device.name));
     return {
       ...head,
-      definition: 'From the warranty end date stored for each computer — entered by hand on its device page, or read from the vendor (Dell, Lenovo, HP or Apple) when a Platform Admin has switched that lookup on in Settings → Warranty. Ends within 60 and 90 days include the shorter windows. Unknown means no date is stored, and each such computer says why; a virtual machine has no hardware warranty.',
+      definition: 'From the warranty end date stored for each computer — entered by hand on its device page, or read from the vendor (Dell, Lenovo, HP or Apple) when a Platform Admin has switched that lookup on in Administration → Warranty. Ends within 60 and 90 days include the shorter windows. Unknown means no date is stored, and each such computer says why; a virtual machine has no hardware warranty.',
       totals: summarise(rows),
       byBusiness: [...byBiz.values()].map((l) => ({ business: l[0].business, ...summarise(l) })).sort((a, b) => byName(a.business, b.business)),
       devices: attention.slice(0, PAGE_LIST_MAX).map(view),
@@ -723,7 +723,7 @@ export class ReportsService {
       ]);
     }
     if (lines.length > EXPORT_MAX_ROWS) {
-      throw new BadRequestException({ code: 'EXPORT_TOO_LARGE', message: `This report has more than ${EXPORT_MAX_ROWS} rows. Narrow it with a business, site or shorter period and export again.` });
+      throw new BadRequestException({ code: 'EXPORT_TOO_LARGE', message: `This report has more than ${EXPORT_MAX_ROWS} rows. Narrow it with a customer, site or shorter period and export again.` });
     }
     const scope = actor.isPlatformAdmin ? (q.businessId ?? null) : actor.businessId;
     await this.audit.logOrFail({

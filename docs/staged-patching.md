@@ -1,14 +1,14 @@
 # Staged patching
 
-rem0te 0.27 can install **Windows updates** on customer computers in stages. 0.32 adds
-[installing from one computer's Patches tab](#installing-from-one-computers-patches-tab) and
+rem0te 0.27 can install **Windows updates** on customer devices in stages. 0.32 adds
+[installing from one device's Patches tab](#installing-from-one-devices-patches-tab) and
 [patch policies](#patch-policies), which are approved once and then run inside a maintenance window. 0.34 adds a
 [restart rule](#restarting-after-updates): restart, if Windows requires it, inside the plan's window. For production
 setup, see [Patching setup](patching-setup.md).
 
-**From 0.62 a rollout installs [all at once](#all-at-once-062) by default:** you tick the computers and every one of
-them installs together in the window, with no canary and nothing waiting for anything else. **Test on one computer
-first** is an option, off by default, and gives the staged behaviour this page describes below: a **canary** computer
+**From 0.62 a rollout installs [all at once](#all-at-once-062) by default:** you tick the devices and every one of
+them installs together in the window, with no canary and nothing waiting for anything else. **Test on one device
+first** is an option, off by default, and gives the staged behaviour this page describes below: a **canary** device
 goes first, then one or more **rings**. Each ring is a single signed plan that two people on the approval roster
 authorize with a passkey (in direct mode it is signed at once). The next ring can't be requested until the canary
 reports that the updates took effect.
@@ -17,9 +17,9 @@ The plan is approved, delivered and executed exactly like the [approved Print Sp
 the same approval signer, roster, signature and agent checks. This page covers only what is different for updates.
 
 > **Warning.** An installed update may not stay installable *out*. Some can't be uninstalled, and uninstalling is not
-> built here. By default rem0te never restarts a computer, so an update that needs a restart is reported as
+> built here. By default rem0te never restarts a device, so an update that needs a restart is reported as
 > **restart required** until someone restarts it. With the 0.34 rule *restart if required, inside the window*, the
-> computer restarts itself after a fixed warning, unless a technician is connected through RustDesk or the window
+> device restarts itself after a fixed warning, unless a technician is connected through RustDesk or the window
 > would close first. From 0.54 a policy can also have a [restart window](#restart-windows-054). A signed-in user does
 > not stop the restart. They see the 15-minute warning, and unsaved work is lost.
 
@@ -29,12 +29,12 @@ the same approval signer, roster, signature and agent checks. This page covers o
 |---|---|
 | Security Updates, Critical Updates, Update Rollups, Updates | Upgrades (feature updates), Feature Packs, Service Packs, Tools, anything unclassified |
 | **Drivers** and **Definition Updates** (0.42) | Optional / preview updates (`BrowseOnly`) |
-| Only updates Windows Update **itself offers** that computer at install time | Anything that needs a licence accepted |
+| Only updates Windows Update **itself offers** that device at install time | Anything that needs a licence accepted |
 | | Anything that says it needs someone at the keyboard (`CanRequestUserInput`), **except drivers** |
 | | Third-party software, scripts, files, URLs. A plan names updates only by Windows Update ID and revision |
-| | Computers whose updates are managed by **WSUS**, **Windows Update for Business policy**, **MDM (Intune)** or **Configuration Manager** |
+| | Devices whose updates are managed by **WSUS**, **Windows Update for Customer policy**, **MDM (Intune)** or **Configuration Manager** |
 
-**Drivers and definition updates (0.42).** On a real Windows 10 computer, 8 of 11 offered updates were drivers and
+**Drivers and definition updates (0.42).** On a real Windows 10 device, 8 of 11 offered updates were drivers and
 one was a Defender security-intelligence update, and none of them could be picked. They can be now. Windows Update
 marks nearly every driver as one that *can* request user input (all eight there did), and drivers install unattended
 as SYSTEM in practice, so for drivers only that flag no longer refuses the update. Every other classification still
@@ -42,32 +42,32 @@ refuses it, and optional, licence-bound and feature updates stay out whatever th
 **Drivers** or **Definition Updates** too, but they are never ticked by default. An agent older than 0.42 still
 refuses them (`excluded_classification`); the deployment says so and tells you to update the agent.
 
-These rules are enforced twice: by the portal, when you build a deployment, and again by **the computer**, which
+These rules are enforced twice: by the portal, when you build a deployment, and again by **the device**, which
 asks Windows Update for each named update and decides from that answer. The KBs and titles in a plan are what the
 approvers *see*, and they are signed, but the agent never consults them. A misleading title can mislabel an update. It
 can't widen what gets installed.
 
-At most 20 updates per plan; ring 0 is exactly one computer; later rings have up to 25 computers; at most five rings.
+At most 20 updates per plan; ring 0 is exactly one device; later rings have up to 25 devices; at most five rings.
 
 ## All at once (0.62)
 
 0.62 removes the canary as the default, at the owner's request ("remove the goofy canary thing in update policy").
 Every way to start patching — a one-off deployment, a patch policy and a company-wide policy — now asks one question,
-**Test on one computer first**, and it is not ticked.
+**Test on one device first**, and it is not ticked.
 
 **All at once (the default).**
 
-- You tick the computers (or **Select all**). They are split evenly into plans of at most 25 computers, at most five
-  plans — so at most **125 computers** in one deployment or policy. A plan is still one signed document per 25
-  computers; that limit is the agent's and the signer's, and it did not move.
+- You tick the devices (or **Select all**). They are split evenly into plans of at most 25 devices, at most five
+  plans — so at most **125 devices** in one deployment or policy. A plan is still one signed document per 25
+  devices; that limit is the agent's and the signer's, and it did not move.
 - **No plan waits for another.** There is no canary, no soak and no gate. Requesting a deployment's rings is one
-  press — **Install on every computer** in direct mode — which requests every plan at once. A policy's sweep proposes
+  press — **Install on every device** in direct mode — which requests every plan at once. A policy's sweep proposes
   every plan in the same window.
-- One computer's failure does not stop the others. A plan that is rejected, canceled, expired, or has more failures
+- One device's failure does not stop the others. A plan that is rejected, canceled, expired, or has more failures
   than its threshold can be requested again on its own.
-- No computer needs a [result key](#signed-results-034), because no result opens anything.
+- No device needs a [result key](#signed-results-034), because no result opens anything.
 
-**Test on one computer first (optional).** Everything below this section: a canary, gated rings, soak, a failure
+**Test on one device first (optional).** Everything below this section: a canary, gated rings, soak, a failure
 threshold and signed results. A rollout made before 0.62, or by an API caller that does not say, is this kind.
 
 **How it is signed.** The policy document carries a new field, `staging`, written only when it is `"none"`. A document
@@ -75,7 +75,7 @@ without it is a canary document, so every policy approved before 0.62 keeps its 
 signer:
 
 - refuses any other value (`staging_unknown`), at admission and again when it signs a plan;
-- under `"none"`, still checks the policy's standing, the computers by identity, the filter, the window, the restart
+- under `"none"`, still checks the policy's standing, the devices by identity, the filter, the window, the restart
   rule, the signed pause and its ledger; it skips only ring order and the gate, refuses any gate evidence
   (`bad_evidence`), and keeps one open plan per ring (`ring_already_signed`) and the retry limit
   (`ring_retry_limit`);
@@ -102,16 +102,16 @@ create ──▶ request canary ──▶ 2 approvals ──▶ canary installs 
                                                      deployment PAUSES itself
 ```
 
-1. **Create** (Patching → New deployment). Pick updates from what the business's computers report being offered,
-   assign computers to rings, and set the soak time, the failures allowed per ring and the window each ring may run in.
-   The portal refuses a computer that's managed elsewhere, isn't ready (legacy agent, unpublished build, protected
+1. **Create** (Patching → New deployment). Pick updates from what the customer's devices report being offered,
+   assign devices to rings, and set the soak time, the failures allowed per ring and the window each ring may run in.
+   The portal refuses a device that's managed elsewhere, isn't ready (legacy agent, unpublished build, protected
    class) or hasn't reported a scan, and refuses an update nobody is offered or that isn't installable.
 2. **Request the canary.** This creates a signed plan **awaiting approval** and opens its approval page. Updates are
    always **high impact**, so they always need **two** approvers, even on a single workstation, and never the requester.
 3. **The canary installs.** It downloads and installs the updates. Under the default rule it never restarts; under
    *restart if required, inside the window* it may schedule one ([below](#restarting-after-updates)). It reports a
    state for each update (below).
-4. **Confirm.** After a restart, if one is needed, the computer's next scan shows whether each update took effect.
+4. **Confirm.** After a restart, if one is needed, the device's next scan shows whether each update took effect.
 5. **Request ring 1** once the gate passes, and so on. Each ring is a new plan with new approvals.
 
 ### The gate
@@ -121,53 +121,53 @@ A ring can be requested only when the ring before it passes:
 | Gate reason | Meaning |
 |---|---|
 | `in_progress` | The previous ring is awaiting approval, approved or delivered |
-| `ring_not_run` | Its plan was rejected, canceled or expired, or reached no computer; request it again |
-| `unreconciled` | A computer's outcome is uncertain. Someone has to reconcile it first (below) |
-| `too_many_failures` | More computers failed than the threshold allows. **The deployment pauses itself** |
+| `ring_not_run` | Its plan was rejected, canceled or expired, or reached no device; request it again |
+| `unreconciled` | A device's outcome is uncertain. Someone has to reconcile it first (below) |
+| `too_many_failures` | More devices failed than the threshold allows. **The deployment pauses itself** |
 | `canary_not_effective` | The canary hasn't confirmed every update effective. Usually it needs a restart and a scan |
 | `canary_proved_nothing` | No update applied to the canary, so it proves nothing. Choose a canary that's offered them |
 | `soaking` | The ring passed; the soak time hasn't elapsed |
 | `passed` | The next ring may be requested |
 
 A ring over its threshold isn't promoted past. **Resume** the deployment, then request the *same* ring again, leaving
-out computers with a reason if you need to. The retry is a new plan and needs new approvals. When the last ring passes,
+out devices with a reason if you need to. The retry is a new plan and needs new approvals. When the last ring passes,
 the deployment is **completed**.
 
 ## What each state means
 
-These are the states shown for each update on each computer on the deployment page:
+These are the states shown for each update on each device on the deployment page:
 
 | State | Meaning |
 |---|---|
-| **awaiting approval** / **scheduled** / **delivered** | The plan isn't approved, is approved but not yet taken, or the computer has it and hasn't answered |
+| **awaiting approval** / **scheduled** / **delivered** | The plan isn't approved, is approved but not yet taken, or the device has it and hasn't answered |
 | **installed** | Windows reported the install succeeded. **Not yet confirmed:** a later scan must show it took effect |
 | **restart required** | Installed. It takes effect after a restart: one a person makes, or one the in-window rule scheduled |
-| **effective** | A scan taken *after* the result no longer offers the update, Windows' own history records it installed (or the computer said it already was), and no restart is pending |
+| **effective** | A scan taken *after* the result no longer offers the update, Windows' own history records it installed (or the device said it already was), and no restart is pending |
 | **superseded** | Windows Update replaced it with a newer update before install. Nothing was installed for it |
-| **not offered** | Windows Update didn't offer it to this computer at install time (e.g. it doesn't apply) |
+| **not offered** | Windows Update didn't offer it to this device at install time (e.g. it doesn't apply) |
 | **excluded** | Windows Update offered it, but the agent refused it (a driver, optional, needs a licence or input) |
 | **failed** | Windows reported a failure, with its own HRESULT. Or a later scan offers it again, which means it didn't stay installed |
-| **refused** | The computer refused the whole plan (a signature, target, window or `managed_elsewhere` reason) |
-| **unknown** | Nobody knows. The installer died, or the computer didn't answer within six hours. Never reported as failed |
-| **canceled** | That computer was taken out before delivery (`device_identity_changed`, `requester_no_longer_authorized`, …) |
+| **refused** | The device refused the whole plan (a signature, target, window or `managed_elsewhere` reason) |
+| **unknown** | Nobody knows. The installer died, or the device didn't answer within six hours. Never reported as failed |
+| **canceled** | That device was taken out before delivery (`device_identity_changed`, `requester_no_longer_authorized`, …) |
 
-**Effective is what the computer reports.** It doesn't prove a vulnerability is fixed, and it doesn't cover a
-computer that was restored from a backup afterwards.
+**Effective is what the device reports.** It doesn't prove a vulnerability is fixed, and it doesn't cover a
+device that was restored from a backup afterwards.
 
-A computer counts as **failed** for the threshold if it reported failed, partial, refused or not executed, if any of
+A device counts as **failed** for the threshold if it reported failed, partial, refused or not executed, if any of
 its updates is failed or unknown, or if its outcome is uncertain, even after it has been reconciled.
 
 ### Uncertain outcomes
 
 If the installer stops part-way (a crash, a power cut, a reboot by someone else), the agent can't say what happened.
-It reports **uncertain** and never runs that plan again on that computer. The deployment page shows **Reconcile** for
-that computer. Check **Settings → Windows Update → Update history** on it, then record what you found. The gate
+It reports **uncertain** and never runs that plan again on that device. The deployment page shows **Reconcile** for
+that device. Check **Settings → Windows Update → Update history** on it, then record what you found. The gate
 doesn't move until you do.
 
-## On the computer
+## On the device
 
 - **Every agent shows updates (0.29.1).** The standard agent, on either channel, answers the inventory's update scan
-  every 12 hours and on **Scan now**. A computer without the signed agent shows that list on its **Patches** tab:
+  every 12 hours and on **Scan now**. A device without the signed agent shows that list on its **Patches** tab:
   offered updates with KB, severity and size, and whether a restart is pending. It is read-only. It never feeds a
   deployment, because installing needs the signed agent and its fuller scan below.
 - **Patch status (0.30).** The Patches tab leads with a summary for every agent: the evidence (signed scan,
@@ -176,9 +176,9 @@ doesn't move until you do.
   agent), relevant KBs, whether each update from a recent plan was **confirmed by a later scan**, and why deploying
   is or isn't available. Fields and test status: [What each agent can do](capabilities.md).
 - **Posture.** The signed agent scans Windows Update (`rem0te-agent.exe patch-scan`) at most every 12 hours, when the
-  portal asks (**Scan now** on the computer's **Patches** tab, or **Refresh inventory**), and no more than once every 30
+  portal asks (**Scan now** on the device's **Patches** tab, or **Refresh inventory**), and no more than once every 30
   minutes. The scan reports offered updates, the last 50 history entries, pending-restart signals (component servicing,
-  Windows Update, pending file renames, the update agent) and which update manager, if any, owns the computer. It
+  Windows Update, pending file renames, the update agent) and which update manager, if any, owns the device. It
   installs nothing.
 - **Install.** The heartbeat hands the signed envelope to `rem0te-agent.exe action`. That runs **detached**, so a
   download of several hundred megabytes doesn't hold up the heartbeat. A per-job lock means a re-delivery while it runs is
@@ -195,11 +195,11 @@ Portal, when creating a deployment or requesting a ring:
 
 | Code | Meaning |
 |---|---|
-| `ACTION_NOT_DIRECT` | Updates can't be requested from a computer's Actions tab. Use a deployment |
-| `BAD_RINGS` | Ring 0 isn't exactly one computer, a computer is in two rings, or a ring is empty or too large |
-| `NO_PATCH_POSTURE` | A computer hasn't reported a Windows Update scan yet |
-| `MANAGED_ELSEWHERE` | A computer's updates are managed by WSUS, WUfB policy, MDM or ConfigMgr |
-| `UPDATE_NOT_OFFERED` | No computer in the deployment is offered that update |
+| `ACTION_NOT_DIRECT` | Updates can't be requested from a device's Actions tab. Use a deployment |
+| `BAD_RINGS` | Ring 0 isn't exactly one device, a device is in two rings, or a ring is empty or too large |
+| `NO_PATCH_POSTURE` | A device hasn't reported a Windows Update scan yet |
+| `MANAGED_ELSEWHERE` | A device's updates are managed by WSUS, WUfB policy, MDM or ConfigMgr |
+| `UPDATE_NOT_OFFERED` | No device in the deployment is offered that update |
 | `UPDATE_NOT_INSTALLABLE` | A driver, upgrade, optional update, or one that needs a licence or input |
 | `RING_GATE` | That ring can't be requested now. The message says why (the gate reasons above) |
 | `ACTION_NOT_GRANTED` | Your access level doesn't include high-impact requests (an L2 technician, for example) |
@@ -207,16 +207,16 @@ Portal, when creating a deployment or requesting a ring:
 The agent adds `managed_elsewhere`, `update_agent_busy` (a scan held Windows Update for 20 minutes) and
 `lookup_failed` to the refusal reasons listed in [Approved actions](approved-actions.md#refusal-codes).
 
-## Installing from one computer's Patches tab
+## Installing from one device's Patches tab
 
-Since 0.32, a computer's **Patches** tab has an **Install updates** button when the computer can be patched. You
+Since 0.32, a device's **Patches** tab has an **Install updates** button when the device can be patched. You
 pick from its installable updates, the [restart rule](#restarting-after-updates) (*never*, the default, or *restart
 if required, inside the window*) and a window, and give a reason.
 
-- The request becomes a **one-computer deployment**: a single canary ring, marked *one computer* in the list. Its plan
+- The request becomes a **one-device deployment**: a single canary ring, marked *one device* in the list. Its plan
   awaits **two approvals** on the approval signer, like any ring.
 - It isn't a direct request. `POST /endpoints/:id/actions` still refuses updates with `ACTION_NOT_DIRECT`.
-- When the computer can't be patched, the tab shows no button. It says why and what to do instead:
+- When the device can't be patched, the tab shows no button. It says why and what to do instead:
 
 | Why | What to do |
 |---|---|
@@ -242,11 +242,11 @@ same as one that had failed. On DEWEY-WKS2022 the plan was handed out at 23:33, 
 Now the tab's **Latest install** card follows the install from the request to the scan after it:
 
 - **Steps**: scheduled (when it was), approval (in signed mode), queued, handed out, running, done. The sentence under
-  them says where it is in words: *Queued: it is handed to the computer at its next check-in, about every 3 minutes*;
-  *Handed to the computer at 23:33 UTC (4 deliveries, the last at 23:42)*; and so on. It re-reads every 5 seconds
+  them says where it is in words: *Queued: it is handed to the device at its next check-in, about every 3 minutes*;
+  *Handed to the device at 23:33 UTC (4 deliveries, the last at 23:42)*; and so on. It re-reads every 5 seconds
   while something is moving and shows when it last checked.
 - **Overdue**: an install handed out more than 30 minutes ago with no answer says so, and what that usually means (a
-  large update can take a long time; the agent may be busy or the computer offline). Nothing is retried or canceled
+  large update can take a long time; the agent may be busy or the device offline). Nothing is retried or canceled
   because of it.
 - **Results**: one row per update, with Windows' own result and, for a failure, the HRESULT and its meaning
   (`0x80240022` *all updates failed*, `0x80070005` *access denied*, and so on).
@@ -258,41 +258,41 @@ Now the tab's **Latest install** card follows the install from the request to th
   [Restart windows](#restart-windows-054)). When that restart is reported scheduled, the portal asks for a patch scan two minutes after
   the restart time, so the list catches up without anyone pressing Scan now.
 - **Installed, waiting for restart**: until a scan after the install, the updates it installed are listed with that
-  badge instead of a checkbox — Windows keeps offering them until the computer restarts and scans again, and
+  badge instead of a checkbox — Windows keeps offering them until the device restarts and scans again, and
   installing them a second time would do nothing.
 
 ![The Latest install card on HARB-DISPATCH-01's Patches tab: three updates installed and one failed with 0x800f0922, a restart required, and the updates it installed marked as waiting for the restart](screenshots/guide/patch-latest-install.png)
 
-1. **State** — *Restart required* here; *Queued*, *Handed to the computer*, *Scheduled*, *Overdue* and so on while it
+1. **State** — *Restart required* here; *Queued*, *Handed to the device*, *Scheduled*, *Overdue* and so on while it
    moves.
 2. **Steps** — scheduled, approval, queued, handed out, running, done, with the sentence under them saying where it is.
 3. **The restart banner** — how many installed and failed, and that the list refreshes after the restart.
 4. **Schedule restart** — a `windows.reboot.schedule` plan with the warning chosen beside it.
-5. **Scan now** — asks the computer for a new Windows Update scan.
+5. **Scan now** — asks the device for a new Windows Update scan.
 6. **Results** — one row per update; a failure has its HRESULT and what it means.
-7. **Installed, waiting for restart** — an update this install put on the computer, no longer offered for install.
+7. **Installed, waiting for restart** — an update this install put on the device, no longer offered for install.
 
-The same task appears in the computer's **Tasks** panel and on **Automation → Tasks**; see
+The same task appears in the device's **Tasks** panel and on **Automation → Tasks**; see
 [Following a task](approved-actions.md#following-a-task-052).
 
 ## Scheduled installs
 
 From 0.52, **Install updates** on the Patches tab and a deployment's **next ring** can start at a time instead of now.
-Choose **Schedule**, a date and time, and a time zone. The form offers the computer's site zone, your profile's zone,
+Choose **Schedule**, a date and time, and a time zone. The form offers the device's site zone, your profile's zone,
 this browser's and UTC, and says which one the time is in. Up to 14 days ahead; for a regular schedule, use a
-[patch policy](#patch-policies) and its weekly or monthly maintenance window. From 0.53, when the computer is covered
-by a patch policy, the form also offers **Start at the next opening of this computer's patch policy window**: it fills
+[patch policy](#patch-policies) and its weekly or monthly maintenance window. From 0.53, when the device is covered
+by a patch policy, the form also offers **Start at the next opening of this device's patch policy window**: it fills
 in that opening's start, as a wall-clock time in the zone chosen in the form, and sets the run window to the policy
 window's length (1–24 hours). It is offered greyed out, with the reason, while that window is open (install now) or
-more than 14 days away. It is an ordinary one-computer install that starts at that time, not a ring under the policy.
+more than 14 days away. It is an ordinary one-device install that starts at that time, not a ring under the policy.
 
 ![Install updates on HARB-DISPATCH-01 set to Schedule, with the next opening of its patch policy window filled in: Tuesday 22:00 in America/Los_Angeles](screenshots/guide/patch-schedule.png)
 
 1. **Schedule** — instead of *Install now*.
-2. **Start at the next opening of this computer's patch policy window** (0.53) — with that opening in brackets. It
+2. **Start at the next opening of this device's patch policy window** (0.53) — with that opening in brackets. It
    fills in the date and time below and sets the run window to the policy window's length.
 3. **Date and time** — a wall-clock time, up to 14 days ahead.
-4. **Time zone** — the computer's site zone, your profile's, this browser's or UTC; the sentence under it repeats the
+4. **Time zone** — the device's site zone, your profile's, this browser's or UTC; the sentence under it repeats the
    time and the zone.
 5. **Schedule 1 selected** — the button says *Schedule* rather than *Install* (in signed mode, *Request approval for
    the scheduled install*).
@@ -316,7 +316,7 @@ What happens:
 2. That instant is the plan's **`notBefore`**, and `notBefore` plus the deployment's window hours is its
    **`notAfter`**. Both are inside what is signed: the approvers see the window, and in direct mode the signer signs it
    at the request.
-3. **Nothing is handed to the computer before `notBefore`.** The heartbeat skips a plan whose start has not come, and
+3. **Nothing is handed to the device before `notBefore`.** The heartbeat skips a plan whose start has not come, and
    the target stays *pending*, never delivered. If an envelope did reach the agent early, the agent refuses it
    (`not_yet_valid`) without consuming or journaling it, and takes it again at its first check-in after the start.
 4. At the first check-in after `notBefore` (about every 3 minutes) it runs like any other ring, and the restart rule
@@ -331,14 +331,14 @@ runs at the next check-in. A ring under a patch policy cannot be given a schedul
 **Scheduling has been tested against the simulated agent only** (`e2e-task-progress.mjs`, `rem0te-action-sim` with
 its clock moved). It has not run on a real Windows computer.
 
-Patch policies show their **next install window** — on the company-wide policy list and on each computer's Patch
+Patch policies show their **next install window** — on the company-wide policy list and on each device's Patch
 policy card — computed from the running revision's signed window. From 0.53 a window may be weekly or
 [monthly](#monthly-windows-053).
 
 ## Patch policies
 
 A **patch policy** (0.32) approves a bounded kind of patching once, so the nightly install doesn't need two people
-every time. From 0.62 a policy installs [all at once](#all-at-once-062) unless *Test on one computer first* is ticked;
+every time. From 0.62 a policy installs [all at once](#all-at-once-062) unless *Test on one device first* is ticked;
 the canary and ring rules in this section apply to a policy that tests first. Two approvers other than its author approve the policy on the approval signer. After that, **the signer
 itself**, not the portal, signs each ring plan, but only if the plan falls inside the policy.
 
@@ -346,30 +346,30 @@ itself**, not the portal, signs each ring plan, but only if the plan falls insid
 
 | Bound | Checked against |
 |---|---|
-| The business and its computers, by enrolled identity (endpoint, RustDesk ID, device-secret hash) | Every target in every plan. A re-enrolled computer is a different computer and is refused |
-| 0.34: each computer's **result key**, the key its agent signs its results with | Every result and scan that opens a later ring ([Signed results](#signed-results-034)) |
+| The customer and its devices, by enrolled identity (device, RustDesk ID, device-secret hash) | Every target in every plan. A re-enrolled device is a different device and is refused |
+| 0.34: each device's **result key**, the key its agent signs its results with | Every result and scan that opens a later ring ([Signed results](#signed-results-034)) |
 | The rings, in order. Ring 0 is one canary; later rings hold at most 25 | The signer's own ledger of what it signed. Ring *n* needs ring *n − 1* of the same deployment signed first |
-| Classes, severities, excluded KBs | Each update shown in the plan. The plan also carries the filter as `params.allow`, and **each computer applies it** to Windows Update's own answer, so a mislabelled update can't slip past |
+| Classes, severities, excluded KBs | Each update shown in the plan. The plan also carries the filter as `params.allow`, and **each device applies it** to Windows Update's own answer, so a mislabelled update can't slip past |
 | The maintenance window: weekly days, or (0.53) a monthly day; local start and end; IANA time zone | The plan's window must lie inside one occurrence. DST is honoured |
 | Soak and failure threshold | The ring gate, re-run by the signer (below) |
 | The restart rule: *never*, or *restart if required, inside the window* (0.34) | The plan's `params.reboot`. A plan may ask for no more than the policy: under a *never* policy, a plan asking to restart is refused (`reboot_not_allowed`); under an in-window policy, a plan may ask for either |
 | Expiry: a date at most 90 days out (before 0.63), or (0.63) a signed `expiry: "never"` | Every plan, and the plan's window end, when it has a date. A document with neither, both, or another value signs nothing (`expiry_unknown`) |
 
 **The canary must be effective.** For every ring after the canary, the portal hands the signer the previous ring's
-results and scans, **as each computer signed them** (0.34). The signer checks every signature, then re-runs the same
-gate the portal uses (`evaluateRingGate`) over the signed facts only: every computer answered, nothing uncertain left
-unreconciled, failures within the threshold, the soak passed (counted from the time the computer signed), and **for
+results and scans, **as each device signed them** (0.34). The signer checks every signature, then re-runs the same
+gate the portal uses (`evaluateRingGate`) over the signed facts only: every device answered, nothing uncertain left
+unreconciled, failures within the threshold, the soak passed (counted from the time the device signed), and **for
 the canary, every update effective in a later signed scan**.
 
-**What a compromised portal still can't do:** widen the computers, classes or window, change the ring order, skip
+**What a compromised portal still can't do:** widen the devices, classes or window, change the ring order, skip
 the canary, or keep using a revoked or expired policy, or turn an expiring policy into one that never expires (the
 field is inside the digest). It also can't approve a policy: there's no approve route, and
 the passkeys are checked on the signer's own origin. From 0.34 it also can't forge a ring's results: a canary
-success it writes, signs with a key of its own, edits, replays from another job or borrows from another computer is
+success it writes, signs with a key of its own, edits, replays from another job or borrows from another device is
 refused (below).
 
-**What it can do** is withhold or delay results, so the next ring starts late or never; and, before a computer's
-first policy is approved, propose a result key that isn't the computer's
+**What it can do** is withhold or delay results, so the next ring starts late or never; and, before a device's
+first policy is approved, propose a result key that isn't the device's
 ([the trust-on-first-use window](#the-trust-on-first-use-window)).
 
 ### Policies that never expire (0.63)
@@ -393,7 +393,7 @@ its date, has a document whose digest doesn't match (`policy_digest_mismatch`). 
 refuses the field outright (its schema is strict); the portal asks for the signer's `neverExpires` capability first
 and says *Install the 0.63 approval signer* (`SIGNER_TOO_OLD`).
 
-**Nothing else is relaxed.** Revocation, pausing, the window, the computers and their identities, the update filter,
+**Nothing else is relaxed.** Revocation, pausing, the window, the devices and their identities, the update filter,
 the restart rules, the signed containment pause, the ledger and the retry limits are checked exactly as before. The
 per-plan window (`notAfter`) still bounds each plan. Device result keys are pinned when a policy is approved and are
 not tied to its expiry.
@@ -476,35 +476,35 @@ window, only its plan's own `notBefore` and `notAfter`, which the signer has alr
 
 Monthly windows are tested against the simulated agent and the signer (`unit-monthly-window.mjs`,
 `e2e-patch-policies.mjs`, `e2e-patch-assignment.mjs`). Like every patch policy, they have not run on a real Windows
-computer.
+device.
 
-### Company-wide policies and each computer's Patch policy (0.50)
+### Company-wide policies and each device's Patch policy (0.50)
 
-A policy made by hand names its computers ring by ring. A **company-wide** policy names them for you: every computer
-of the business whose **Patch policy** setting is *Inherit* — Windows, on the signed agent, not archived. An
-**assignable** policy covers only the computers set to use it, for example a separate policy for servers with its own
+A policy made by hand names its devices ring by ring. A **company-wide** policy names them for you: every device
+of the customer whose **Patch policy** setting is *Inherit* — Windows, on the signed agent, not archived. An
+**assignable** policy covers only the devices set to use it, for example a separate policy for servers with its own
 window and restart rule.
 
-**The signed document does not change.** Each one is still a closed list of named computers in rings, bound to their
+**The signed document does not change.** Each one is still a closed list of named devices in rings, bound to their
 enrolled identity. A company-wide policy is a *series* of such documents, called **revisions**. Each revision goes
-through the same admission as a policy made by hand: the same per-computer checks, the same `validatePolicyDoc`, and
+through the same admission as a policy made by hand: the same per-device checks, the same `validatePolicyDoc`, and
 the same signer. The signer knows nothing about series. It signs a ring plan only inside the revision it holds,
 exactly as before. The portal can't widen a running revision. It can only propose another one, which is admitted
 (direct mode) or approved (signed mode) like any policy.
 
 **How the portal builds the rings.** From 0.62 a company-wide policy installs [all at once](#all-at-once-062) unless
-*Test on one computer first* is ticked: every computer, in at most five plans of 25 that wait for nothing (at most
+*Test on one device first* is ticked: every device, in at most five plans of 25 that wait for nothing (at most
 125), with no canary and no result keys needed. A company-wide policy made before 0.62 keeps its canary. With *Test on
-one computer first*:
+one device first*:
 
-- **The canary** is the computer you chose, while it is eligible. Otherwise it is the previous revision's canary.
-  Failing both, it is the computer that checks in most reliably: the most hours with a check-in in the last seven
-  days. A canary needs the update action ready on the published signed build. With other computers after it, it
+- **The canary** is the device you chose, while it is eligible. Otherwise it is the previous revision's canary.
+  Failing both, it is the device that checks in most reliably: the most hours with a check-in in the last seven
+  days. A canary needs the update action ready on the published signed build. With other devices after it, it
   also needs a result key (§38).
 - **The rest** go in rings of at most 25, as even as possible, in a stable order: oldest enrolment first, so a new
-  computer joins at the end. A computer whose agent can't sign its results (no result key) goes only in the last
-  ring, whose results open nothing. At most 101 computers: a canary and four rings of 25.
-- **Left out, with the reason**, on the policy and on each computer's Patches tab:
+  device joins at the end. A device whose agent can't sign its results (no result key) goes only in the last
+  ring, whose results open nothing. At most 101 devices: a canary and four rings of 25.
+- **Left out, with the reason**, on the policy and on each device's Patches tab:
 
 | Code | Why |
 |---|---|
@@ -514,81 +514,81 @@ one computer first*:
 | `in_other_policy` | A policy made by hand already patches it, or names it while awaiting approval |
 | `not_allowed` | The access policy refuses high-impact requests on it for the policy's author |
 | `no_result_key` | It can't sign its results, and the last ring, the only place it could go, is full |
-| `policy_full` | The policy already names 101 computers. The newest are left out |
+| `policy_full` | The policy already names 101 devices. The newest are left out |
 
-![Patching for Harbor Logistics: the company-wide policy with its rings and left-out computers, the assignable depots policy, and each computer's Patch policy](screenshots/guide/company-wide-policy.png)
+![Patching for Harbor Logistics: the company-wide policy with its rings and left-out devices, the assignable depots policy, and each device's Patch policy](screenshots/guide/company-wide-policy.png)
 
-1. **Assignable policy** — a new policy for only the computers set to use it. *Company-wide policy* is offered here
-   while the business has none.
-2. **company-wide** — this business's one company-wide policy, active, with its window and restart rule.
-3. **Last check** — what the next revision would name: how many computers, the ring sizes, and the canary with the
-   reason it was chosen. Here a computer moved back to *Inherit* a few minutes ago, so the change is *settling*.
-4. **Left out** — each computer it can't include, with the reason (the codes above).
+1. **Assignable policy** — a new policy for only the devices set to use it. *Company-wide policy* is offered here
+   while the customer has none.
+2. **company-wide** — this customer's one company-wide policy, active, with its window and restart rule.
+3. **Last check** — what the next revision would name: how many devices, the ring sizes, and the canary with the
+   reason it was chosen. Here a device moved back to *Inherit* a few minutes ago, so the change is *settling*.
+4. **Left out** — each device it can't include, with the reason (the codes above).
 5. **Revision 1 · running** — the signed revision the sweep patches under; its page shows the rings.
-6. **Each computer's Patch policy** — *Inherit*, *Exclude* or *Use* an assignable policy, with what that means for
-   the computer now.
+6. **Each device's Patch policy** — *Inherit*, *Exclude* or *Use* an assignable policy, with what that means for
+   the device now.
 
 **When a revision is proposed.** The sweep (`PATCH_POLICY_SWEEP`) works out the rings the next revision would have.
-It proposes one when they differ from the running revision's (a computer joined, left, changed its setting, was
+It proposes one when they differ from the running revision's (a device joined, left, changed its setting, was
 re-enrolled, or its result key changed), or when a running revision made before 0.63 is near its expiry. "Near"
 means seven days, or a third of a short policy's life. That renewal is the last: every revision proposed from 0.63
 never expires, whatever the series was created with, so nothing is renewed again. Three bounds apply, checked in this order before anything is proposed:
 
 1. **Never mid-ring.** While the running revision has a deployment that is active or paused, nothing is revised. The
    policy shows `mid_ring`.
-2. **Debounced.** A change of computers must hold for `PATCH_POLICY_SETTLE_MINUTES` (10) before it is proposed
+2. **Debounced.** A change of devices must hold for `PATCH_POLICY_SETTLE_MINUTES` (10) before it is proposed
    (`settling`). Renewal doesn't wait for this.
-3. **At most one revision pass per business per `PATCH_POLICY_REVISION_MINUTES` (60).** The bound is a conditional
-   claim row per business, so two API processes can't both take it (`rate_limited`). One pass can revise several
-   policies of the business together. Moving a computer from the company-wide policy to an assignable one is
+3. **At most one revision pass per customer per `PATCH_POLICY_REVISION_MINUTES` (60).** The bound is a conditional
+   claim row per customer, so two API processes can't both take it (`rate_limited`). One pass can revise several
+   policies of the customer together. Moving a device from the company-wide policy to an assignable one is
    therefore one pass, not two.
 
-A revision rejected by the approvers isn't proposed again for the same computers. A revision still awaiting approval
-when the computers change again is replaced by the next one. Revoking a revision by hand, or on the signer, **retires**
+A revision rejected by the approvers isn't proposed again for the same devices. A revision still awaiting approval
+when the devices change again is replaced by the next one. Revoking a revision by hand, or on the signer, **retires**
 the policy, so nothing proposes it again. **Retire** on the policy does the same and revokes every revision.
 
 **Taking over.** A revision goes live only once it is ACTIVE on the signer and the running revision has no
 deployment in progress. In direct mode that is at admission. In signed mode it is after two approvals, and **the
-previous revision keeps running until then**. Take-over is one transaction. The running revision's computers are
+previous revision keeps running until then**. Take-over is one transaction. The running revision's devices are
 released first, then the new revision's are made live, then the policy's pointer moves. The replaced revision is
 then revoked on the signer and audited as `PATCH_POLICY_SUPERSEDED`. The sweep proposes ring plans only under a
 policy's running revision.
 
-**One policy per computer.** Each computer has at most one *live* policy, the one the sweep may patch it under. This
+**One policy per device.** Each device has at most one *live* policy, the one the sweep may patch it under. This
 is a partial unique index in the database (`PatchPolicyComputer_one_live`). A trigger allows a live row only for an
 ACTIVE policy, and another trigger releases a policy's rows when it stops being ACTIVE. A policy made by hand can't
-name a computer another policy patches, one a company-wide or assignable policy covers, or one set to *Exclude*
-(`COMPUTER_IN_POLICY`). The sweep plans a computer only while it is live in that policy.
+name a device another policy patches, one a company-wide or assignable policy covers, or one set to *Exclude*
+(`COMPUTER_IN_POLICY`). The sweep plans a device only while it is live in that policy.
 
-**The Patch policy setting** is on each computer's Patches tab and in the business's policy view (**Patching →
-Company-wide patch policy → Each computer's Patch policy**):
+**The Patch policy setting** is on each device's Patches tab and in the customer's policy view (**Patching →
+Company-wide patch policy → Each device's Patch policy**):
 
 | Setting | Means |
 |---|---|
-| **Inherit** (the default) | The business's company-wide policy, if it has one |
-| **Exclude** | No automatic patching. The sweep leaves the computer out at once, before any revision drops it. *Install updates* on its Patches tab still works |
-| **Use policy X** | An assignable policy of the same business |
+| **Inherit** (the default) | The customer's company-wide policy, if it has one |
+| **Exclude** | No automatic patching. The sweep leaves the device out at once, before any revision drops it. *Install updates* on its Patches tab still works |
+| **Use policy X** | An assignable policy of the same customer |
 
-Precedence is the computer's own setting first, then the business's company-wide policy. Device groups are not a
+Precedence is the device's own setting first, then the customer's company-wide policy. Device groups are not a
 scope for patch policies. Group membership (§46) is computed on every read, and a signed policy names a fixed list,
 so a group-scoped policy would be one more source of revisions without saving a step. Use an assignable policy and
-set its computers.
+set its devices.
 
-Changing the setting needs **Edit computers** on that computer and a fresh sign-in (`patching.override`; an everyday
+Changing the setting needs **Edit devices** on that device and a fresh sign-in (`patching.override`; an everyday
 change under *Confirm it is you*). The write is conditional on the value read. It is audited as
 `PATCH_POLICY_OVERRIDE_SET` with the value before and after. The database CHECKs the value, and a trigger refuses a
-policy of another business or one that isn't assignable. A computer moved to another business goes back to
+policy of another customer or one that isn't assignable. A device moved to another customer goes back to
 *Inherit*. The setting signs nothing. A revision follows under the bounds above, and the Patches tab says where that
 stands: *patched automatically*, *pending a revision*, *left out* (and why), *excluded*, or *no automatic patching*.
 
-![A computer's Patches tab: its Patch policy card, inheriting the company-wide policy as ring 1 of revision 1](screenshots/guide/patch-policy-setting.png)
+![A device's Patches tab: its Patch policy card, inheriting the company-wide policy as ring 1 of revision 1](screenshots/guide/patch-policy-setting.png)
 
 1. **State** — *Patched automatically* here, with which policy, revision and ring.
 2. **Open the policy** — the running revision's page.
 3. **Next install window** (0.52) — the next opening of the running revision's signed window, and (0.53) the window
    in words, weekly or monthly.
 4. **The setting** — *Inherit* (naming the company-wide policy), *Exclude*, or *Use policy* for each assignable one.
-5. **Save** — offered once the choice differs from the saved one; needs **Edit computers** and, unless *A computer's
+5. **Save** — offered once the choice differs from the saved one; needs **Edit devices** and, unless *A device's
    patch policy* is set to *Don't ask*, a fresh sign-in.
 
 A company-wide policy's settings (classes, window, soak, threshold, restart rule,
@@ -602,7 +602,7 @@ canary success could have ring 1 signed early. Now each signed agent signs its o
 
 **The key.** The first time the 0.34 agent needs it, it generates an Ed25519 key from the operating system's random
 source and keeps it in `C:\ProgramData\Rem0te\result-key.json` (SYSTEM and Administrators only, beside
-`heartbeat.dat`). The file holds the private seed and nothing else. The key never leaves the computer; only its public
+`heartbeat.dat`). The file holds the private seed and nothing else. The key never leaves the device; only its public
 half is sent, inside each signed statement. `rem0te-agent.exe status` prints it and its fingerprint
 (`1a2b-3c4d-5e6f-7a8b`, the first 16 hex of its sha256).
 
@@ -610,48 +610,48 @@ half is sent, inside each signed statement. `rem0te-agent.exe status` prints it 
 
 | Statement | Signed when | It says |
 |---|---|---|
-| Result (`rem0te-device-result-v1`) | Every final result of every approved action, as it's journaled | The job id; the sha256 of the exact signed plan bytes the computer verified; its RustDesk ID and device-secret hash; the outcome and reason; when it finished; each update's final state and HRESULT; whether a restart is pending |
+| Result (`rem0te-device-result-v1`) | Every final result of every approved action, as it's journaled | The job id; the sha256 of the exact signed plan bytes the device verified; its RustDesk ID and device-secret hash; the outcome and reason; when it finished; each update's final state and HRESULT; whether a restart is pending |
 | Scan (`rem0te-device-scan-v1`) | Every `patch-scan` | Its RustDesk ID and device-secret hash; when it scanned; whether the scan failed; which updates Windows Update offered; which ones its history records installed; whether a restart is pending |
 
 The journal keeps the signed result, so a re-delivered plan is answered with the same signature. A result journaled
 by an older agent is signed on replay, dated when it was recorded. A plan that isn't valid yet isn't consumed, and
 nothing about it is signed.
 
-**How the key becomes trusted.** The portal reads each computer's key from that computer's own signed scans, and
-only from a scan that verifies under it and names the computer's enrolled identity. It puts the key in the policy
+**How the key becomes trusted.** The portal reads each device's key from that device's own signed scans, and
+only from a scan that verifies under it and names the device's enrolled identity. It puts the key in the policy
 document beside the identity. The signer's approval page shows each key's fingerprint. When two approvers approve
-the policy, the signer trusts the key, and **pins it** to the computer's enrolled identity in
+the policy, the signer trusts the key, and **pins it** to the device's enrolled identity in
 `device-keys/<identity>.json` on its own disk. That file is created once and the serving process never changes it.
 
-**What the signer checks**, for each computer of the previous ring, before any later ring is signed:
+**What the signer checks**, for each device of the previous ring, before any later ring is signed:
 
 | Code | Refused when |
 |---|---|
-| `result_key_not_pinned` | The policy names no result key for that computer: it was approved before 0.34, or for an older agent |
-| `result_signature_missing` | The canary has no signed result or no signed scan, or a computer the portal reports as succeeded has no signed result |
-| `result_signature_invalid` | A signature doesn't verify under the computer's key: an edited statement, a forger's signature claiming the computer's key, a scan signed as a result, a malformed envelope |
-| `result_wrong_device` | It's signed by another key (a forger's own, or another computer's genuine one), or names another enrolled identity |
+| `result_key_not_pinned` | The policy names no result key for that device: it was approved before 0.34, or for an older agent |
+| `result_signature_missing` | The canary has no signed result or no signed scan, or a device the portal reports as succeeded has no signed result |
+| `result_signature_invalid` | A signature doesn't verify under the device's key: an edited statement, a forger's signature claiming the device's key, a scan signed as a result, a malformed envelope |
+| `result_wrong_device` | It's signed by another key (a forger's own, or another device's genuine one), or names another enrolled identity |
 | `result_wrong_plan` | It's about another job, or about plan bytes other than the ones this signer signed for the ring (a replay) |
 | `result_stale` | The result is dated before its plan's window opened, more than four hours after it closed, or in the future; or the canary's newest signed scan is over 36 hours old |
-| `device_key_changed` | The policy names a key other than the one pinned for that computer (also refused when such a policy is proposed) |
+| `device_key_changed` | The policy names a key other than the one pinned for that device (also refused when such a policy is proposed) |
 
-A computer in the previous ring with no signed result can only count **against** the ring. If the portal reports it
+A device in the previous ring with no signed result can only count **against** the ring. If the portal reports it
 failed, refused, not executed, uncertain or canceled, it counts as failed. The signer can't tell a cancellation from a
-hidden failure, so a canceled computer in a policy ring counts too. If the portal reports it hasn't answered, the gate
+hidden failure, so a canceled device in a policy ring counts too. If the portal reports it hasn't answered, the gate
 waits. The portal's own copy of results and scans is still relayed for the record, and the decision never reads it.
 
-**Older agents fail closed.** A computer whose results open a later ring must sign them. That is the canary, and
-every ring but the last. A policy that puts a computer without a result key there is refused when it's created
+**Older agents fail closed.** A device whose results open a later ring must sign them. That is the canary, and
+every ring but the last. A policy that puts a device without a result key there is refused when it's created
 (`RESULT_KEY_MISSING`), and by the signer (`result_key_missing`). The last ring opens nothing, so a pre-0.34 agent may
 sit there. A policy approved under 0.32 or 0.33 carries no keys: it can still sign canaries, but every later ring is
-refused with `result_key_not_pinned`. Approve a new policy once its computers run 0.34. **Manual deployments are
+refused with `result_key_not_pinned`. Approve a new policy once its devices run 0.34. **Manual deployments are
 unaffected:** a person approves each ring, and the signer doesn't read evidence for those plans.
 
-**When a computer's key changes.** A re-enrolled computer is a new identity, so it gets a new pin with its next
-policy. A computer that keeps its enrolment but loses `result-key.json` (its agent state was wiped, or the file was
+**When a device's key changes.** A re-enrolled device is a new identity, so it gets a new pin with its next
+policy. A device that keeps its enrolment but loses `result-key.json` (its agent state was wiped, or the file was
 damaged and set aside as `result-key.json.unusable`) makes a new key. The sweep then leaves it out of rings it would
 gate, saying so, and the signer refuses a policy naming the new key with `device_key_changed`. Read the new
-fingerprint on the computer itself (`rem0te-agent.exe status`), have the signer's operator remove the old pin, then
+fingerprint on the device itself (`rem0te-agent.exe status`), have the signer's operator remove the old pin, then
 approve a new policy:
 
 ```bash
@@ -661,20 +661,20 @@ $S device-key forget --endpoint <endpointId> --reason 'agent state reset; new fi
 
 #### The trust-on-first-use window
 
-The signer can't meet the computer. Every byte between them passes through the portal, and the computer's other
-secret, its device secret, is one the portal also holds. So the **first** time a computer's key reaches the signer,
+The signer can't meet the device. Every byte between them passes through the portal, and the device's other
+secret, its device secret, is one the portal also holds. So the **first** time a device's key reaches the signer,
 the signer trusts it because two approvers approved the policy that names it, not because it can prove the key is the
-computer's. A portal that was already compromised when that first policy was proposed could put its own key there,
-then forge that computer's results.
+device's. A portal that was already compromised when that first policy was proposed could put its own key there,
+then forge that device's results.
 
 The window is narrow:
 
-- It's open only until the first policy naming that computer is approved. After that the key is pinned, and a
+- It's open only until the first policy naming that device is approved. After that the key is pinned, and a
   portal compromised later can't swap it. A policy naming another key is refused, and no HTTP route removes a pin.
-- It covers keys only. A substituted key can't widen what a ring installs, add a computer, or run anything on the
-  computer itself.
-- **You can close it.** Before approving a computer's first policy, compare the fingerprint the signer's approval
-  page shows ("first time this signer sees it") with `rem0te-agent.exe status` on the computer. This is the same
+- It covers keys only. A substituted key can't widen what a ring installs, add a device, or run anything on the
+  device itself.
+- **You can close it.** Before approving a device's first policy, compare the fingerprint the signer's approval
+  page shows ("first time this signer sees it") with `rem0te-agent.exe status` on the device. This is the same
   read-back as the approver roster ceremony. The portal's policy page shows the fingerprints too, but that copy comes
   from the portal.
 
@@ -690,7 +690,7 @@ twice. Each attempt is recorded on the policy and audited (`PATCH_POLICY_PROPOSE
 
 - A paused deployment is left alone, and nothing new is proposed while it exists.
 - A containment pause stops it on both sides.
-- Computers in a later ring that aren't ready are left out of that ring's plan, each with the reason.
+- Devices in a later ring that aren't ready are left out of that ring's plan, each with the reason.
 - `PATCH_POLICY_SWEEP=off` disables the sweep.
 
 **Revoking** is one-way and lives on the signer. **Revoke** on the policy's page (fresh sign-in) marks it revoked in
@@ -712,15 +712,15 @@ Policy refusal codes, from the signer: `policy_revoked`, `policy_expired`, `expi
 0.34 adds one restart rule to update plans. It is a closed parameter, `reboot`, with two values and nothing beside
 them: no delay, time, message or command can be chosen.
 
-| Rule | What the computer does after installing |
+| Rule | What the device does after installing |
 |---|---|
-| `never` (the default everywhere) | Nothing. A pending restart stays pending until someone restarts the computer |
-| `if_required_in_window` | Only if Windows then reports a restart is required, it schedules one through the same path as [`windows.reboot.schedule`](approved-actions.md#maintenance-actions-032): `shutdown.exe /r /t 900` with the same fixed warning, so the person at the computer has **15 minutes** to save their work. Programs still open then are closed without saving |
+| `never` (the default everywhere) | Nothing. A pending restart stays pending until someone restarts the device |
+| `if_required_in_window` | Only if Windows then reports a restart is required, it schedules one through the same path as [`windows.reboot.schedule`](approved-actions.md#maintenance-actions-032): `shutdown.exe /r /t 900` with the same fixed warning, so the person at the device has **15 minutes** to save their work. Programs still open then are closed without saving |
 
 You choose the rule on a deployment, on **Install updates** from a Patches tab, and on a patch policy. Every ring plan
 carries it, the approval page shows it, and the approvers sign it.
 
-**When the computer does not restart.** It reports `restart: restart_deferred` with a reason, and leaves the computer
+**When the device does not restart.** It reports `restart: restart_deferred` with a reason, and leaves the device
 as it is. The install plan itself does not retry; the update stays *restart required* and the next ring waits. From
 0.54, a policy with a [restart window](#restart-windows-054) asks for the restart again in that window.
 
@@ -739,7 +739,7 @@ window, sessions, then the schedule. The session check is made once, when the re
 connects in the 15 minutes after sees the Windows warning.
 
 **Proof the update took effect.** A scheduled restart is reported as scheduled, not as done. The portal then asks
-the computer for a patch scan due two minutes after the restart time, and the canary gate opens only when that scan
+the device for a patch scan due two minutes after the restart time, and the canary gate opens only when that scan
 shows each update effective and no restart pending. A restart that never happened (canceled with
 [*Cancel a scheduled restart*](approved-actions.md#maintenance-actions-032), or blocked by Windows) leaves the gate shut.
 
@@ -751,9 +751,9 @@ The **Windows Update script still never restarts** (`wua.ps1`, §15); the only r
 
 ## Restart windows (0.54)
 
-> From 0.60 a restart window can also be set without a patch policy — on a business, a device group or one
-> computer — for computers whose updates are installed some other way. See [Restart windows](/docs/restart-windows).
-> A computer in a patch policy with its own restart window is restarted by that policy only.
+> From 0.60 a restart window can also be set without a patch policy — on a customer, a device group or one
+> device — for devices whose updates are installed some other way. See [Restart windows](/docs/restart-windows).
+> A device in a patch policy with its own restart window is restarted by that policy only.
 
 **Who stops a restart.** Only a technician connected through RustDesk (`rustdesk.exe --cm` running), or the agent
 not being able to tell. **A signed-in user does not stop the restart. They see the 15-minute warning, and unsaved
@@ -766,10 +766,10 @@ weekday, day of the month).
 | Restart rule | What happens inside the restart window |
 |---|---|
 | *No restart window* (the default) | Nothing. The install window's own rule (`never` / `if_required_in_window`) still applies |
-| *Restart if required* (`if_required`) | Each computer in the policy that Windows says needs a restart is asked to restart. The plan carries `onlyIfRequired`, so the computer reads Windows' pending-restart state again when the plan runs and does nothing if none is pending (`no_change`, `no_restart_required`) |
-| *Maintenance restart* (`always`) | Every computer in the policy is restarted once per window, whether or not Windows asks |
+| *Restart if required* (`if_required`) | Each device in the policy that Windows says needs a restart is asked to restart. The plan carries `onlyIfRequired`, so the device reads Windows' pending-restart state again when the plan runs and does nothing if none is pending (`no_change`, `no_restart_required`) |
+| *Maintenance restart* (`always`) | Every device in the policy is restarted once per window, whether or not Windows asks |
 
-**How it runs.** The policy sweep asks the approval signer for one `windows.reboot.schedule` plan per computer,
+**How it runs.** The policy sweep asks the approval signer for one `windows.reboot.schedule` plan per device,
 signed under the policy, with no person approving it. The signer signs it only if all of these hold, and refuses
 with the code otherwise:
 
@@ -777,17 +777,17 @@ with the code otherwise:
 - the warning is the fixed 15 minutes, and `onlyIfRequired` is there exactly for *if required*
   (`restart_params_not_allowed`);
 - the exception below only if the policy has it (`override_not_allowed`);
-- one computer the policy names, unchanged since approval (`computer_not_in_policy`), requested as the policy's
+- one device the policy names, unchanged since approval (`computer_not_in_policy`), requested as the policy's
   author (`requester_mismatch`), naming the policy and no deployment or update (`bad_display`);
 - the restart — the plan's last moment plus the warning — falls inside the restart window, and the plan runs at most
   two hours (`outside_restart_window`);
-- no other restart plan of that computer is still open in this window, and at most three were signed in it
+- no other restart plan of that device is still open in this window, and at most three were signed in it
   (`restart_already_signed`, `restart_retry_limit`).
 
-**A deferred restart is asked for again.** If a technician was connected through RustDesk (or the computer could not
+**A deferred restart is asked for again.** If a technician was connected through RustDesk (or the device could not
 tell), the sweep asks again 15 minutes later in the same window, up to three attempts, and again in the next restart
 window. Each policy restart plan is valid for 15 minutes, so the previous one has closed on the signer before the
-next is asked for. A computer that is off for the whole window is tried in the next one. The policy page lists every
+next is asked for. A device that is off for the whole window is tried in the next one. The policy page lists every
 attempt (**Restarts under it**). The 0.34 install-window rule is unchanged: it does not retry by itself.
 
 **The RustDesk exception.** At the owner's request ("there should be an override exception checkbox") a restart can
@@ -810,7 +810,7 @@ session is open.
 **Where it is shown.** The policy list and the company-wide list say the schedule in words, for example *Installs:
 2 days after the second Tuesday of each month 22:00–04:00 America/New_York · Restarts: if required, Sundays
 02:00–04:00 America/New_York*. The policy page shows the next restart windows and the restarts asked for. Each
-computer's Patch policy card says *Restart planned for …*, or when the next restart window opens.
+device's Patch policy card says *Restart planned for …*, or when the next restart window opens.
 
 > **Not proven on Windows.** Restart windows, *only if required* and the exception have been tested against the
 > simulated agent only.
@@ -823,7 +823,7 @@ production order, with a live pre-flight. On top of that:
 
 1. Build and publish the **0.27 signed agent** (`windows/rem0te-agent.exe`) through the offline-signed update chain.
    Agents report `windows.update.install@1` in their heartbeat once they run it.
-2. Give the computers time to scan, or press **Scan now** on a computer's **Patches** tab.
+2. Give the devices time to scan, or press **Scan now** on a device's **Patches** tab.
 3. Choose a canary that's representative, is offered the updates, and that someone can restart.
 
 There are no new server settings.
@@ -832,21 +832,21 @@ There are no new server settings.
 
 | Level | State |
 |---|---|
-| **Fixture-tested** | Yes. The Go packages `internal/patch` and `internal/action` test eligibility, manager detection, the parsers' refusal of answers for unrequested updates, every per-update state, crash → unknown, the Windows Update lock, replay, and a second process seeing `in_progress`. `wua.ps1` is parsed by PowerShell in the tests and checked for banned cmdlets. `e2e-staged-patching.mjs` (59 checks) runs the portal, the signer and the agent's real decision code against a simulated Windows Update and registry: posture, deployment refusals, the canary, restart → effective, a three-computer ring with a crash and a failure, auto-pause, resume and retry, identity change, a tampered ring plan, and cancel |
-| **Fixture-tested (0.32)** | Yes. `unit-patch-policy.mjs` (114 checks) covers every policy refusal, the window arithmetic across DST in several zones, and the signer's policy records. `e2e-patch-policies.mjs` (75 checks) covers: a one-computer install through two approvals to effective; no button on a standard-agent computer; a policy approved by passkey; the sweep proposing the canary inside the window; the agent installing only the policy's class; ring 1 signed automatically only after the canary was effective; the signer refusing widened rings, a disallowed class, a wider filter, out-of-window plans, a skipped canary, an altered digest, a non-author requester, expired and revoked policies, and a containment pause; and no duplicate after an API restart. Go tests cover the agent's `allow` filter |
+| **Fixture-tested** | Yes. The Go packages `internal/patch` and `internal/action` test eligibility, manager detection, the parsers' refusal of answers for unrequested updates, every per-update state, crash → unknown, the Windows Update lock, replay, and a second process seeing `in_progress`. `wua.ps1` is parsed by PowerShell in the tests and checked for banned cmdlets. `e2e-staged-patching.mjs` (59 checks) runs the portal, the signer and the agent's real decision code against a simulated Windows Update and registry: posture, deployment refusals, the canary, restart → effective, a three-device ring with a crash and a failure, auto-pause, resume and retry, identity change, a tampered ring plan, and cancel |
+| **Fixture-tested (0.32)** | Yes. `unit-patch-policy.mjs` (114 checks) covers every policy refusal, the window arithmetic across DST in several zones, and the signer's policy records. `e2e-patch-policies.mjs` (75 checks) covers: a one-device install through two approvals to effective; no button on a standard-agent device; a policy approved by passkey; the sweep proposing the canary inside the window; the agent installing only the policy's class; ring 1 signed automatically only after the canary was effective; the signer refusing widened rings, a disallowed class, a wider filter, out-of-window plans, a skipped canary, an altered digest, a non-author requester, expired and revoked policies, and a containment pause; and no duplicate after an API restart. Go tests cover the agent's `allow` filter |
 | **Fixture-tested (0.34, restart rule)** | Yes, for the restart rule. Go tests: the closed rule, the shared scheduling path and fixed warning, never under *never*, and every deferral (session open, cannot tell, window closing first, a restart already pending, an uncertain install, nothing installed). `e2e-staged-patching.mjs` (94 checks) adds: restart in the window, scheduled, the simulated restart (`rem0te-action-sim -fire-restart`) and the post-restart scan to *effective* and a completed deployment; an open session and a closing window each deferring with nothing scheduled. `e2e-patch-policies.mjs` (84 checks) adds a *never* policy's signer refusing a restart plan (`reboot_not_allowed`), and an in-window policy signing one |
 | **Fixture-tested (0.34, signed results)** | Yes. Go tests (`internal/devsig`, `internal/action`) cover creating the key once under concurrency, an unusable key file, signing and opening (forged, claimed key, altered, cross-domain), every journaled result signed, and replay returning the same signature. `unit-patch-policy.mjs` (151 checks) covers forged, replayed, cross-device, cross-plan, stale, malformed and missing signatures, an unsigned canceled target, a pre-0.34 policy, and `result_key_missing`. `unit-approval-signer.mjs` (99 checks) covers the pin on approval, `device_key_changed` at proposal and at signing, the ledger's plan hash, and `device-key list/forget`. `e2e-patch-policies.mjs` (89 checks) covers the portal refusing a canary without a key, the key bound from the agent's own scan, the stored signature equal to the agent's, five forged canary successes refused, and the genuine one opening ring 1 |
-| **Fixture-tested (0.50, company-wide policies)** | Yes, against the simulated agent only. `unit-patch-assignment.mjs` (62 checks) covers the ring builder (canary choice, rings of at most 25, keyless computers only in the last ring, the 101 cap, stable order), the membership fingerprint, every revision decision and its bounds, and the setting's parser. `e2e-patch-assignment.mjs` (68 checks) covers a company-wide policy built from the business's computers with the left-out reasons; a new computer joining by revision no sooner than the per-business bound, and no further revision when nothing changed; nothing revised mid-ring; Exclude dropping the computer by revision; *Use policy X* moving a computer to an assignable policy in one revision pass; another business's policy refused by the API and by the database trigger; the one-live-row index and the setting's CHECK; the setting audited before and after and needing a fresh sign-in; a hand-made policy refused over a covered computer (`COMPUTER_IN_POLICY`); signed mode, where the old revision keeps running until the new one is approved; renewal before expiry; and retirement. `e2e-patch-policies.mjs` (100 checks) and `e2e-staged-patching.mjs` (100 checks) still pass |
-| **Fixture-tested (0.52, progress and scheduling)** | Yes, against the simulated agent only. `unit-task-progress.mjs` (59 checks) replays the DEWEY-WKS2022 timeline through the lifecycle builder (queued, handed out with four deliveries, overdue at 30 minutes, restart required with eight updates and the HRESULT text) and covers every task kind, the scheduled, approval, containment and quiet-computer states, ordering and the schedule arithmetic. `e2e-task-progress.mjs` (58 checks) covers an install from request to restart required, overdue, the Tasks page's scope, Schedule restart as a `windows.reboot.schedule` plan and the scan requested after it, a scheduled install signed with its `notBefore`, nothing handed out before it, the agent refusing it early (`not_yet_valid`) and running it after, cancel touching only undelivered targets, and a scheduled ring |
+| **Fixture-tested (0.50, company-wide policies)** | Yes, against the simulated agent only. `unit-patch-assignment.mjs` (62 checks) covers the ring builder (canary choice, rings of at most 25, keyless devices only in the last ring, the 101 cap, stable order), the membership fingerprint, every revision decision and its bounds, and the setting's parser. `e2e-patch-assignment.mjs` (68 checks) covers a company-wide policy built from the customer's devices with the left-out reasons; a new device joining by revision no sooner than the per-customer bound, and no further revision when nothing changed; nothing revised mid-ring; Exclude dropping the device by revision; *Use policy X* moving a device to an assignable policy in one revision pass; another customer's policy refused by the API and by the database trigger; the one-live-row index and the setting's CHECK; the setting audited before and after and needing a fresh sign-in; a hand-made policy refused over a covered device (`COMPUTER_IN_POLICY`); signed mode, where the old revision keeps running until the new one is approved; renewal before expiry; and retirement. `e2e-patch-policies.mjs` (100 checks) and `e2e-staged-patching.mjs` (100 checks) still pass |
+| **Fixture-tested (0.52, progress and scheduling)** | Yes, against the simulated agent only. `unit-task-progress.mjs` (59 checks) replays the DEWEY-WKS2022 timeline through the lifecycle builder (queued, handed out with four deliveries, overdue at 30 minutes, restart required with eight updates and the HRESULT text) and covers every task kind, the scheduled, approval, containment and quiet-device states, ordering and the schedule arithmetic. `e2e-task-progress.mjs` (58 checks) covers an install from request to restart required, overdue, the Tasks page's scope, Schedule restart as a `windows.reboot.schedule` plan and the scan requested after it, a scheduled install signed with its `notBefore`, nothing handed out before it, the agent refusing it early (`not_yet_valid`) and running it after, cancel touching only undelivered targets, and a scheduled ring |
 | **Paired lab** (real Windows, real Windows Update, real authenticator) | **Not done.** The script hasn't run against a real Windows Update service. Classification IDs, result codes and pending-restart keys are as Microsoft documents them, not yet as observed |
-| **Production-ready** | **No.** It needs the paired lab first: a canary, a WSUS-managed computer, an update that needs a restart, and one that fails |
+| **Production-ready** | **No.** It needs the paired lab first: a canary, a WSUS-managed device, an update that needs a restart, and one that fails |
 
 ## Known limits
 
 - Windows only, and Microsoft updates only. No third-party patching or feature upgrades. Drivers (0.42) install as
   Windows Update offers them; there is no rollback of a driver from here.
 - Installing a driver or a definition update (0.42) has been proven against the simulated Windows Update only. On a
-  real computer it is the same `IUpdateInstaller` call as any other update, unattended (`ForceQuiet`), but a driver
+  real device it is the same `IUpdateInstaller` call as any other update, unattended (`ForceQuiet`), but a driver
   that does stop to ask has not been seen yet.
 - The in-window restart has not yet run on a real Windows computer. Its warning is Windows' own shutdown dialog; there
   is no other notice and no postponing by the user. A deferred install-window restart is retried only by a policy's
@@ -856,21 +856,21 @@ There are no new server settings.
   builds them in enrolment order. There is no grouping by model, site or role, and device groups are not a policy
   scope.
 - A company-wide policy's settings are fixed for its life; to change them, retire it and create another. It names at
-  most 101 computers.
-- A change of a computer's Patch policy reaches the signed policy only by revision, so it can take the debounce plus
+  most 101 devices.
+- A change of a device's Patch policy reaches the signed policy only by revision, so it can take the debounce plus
   up to an hour (more if a deployment is running, and until two approvals in signed mode). Exclude takes effect at once.
-- The Devices list doesn't show each computer's patch policy; the Patches tab and the business's policy view do.
+- The Devices list doesn't show each device's patch policy; the Patches tab and the customer's policy view do.
 - The session check sees RustDesk sessions only, once. A signed-in user, at the console or over Remote Desktop, does
   not stop a restart: they see the warning, and unsaved work is lost.
-- A scheduled install (0.52) starts at the computer's first check-in after its time, so up to a few minutes late, and
-  not at all if the computer is off for the whole window. Scheduling has not run on real Windows. (0.53 added monthly
+- A scheduled install (0.52) starts at the device's first check-in after its time, so up to a few minutes late, and
+  not at all if the device is off for the whole window. Scheduling has not run on real Windows. (0.53 added monthly
   windows; 0.54 restart windows.)
-- Under a policy, ring results are signed by the computers (0.34), and a forged result is refused. Each computer's
+- Under a policy, ring results are signed by the devices (0.34), and a forged result is refused. Each device's
   key is trusted on first use: the first time a policy names it, approvers vouch for it, and only a fingerprint
-  read-back on the computer proves it ([The trust-on-first-use window](#the-trust-on-first-use-window)).
-- Under a policy, a computer whose result is missing counts as failed, even one that was canceled before delivery.
-- A computer managed by WSUS or Intune is refused rather than coordinated with.
-- Posture is device-reported, so a compromised computer can misreport its own posture. It can't widen another
-  computer's plan, and it can't get anything installed that Windows Update doesn't offer it.
+  read-back on the device proves it ([The trust-on-first-use window](#the-trust-on-first-use-window)).
+- Under a policy, a device whose result is missing counts as failed, even one that was canceled before delivery.
+- A device managed by WSUS or Intune is refused rather than coordinated with.
+- Posture is device-reported, so a compromised device can misreport its own posture. It can't widen another
+  device's plan, and it can't get anything installed that Windows Update doesn't offer it.
 - A compromised portal can delay, cancel or withhold a ring, or misreport the gate *to you*. It can't sign a plan,
-  add a computer to a signed ring, or make a computer install an update the plan doesn't name.
+  add a device to a signed ring, or make a device install an update the plan doesn't name.

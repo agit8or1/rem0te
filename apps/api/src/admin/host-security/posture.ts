@@ -1,5 +1,5 @@
 /**
- * Server security posture (0.74): findings and the score on Admin → Security
+ * Server security posture (0.74): findings and the score on Security → Server security
  * → Overview. Pure: it imports only the pure parsers' types.
  *
  * A finding is one check with a status, a severity, the evidence it was
@@ -130,7 +130,7 @@ export const OFF_SWITCHES: ReadonlyArray<{ name: string; severity: Severity; cos
   { name: 'WARRANTY_SWEEP', severity: 'low', cost: 'Warranty dates are not looked up.' },
   { name: 'MDM_SWEEP', severity: 'low', cost: 'Mobile devices are not read from their MDM provider: inventory, compliance and command history stop updating, and unfinished commands are not expired.' },
   { name: 'BACKUP_SYNC_SWEEP', severity: 'low', cost: 'Backup providers that Rem0te reads are not read (a St0r push still arrives).' },
-  { name: 'AGENT_AUTO_UPDATE', severity: 'medium', cost: 'Outdated agents are never handed an update (a test switch; the setting belongs in Settings → Client updates).' },
+  { name: 'AGENT_AUTO_UPDATE', severity: 'medium', cost: 'Outdated agents are never handed an update (a test switch; the setting belongs in Patching → Client updates).' },
   { name: 'SNAPSHOT_QUIET', severity: 'low', cost: 'Every heartbeat reads the snapshot schedule again (about three transactions each, for nothing).' },
 ];
 

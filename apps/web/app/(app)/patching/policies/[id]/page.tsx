@@ -116,19 +116,19 @@ export default function PolicyPage() {
             {row('Severities', d.allow.severities?.join(', ') ?? 'any')}
             {row('Never installs', d.allow.excludeKbs?.join(', ') ?? 'nothing excluded')}
             {row('Window', <span data-testid="policy-window">{describeWindow(d.window)}{(p.upcomingWindows?.length ?? 0) > 0 && <span className="block text-muted-foreground">Next openings: {p.upcomingWindows!.map((o) => describeOccurrence(o, d.window.timezone)).join('; ')}</span>}</span>)}
-            {row('Staging', <span data-testid="policy-staging">{d.staging === 'none' ? 'All at once: every computer installs in the window together, with no test computer' : 'One computer first: the rest follow in rings, each after the one before it is confirmed'}</span>)}
+            {row('Staging', <span data-testid="policy-staging">{d.staging === 'none' ? 'All at once: every device installs in the window together, with no test device' : 'One device first: the rest follow in rings, each after the one before it is confirmed'}</span>)}
             {d.staging !== 'none' && row('Soak between rings', `${d.soakHours} h`)}
             {d.staging !== 'none' && row('Failures allowed per ring', String(d.failureThreshold))}
             {row('Restart', <span data-testid="policy-restart">{p.restartWords ? `${rebootSummary(d.reboot)}. Restarts: ${p.restartWords}` : rebootSummary(d.reboot)}{(p.upcomingRestartWindows?.length ?? 0) > 0 && d.restart && <span className="block text-muted-foreground">Next restart windows: {p.upcomingRestartWindows!.map((o) => describeOccurrence(o, d.restart!.window.timezone)).join('; ')}</span>}{(d.restart || d.reboot === 'if_required_in_window') && <span className="block text-muted-foreground">A signed-in user does not stop the restart. They see the 15-minute warning, and unsaved work is lost.</span>}</span>)}
             {p.schedule && row('Schedule', <span data-testid="policy-schedule">{p.schedule}</span>)}
             {row('Reason', d.reason)}
-            {row('Approved by', p.direct ? `${directApproved(d.createdBy.name, p.createdAt)} — it stops counting if the business leaves direct mode on the approval signer` : p.approvals.length ? p.approvals.map((a) => `${a.name} (${a.role}, ${formatDate(a.at)})`).join('; ') : 'nobody yet — two approvers other than its author approve it on the approval signer')}
+            {row('Approved by', p.direct ? `${directApproved(d.createdBy.name, p.createdAt)} — it stops counting if the customer leaves direct mode on the approval signer` : p.approvals.length ? p.approvals.map((a) => `${a.name} (${a.role}, ${formatDate(a.at)})`).join('; ') : 'nobody yet — two approvers other than its author approve it on the approval signer')}
             {row('Document digest', <code className="break-all">{p.digest}</code>)}
           </dl>
           <div className="space-y-1">
             {d.rings.map((r, i) => (
               <p key={i}>
-                <strong>{d.staging === 'none' ? (d.rings.length > 1 ? `Plan ${i + 1}` : 'Computers') : i === 0 ? 'Canary' : `Ring ${i}`}:</strong>{' '}
+                <strong>{d.staging === 'none' ? (d.rings.length > 1 ? `Plan ${i + 1}` : 'Devices') : i === 0 ? 'Canary' : `Ring ${i}`}:</strong>{' '}
                 {r.map((c, j) => {
                   const fp = p.resultKeys?.[c.endpointId];
                   return (
@@ -143,7 +143,7 @@ export default function PolicyPage() {
             {p.resultKeys && (
               <p className="text-xs text-muted-foreground">
                 Result-key fingerprints are this portal&apos;s copy. Compare the approval signer&apos;s page with{' '}
-                <code>rem0te-agent.exe status</code> on the computer, not with this list.
+                <code>rem0te-agent.exe status</code> on the device, not with this list.
               </p>
             )}
           </div>

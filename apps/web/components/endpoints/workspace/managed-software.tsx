@@ -99,15 +99,15 @@ export function ManagedSoftware({ endpointId }: { endpointId: string }) {
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center gap-2"><Package className="h-4 w-4" />Managed software</CardTitle>
         <p className="text-xs text-muted-foreground">
-          This business&apos;s and the global <Link className="underline" href="/automation/software">software catalog</Link> first, ready to install; below it, a search of the whole winget community catalog.{' '}
+          This customer&apos;s and the global <Link className="underline" href="/automation/software">software catalog</Link> first, ready to install; below it, a search of the whole winget community catalog.{' '}
           {direct
-            ? 'Direct mode is on for this business: installing or uninstalling one is signed at once and runs when the computer next checks in.'
+            ? 'Direct mode is on for this customer: installing or uninstalling one is signed at once and runs when the device next checks in.'
             : 'Installing or uninstalling one creates a plan that two people approve on the approval signer.'}
         </p>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         {isLoading ? <p className="text-muted-foreground">Loading…</p>
-          : error ? <p className="text-muted-foreground">{refusalText(error, 'The software catalog for this computer could not be loaded.')}</p>
+          : error ? <p className="text-muted-foreground">{refusalText(error, 'The software catalog for this device could not be loaded.')}</p>
           : data && (
             <>
               {(!data.install.possible || !data.uninstall.possible) && (
@@ -132,7 +132,7 @@ export function ManagedSoftware({ endpointId }: { endpointId: string }) {
                           <tr key={e.id} className="border-t align-top" data-managed-row>
                             <td className="px-3 py-1.5">
                               <Link className="font-medium underline" href={`/automation/software/${e.id}`}>{e.name}</Link> <span className="font-mono">{e.version}</span>{' '}
-                              <Badge variant="outline" className="text-[10px]">{e.scope === 'global' ? 'global' : 'this business'}</Badge>
+                              <Badge variant="outline" className="text-[10px]">{e.scope === 'global' ? 'global' : 'this customer'}</Badge>
                               <span className="block text-muted-foreground font-mono">{e.packageId}</span>
                             </td>
                             <td className="px-3 py-1.5">
@@ -171,7 +171,7 @@ export function ManagedSoftware({ endpointId }: { endpointId: string }) {
         <RequestDialog
           endpointId={endpointId} direct={direct} actionId={`windows.software.${asking.op}`} warning={data[asking.op].warning}
           title={`${asking.op === 'install' ? 'Install' : 'Uninstall'} ${asking.row.name} ${asking.op === 'install' ? asking.row.version : ''}`}
-          fallback={`${asking.op === 'install' ? 'Installs' : 'Uninstalls'} ${asking.row.packageId} on this computer.`}
+          fallback={`${asking.op === 'install' ? 'Installs' : 'Uninstalls'} ${asking.row.packageId} on this device.`}
           verb={asking.op}
           send={(reason, windowHours, schedule) => softwareApi.single(endpointId, asking.row.id, asking.op, { reason, windowHours, ...schedule })}
           schedulable
@@ -182,9 +182,9 @@ export function ManagedSoftware({ endpointId }: { endpointId: string }) {
         <RequestDialog
           endpointId={endpointId} direct={direct} actionId="windows.software.install" warning={data.install.warning}
           title={`Install ${asking.hit.name} ${asking.hit.latestVersion}`}
-          fallback={`Installs ${asking.hit.packageId} on this computer.`}
+          fallback={`Installs ${asking.hit.packageId} on this device.`}
           verb="install"
-          note={`The server reads ${asking.hit.packageId} ${asking.hit.latestVersion}'s installer manifest from winget-pkgs, picks the machine-wide installer winget would choose for this computer (${data.architecture}), pins its SHA-256 and derives how to tell it is installed. If this business's catalog has no entry for it at that version, one is added (Business Owner or Platform Admin only${askCatalog ? ', with a fresh sign-in' : ''}). The computer hashes what winget downloads and refuses a mismatch.`}
+          note={`The server reads ${asking.hit.packageId} ${asking.hit.latestVersion}'s installer manifest from winget-pkgs, picks the machine-wide installer winget would choose for this device (${data.architecture}), pins its SHA-256 and derives how to tell it is installed. If this customer's catalog has no entry for it at that version, one is added (Business Owner or Platform Admin only${askCatalog ? ', with a fresh sign-in' : ''}). The device hashes what winget downloads and refuses a mismatch.`}
           send={(reason, windowHours) => softwareApi.quickInstall(endpointId, { packageId: asking.hit.packageId, version: asking.hit.latestVersion, ...(reason ? { reason } : {}), windowHours })}
           optionalReason
           onClose={() => setAsking(null)}
@@ -339,11 +339,11 @@ export function RequestDialog({ endpointId, direct, actionId, warning, title, fa
 
 /** What the computer runs for each removal kind (0.42), in the words the dialog uses. */
 const REMOVE_NOTE: Record<string, string> = {
-  msi: 'A Windows Installer product: the computer runs msiexec /x {product code} /qn /norestart.',
-  quiet: 'The computer runs the silent uninstall command the program registered (its QuietUninstallString).',
-  inno: 'An Inno Setup program: the computer runs its registered uninstaller with /VERYSILENT /SUPPRESSMSGBOXES /NORESTART.',
-  nsis: 'An NSIS program: the computer runs its registered uninstaller with /S. NSIS uninstallers hand over to a copy of themselves and return early, so the computer waits for the key to go.',
-  chromium: 'A Chromium browser (Chrome, Edge…): the computer runs its registered setup.exe --uninstall with --force-uninstall, system-wide as registered. Microsoft may refuse to uninstall Edge; the result says so.',
+  msi: 'A Windows Installer product: the device runs msiexec /x {product code} /qn /norestart.',
+  quiet: 'The device runs the silent uninstall command the program registered (its QuietUninstallString).',
+  inno: 'An Inno Setup program: the device runs its registered uninstaller with /VERYSILENT /SUPPRESSMSGBOXES /NORESTART.',
+  nsis: 'An NSIS program: the device runs its registered uninstaller with /S. NSIS uninstallers hand over to a copy of themselves and return early, so the device waits for the key to go.',
+  chromium: 'A Chromium browser (Chrome, Edge…): the device runs its registered setup.exe --uninstall with --force-uninstall, system-wide as registered. Microsoft may refuse to uninstall Edge; the result says so.',
 };
 
 /** Uninstall a program from the installed-software list: its catalog entry's uninstall, or windows.software.remove. */
@@ -365,7 +365,7 @@ export function RemoveProgramDialog({ endpointId, program, data, onClose }: { en
     <RequestDialog
       endpointId={endpointId} direct={direct} actionId="windows.software.remove" warning={data.remove.warning}
       title={`Uninstall ${program.name}`} fallback={`Removes ${program.name} by its uninstall key.`} verb="uninstall"
-      note={`${REMOVE_NOTE[program.removal.method ?? 'quiet'] ?? REMOVE_NOTE.quiet} The computer first checks the key “${program.key}” still names “${program.name}”, and decides the command itself from what the key says.`}
+      note={`${REMOVE_NOTE[program.removal.method ?? 'quiet'] ?? REMOVE_NOTE.quiet} The device first checks the key “${program.key}” still names “${program.name}”, and decides the command itself from what the key says.`}
       send={(reason, windowHours) => softwareApi.removeProgram(endpointId, { key: program.key!, view: program.view!, displayName: program.name, ...(reason ? { reason } : {}), windowHours })}
       optionalReason
       onClose={onClose}
@@ -385,11 +385,11 @@ function CatalogPicker({ entries, children }: { entries: Row[]; children: (rows:
   return (
     <div className="space-y-2" data-testid="catalog-picker">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs font-medium">From the catalog <span className="font-normal text-muted-foreground">({entries.length} {entries.length === 1 ? 'package' : 'packages'}: this business&apos;s and global)</span></p>
+        <p className="text-xs font-medium">From the catalog <span className="font-normal text-muted-foreground">({entries.length} {entries.length === 1 ? 'package' : 'packages'}: this customer&apos;s and global)</span></p>
         {entries.length > 8 && <Input className="h-7 w-56 text-xs" placeholder="Filter the catalog" aria-label="Filter the catalog" value={f} maxLength={64} onChange={(e) => setF(e.target.value)} />}
       </div>
       {entries.length === 0
-        ? <p className="text-xs text-muted-foreground">The catalog has nothing for this computer&apos;s business yet. Search the winget catalog below to install a package (it is added to the catalog as it is installed), or build the catalog on <Link className="underline" href="/automation/software">Automation → Software catalog</Link>.</p>
+        ? <p className="text-xs text-muted-foreground">The catalog has nothing for this device&apos;s customer yet. Search the winget catalog below to install a package (it is added to the catalog as it is installed), or build the catalog on <Link className="underline" href="/automation/software">Automation → Software catalog</Link>.</p>
         : rows.length === 0 ? <p className="text-xs text-muted-foreground">No catalog entry matches “{f.trim()}”.</p>
         : children(rows)}
     </div>

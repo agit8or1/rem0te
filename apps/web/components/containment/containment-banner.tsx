@@ -49,7 +49,7 @@ export function ContainmentBanner() {
       {data!.map((p) => (
         <div key={p.id} className="flex flex-wrap items-center gap-x-2">
           <OctagonPause className="h-4 w-4 shrink-0" />
-          <strong>{p.scope === 'global' ? 'Write pause (all businesses)' : `${p.businessName ?? 'This business'} is suspended`}:</strong>
+          <strong>{p.scope === 'global' ? 'Write pause (all customers)' : `${p.businessName ?? 'This customer'} is suspended`}:</strong>
           <span>{p.kinds.map((k) => KIND[k] ?? k).join(', ')} stopped</span>
           <span className="text-red-800/80 dark:text-red-200/80">— {p.reason}</span>
           <Link href="/settings/security/containment" className="ml-auto underline">Containment</Link>

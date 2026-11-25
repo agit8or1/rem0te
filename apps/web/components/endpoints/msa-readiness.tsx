@@ -39,8 +39,8 @@ export interface MsaEndpointView {
 }
 
 /** The one sentence every readiness view leads with (the API's READINESS_NOTE). */
-export const MSA_NOTE = 'Readiness only — Managed Secure Access is not available yet; nothing has changed on this computer.';
-export const MSA_FLEET_NOTE = 'Readiness only — Managed Secure Access is not available yet; nothing has changed on any computer.';
+export const MSA_NOTE = 'Readiness only — Managed Secure Access is not available yet; nothing has changed on this device.';
+export const MSA_FLEET_NOTE = 'Readiness only — Managed Secure Access is not available yet; nothing has changed on any device.';
 
 const TONE: Record<MsaState, string> = {
   compatible: 'border-emerald-600/40 text-emerald-800 dark:text-emerald-300',
@@ -82,7 +82,7 @@ export function MsaReadinessCard({ endpointId }: { endpointId: string }) {
       <CardHeading
         title="Secure remote access readiness"
         icon={ShieldQuestion}
-        aside={<Link href="/endpoints/remote-readiness" className="text-xs text-muted-foreground underline-offset-2 hover:underline" data-testid="msa-card-fleet-link">All computers</Link>}
+        aside={<Link href="/endpoints/remote-readiness" className="text-xs text-muted-foreground underline-offset-2 hover:underline" data-testid="msa-card-fleet-link">All devices</Link>}
       />
       <CardContent className="space-y-2.5 text-sm">
         <MsaNote testId="msa-card-note" text={data?.note ?? MSA_NOTE} />
@@ -112,7 +112,7 @@ export function MsaReadinessCard({ endpointId }: { endpointId: string }) {
             <p className="text-xs text-muted-foreground">
               The signed agent reads RustDesk&apos;s settings with its own command line every 6 hours, and whenever RustDesk changes. That read never writes one.
               {r.state === 'managed' || r.state === 'managed_verified' || r.state === 'enforcement_failure'
-                ? ' A Platform Admin moved this computer into Managed Secure Access.'
+                ? ' A Platform Admin moved this device into Managed Secure Access.'
                 : ' Compatible means it could be managed; it is not managed now.'}
             </p>
           </>

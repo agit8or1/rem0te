@@ -327,7 +327,7 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
       <CardHeader className={embedded ? 'shrink-0 space-y-0 px-4 py-2.5' : 'pb-2'}>
         <CardTitle className={`text-sm flex items-center gap-2 flex-wrap${embedded ? ' font-semibold' : ''}`}>
           <Globe className="h-4 w-4" />
-          Client Locations
+          Client locations
           <span className="ml-auto flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
             {data && (
               <>
@@ -350,9 +350,9 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
           </div>
         ) : points.length === 0 ? (
           <div className={`${mapH} flex flex-col items-center justify-center gap-1 text-sm text-muted-foreground`}>
-            <span>No computers could be located yet.</span>
+            <span>No devices could be located yet.</span>
             <span className="text-xs max-w-md text-center">
-              Locations come from the address a computer checks in from. Machines on private
+              Locations come from the address a device checks in from. Machines on private
               networks, or that have not checked in, cannot be placed.
             </span>
           </div>
@@ -373,7 +373,7 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
                 preserveAspectRatio="xMidYMid slice"
                 className="absolute inset-0 w-full h-full"
                 role="img"
-                aria-label={`Map of ${data?.located ?? 0} located computers`}
+                aria-label={`Map of ${data?.located ?? 0} located devices`}
               >
                 {/* Land first, then internal (state) borders, then country
                     borders on top, so the heavier line always wins. */}
@@ -501,7 +501,7 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
                 >
                   <div className="font-medium">{placeLabel(hover.p)}</div>
                   <div className="text-muted-foreground">
-                    {hover.p.total} computer{hover.p.total === 1 ? '' : 's'} · {hover.p.online} online{hover.p.agentSilent ? ` · ${hover.p.agentSilent} agent silent` : ''}
+                    {hover.p.total} device{hover.p.total === 1 ? '' : 's'} · {hover.p.online} online{hover.p.agentSilent ? ` · ${hover.p.agentSilent} agent silent` : ''}
                   </div>
                   {hover.p.accuracy === 'country' && (
                     <div className="text-amber-600 dark:text-amber-500">Country-level estimate</div>
@@ -535,7 +535,7 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
                 <Info className="h-3 w-3 mt-px shrink-0" />
                 <span>
                   {data!.approximate} dashed marker{data!.approximate === 1 ? '' : 's'} — country-level
-                  only, sitting on the country&apos;s centre point rather than the computer.
+                  only, sitting on the country&apos;s centre point rather than the device.
                 </span>
               </p>
             )}
@@ -546,7 +546,7 @@ export function ClientMap({ businessId, embedded }: { businessId?: string; embed
                   <div>
                     <div className="text-sm font-medium">{placeLabel(selected)}</div>
                     <div className="text-[11px] text-muted-foreground">
-                      {selected.total} computer{selected.total === 1 ? '' : 's'} · {selected.online} online{selected.agentSilent ? ` · ${selected.agentSilent} agent silent` : ''}
+                      {selected.total} device{selected.total === 1 ? '' : 's'} · {selected.online} online{selected.agentSilent ? ` · ${selected.agentSilent} agent silent` : ''}
                     </div>
                   </div>
                   <button onClick={() => setSelected(null)}

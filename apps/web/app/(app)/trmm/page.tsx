@@ -51,11 +51,11 @@ interface ResolveResult {
 }
 
 const WHY: Record<ResolveResult['kind'], string> = {
-  'agent-id': 'Matched on the Tactical RMM agent id recorded for this computer.',
+  'agent-id': 'Matched on the Tactical RMM agent id recorded for this device.',
   'hostname+client': 'Matched on hostname, narrowed by the client name from Tactical RMM.',
   hostname: 'Matched on hostname.',
-  ambiguous: 'More than one computer answers to that hostname.',
-  none: 'No computer matched.',
+  ambiguous: 'More than one device answers to that hostname.',
+  none: 'No device matched.',
 };
 
 function TrmmLanding() {
@@ -127,8 +127,8 @@ function TrmmLanding() {
       const info = res.data?.data as { rustdeskId?: string; sessionId?: string } | undefined;
       if (!info?.rustdeskId) {
         toast({
-          title: 'Computer not ready',
-          description: 'This computer has not finished enrollment.',
+          title: 'Device not ready',
+          description: 'This device has not finished enrollment.',
           variant: 'destructive',
         });
         return;
@@ -175,10 +175,10 @@ function TrmmLanding() {
     <Shell>
       {list.length > 0 ? (
         <>
-          <Problem title="More than one computer matches" tone="warn">
+          <Problem title="More than one device matches" tone="warn">
             Tactical RMM sent the hostname <code className="font-mono">{host}</code>
             {client && <> for client <code className="font-mono">{client}</code></>}, and it
-            matches {list.length} computers. Pick the right one — Rem0te will not guess,
+            matches {list.length} devices. Pick the right one — Rem0te will not guess,
             because guessing here opens a session on somebody else&apos;s machine.
           </Problem>
           <div className="space-y-2 mt-4">
@@ -215,7 +215,7 @@ function TrmmLanding() {
           )}
         </>
       ) : (
-        <Problem title="No computer matched" tone="warn">
+        <Problem title="No device matched" tone="warn">
           <p>
             Tactical RMM sent
             {host && <> hostname <code className="font-mono">{host}</code></>}
@@ -224,8 +224,8 @@ function TrmmLanding() {
             {' '}— nothing in Rem0te matches, or nothing you have access to does.
           </p>
           <p className="mt-2">
-            The computer may not be enrolled in Rem0te, or it may be enrolled under a
-            different name. <Link href="/endpoints" className="underline">Browse computers</Link>
+            The device may not be enrolled in Rem0te, or it may be enrolled under a
+            different name. <Link href="/endpoints" className="underline">Browse devices</Link>
             {' '}to check.
           </p>
         </Problem>

@@ -100,6 +100,30 @@ you, Monitoring & API, Quick Connect, RustDesk, Branding, Network / Ports).
 Its *Access Control* tab is gone: it was a tab that left the page
 (UX_AUDIT.md F-13). Access control is in the Security group.
 
+## Wording (0.87.1)
+
+The menu already said *Customers* and *Devices* in 0.87; from 0.87.1 the pages
+say it too (UX_ROADMAP.md P1-1). Nothing in this table changed: the *Was*
+column keeps the old names, because that is what someone looking for a page
+remembers.
+
+| You may remember | It says now |
+|---|---|
+| Business, businesses | Customer, customers |
+| Computer, endpoint | Device |
+| Awaiting approval, Waiting for approval | Pending approval |
+| *Settings → Security → Containment* (and the other Security pages) | *Security → Containment* |
+| *Settings → Monitoring* | *Monitoring → Monitoring policies* |
+| *Settings → Client updates*, *Client rollouts* | *Patching → Client updates*, *Client rollouts* |
+| *Settings → Warranty*, *Backups*, *API keys*, *Email*, *AI*, *PSA / ticketing*, *System status* | *Administration → …* (*Backups* is *Backup connections*) |
+| *Admin → Security* | *Security → Server security* |
+| *Remote Support → …* | *Remote support → …* |
+
+The role names *Business Owner* and *Business User* are unchanged, and so are
+URLs, API fields and codes (`/businesses`, `/endpoints`, `businessId`,
+`computers:view`). The words, and what was kept and why, are in
+[UI_DESIGN_SYSTEM.md](UI_DESIGN_SYSTEM.md#words).
+
 ## Moved out of the sidebar footer
 
 | Was | Now |

@@ -4,14 +4,14 @@
 Readiness reporting (§3.9) shipped in 0.69; grants and the long-poll (§3.10)
 in 0.71; agent enforcement, the managed test session, cutover and rollback
 (§3.11) in 0.72; Connect through grants, revocation, session evidence and
-group or business cutover runs (§3.12) in 0.73. Everything after readiness
+group or customer cutover runs (§3.12) in 0.73. Everything after readiness
 runs only when the server's environment has `MSA_GRANTS=on`, which no
-production server does. Even then **nothing on a computer changes until a
+production server does. Even then **nothing on a device changes until a
 Platform Admin moves it into Managed (pending)** with a fresh confirmation —
-one computer, or a cutover run that moves a canary first and then paced
-batches, each computer through its own checks. Never the fleet at once, and
-never automatically. Every other computer stays in today's mode (*Legacy*),
-and a 0.73 agent on a Legacy computer behaves exactly as 0.71's. RustDesk
+one device, or a cutover run that moves a canary first and then paced
+batches, each device through its own checks. Never the fleet at once, and
+never automatically. Every other device stays in today's mode (*Legacy*),
+and a 0.73 agent on a Legacy device behaves exactly as 0.71's. RustDesk
 stays the remote desktop.
 
 **Managed Secure Access has run only in the Windows lab** (GitHub's Windows
@@ -23,7 +23,7 @@ SYSTEM; it does not run the portal, the long-poll or a remote connection.
 Written 2026-11-19 against Rem0te 0.68 and RustDesk's source at 1.2.3–1.5.3
 (client) and 1.1.16 (hbbs/hbbr OSS). Every RustDesk claim below names the
 behaviour in RustDesk's own source; anything not yet run on a real Windows
-computer is marked **unverified on Windows**.
+device is marked **unverified on Windows**.
 
 ## 1. Audit: remote access today
 
@@ -31,8 +31,8 @@ computer is marked **unverified on Windows**.
 
 | Control | Today | Who enforces it |
 |---|---|---|
-| Who may press Connect (role, preset, business, assignment, containment, unassigned pool) | **Enforced** | portal |
-| Launch token (short-lived, one use, bound to technician and computer) | **Enforced** | portal |
+| Who may press Connect (role, preset, customer, assignment, containment, unassigned pool) | **Enforced** | portal |
+| Launch token (short-lived, one use, bound to technician and device) | **Enforced** | portal |
 | MFA / passkeys at sign-in, fresh sign-in for sensitive changes | **Enforced** | portal |
 | Permanent password: generated, sealed, revealed only to whom policy allows, rotation staged | **Enforced** (portal side) | portal + agent applies the rotation |
 | Use of a seen permanent password outside Rem0te | **Not prevented** | nobody: any RustDesk client pointed at the server connects |
@@ -48,7 +48,7 @@ computer is marked **unverified on Windows**.
 
 ### Strengths to keep
 
-Fail-closed launch policy (a mode the endpoint cannot enforce is refused, never
+Fail-closed launch policy (a mode the device cannot enforce is refused, never
 silently weakened), tenant isolation on every remote path, sealed credentials,
 the tamper-evident audit chain, containment, and the signed agent's verified
 update chain. MSA builds on all of them and relaxes none.
@@ -56,21 +56,21 @@ update chain. MSA builds on all of them and relaxes none.
 ### Limitations (architectural, not confirmed exploits)
 
 1. A permanent password, once seen, is a standing credential outside Rem0te.
-2. The portal's decisions stop at the launch; nothing on the computer knows
+2. The portal's decisions stop at the launch; nothing on the device knows
    about them.
-3. The technician's identity is not visible to the computer: RustDesk's peer
+3. The technician's identity is not visible to the device: RustDesk's peer
    ID and name are asserted by the connecting client and checked by nobody
    (RustDesk `src/server/connection.rs`; the source says so itself).
 4. hbbs OSS has no per-peer authorization. Its `-k` key is the public key every
    client holds: it means "configured for this server", not "authorized".
 
-## 2. What unmodified RustDesk enforces on the computer
+## 2. What unmodified RustDesk enforces on the device
 
 From RustDesk's source (`src/server/connection.rs`, `password_security.rs`,
 `core_main.rs`, `hbb_common/src/config.rs`). "Enforced" means the controlled
 side drops or refuses it, whatever the technician's client does.
 
-| Control | Enforced by the computer? | How | Notes |
+| Control | Enforced by the device? | How | Notes |
 |---|---|---|---|
 | View-only | **Yes** | `access-mode=view` | Flutter builds (Windows since 1.2); Sciter builds ignore it |
 | `access-mode` itself | — | `view`, `full`, anything else | Flutter builds: `view` is every permission **off** and `full` every permission **on**, before any `enable-*` key is read; anything else (`custom`, or unset, which RustDesk's own settings page writes for *Custom*) reads each key (`Connection::permission` in 1.4.1–1.4.6, `is_permission_enabled_locally` from 1.4.7). The agent writes `view` or `custom`, never `full` (0.78.1, F1) |
@@ -80,7 +80,7 @@ side drops or refuses it, whatever the technician's client does.
 | Audio, tunnels, remote restart, block input, recording | **Yes** | `enable-*` keys | an `enable-*` key that is unset, or anything but `N`, is **on** (hbb_common `option2bool`) |
 | Terminal, camera, remote printer | **Yes** | `enable-terminal`, `enable-camera`, `enable-remote-printer` | present in every supported release (1.4.1–1.5.3) |
 | Privacy mode | **From 1.4.7** | `enable-privacy-mode` | 1.4.1–1.4.6 have no such permission: there privacy mode is refused only when unsupported. The agent writes `N` on every release; before 1.4.7 RustDesk stores it and ignores it |
-| Permission changes in the accept window | **No** (not settable) | `enable-perm-change-in-accept-window` | a *built-in* option (custom clients only), so the person at the computer can widen keyboard, clipboard, audio, file, restart, recording, block-input and privacy mode for their own session |
+| Permission changes in the accept window | **No** (not settable) | `enable-perm-change-in-accept-window` | a *built-in* option (custom clients only), so the person at the device can widen keyboard, clipboard, audio, file, restart, recording, block-input and privacy mode for their own session |
 | Server-sent permissions | — | `ControlPermissions` (1.4.9+) | only RustDesk Server Pro sends them, and they override the local keys; Rem0te's open-source hbbs never does |
 | Consent (Accept / Dismiss) | **Yes**, and no password bypasses it | `approve-mode=click` | prompt waits for a signed-in user: not usable unattended at the logon screen |
 | Which password works | **Yes** | `verification-method=use-permanent-password` | |
@@ -104,7 +104,7 @@ and 11 desktops, a signed-in user and a live session are still untested.
 
 ## 3. Design
 
-### 3.1 Modes, per computer
+### 3.1 Modes, per device
 
 | Mode | Meaning |
 |---|---|
@@ -121,7 +121,7 @@ A saved setting is never shown as enforcement: only the agent's readback is.
 
 ### 3.2 Session grant
 
-When an authorized technician presses Connect on a managed computer, the
+When an authorized technician presses Connect on a managed device, the
 portal issues a **session grant**: a small JSON document signed with Ed25519
 (`node:crypto`; Go's `crypto/ed25519` on the agent).
 
@@ -137,15 +137,15 @@ portal issues a **session grant**: a small JSON document signed with Ed25519
   from the signed release metadata it already verifies (TUF targets), so a
   substituted key needs a signed release. A compromised portal can still issue
   grants, exactly as it can launch sessions today: MSA moves enforcement onto
-  the computer and removes the standing credential; it does not add a second
+  the device and removes the standing credential; it does not add a second
   person to ordinary support (the directive's "no repetitive approvals").
 - **Agent checks:** signature, `endpointId` and `rustdeskId` are its own,
   `notBefore ≤ now ≤ notAfter`, `grantId` never seen before (kept until
-  expiry), mode and permissions within the computer's ceiling, no `remote`
+  expiry), mode and permissions within the device's ceiling, no `remote`
   containment pause in its signed pause file.
-- **Delivery:** a managed computer's signed agent keeps one long-poll request
+- **Delivery:** a managed device's signed agent keeps one long-poll request
   open to the portal (device secret, TLS), so a grant arrives within seconds.
-  Legacy computers never open it. The portal side was built in 0.71
+  Legacy devices never open it. The portal side was built in 0.71
   (`POST /msa/agent/poll`, §3.10); the agent's poller in 0.72 (§3.11).
 - **Publishing the key (0.72):** the agent trusts a grant key only when it is
   listed in `msa/grant-keys.json`, a target in the signed release metadata
@@ -173,15 +173,15 @@ portal issues a **session grant**: a small JSON document signed with Ed25519
    sets the password to a fresh random value **no one is told**, and ends any
    open session with `stop-service Y` → `N`.
 
-Between sessions a managed computer's password is that unknown random value,
+Between sessions a managed device's password is that unknown random value,
 so **an old permanent password is not a bypass.** This is the property the
 directive asks to test directly.
 
 ### 3.4 Revocation
 
-Disconnect one session, all of a technician's sessions, a business's, or a
-computer's, and the `remote` containment pause, all reach the agent over the
-same long-poll and end the session. **Built in 0.73** (§3.12). **Offline:** a computer that cannot
+Disconnect one session, all of a technician's sessions, a customer's, or a
+device's, and the `remote` containment pause, all reach the agent over the
+same long-poll and end the session. **Built in 0.73** (§3.12). **Offline:** a device that cannot
 reach the portal cannot receive a grant, so it cannot be connected to in
 managed mode at all (fail closed; Legacy behaves as today). A session already
 open when the network drops ends at `maxMinutes` or idle timeout, enforced by
@@ -221,15 +221,15 @@ verified.
   and Flutter build, CLI works as SYSTEM, readback works. Result: Compatible /
   Upgrade available / Unsupported. **Built in 0.69** — see §3.9.
 - **Cutover** needs a Platform Admin (fresh sign-in) and moves **one
-  computer** at a time. The legacy password is kept until a managed test
+  device** at a time. The legacy password is kept until a managed test
   session succeeds; only then is it replaced. Never automatic, never
-  fleet-wide. **Built in 0.72** (§3.11). **Group or business cutover runs**
+  fleet-wide. **Built in 0.72** (§3.11). **Group or customer cutover runs**
   (0.73, §3.12) move a canary first, then batches a Platform Admin advances,
-  each computer through the same one-computer cutover.
+  each device through the same one-device cutover.
 - **Rollback** to Legacy is an admin action: the agent restores the previous
   RustDesk settings and the portal stages a new sealed permanent password
   through the ordinary rotation. **Built in 0.72** (§3.11).
-- Nothing rotates the fleet, reinstalls RustDesk, or moves a computer by
+- Nothing rotates the fleet, reinstalls RustDesk, or moves a device by
   itself.
 
 ### 3.8 What MSA cannot do (stated in the console, too)
@@ -239,16 +239,16 @@ verified.
 - Prevent a local administrator from changing RustDesk settings: the agent
   re-applies and reports drift as *Enforcement failure* (Connect refused).
 - Work unattended at the logon screen with consent required.
-- Protect computers without the signed agent (Linux, macOS, standard agent).
+- Protect devices without the signed agent (Linux, macOS, standard agent).
 
 A modified RustDesk client (AGPL-3.0: source must be published with every
-build) would be needed for locked settings or endpoint-side recording. Not
+build) would be needed for locked settings or device-side recording. Not
 planned unless the agent-based design proves insufficient.
 
 ### 3.9 Readiness reporting (built, 0.69)
 
 **Readiness only — Managed Secure Access is not available yet; nothing has
-changed on any computer.** The console says this above every readiness view.
+changed on any device.** The console says this above every readiness view.
 
 **What the agent reports.** `rem0te-agent.exe rustdesk-preflight`, started by
 the signed heartbeat at most every 30 minutes, runs for real at most every 6
@@ -273,9 +273,9 @@ same file. Each read times out after 15 s and keeps at most 4 KB of output.
 
 **What the portal accepts.** Only from an authenticated heartbeat on the
 signed channel that may act (§64): never a standard heartbeat, an installer's
-check-in, a leftover standard heartbeat or a pooled computer. Anything that
+check-in, a leftover standard heartbeat or a pooled device. Anything that
 does not parse is dropped; the heartbeat never fails for it, so an older or
-newer agent is never refused. One row per computer (`RustdeskPreflight`,
+newer agent is never refused. One row per device (`RustdeskPreflight`,
 migration 0087), newest report wins.
 
 **The states** (`apps/api/src/msa/readiness.ts`, one pure function; the first
@@ -294,16 +294,16 @@ unit test runs 622,080 combinations of facts and the security invariants
 (§80) check the source. No readiness answer is ever marked verified.
 
 **Where it shows.** The device page's *Secure remote access readiness* card
-(Overview), and *Devices → Remote access readiness*: counts per state and every
-computer the viewer can see, from `GET /msa/readiness` (View computers;
+(Overview), and *Remote support → Remote access readiness*: counts per state and every
+device the viewer can see, from `GET /msa/readiness` (View devices;
 `endpointVisibilityWhere`). `GET /msa/readiness/:endpointId` is the card's.
 
 **Evidence.** The preflight ran on real Windows Server 2025 in the Windows lab
 against RustDesk 1.4.1, 1.4.6, 1.4.7, 1.4.9 and 1.5.3, as the administrator and
 as SYSTEM through the real `rem0te-agent.exe` from a scheduled task
 (`TestLabRustdeskPreflight`). It has **not** run on a Windows 10 or 11 desktop,
-with someone signed in, or on any fleet computer: reports appear only once a
-computer's signed agent has updated to 0.69, through the existing automatic
+with someone signed in, or on any fleet device: reports appear only once a
+device's signed agent has updated to 0.69, through the existing automatic
 update policy.
 
 ### 3.10 Grants and the long-poll (built, 0.71, behind `MSA_GRANTS`, off)
@@ -351,32 +351,32 @@ command imports the verifier**: the 0.71 agent binary is unchanged.
 Platform Admin, with a fresh confirmation when *Settings → Confirm it is you*
 has **Managed Secure Access test grants** (`msa.grant`) on *Ask*. Body, all
 optional: `mode` (`view`), `permissions` (all `false`), `consent`
-(`required`), `maxMinutes` (60), `idleMinutes` (15). Refused: a computer the
+(`required`), `maxMinutes` (60), `idleMinutes` (15). Refused: a device the
 caller cannot see (404), an unassigned one (`ENDPOINT_UNASSIGNED`), one not on
 Windows or not running the signed agent (`409 MSA_SIGNED_AGENT_REQUIRED`), one
 with no RustDesk ID or device secret (`409 MSA_GRANT_NO_DEVICE`), a `remote`
 containment pause (`403 CONTAINED`), and a malformed body
 (`400 MSA_GRANT_INVALID`). `MSA_GRANT_ISSUED` (ids, mode, consent, key id) is
 written before the grant exists, and a failure to write it refuses the grant.
-A newer grant cancels an older undelivered one for the same computer.
+A newer grant cancels an older undelivered one for the same device.
 
 **The long-poll**, `POST /msa/agent/poll` (`rustdeskId`, `agentSecret`,
 optional `ack` of up to 20 grant ids, optional `wait: false`): the device
-secret is checked first, then only an assigned Windows computer whose
+secret is checked first, then only an assigned Windows device whose
 identity is the signed agent (§64) may poll (`403 MSA_SIGNED_AGENT_REQUIRED`
-otherwise). It answers at once with the computer's undelivered grants inside
+otherwise). It answers at once with the device's undelivered grants inside
 their window (at most five); with none, it holds for up to 25 s and wakes as
 soon as one is issued (in process; every 5 s it also looks at the database).
-One held poll per computer — a second ends the first, which then hands
+One held poll per device — a second ends the first, which then hands
 nothing over (`superseded: true`) — and at most 500 in a process
 (`retryAfterMs`). An `ack` marks those of its own grants still issued and in
 their window *delivered*, conditionally, so a repeated ack changes nothing.
 Under a `remote` pause grants are withheld (`paused: true`). An undelivered
-grant past its window is marked *expired* when the computer polls or the list
+grant past its window is marked *expired* when the device polls or the list
 is read; there is no sweep. The 0.71 agent never calls it.
 
-**Reading:** `GET /msa/grants/endpoint/:endpointId` (View computers, the
-computer in scope) lists its 50 most recent grants — state, mode,
+**Reading:** `GET /msa/grants/endpoint/:endpointId` (View devices, the
+device in scope) lists its 50 most recent grants — state, mode,
 permissions, window, who issued it — never the password or the envelope.
 `GET /msa/grants/keys` (Platform Admin) lists the public keys.
 
@@ -393,7 +393,7 @@ has run on Windows**, and no agent has polled.
 ### 3.11 Enforcement, the managed test session, cutover and rollback (built, 0.72, behind `MSA_GRANTS`, off)
 
 **This is a new signed agent build.** On deploy the fleet's signed agents
-update to 0.72 as they always do. On a Legacy computer — every computer, until
+update to 0.72 as they always do. On a Legacy device — every device, until
 a Platform Admin moves one — the 0.72 agent does exactly what 0.71 did: the
 heartbeat never says `msaPoll`, the poller never starts, and no RustDesk
 setting or password is touched.
@@ -411,7 +411,7 @@ list, an empty list, or a key not on it: every grant is refused (`no_keys` /
 commands with the active key filled in until the published release lists it,
 and cutover is refused until it does (`MSA_GRANT_KEY_NOT_PUBLISHED`).
 
-**Per-computer mode** (`MsaManagedComputer`, migration 0089; no row is
+**Per-device mode** (`MsaManagedComputer`, migration 0089; no row is
 Legacy): `pending` → `verified`, or `enforcement_failure`, or
 `rollback_pending` → row deleted. Only `MsaManagedService` writes it.
 Readiness shows *Managed (pending)*, *Managed and verified* (only while the
@@ -419,8 +419,8 @@ agent's last full readback is inside the report window) and *Enforcement
 failure* from this row and the agent's reports, never from a saved setting.
 
 **Cutover**, `POST /msa/managed/:endpointId/cutover`: Platform Admin, a fresh
-confirmation when `msa.cutover` asks, one computer in scope. Refused when the
-computer is unassigned, not the signed Windows agent, not *Compatible*,
+confirmation when `msa.cutover` asks, one device in scope. Refused when the
+device is unassigned, not the signed Windows agent, not *Compatible*,
 running an agent older than 0.72 (`MSA_AGENT_TOO_OLD`), under a `remote`
 pause, already managed, or when the grant key is not in the published
 release. Audited (`MSA_CUTOVER`) before the row is written. The next
@@ -429,7 +429,7 @@ heartbeat says `msaPoll: true`, and the signed heartbeat starts
 
 **The poller** (`internal/msa/enforce`, wired in `msa_poller_windows.go`)
 holds the long-poll with the device secret and, on each answer: exits for
-Legacy; for each grant verifies it under the published keys, this computer's
+Legacy; for each grant verifies it under the published keys, this device's
 identity, the persisted replay set, the compiled **ceiling — view only,
 nothing beyond (no keyboard, clipboard, files, audio, tunnel or restart)** —
 and the signed pause; writes the replay set and (before the first change
@@ -462,16 +462,16 @@ rotation waits while a grant is in flight.
 connected. The agent then replaces the permanent password with one nobody is
 told (`secured`). From then on legacy Reveal, Connect, rotation and set
 password are refused (`409 MSA_MANAGED` / `msa_managed`). From 0.73 Connect
-on a verified computer goes through a session grant (§3.12).
+on a verified device goes through a session grant (§3.12).
 
 **Rollback**, `POST /msa/managed/:endpointId/rollback`: Platform Admin, never
 asks for a fresh confirmation, audited. It cancels undelivered grants and
 stages a fresh sealed permanent password through the existing rotation path;
 the agent ends any session, restores the saved settings, reads them back and
 reports `restored` (the row is deleted) or `restore_failed`. **Finish
-rollback without the agent** (`force: true`) is only for a computer already
+rollback without the agent** (`force: true`) is only for a device already
 rolling back whose agent is gone. Rollback needs the switch on: turning
-`MSA_GRANTS` off with a verified computer stops its poller but still refuses
+`MSA_GRANTS` off with a verified device stops its poller but still refuses
 its legacy password (fail closed) — roll back first.
 
 Step 5 (0.73, §3.12) added Connect through grants, the control ceiling,
@@ -489,11 +489,11 @@ RustDesk, but not the portal, the long-poll or a real remote connection.
 ### 3.12 Connect through grants, revocation, evidence and cutover runs (built, 0.73, behind `MSA_GRANTS`, off)
 
 **A new signed agent build (0.73.0).** Agents update as they always do; on a
-Legacy computer it behaves exactly as 0.71's. Everything below needs
+Legacy device it behaves exactly as 0.71's. Everything below needs
 `MSA_GRANTS=on`; with it off every new route answers `404 MSA_NOT_ENABLED`
 and the console asks none of them.
 
-**Connect.** On a *Managed and verified* computer the device page's Connect
+**Connect.** On a *Managed and verified* device the device page's Connect
 calls `POST /msa/sessions/connect/:endpointId` with only the mode the
 technician picked (`control`, `view_only`, `unattended`). In order, the
 portal refuses with a reason:
@@ -501,7 +501,7 @@ portal refuses with a reason:
 | Refusal | When |
 |---|---|
 | `MSA_NOT_MANAGED` / `MSA_NOT_VERIFIED` | Legacy or Managed (pending): use the ordinary Connect |
-| `MSA_ROLLBACK_PENDING`, `MSA_ENFORCEMENT_FAILURE` | the computer's state |
+| `MSA_ROLLBACK_PENDING`, `MSA_ENFORCEMENT_FAILURE` | the device's state |
 | `MSA_AGENT_TOO_OLD` | the agent is older than 0.73.0 (it could not be told to end a session) |
 | `MSA_AGENT_NOT_POLLING` | no poll held and none in the last 90 s: offline, or its poller is not running |
 | `MSA_SESSION_ACTIVE` | another person's managed session is live there |
@@ -511,7 +511,7 @@ Then the grant's terms come from the policy, never from the request:
 
 - **Mode.** `view_only` → view with nothing beyond; `control` and
   `unattended` → control. Elevated never reaches a grant.
-- **Clipboard and file transfer** only when the business's access controls
+- **Clipboard and file transfer** only when the customer's access controls
   say `request` and, for a preset technician, the preset allows them.
   **Audio** with control. **Tunnel and remote restart never.**
 - **Consent** (`approve-mode=click`) when a preset technician's access
@@ -520,10 +520,10 @@ Then the grant's terms come from the policy, never from the request:
   `maxSessionMinutes` (1–480), enforced by the agent. Idle disconnect is 15
   minutes, or the limit if shorter.
 
-So **view-only and attended consent are enforceable on a managed computer**:
+So **view-only and attended consent are enforceable on a managed device**:
 an L2 technician whose Legacy Connect is refused as
 `ENDPOINT_CANNOT_ENFORCE_VIEW_ONLY` gets a view-only, consent-required grant
-here. On a Legacy computer nothing changed: it is still refused.
+here. On a Legacy device nothing changed: it is still refused.
 
 The portal signs the grant and the console shows its progress: *Authorized*,
 *Received by the agent*, *Applied (settings read back)*. **It waits at most 60
@@ -535,7 +535,7 @@ one-time password **once**, to that technician only
 audited with ids). It is not the permanent password and needs no fresh
 confirmation: it opens only this session, and the agent replaces it when the
 session ends. **There is never a fallback to a Legacy password.** The
-`rem0te://` launcher is not used for managed computers in 0.73; it refuses
+`rem0te://` launcher is not used for managed devices in 0.73; it refuses
 one, as before.
 
 **Control mode and the ceiling.** The managed ceiling is **control with
@@ -554,13 +554,13 @@ neither is offered. Widening the ceiling is a signed agent release.
 > off, no tunnel and no remote restart were written and read back but not enforced, and RustDesk's terminal
 > (1.4.1+, SYSTEM with an administrator's credentials), camera, remote printer, block-input, privacy mode and
 > recording were on, because the agent never wrote their keys. View-only grants were unaffected, and no
-> production computer was exposed: `MSA_GRANTS` is off. Finding F1 in
+> production device was exposed: `MSA_GRANTS` is off. Finding F1 in
 > [session-maintenance-mdm-backup-audit.md](session-maintenance-mdm-backup-audit.md#f1-a-control-grant-turns-every-permission-on).
 >
 > **What 0.78.1's signed agent does** (roadmap 1.1):
 >
 > - **Control is `access-mode=custom`**, which makes RustDesk read each `enable-*` key. `full` is refused by
->   every argument builder (`args.go`), including a rollback: a computer that had `full` before cutover gets
+>   every argument builder (`args.go`), including a rollback: a device that had `full` before cutover gets
 >   RustDesk's default (*Custom*, unset) back, with each `enable-*` key restored as it was.
 > - **Every grant, view and control alike, sets `enable-terminal`, `enable-camera`, `enable-remote-printer`,
 >   `enable-block-input`, `enable-privacy-mode` and `enable-record-session` to `N`** and reads each back. A
@@ -571,11 +571,11 @@ neither is offered. Widening the ceiling is a signed agent release.
 > - **Before it writes anything**, the agent evaluates RustDesk's own rule (`enforce.Effective`, a port of
 >   `is_permission_enabled_locally` and `option2bool`) over the values it is about to set, and refuses the grant
 >   if RustDesk would allow anything the grant and the ceiling do not.
-> - A computer cut over by an older agent is brought forward: the agent adds the six keys' current values to
+> - A device cut over by an older agent is brought forward: the agent adds the six keys' current values to
 >   the settings it saved before cutover (it never changed them), and treats a remembered `full` as `custom`, so
 >   the hourly readback corrects it.
 >
-> **What is still not enforced by RustDesk:** the person at the computer can change permissions in RustDesk's
+> **What is still not enforced by RustDesk:** the person at the device can change permissions in RustDesk's
 > accept window (`enable-perm-change-in-accept-window` is a built-in option only a custom client can set), and
 > RustDesk Server Pro could override the local keys (`ControlPermissions`), which Rem0te's hbbs never sends.
 >
@@ -589,7 +589,7 @@ neither is offered. Widening the ceiling is a signed agent release.
 
 **Revocation.** A signed revocation, Ed25519 under the same grant key with
 its own prefix (`rem0te-msa-revoke-v1\n`), so a grant signature can never be
-replayed as one. It names one computer and either a list of grants or `all`
+replayed as one. It names one device and either a list of grants or `all`
 (every grant issued before it), and lives at most nine hours. The agent
 verifies it (`grant.VerifyRevocation`), ends the open session it covers,
 remembers the revoked grant ids so they can never be applied later, and acks.
@@ -597,15 +597,15 @@ It only reduces: it can end a session, never start or widen one.
 
 | Scope | Who may (any of them, never a fresh confirmation) |
 |---|---|
-| One session (*Disconnect*) | its technician; the business's own Owner or Admin (not a technician, with Edit computers); a Platform Admin |
+| One session (*Disconnect*) | its technician; the customer's own Owner or Admin (not a technician, with Edit devices); a Platform Admin |
 | A list (*Managed sessions → Disconnect selected*) | the same, per session; the others are reported refused |
-| Every session on a computer | the business's Owner or Admin; a Platform Admin |
-| A technician's sessions | the business's Owner or Admin (in their business); a Platform Admin |
-| A business's sessions | its Owner or Admin; a Platform Admin |
+| Every session on a device | the customer's Owner or Admin; a Platform Admin |
+| A technician's sessions | the customer's Owner or Admin (in their customer); a Platform Admin |
+| A customer's sessions | its Owner or Admin; a Platform Admin |
 | The `remote` containment pause | whoever may set the pause; every delivered or applied grant is revoked on the next poll, by the system |
 
 Each revocation is audited (`MSA_SESSION_REVOKED`: who, the reason, the
-grant ids). **Offline:** a revoked session on a computer that cannot reach
+grant ids). **Offline:** a revoked session on a device that cannot reach
 the portal ends at its session limit or idle timeout, enforced locally; the
 console says so (*waiting for the agent to end it*).
 
@@ -615,41 +615,41 @@ Received → Applied → Launched → Connected → Disconnected / Expired / Rev
 *Launched* (the password went to a Connect script) is never shown as
 *Connected*; *Connected* is the agent seeing RustDesk's connection manager.
 Every timeline says what the agent cannot see: who is at the other end,
-whether the person at the computer accepted the consent prompt, and what
+whether the person at the device accepted the consent prompt, and what
 happened inside the session.
 
 **Cutover runs** (`/msa/cutover-runs`, Platform Admin; starting, advancing
 and confirming need a fresh confirmation, `msa.cutover`; halting and rolling
-back never do). A run covers one business or one of its device groups, at
-most 500 computers, one open run per business.
+back never do). A run covers one customer or one of its device groups, at
+most 500 devices, one open run per customer.
 
-1. **Canary.** Starting a run cuts over its canary (one named computer, or
+1. **Canary.** Starting a run cuts over its canary (one named device, or
    the first eligible). It is confirmed on its own page as in §3.11 — a test
    session that read back and connected. Nothing else moves until it is
    verified (`MSA_CANARY_NOT_VERIFIED`).
 2. **Batches.** *Advance* moves the next batch (1–25, default 5). Each
-   computer goes through the one-computer cutover with its own blockers and
+   device goes through the one-device cutover with its own blockers and
    audit row; one that is refused is **skipped** with the code. Each
-   computer moved is sent a five-minute view-only verification grant.
-3. **Pacing.** The next batch waits until every computer in the last one has
+   device moved is sent a five-minute view-only verification grant.
+3. **Pacing.** The next batch waits until every device in the last one has
    read back its verification grant, or an hour has passed. Nothing runs on a
    timer: every batch is a person pressing *Advance*.
-4. **Confirm.** Marks verified each computer whose agent applied and read
+4. **Confirm.** Marks verified each device whose agent applied and read
    back its verification grant since its cutover (the canary proved a real
    connection). Each one is its own `MSA_VERIFIED` row naming the run.
-5. **Halt** stops the run; **Rollback** rolls back every computer the run
+5. **Halt** stops the run; **Rollback** rolls back every device the run
    moved.
 
-**The console.** The device page lists the computer's managed sessions with
+**The console.** The device page lists the device's managed sessions with
 their timelines and *Disconnect* (only when the server says
-`managedControls`). *Devices → Managed sessions* lists live sessions on every
-computer the viewer can see, with bulk *Disconnect*. *Remote readiness*
+`managedControls`). *Remote support → Managed sessions* lists live sessions on every
+device the viewer can see, with bulk *Disconnect*. *Remote readiness*
 shows cutover runs to Platform Admins.
 
 **Evidence.** `apps/api/scripts/e2e-msa-sessions.mjs` (port 3971: Connect
 end to end with a stand-in agent, every refusal, view-only enforced on a
-managed computer and still refused on Legacy, revocation for each scope and
-the pause, the timeline, group and business runs with canary, skip, confirm,
+managed device and still refused on Legacy, revocation for each scope and
+the pause, the timeline, group and customer runs with canary, skip, confirm,
 halt and rollback, inertness with the switch off, no password in an audit
 row), `unit-msa-sessions.mjs` (the shared revocation fixture
 `internal/msa/testdata/msa-revocations.json`, every combination of policy
@@ -658,8 +658,8 @@ facts against the ceiling, the timeline), the Go `internal/msa/grant` and
 Windows lab's `TestLabRustdeskEnforce`, which now also applies and reads back
 the control ceiling and checks that a revocation ends the session (RustDesk
 1.4.1–1.5.3, as the administrator and as SYSTEM). **Not run:** a real
-technician connecting through RustDesk to a managed computer, a Windows 10
-or 11 desktop, or any fleet computer.
+technician connecting through RustDesk to a managed device, a Windows 10
+or 11 desktop, or any fleet device.
 
 ## 4. Build order (each a reviewable PR, none deployed without approval)
 
@@ -668,7 +668,7 @@ or 11 desktop, or any fleet computer.
    against RustDesk 1.2.x, 1.3.x, 1.4.6 and 1.4.7+. Go/no-go for everything
    below. **Done in 0.68.3** for 1.4.1–1.5.3 (go); 1.3.9 and older untested.
 2. **Capability reporting and modes** (read-only): the agent reports RustDesk
-   version, build and preflight; the console shows each computer's mode.
+   version, build and preflight; the console shows each device's mode.
    **Built in 0.69** (§3.9).
 3. **Grants and the long-poll channel**, behind a feature flag, off.
    **Built in 0.71, behind `MSA_GRANTS`, off** (§3.10): the portal side and a
@@ -676,7 +676,7 @@ or 11 desktop, or any fleet computer.
    signed release metadata is step 4.
 4. **Agent enforcement** (signed agent release), managed test session, cutover
    and rollback. **Built in 0.72, behind `MSA_GRANTS`, off** (§3.11): one
-   computer at a time, view-only, grant keys in the signed release.
+   device at a time, view-only, grant keys in the signed release.
 5. **Connect through grants, revocation, session evidence**, cutover runs,
    console controls. **Built in 0.73, behind `MSA_GRANTS`, off** (§3.12).
 6. **Compatibility suite** (below) gates every release from step 2 on.

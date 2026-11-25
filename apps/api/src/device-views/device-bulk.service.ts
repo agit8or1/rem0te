@@ -96,10 +96,10 @@ export class DeviceBulkService {
     const g = await this.groups.findVisible(a, groupId);
     let ids: string[];
     if (g.kind === 'RULE') {
-      if (!g.customerId) throw new BadRequestException({ code: 'LEGACY_GROUP', message: 'This group belongs to no business.' });
+      if (!g.customerId) throw new BadRequestException({ code: 'LEGACY_GROUP', message: 'This group belongs to no customer.' });
       const m = await this.list.evaluateRuleGroups(a, [{ id: g.id, name: g.name, customerId: g.customerId, rule: ruleFilters(g.rule) }], { status: 'current' });
       const got = m.get(g.id);
-      if (got === null || got === undefined) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'This rule group selects computers by their alerts, which needs the monitoring:alerts permission.' });
+      if (got === null || got === undefined) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'This rule group selects devices by their alerts, which needs the monitoring:alerts permission.' });
       ids = got;
     } else {
       ids = (await this.prisma.endpointGroupMember.findMany({
@@ -110,7 +110,7 @@ export class DeviceBulkService {
     if (ids.length > BULK_MAX) {
       throw new BadRequestException({ code: 'BULK_TOO_LARGE', message: `At most ${BULK_MAX} devices per request; this group has ${ids.length} you can see right now. Narrow it, or act on a selection.` });
     }
-    if (!ids.length) throw new BadRequestException({ code: 'GROUP_EMPTY', message: 'No computer you can see is in this group right now; nothing was done.' });
+    if (!ids.length) throw new BadRequestException({ code: 'GROUP_EMPTY', message: 'No device you can see is in this group right now; nothing was done.' });
     return { ids, group: { id: g.id, name: g.name, kind: g.kind === 'RULE' ? 'rule' : 'static' } };
   }
 
@@ -162,10 +162,10 @@ export class DeviceBulkService {
     // A rule group's members follow its rule; nobody adds or removes them by
     // hand (the 0053 trigger refuses the row too). Refused for the whole request.
     if (g.kind === 'RULE') {
-      throw new BadRequestException({ code: 'RULE_GROUP', message: 'This is a rule group: its members are the computers its rule matches, so they cannot be added or removed by hand. Edit the rule instead.' });
+      throw new BadRequestException({ code: 'RULE_GROUP', message: 'This is a rule group: its members are the devices its rule matches, so they cannot be added or removed by hand. Edit the rule instead.' });
     }
     if (!g.customerId) {
-      for (const t of targets) results.set(t.id, { endpointId: t.id, name: t.name, ok: false, code: 'LEGACY_GROUP', reason: 'This group predates 0.33 and belongs to no business, so its members are not changed here.' });
+      for (const t of targets) results.set(t.id, { endpointId: t.id, name: t.name, ok: false, code: 'LEGACY_GROUP', reason: 'This group predates 0.33 and belongs to no customer, so its members are not changed here.' });
       return null;
     }
     const group = { id: g.id, name: g.name, customerId: g.customerId };
@@ -189,7 +189,7 @@ export class DeviceBulkService {
         } catch (e) {
           if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') { results.set(t.id, { ...base, ok: true, unchanged: true }); continue; }
           this.logger.warn(`bulk group.add ${t.id}: ${String(e)}`);
-          results.set(t.id, { ...base, ok: false, code: 'CONFLICT', reason: 'This computer changed while the request ran; nothing was changed for it.' });
+          results.set(t.id, { ...base, ok: false, code: 'CONFLICT', reason: 'This device changed while the request ran; nothing was changed for it.' });
         }
       } else {
         const w = await this.prisma.endpointGroupMember.deleteMany({ where: { endpointGroupId: g.id, endpointId: t.id } });
@@ -230,10 +230,10 @@ export class DeviceBulkService {
     for (const t of targets) {
       const base = { endpointId: t.id, name: t.name };
       if (stopped) { results.set(t.id, { ...base, ok: false, ...stopped }); continue; }
-      if (t.status === 'ARCHIVED') { results.set(t.id, { ...base, ok: false, code: 'ARCHIVED', reason: 'Archived — nothing is sent to an archived computer.' }); continue; }
+      if (t.status === 'ARCHIVED') { results.set(t.id, { ...base, ok: false, code: 'ARCHIVED', reason: 'Archived — nothing is sent to an archived device.' }); continue; }
       const limit = budget.wouldExceed(t.id, t.customerId, controls.thresholds[this.policy.tierFor(a, t.id)]);
       if (limit) {
-        results.set(t.id, { ...base, ok: false, code: 'FLEET_LIMIT', reason: `Not sent: it would pass your limit on distinct computers in ${controls.windowMinutes} minutes (${limit}). Try the rest later, or ask for a maintenance exception.` });
+        results.set(t.id, { ...base, ok: false, code: 'FLEET_LIMIT', reason: `Not sent: it would pass your limit on distinct devices in ${controls.windowMinutes} minutes (${limit}). Try the rest later, or ask for a maintenance exception.` });
         continue;
       }
       try {
@@ -255,7 +255,7 @@ export class DeviceBulkService {
   private async clientUpdate(a: ActorContext, targets: Target[], results: Map<string, BulkResult>) {
     if (!a.isPlatformAdmin) {
       // The one-click update is a Platform Admin action (UpdateController).
-      for (const t of targets) results.set(t.id, { endpointId: t.id, name: t.name, ok: false, code: 'NOT_ALLOWED', reason: 'Queueing a RustDesk client update by hand needs a Platform Admin. A business can turn on scheduled client updates instead.' });
+      for (const t of targets) results.set(t.id, { endpointId: t.id, name: t.name, ok: false, code: 'NOT_ALLOWED', reason: 'Queueing a RustDesk client update by hand needs a Platform Admin. A customer can turn on scheduled client updates instead.' });
       return;
     }
     if (!targets.length) return;
@@ -304,7 +304,7 @@ export class DeviceBulkService {
     for (const t of stage) {
       const n = after.get(t.id);
       const ok = !!n?.updateRequestedAt && n.updateRequestSource === 'MANUAL' && n.updateRequestedById === a.userId;
-      results.set(t.id, ok ? { endpointId: t.id, name: t.name, ok: true } : { endpointId: t.id, name: t.name, ok: false, code: 'NOT_QUEUED', reason: 'The update path skipped this computer.' });
+      results.set(t.id, ok ? { endpointId: t.id, name: t.name, ok: true } : { endpointId: t.id, name: t.name, ok: false, code: 'NOT_QUEUED', reason: 'The update path skipped this device.' });
     }
   }
 

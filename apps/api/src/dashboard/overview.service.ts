@@ -35,7 +35,7 @@ const RELEVANT_ACTIVITY: ActivityAction[] = [
 ];
 
 const ACTIVITY_LABEL: Partial<Record<ActivityAction, string>> = {
-  ACTION_REQUESTED: 'requested an approved action', ACTION_APPROVAL_UPDATED: 'approval updated', ACTION_DISPATCHED: 'action sent to the computer',
+  ACTION_REQUESTED: 'requested an approved action', ACTION_APPROVAL_UPDATED: 'approval updated', ACTION_DISPATCHED: 'action sent to the device',
   ACTION_DISPATCH_BLOCKED: 'action held back (containment)', ACTION_RESULT: 'action result received', ACTION_CANCELED: 'canceled an action', ACTION_RECONCILED: 'recorded an uncertain action\'s outcome',
   PATCH_DEPLOYMENT_CREATED: 'created a patch deployment', PATCH_DEPLOYMENT_UPDATED: 'changed a patch deployment', PATCH_RING_REQUESTED: 'requested a patch ring', PATCH_SCAN_REQUESTED: 'asked for an update scan',
   CONTAINMENT_PAUSED: 'paused actions (containment)', CONTAINMENT_CLEARED: 'lifted a containment pause',
@@ -347,7 +347,7 @@ export class DashboardOverviewService {
     const bump = (id: string | null | undefined, k: keyof Omit<Affected, 'business'>, n = 1) => {
       if (!id) return;
       let a = affected.get(id);
-      if (!a) { a = { business: { id, name: names.get(id) ?? 'Unknown business' }, critical: 0, warning: 0, outages: 0, offline: 0, failedActions: 0 }; affected.set(id, a); }
+      if (!a) { a = { business: { id, name: names.get(id) ?? 'Unknown customer' }, critical: 0, warning: 0, outages: 0, offline: 0, failedActions: 0 }; affected.set(id, a); }
       a[k] += n;
     };
     for (const g of alertByBiz) {
@@ -387,12 +387,12 @@ export class DashboardOverviewService {
       items.push(t.status === 'UNKNOWN'
         ? {
             key: `target:${t.id}`, kind: 'action_uncertain', severity: 'warning', title: `${what}: outcome unknown`,
-            reason: `The computer has not said whether it ran (${age(when, now)}). New requests for this action on it are blocked until someone records what they found.`,
+            reason: `The device has not said whether it ran (${age(when, now)}). New requests for this action on it are blocked until someone records what they found.`,
             business: t.job.customer, device: e ? { id: e.id, name: label(e) } : null, since: when.toISOString(),
             href: `/endpoints/${t.endpointId}?tab=actions`,
           }
         : {
-            key: `target:${t.id}`, kind: 'action_failed', severity: 'warning', title: `${what}: ${t.status === 'FAILED' ? 'failed' : t.status === 'REFUSED_BY_ENDPOINT' ? 'refused by the computer' : 'did not run'}`,
+            key: `target:${t.id}`, kind: 'action_failed', severity: 'warning', title: `${what}: ${t.status === 'FAILED' ? 'failed' : t.status === 'REFUSED_BY_ENDPOINT' ? 'refused by the device' : 'did not run'}`,
             reason: `Approved, sent, and not done ${age(when, now)} ago${t.statusReason ? `: ${clip(t.statusReason, 120)}` : ''}.`,
             business: t.job.customer, device: e ? { id: e.id, name: label(e) } : null, since: when.toISOString(),
             href: t.job.deploymentId ? `/patching/${t.job.deploymentId}` : `/endpoints/${t.endpointId}?tab=actions`,
@@ -408,14 +408,14 @@ export class DashboardOverviewService {
       for (const [id, r] of byRollout) {
         items.push({
           key: `rollout:${id}`, kind: 'rollout_failed', severity: 'warning', title: `Client rollout "${r.name}": ${r.n} failed`,
-          reason: `${r.n} computer${r.n === 1 ? '' : 's'} failed to install the client update in the last 7 days${r.status === 'PAUSED' ? '; the rollout is paused' : ''}.`,
+          reason: `${r.n} device${r.n === 1 ? '' : 's'} failed to install the client update in the last 7 days${r.status === 'PAUSED' ? '; the rollout is paused' : ''}.`,
           business: null, device: null, since: r.since.toISOString(), href: `/admin/rollouts/${id}`,
         });
       }
     }
     for (const j of awaiting) {
       items.push({
-        key: `job:${j.id}`, kind: 'approval_waiting', severity: 'info', title: `${actionTitle(j.actionId, j.actionVersion)}: waiting for approval`,
+        key: `job:${j.id}`, kind: 'approval_waiting', severity: 'info', title: `${actionTitle(j.actionId, j.actionVersion)}: pending approval`,
         reason: `Requested ${age(j.createdAt, now)} ago, needs ${j.approvalsRequired} approver${j.approvalsRequired === 1 ? '' : 's'} on the approval roster; expires in ${age(now, j.notAfter)}. Nothing runs until then.`,
         business: j.customer, device: j._count.targets === 1 ? dev(j.endpoint) : null, since: j.createdAt.toISOString(),
         href: j.deploymentId ? `/patching/${j.deploymentId}` : `/endpoints/${j.endpoint.id}?tab=actions`,

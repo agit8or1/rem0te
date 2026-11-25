@@ -3,7 +3,7 @@
  * build actually enforces it, where, its default, what it needs, and what
  * proves it. Served at GET /security-controls/catalog (with the effective
  * state the caller is allowed to see — security-features.service.ts) and
- * rendered in Settings → Security → Security Features and Admin → Security.
+ * rendered in Security → Security features and Security → Server security.
  *
  * `status` is deliberately blunt:
  *   enforced     the server refuses the action; a test drives it
@@ -368,7 +368,7 @@ export const SECURITY_FEATURES: SecurityFeature[] = [
     scope: 'Computers with monitors in effect (global, business, site or computer scope; the most specific wins).',
     enforcedAt: ['portal', 'endpoint-agent'],
     enforcement: 'Read-side only. The heartbeat hands an authenticated agent the services to read and event queries to count; the agent checks every name and log against fixed rules and changes nothing, and the server keeps only what it asked for. One open alert per problem (a database index enforces it); offline alerts wait a few minutes so a site going dark is one outage alert. Notification and escalation go to webhooks set by a Business Owner or the MSP with fresh authentication (business destinations: public HTTPS hosts only). A maintenance window silences notification and escalation, never the alert itself, and never touches a containment pause or a security alert. Alert events to ClientSt0r are signed and sequenced per organization; a linked ticket grants nothing.',
-    default: 'No monitors exist until someone adds them (Settings → Monitoring offers a recommended set). Nobody is notified until a policy names destinations.',
+    default: 'No monitors exist until someone adds them (Monitoring → Monitoring policies offers a recommended set). Nobody is notified until a policy names destinations.',
     prerequisites: ['Monitors at some scope', 'A notification policy with destinations', 'Service and event monitors need agents from 0.29 (re-run the installer)'],
     link: { href: DOC('monitoring'), label: 'Monitoring' },
     evidence: ['apps/api/scripts/unit-monitoring.mjs', 'apps/api/scripts/e2e-monitoring.mjs', 'scripts/check-security-invariants.mjs § 17'],

@@ -87,7 +87,7 @@ export function WingetBrowser({ isPlatformAdmin, businesses, initialBusinessId, 
   });
   const d = browse.data;
   const targetBusiness = isPlatformAdmin ? (target || null) : d?.target?.businessId ?? null;
-  const targetName = targetBusiness ? (d?.target?.businessName ?? businesses.find((b) => b.id === targetBusiness)?.name ?? 'this business') : null;
+  const targetName = targetBusiness ? (d?.target?.businessName ?? businesses.find((b) => b.id === targetBusiness)?.name ?? 'this customer') : null;
   const targetLabel = targetName ? `the ${targetName} catalog` : 'the global catalog';
   const canWrite = !!d && (targetBusiness ? d.you.canAddBusiness : d.you.canAddGlobal);
   /** The target catalog's own entry for a row (what Remove archives). */
@@ -144,7 +144,7 @@ export function WingetBrowser({ isPlatformAdmin, businesses, initialBusinessId, 
             <Label htmlFor="wb-target" className="text-xs">Catalog to build</Label>
             {isPlatformAdmin ? (
               <select id="wb-target" className={selectClass} value={target} onChange={(e) => setTarget(e.target.value)} data-testid="winget-target">
-                <option value="">Global catalog (every business)</option>
+                <option value="">Global catalog (every customer)</option>
                 {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
             ) : <p id="wb-target" className="h-10 flex items-center text-sm" data-testid="winget-target">{targetName ? `${targetName} catalog` : '—'}</p>}
@@ -313,7 +313,7 @@ function RemoveDialog({ items, targetLabel, onDone, onClose }: { items: { row: R
         <DialogHeader>
           <DialogTitle>Remove {items.length} from {targetLabel}</DialogTitle>
           <DialogDescription>
-            Each entry is archived: it can no longer be installed from, and with an approval signer configured it is revoked there first, so a plan already signed from it is refused by the computer. Software already installed stays installed.
+            Each entry is archived: it can no longer be installed from, and with an approval signer configured it is revoked there first, so a plan already signed from it is refused by the device. Software already installed stays installed.
           </DialogDescription>
         </DialogHeader>
         <ul className="list-disc pl-5 text-xs">{items.map(({ row, mark }) => <li key={mark.entryId}>{row.name} <span className="font-mono">{mark.version}</span></li>)}</ul>

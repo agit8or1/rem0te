@@ -16,7 +16,7 @@ import { UpgradePanel } from '@/components/security-controls/upgrade-panel';
 import { PausesAlertsPanel, ReviewsPanel } from '@/components/security-controls/review-panels';
 
 /**
- * Settings → Security → Technician Access (v0.23).
+ * Security → Technician access (v0.23).
  *
  * Presets, the platform access policy, the effective-access inspector, the
  * upgrade impact of presets on existing assignments, the independent-review
@@ -49,7 +49,7 @@ export default function TechnicianAccessPage() {
         <ArrowLeft className="h-4 w-4" />Settings
       </Link>
       <PageHeader
-        title="Technician Access"
+        title="Technician access"
         description="Presets for technician tiers, the platform access policy, and independent review of anything that widens trust."
       />
 

@@ -52,7 +52,7 @@ function Sessions({ sessions }: { sessions: SessionRow[] }) {
   return (
     <Section id="history-sessions" title="Remote sessions" aside={<Link href="/sessions" className="text-xs underline text-muted-foreground hover:text-foreground">All sessions</Link>}>
       {sessions.length === 0 ? (
-        <p className="text-muted-foreground">No remote sessions recorded for this computer.</p>
+        <p className="text-muted-foreground">No remote sessions recorded for this device.</p>
       ) : (
         <>
           <ul className="divide-y rounded-md border">
@@ -305,7 +305,7 @@ function AiSummary({ endpointId, stored }: { endpointId: string; stored: string 
   const canGenerate = !!st?.available && !!st?.canRequest && !generate.isPending;
   const why = !st ? (status.isError ? 'Could not check whether ClientSt0r can write the summary.' : 'Checking ClientSt0r…')
     : !st.available ? st.message
-    : !st.canRequest ? `Requesting it needs ${st.requires.join(' and ')} in this business.`
+    : !st.canRequest ? `Requesting it needs ${st.requires.join(' and ')} in this customer.`
     : null;
 
   if (!showAiSummary(st, text)) return null;
@@ -328,8 +328,8 @@ function AiSummary({ endpointId, stored }: { endpointId: string; stored: string 
       }
     >
       <p className="text-xs text-muted-foreground">
-        Written by a model that ClientSt0r runs, from a redacted copy of this computer&apos;s notes, sessions and status.
-        It does not use the AI provider in Settings → AI. It can be wrong; it is a starting point, not a record.
+        Written by a model that ClientSt0r runs, from a redacted copy of this device&apos;s notes, sessions and status.
+        It does not use the AI provider in Administration → AI. It can be wrong; it is a starting point, not a record.
       </p>
       {why && <p className="text-xs rounded-md border border-dashed px-3 py-2 text-muted-foreground" data-testid="ai-summary-unavailable">{why}</p>}
       {st?.available && (
@@ -392,7 +392,7 @@ function TrayHistory({ endpointId }: { endpointId: string }) {
               <p data-testid="tray-kind" data-kind={data.tray.kind}>{data.tray.message}</p>
               <p className="text-xs text-muted-foreground">
                 The tray program has been built and unit-tested for Windows but has not been run on a real Windows computer by
-                this release&apos;s tests. Treat its first use on a computer as a trial.
+                this release&apos;s tests. Treat its first use on a device as a trial.
               </p>
               <div className="space-y-1">
                 <p className="text-xs font-medium text-muted-foreground">Self-help runs (newest 50)</p>

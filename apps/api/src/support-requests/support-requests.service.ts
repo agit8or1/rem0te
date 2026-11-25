@@ -112,7 +112,7 @@ export class SupportRequestsService implements OnModuleInit, OnModuleDestroy {
   // ── Intake settings (Business Owner / Platform Admin) ───────────────────
 
   private assertOwnerOf(actor: ActorContext, businessId: string) {
-    if (actor.technician) throw new ForbiddenException('Switch back to your own business to change its settings');
+    if (actor.technician) throw new ForbiddenException('Switch back to your own customer to change its settings');
     if (actor.isPlatformAdmin) return;
     if (!this.acl.isBusinessOwner(actor) || actor.businessId !== businessId) {
       throw new ForbiddenException('Only a Business Owner can change the support intake');
@@ -264,7 +264,7 @@ export class SupportRequestsService implements OnModuleInit, OnModuleDestroy {
 
   async portalSubmit(actor: ActorContext, dto: { description?: string; endpointId?: string; phone?: string }) {
     if (actor.technician || !actor.businessId || actor.isPlatformAdmin) {
-      throw new ForbiddenException('Support requests are raised by people in the business that needs help');
+      throw new ForbiddenException('Support requests are raised by people at the customer that needs help');
     }
     const description = clean(dto.description, 2000);
     if (!description) throw new BadRequestException('Please describe what you need help with');
@@ -525,7 +525,7 @@ export class SupportRequestsService implements OnModuleInit, OnModuleDestroy {
     if (!this.canManage(actor, r)) throw new ForbiddenException('Only the technician who claimed it, or a Business Owner, can hand it off');
     if (toUserId === r.claimedById) throw new BadRequestException('That person already has it');
     if (!(await this.canHandle(toUserId, r.customerId))) {
-      throw new ForbiddenException('That person cannot handle support requests for this business');
+      throw new ForbiddenException('That person cannot handle support requests for this customer');
     }
     const u = await this.prisma.supportRequest.updateMany({
       where: { id, status: { in: ['CLAIMED', 'CONNECTING'] }, version, claimedById: r.claimedById },

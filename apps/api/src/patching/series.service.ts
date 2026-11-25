@@ -134,7 +134,7 @@ export class PatchSeriesService implements OnModuleInit {
     const byId = new Map(cands.map((c) => [c.endpointId, c]));
     const fingerprint = membershipFingerprint(plan.rings.map((r) => r.map((id) => { const c = byId.get(id)!; return { endpointId: id, rustdeskId: c.rustdeskId, deviceSecretSha256: c.deviceSecretSha256, resultKey: c.resultKey ?? undefined }; })));
     return {
-      ok: true, code: 'ok', message: `${plan.rings.flat().length} computer(s) in ${plan.rings.length} ring(s).`,
+      ok: true, code: 'ok', message: `${plan.rings.flat().length} device(s) in ${plan.rings.length} ring(s).`,
       rings: plan.rings, fingerprint, canary: plan.canary, leftOut: [...leftOut, ...plan.leftOut],
       lastRingOnly: plan.lastRingOnly.map((id) => byId.get(id)?.hostname ?? id), identity,
     };
@@ -191,7 +191,7 @@ export class PatchSeriesService implements OnModuleInit {
       const actor = await this.actors.contextFor(s.createdById, s.tenantId ?? '', s.customerId);
       const v = await this.revisions(s);
       if (!actor) {
-        await this.record(s, { code: 'author_inactive', message: 'Whoever created this policy is no longer active or no longer reaches this business, so no revision is proposed on their behalf. Retire it and create a new one.' }, null, now);
+        await this.record(s, { code: 'author_inactive', message: 'Whoever created this policy is no longer active or no longer reaches this customer, so no revision is proposed on their behalf. Retire it and create a new one.' }, null, now);
         continue;
       }
       const previousCanary = (v.current?.document as unknown as PolicyDoc | undefined)?.rings[0][0]?.endpointId ?? null;
@@ -211,7 +211,7 @@ export class PatchSeriesService implements OnModuleInit {
       }
       if (decision.act === 'propose') {
         if (claimed === null) claimed = await this.claim(businessId, now);
-        if (!claimed) outcome = { code: 'rate_limited', message: `This business had an automatic revision less than ${revisionMinutes()} minute(s) ago.` };
+        if (!claimed) outcome = { code: 'rate_limited', message: `This customer had an automatic revision less than ${revisionMinutes()} minute(s) ago.` };
         else outcome = await this.proposeRevision(s, settings, actor, d, decision, v.current, v.pending, now);
       } else if (decision.act === 'withdraw' && v.current) {
         await this.policies.withdraw(v.current, 'no computer is eligible for this policy any more', { seriesId: s.id, revision: v.current.revision }, now);
@@ -335,7 +335,7 @@ export class PatchSeriesService implements OnModuleInit {
     const parsed = CreateSeriesDto.safeParse(raw);
     if (!parsed.success) this.bad('INVALID_REQUEST', parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
     const dto = parsed.data;
-    if (!this.mayManage(actor, dto.businessId)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'A company-wide or assignable patch policy is created by a Business Owner of the business or a Platform Admin.' });
+    if (!this.mayManage(actor, dto.businessId)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'A company-wide or assignable patch policy is created by a Business Owner of the customer or a Platform Admin.' });
     const biz = await this.prisma.customer.findUnique({ where: { id: dto.businessId }, select: { id: true, tenantId: true, isActive: true, isArchived: true } });
     if (!biz || !biz.isActive || biz.isArchived) throw new NotFoundException('Business not found');
     if (dto.canaryEndpointId) {
@@ -348,7 +348,7 @@ export class PatchSeriesService implements OnModuleInit {
     try {
       s = await this.prisma.patchPolicySeries.create({ data: { tenantId: biz.tenantId, customerId: businessId, scope, name, settings: settings as unknown as Prisma.InputJsonValue, createdById: actor.userId } });
     } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw new ConflictException({ code: 'SERIES_EXISTS', message: 'This business already has a company-wide patch policy. Retire it first, or create an assignable policy for some of its computers.' });
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw new ConflictException({ code: 'SERIES_EXISTS', message: 'This customer already has a company-wide patch policy. Retire it first, or create an assignable policy for some of its devices.' });
       throw e;
     }
     let first: { code: string; message: string } = { code: 'no_revision', message: scope === 'assigned' ? 'No computer uses this policy yet. Set a computer\'s Patch policy to it; the first revision follows.' : '' };
@@ -392,7 +392,7 @@ export class PatchSeriesService implements OnModuleInit {
     if (!dto.success) this.bad('INVALID_REQUEST', 'A reason of at least 3 characters is required.');
     const s = Id.safeParse(id).success ? await this.prisma.patchPolicySeries.findUnique({ where: { id } }) : null;
     if (!s || !(await this.visible(actor, s.customerId))) throw new NotFoundException('Policy not found');
-    if (!this.mayManage(actor, s.customerId) && s.createdById !== actor.userId) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever created the policy, a Business Owner of this business or a Platform Admin can retire it.' });
+    if (!this.mayManage(actor, s.customerId) && s.createdById !== actor.userId) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever created the policy, a Business Owner of this customer or a Platform Admin can retire it.' });
     if (s.status !== 'active') throw new ConflictException({ code: 'NOT_ALLOWED_NOW', message: 'The policy is already retired.' });
     await this.end(s, dto.data!.reason, actor.userId, actor);
     return this.one(actor, s.id);
@@ -537,15 +537,15 @@ export class PatchSeriesService implements OnModuleInit {
     let seriesName: string | null = null;
     if (dto.mode === 'policy') {
       const s = await this.prisma.patchPolicySeries.findFirst({ where: { id: dto.seriesId, customerId: ep.customerId, scope: 'assigned', status: 'active' }, select: { name: true } });
-      if (!s) throw new NotFoundException({ code: 'POLICY_NOT_FOUND', message: 'No active assignable policy of this business has that id.' });
+      if (!s) throw new NotFoundException({ code: 'POLICY_NOT_FOUND', message: 'No active assignable policy of this customer has that id.' });
       seriesName = s.name;
     }
     const after = { mode: dto.mode, seriesId: dto.mode === 'policy' ? dto.seriesId : null };
     const before = { mode: ep.patchPolicyMode, seriesId: ep.patchPolicySeriesId };
     if (before.mode === after.mode && before.seriesId === after.seriesId) return { setting: after, changed: false };
-    assertFresh(freshMethod, { action: 'patching.override', message: 'Changing which patch policy a computer follows decides what installs on it automatically: confirm it is you.' });
+    assertFresh(freshMethod, { action: 'patching.override', message: 'Changing which patch policy a device follows decides what installs on it automatically: confirm it is you.' });
     const w = await this.prisma.endpoint.updateMany({ where: { id: endpointId, patchPolicyMode: before.mode, patchPolicySeriesId: before.seriesId }, data: { patchPolicyMode: after.mode, patchPolicySeriesId: after.seriesId } });
-    if (w.count !== 1) throw new ConflictException({ code: 'CHANGED', message: 'This computer\'s setting changed while the request ran; nothing was changed. Reload and try again.' });
+    if (w.count !== 1) throw new ConflictException({ code: 'CHANGED', message: 'This device\'s setting changed while the request ran; nothing was changed. Reload and try again.' });
     await this.audit.log({
       tenantId: ep.tenantId ?? undefined, customerId: ep.customerId, actorId: actor.userId, actorIp: actor.ip,
       action: 'PATCH_POLICY_OVERRIDE_SET', resource: 'endpoint', resourceId: endpointId,

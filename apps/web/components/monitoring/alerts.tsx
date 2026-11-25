@@ -22,7 +22,7 @@ export type AlertRow = {
   firstSeenAt: string; lastSeenAt: string; occurrences: number; notifyFrom: string; escalationLevel: number; lastNotifiedAt: string | null;
   suppressed: boolean; parentId: string | null; acknowledgedAt: string | null; resolvedAt: string | null; resolvedBy: 'person' | 'monitor' | null; resolveNote: string | null;
   ticket: { id: string; url: string | null; peer: string | null; linkedAt: string } | null;
-  /** 0.55: the automatic PSA ticket (Settings → Monitoring → Automatic tickets). */
+  /** 0.55: the automatic PSA ticket (Monitoring → Monitoring policies → Automatic tickets). */
   autoTicket?: { status: 'sending' | 'sent' | 'failed' | 'gave_up'; attempts: number; lastStatus: string | null; connectorKind: string | null; ref: string | null; url: string | null; lastAttemptAt: string; nextAttemptAt: string | null } | null;
   /** 0.66: the classifier's verdict (null on alerts raised before 0.66). */
   classification?: { class: AlertClass; basis: string; matched: string | null; version: number | null } | null;
@@ -64,7 +64,7 @@ const BASIS_TIP: Record<string, string> = {
   known_benign: 'Matched a known harmless pattern on every condition.', known_event: 'A Windows event Rem0te recognises.',
   level: 'Windows logged it as Information.', rule: 'Rem0te does not recognise this event: the monitor\'s severity stands.',
   partial: 'The agent counted more events than it sent; the rest could not be checked.', threshold: 'The monitor\'s own threshold.',
-  quality_rule: 'An approved alert quality rule for this scope changed it (Alerts → False positives & rules).',
+  quality_rule: 'An approved alert quality rule for this scope changed it (Monitoring → False positives & rules).',
 };
 export function ClassBadge({ c }: { c: AlertRow['classification'] }) {
   if (!c || c.basis === 'threshold') return null;
@@ -148,7 +148,7 @@ export function AlertDetail({ id, onChanged }: { id: string; onChanged: () => vo
         <div><div className="text-xs text-muted-foreground">First seen</div>{fmt(data.firstSeenAt)}</div>
         <div><div className="text-xs text-muted-foreground">Monitor</div><code className="text-xs">{data.monitor}</code></div>
         <div><div className="text-xs text-muted-foreground">Notified</div>{data.lastNotifiedAt ? `level ${data.escalationLevel} · ${fmt(data.lastNotifiedAt)}` : data.suppressed ? `held until ${fmt(data.notifyFrom)}` : 'not yet'}</div>
-        {data.computer && <div><div className="text-xs text-muted-foreground">Computer</div><Link className="text-primary hover:underline" href={`/endpoints/${data.computer.id}?tab=monitoring`}>{data.computer.name ?? data.computer.hostname ?? data.computer.id}</Link></div>}
+        {data.computer && <div><div className="text-xs text-muted-foreground">Device</div><Link className="text-primary hover:underline" href={`/endpoints/${data.computer.id}?tab=monitoring`}>{data.computer.name ?? data.computer.hostname ?? data.computer.id}</Link></div>}
         {data.ticket && (
           <div><div className="text-xs text-muted-foreground">Ticket</div>
             {data.ticket.url ? <a className="inline-flex items-center text-primary hover:underline" href={data.ticket.url} target="_blank" rel="noopener noreferrer">{data.ticket.id}<ExternalLink className="ml-1 h-3 w-3" /></a> : data.ticket.id}
@@ -184,7 +184,7 @@ export function AlertDetail({ id, onChanged }: { id: string; onChanged: () => vo
       )}
       {show === 'similar' && data.similar && (
         <div className="rounded-md border bg-background p-2 text-xs" data-testid="alert-similar">
-          {data.similar.onThisComputer && <p className="mb-1 text-muted-foreground">This computer has reported this event in {data.similar.onThisComputer.seen} report{data.similar.onThisComputer.seen === 1 ? '' : 's'} since {fmt(data.similar.onThisComputer.firstSeenAt)} (including any classified harmless).</p>}
+          {data.similar.onThisComputer && <p className="mb-1 text-muted-foreground">This device has reported this event in {data.similar.onThisComputer.seen} report{data.similar.onThisComputer.seen === 1 ? '' : 's'} since {fmt(data.similar.onThisComputer.firstSeenAt)} (including any classified harmless).</p>}
           {!data.fingerprint && <p className="text-muted-foreground">Only event alerts carry an event fingerprint; there is nothing to compare this one with.</p>}
           {data.fingerprint && data.similar.total === 0 && <p className="text-muted-foreground">No other alert you can see has the same event fingerprint.</p>}
           <ul className="space-y-1">
@@ -203,7 +203,7 @@ export function AlertDetail({ id, onChanged }: { id: string; onChanged: () => vo
       )}
       {data.children.length > 0 && (
         <div>
-          <div className="mb-1 text-xs font-medium text-muted-foreground">Computers in this outage ({data.children.length})</div>
+          <div className="mb-1 text-xs font-medium text-muted-foreground">Devices in this outage ({data.children.length})</div>
           <ul className="space-y-1">
             {data.children.map((c) => <li key={c.id} className="flex items-center gap-2"><StateBadge a={c} /> {c.computer?.name ?? c.title}</li>)}
           </ul>
@@ -227,7 +227,7 @@ export function AlertDetail({ id, onChanged }: { id: string; onChanged: () => vo
       <div className="flex flex-wrap items-center gap-2" data-testid="alert-quality-actions">
         {data.kind !== 'SITE_OUTAGE' && <ReportFalsePositiveButton alertId={id} onDone={done} />}
         {data.falsePositive && data.falsePositive.reports > 0 && <Badge variant="outline" data-testid="alert-fp-count">reported false positive ×{data.falsePositive.reports}</Badge>}
-        {/* 0.67: advisory AI only, through the existing AI module (Settings → AI); it never decides. */}
+        {/* 0.67: advisory AI only, through the existing AI module (Administration → AI); it never decides. */}
         {data.computer && <EntryActions endpointId={data.computer.id} source={{ source: 'alert', alertId: id }} />}
       </div>
       {data.state !== 'RESOLVED' && (

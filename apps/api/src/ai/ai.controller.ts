@@ -10,7 +10,7 @@ import { AiSettingsService } from './ai-settings.service';
 import { AiService } from './ai.service';
 
 /**
- * Settings → AI (0.48). Platform Admin only (the guard, before anything is
+ * Administration → AI (0.48). Platform Admin only (the guard, before anything is
  * read). Saving needs fresh authentication unless a Platform Admin turned
  * its catalog key (ai.settings) off: it holds a provider key and decides where
  * redacted event text goes.

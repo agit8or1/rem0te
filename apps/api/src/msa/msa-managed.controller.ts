@@ -46,7 +46,7 @@ export class MsaManagedController {
   @RateLimit(20)
   @HttpCode(HttpStatus.OK)
   async cutover(@Actor() a: ActorContext, @Param('endpointId') endpointId: string, @Req() req: Request) {
-    assertFresh(this.method(req), { action: 'msa.cutover', message: 'Confirm it is you to move this computer into Managed Secure Access.' });
+    assertFresh(this.method(req), { action: 'msa.cutover', message: 'Confirm it is you to move this device into Managed Secure Access.' });
     return { success: true, data: await this.managed.cutover(a, endpointId) };
   }
 
@@ -56,7 +56,7 @@ export class MsaManagedController {
   @RateLimit(20)
   @HttpCode(HttpStatus.OK)
   async confirm(@Actor() a: ActorContext, @Param('endpointId') endpointId: string, @Req() req: Request) {
-    assertFresh(this.method(req), { action: 'msa.cutover', message: 'Confirm it is you to mark this computer managed and verified.' });
+    assertFresh(this.method(req), { action: 'msa.cutover', message: 'Confirm it is you to mark this device managed and verified.' });
     return { success: true, data: await this.managed.confirm(a, endpointId) };
   }
 

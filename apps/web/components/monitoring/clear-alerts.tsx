@@ -31,14 +31,14 @@ export function ClearAlertsButton({ endpointId, name, count, className }: { endp
     <>
       <button type="button" data-testid="clear-alerts"
         className={cn('text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm', className)}
-        title="Resolve this computer's open alerts until the next check" aria-label={`Clear ${count} open alert${count === 1 ? '' : 's'} on ${name}`}
+        title="Resolve this device's open alerts until the next check" aria-label={`Clear ${count} open alert${count === 1 ? '' : 's'} on ${name}`}
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(true); }}>
         Clear
       </button>
       {open && (
         <ConfirmDialog open onOpenChange={(o) => { if (!o && !clear.isPending) setOpen(false); }}
           title={`Clear ${count} alert${count === 1 ? '' : 's'} on ${name}?`}
-          description="They are resolved now and Health shows Healthy. Monitors are not changed: anything still wrong is raised again at the computer's next check, and notifications and tickets work as for a new alert."
+          description="They are resolved now and Health shows Healthy. Monitors are not changed: anything still wrong is raised again at the device's next check, and notifications and tickets work as for a new alert."
           confirmLabel="Clear alerts" loading={clear.isPending} onConfirm={() => clear.mutate()} />
       )}
     </>

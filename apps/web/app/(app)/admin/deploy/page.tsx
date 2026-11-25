@@ -42,8 +42,8 @@ export default function DeployAgentsPage() {
     <div className="p-4 sm:p-6 space-y-6">
       <PageHeader
         title="Deploy agents"
-        description="Deployment keys enrol many computers at once — from Group Policy, Intune, another RMM or a script. Platform Admins only."
-        actions={<Button asChild variant="outline" size="sm"><Link href="/admin/unassigned">Unassigned computers</Link></Button>}
+        description="Deployment keys enrol many devices at once — from Group Policy, Intune, another RMM or a script. Platform Admins only."
+        actions={<Button asChild variant="outline" size="sm"><Link href="/admin/unassigned">Unassigned devices</Link></Button>}
       />
       <Keys enabled={isPlatformAdmin} onKey={setKey} />
       <Instructions keyValue={key} onKey={setKey} />
@@ -71,7 +71,7 @@ function Keys({ enabled, onKey }: { enabled: boolean; onKey: (k: string) => void
   });
   const revoke = useMutation({
     mutationFn: (id: string) => adoptionApi.revokeKey(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['adoption', 'keys'] }); toast({ title: 'Key revoked', description: 'Computers it already enrolled are not affected.' }); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['adoption', 'keys'] }); toast({ title: 'Key revoked', description: 'Devices it already enrolled are not affected.' }); },
     onError: (e) => toast({ title: 'Could not revoke', description: errText(e), variant: 'destructive' }),
   });
   const copy = (t: string) => navigator.clipboard?.writeText(t).then(() => toast({ title: 'Copied' })).catch(() => undefined);
@@ -93,16 +93,16 @@ function Keys({ enabled, onKey }: { enabled: boolean; onKey: (k: string) => void
               <Input type="number" min={1} max={90} value={days} onChange={(e) => setDays(e.target.value)} />
             </label>
           </div>
-          <label className="space-y-1 text-xs font-medium block"><span>When a computer enrols with it</span>
+          <label className="space-y-1 text-xs font-medium block"><span>When a device enrols with it</span>
             <select className={selectClass} value={mode} onChange={(e) => setMode(e.target.value as 'review' | 'active')}>
               <option value="review">Hold it in Unassigned for review (recommended)</option>
-              <option value="active">Put it straight into this business</option>
+              <option value="active">Put it straight into this customer</option>
             </select>
           </label>
           <p className="text-xs text-muted-foreground">
             {mode === 'review'
-              ? 'Each computer appears under Unassigned with this key’s business suggested; nothing can connect to it until a Platform Admin assigns it.'
-              : 'Each computer goes straight into this business (and site and group), where everyone with access can see and act on it. Anyone who has the key can add a computer there until it expires, is used up or is revoked.'}
+              ? 'Each device appears under Unassigned with this key’s customer suggested; nothing can connect to it until a Platform Admin assigns it.'
+              : 'Each device goes straight into this customer (and site and group), where everyone with access can see and act on it. Anyone who has the key can add a device there until it expires, is used up or is revoked.'}
             {' '}You will be asked to confirm it is you. The key is shown once.
           </p>
           <Button size="sm" disabled={!place.businessId || !name.trim() || create.isPending} onClick={() => create.mutate()}>
@@ -124,7 +124,7 @@ function Keys({ enabled, onKey }: { enabled: boolean; onKey: (k: string) => void
       <div className="rounded-md border bg-background overflow-x-auto">
         <table className="w-full text-sm">
           <thead><tr className="border-b bg-muted/50 text-left">
-            <th className="px-3 py-3 font-medium">Key</th><th className="px-3 py-3 font-medium">Business</th><th className="px-3 py-3 font-medium">Mode</th>
+            <th className="px-3 py-3 font-medium">Key</th><th className="px-3 py-3 font-medium">Customer</th><th className="px-3 py-3 font-medium">Mode</th>
             <th className="px-3 py-3 font-medium">Uses</th><th className="px-3 py-3 font-medium">Expires</th><th className="px-3 py-3 font-medium">State</th><th className="px-3 py-3" />
           </tr></thead>
           <tbody className="divide-y">
@@ -182,7 +182,7 @@ function Instructions({ keyValue, onKey }: { keyValue: string; onKey: (k: string
         </label>
         <p className="text-xs text-muted-foreground">
           {valid ? 'The key is filled in below, in this browser only.' : 'Until a key is entered the commands show <DEPLOYMENT-KEY>.'}
-          {' '}Every method runs the same installer as Add device and enrols with the key; running it again on a computer that is already enrolled changes nothing and uses nothing.
+          {' '}Every method runs the same installer as Add device and enrols with the key; running it again on a device that is already enrolled changes nothing and uses nothing.
         </p>
         <Tabs defaultValue={recipes[0].id}>
           <TabsList className="flex flex-wrap h-auto">
