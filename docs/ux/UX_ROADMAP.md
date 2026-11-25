@@ -186,7 +186,8 @@ reason to build the feature. Each stays on its own roadmap:
 
 ## Owner decisions
 
-Numbered as in the batch report. Each has a recommendation; none blocks P0-2.
+**Decided 2026-11-25, "accept recs": every item below as recommended** (1a, 2b, 3b, 4 yes,
+5b, 6a, 7 yes, 8b). Numbered as in the batch report.
 
 1. **"Business" → "Customer" in visible text.** (a) Rename wording only; (b)
    keep "Business". *Recommend (a)*, as P1-1.
