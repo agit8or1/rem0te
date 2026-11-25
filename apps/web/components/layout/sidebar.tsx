@@ -293,7 +293,7 @@ export function Sidebar({ className }: { className?: string } = {}) {
         {build?.version && (
           <Link
             href="/about"
-            className="block px-3 pt-1.5 text-[10px] text-muted-foreground/60 hover:text-muted-foreground transition-colors truncate"
+            className="block px-3 pt-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors truncate"
             title={build.codename ? `Rem0te v${build.version} — ${build.codename}` : `Rem0te v${build.version}`}
           >
             v{build.version}

@@ -123,7 +123,10 @@ export function CreateTicketButton({ endpointId, source }: { endpointId: string;
     mutationFn: () => psaApi.create(endpointId, { ...source, subject: (subject ?? draft.data?.subject ?? '').trim() || undefined, note: note.trim() || undefined, includeAi }).then((r) => r.data.data as PsaTicketResult),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['psa-ticket-status', endpointId] }),
   });
-  if (!status || !status.canCreate) return null;
+  // Standalone (docs/ux/STANDALONE_REQUIREMENTS.md): no PSA connected means the
+  // button could never work, so it is not drawn. A connector that is paused or
+  // not ready keeps the disabled button and its reason.
+  if (!status || !status.canCreate || !status.connector) return null;
   const existing = status.tickets.find((t) => t.sourceRef === ref);
   const why = !status.available ? status.reason ?? 'Ticketing is not available.' : null;
   const close = (v: boolean) => { setOpen(v); if (!v) { send.reset(); setSubject(null); setNote(''); setIncludeAi(false); } };

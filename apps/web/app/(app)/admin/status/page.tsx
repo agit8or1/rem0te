@@ -155,7 +155,7 @@ export default function StatusPage() {
               Updated {new Date(dataUpdatedAt).toLocaleTimeString()}
             </span>
           )}
-          <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isLoading}>
+          <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isLoading} aria-label="Refresh">
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </Button>
         </div>

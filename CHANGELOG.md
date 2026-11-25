@@ -5,6 +5,90 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.85.1] — 2026-11-25 · *Mooring*
+
+The first batch of the UI/UX initiative (directive of 2026-11-25): an audit
+of the console as it runs, workflow baselines, standalone requirements and a
+phased plan, plus a few small fixes the audit found. No migration, no API
+change, no agent change, and no visual redesign. Nothing here is evidence
+about endpoints.
+
+### Added
+
+- **`docs/ux/`**, ten pages:
+  - `UX_AUDIT.md`: 25 ranked findings from a Playwright walk of 45 pages, in
+    light and dark, at 390, 1280 and 1920 px (270 loads). The walk ran against
+    the scratch docs stack with no integration configured, and ran axe-core
+    4.11 at 1280 px.
+  - `WORKFLOW_BENCHMARKS.md`: click and time baselines for every §28
+    workflow, with security steps counted in their own column.
+  - `UX_ROADMAP.md`: P0, P1 and P2 items, each the size of one release, and
+    eight owner decisions. It is linked from `implementation-status.md` and
+    `readiness.md` and replaces neither.
+  - `UX_ACCEPTANCE_CRITERIA.md`.
+  - `STANDALONE_REQUIREMENTS.md`.
+  - `SHARED_DESIGN_SYSTEM.md`, with a WCAG contrast table for the directive's
+    palette.
+  - `design-tokens.json`: draft tokens. ClientSt0r has not yet published
+    its shared spec; checked against clientst0r main `2d26c30`.
+  - `CROSS_APP_UX_CONTRACT.md`.
+  - `CLIENTST0R_HANDOFF.md`.
+  - `COMPONENT_INVENTORY.md`.
+
+  `docs/ux/` is not in the in-app docs bundle: it is maintainer material, and
+  `gen-docs-bundle.mjs` reads only top-level pages. Bundled pages link to it
+  by GitHub URL.
+- **CLAUDE.md: "Standalone first, shared design, optional integration".** Rem0te
+  is complete on its own, so:
+  - nothing that cannot work is drawn;
+  - a peer's failure never blocks local work;
+  - a peer requests and records, and Rem0te authorizes.
+
+  It also sets interim visual rules until the token layer lands: no new hex,
+  no `yellow`/`orange`/`emerald` status colours, nothing under 12 px, and no
+  `window.confirm`. Usability never removes a security step.
+
+### Fixed
+
+- **The History tab drew a ClientSt0r *AI summary* section with no peer
+  configured.** Every computer's History tab showed it. Its text also still
+  said "Rem0te holds no AI provider key", which has been untrue since 0.48.
+  - The section and its in-page anchor now render only when a peer is
+    configured or a stored summary exists.
+  - The tab reads the timeline status through one shared query instead of
+    asking twice.
+  - The text now says the summary does not use the AI provider in Settings → AI.
+- ***Create ticket* was offered with no PSA connector.** It appeared on alert
+  and event-log rows, along with a "Create ticket: reason" notice. Both now
+  appear only when a connector exists. The server already refused the request,
+  so this changes what is drawn, not what is allowed.
+- **Every browser tab was titled "Reboot Remote".** It is now "Rem0te", with a
+  `%s · Rem0te` template that pages can fill. The public `/download` page's
+  header showed the old name too; it now shows the portal's branding title.
+- **Unnamed icon-only buttons** (axe `button-name`, critical). These now have
+  an `aria-label`:
+  - the row menu on every person in Users;
+  - Users' business filter;
+  - *Remove* on monitors, escalation levels and client-update windows;
+  - the audit log's previous and next page buttons;
+  - the status page's refresh.
+
+  Before, a screen reader announced each one as "button".
+- **The sidebar's version line** was 10 px at 60 % opacity, which is 2.3:1 in
+  light and 3.4:1 in dark. It was the one contrast failure on every page. It is
+  now 12 px in the ordinary muted colour.
+
+### Known, not fixed here
+
+- **Contrast.** Inactive tab labels (4.34:1), white on the red badge (3.59:1)
+  and the emerald badges fail contrast. They are token values, and the next
+  batch (P0-2) fixes them.
+- **Polling.** The chat inbox and task watcher poll in hidden tabs (P1-16).
+- **Mislabelled pause.** The containment kind labelled *ClientSt0r jobs* also
+  stops warranty lookups, backup pulls and MDM syncs (F-17).
+
+See `docs/ux/UX_AUDIT.md`.
+
 ## [0.85.0] — 2026-11-24 · *Mooring*
 
 **Rem0te is the EMM for Android: step M3 of [own-mdm.md](docs/own-mdm.md), enterprise sign-up and a read-only

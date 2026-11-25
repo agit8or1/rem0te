@@ -256,6 +256,51 @@ previous build's files 404s every browser that already had the app open.
   `deploy/scripts/hbbs-probe.py <id>`. Note it sends a real punch-hole, so the
   endpoint will dial the relay as a side effect.
 
+## Standalone first, shared design, optional integration
+
+This is permanent (the owner's UI/UX directive of 2026-11-25, §2 and §35), and
+standalone operation is release-blocking. The detail is in `docs/ux/`; the
+rules a change is checked against are
+[`docs/ux/STANDALONE_REQUIREMENTS.md`](docs/ux/STANDALONE_REQUIREMENTS.md).
+
+- **Rem0te is complete on its own.** Installer, database, sign-in and
+  recovery, users, customers, permissions, endpoints, monitoring, remote
+  support, automation, patching, the approval signer, agent updates, the API,
+  AI settings, notifications, reports and docs never come to need ClientSt0r,
+  a PSA, MSPZero, Agit8or Connect or a shared identity provider. Nothing is held
+  back to encourage pairing.
+- **Nothing that cannot work is drawn.** With an integration not configured
+  at all, its controls are absent: no disabled button on every row, no empty
+  card, no "not configured" banner, no upsell. Configured but unusable right
+  now (paused, unmapped, unreachable, not offered by the peer) keeps the
+  control with its reason. Decide from the server's own status (`connector`,
+  the timeline `code`, AI `enabled`), never a browser guess. Every integration
+  stays findable in Settings.
+- **A peer's failure never blocks local work.** Bounded timeouts on every
+  outbound call, no page waiting on a peer to render, one error in the section
+  that asked, stale external data labelled with its age. Disabling or removing
+  an integration deletes no local history or audit evidence.
+- **A peer requests and records; Rem0te authorizes, approves, executes and
+  reports.** No UI change may suggest otherwise, and no outage relaxes
+  approval, signing, revocation or containment.
+- **Shared design is a development-time reference.** ClientSt0r publishes the
+  MSPZero specification (`docs/ux` in its repository); record the adopted
+  commit in `docs/ux/CLIENTST0R_HANDOFF.md`. Never load CSS, fonts, icons or
+  scripts from another application or a CDN at runtime, never edit
+  ClientSt0r's repository, and file anything that touches the protocol in
+  `INTEGRATION_COORDINATION.md` as a proposal first. Until the token layer
+  lands (`docs/ux/UX_ROADMAP.md`), new code adds no hex colour, no
+  `yellow`/`orange`/`emerald` status colour, no text under 12 px and no
+  `window.confirm` (`docs/ux/SHARED_DESIGN_SYSTEM.md` §3).
+- **Usability never removes a security step.** Click counts in
+  `docs/ux/WORKFLOW_BENCHMARKS.md` count step-up, approvals and consent
+  separately; none is skipped to meet a target. A UI that works is not
+  evidence that a feature is production-ready (`docs/readiness.md`).
+
+`docs/ux/` is maintainer and cross-project material and is not in the in-app
+docs bundle (`gen-docs-bundle.mjs` reads only `docs/*.md`); a bundled page that
+links into it uses the GitHub URL.
+
 ## Security invariants
 
 ```bash

@@ -241,6 +241,28 @@ function OutboundDisclosure({ st }: { st: TimelineStatus }) {
   );
 }
 
+/**
+ * 0.85.1: the ClientSt0r summary's status, shared by the section and the tab's
+ * "On this tab" links (one request; React Query de-duplicates the key).
+ */
+function useTimelineStatus(endpointId: string) {
+  return useQuery({
+    queryKey: ['endpoint-timeline', endpointId],
+    queryFn: () => endpointsApi.timelineStatus(endpointId).then((r) => r.data?.data as TimelineStatus),
+  });
+}
+
+/**
+ * Standalone (docs/ux/STANDALONE_REQUIREMENTS.md): with no ClientSt0r peer on
+ * this server the section is a control that can never work, so it is not drawn
+ * at all, unless a summary was already saved here, which stays readable. Any
+ * other refusal (not mapped, unsupported, paused, unreachable) keeps the
+ * section and says why, because a peer exists and the reason is actionable.
+ */
+function showAiSummary(st: TimelineStatus | undefined, stored: string | null): boolean {
+  return !!stored || !st || st.code !== 'NOT_CONFIGURED';
+}
+
 function AiSummary({ endpointId, stored }: { endpointId: string; stored: string | null }) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -252,10 +274,7 @@ function AiSummary({ endpointId, stored }: { endpointId: string; stored: string 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stored]);
 
-  const status = useQuery({
-    queryKey: ['endpoint-timeline', endpointId],
-    queryFn: () => endpointsApi.timelineStatus(endpointId).then((r) => r.data?.data as TimelineStatus),
-  });
+  const status = useTimelineStatus(endpointId);
   const st = status.data;
 
   const generate = useMutation({
@@ -289,6 +308,7 @@ function AiSummary({ endpointId, stored }: { endpointId: string; stored: string 
     : !st.canRequest ? `Requesting it needs ${st.requires.join(' and ')} in this business.`
     : null;
 
+  if (!showAiSummary(st, text)) return null;
   return (
     <Section
       id="history-ai-summary"
@@ -309,7 +329,7 @@ function AiSummary({ endpointId, stored }: { endpointId: string; stored: string 
     >
       <p className="text-xs text-muted-foreground">
         Written by a model that ClientSt0r runs, from a redacted copy of this computer&apos;s notes, sessions and status.
-        Rem0te holds no AI provider key. It can be wrong; it is a starting point, not a record.
+        It does not use the AI provider in Settings → AI. It can be wrong; it is a starting point, not a record.
       </p>
       {why && <p className="text-xs rounded-md border border-dashed px-3 py-2 text-muted-foreground" data-testid="ai-summary-unavailable">{why}</p>}
       {st?.available && (
@@ -426,12 +446,14 @@ export function DeviceHistoryTab({
   /** Present only when the viewer may review access (users:view) and the route answered. */
   review: AccessReview | null;
 }) {
+  const timeline = useTimelineStatus(endpointId);
+  const summaryShown = showAiSummary(timeline.data, aiTimeline);
   return (
     <div className="space-y-4" data-testid="device-history">
       <nav className="flex flex-wrap gap-3 text-xs text-muted-foreground" aria-label="On this tab">
         <a className="hover:text-foreground underline-offset-2 hover:underline" href="#history-sessions">Remote sessions</a>
         <a className="hover:text-foreground underline-offset-2 hover:underline" href="#history-notes">Notes</a>
-        <a className="hover:text-foreground underline-offset-2 hover:underline" href="#history-ai-summary">AI summary</a>
+        {summaryShown && <a className="hover:text-foreground underline-offset-2 hover:underline" href="#history-ai-summary">AI summary</a>}
         <a className="hover:text-foreground underline-offset-2 hover:underline" href="#history-tray">Tray</a>
         {review && <a className="hover:text-foreground underline-offset-2 hover:underline" href="#history-access">Who can connect</a>}
       </nav>
