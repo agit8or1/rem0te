@@ -357,7 +357,7 @@ async function all() {
   check(r.status === 404 || r.status === 403, 'Business B cannot read A1 (or its groups)', msg(r));
   let threw = null;
   try { await prisma.endpointGroupMember.create({ data: { endpointGroupId: gA.id, endpointId: b1.id } }); } catch (e) { threw = String(e.message); }
-  check(threw && /not in the group's customer/.test(threw) && (await prisma.endpointGroupMember.count({ where: { endpointId: b1.id } })) === 0,
+  check(threw && /not in the group's business/.test(threw) && (await prisma.endpointGroupMember.count({ where: { endpointId: b1.id } })) === 0,
     'a direct database insert of B1 into A’s group is refused by the trigger (migration 0049)', threw ?? 'it was inserted');
   r = await list(S.ownerB, { groupId: gA.id });
   check(r.status === 200 && r.data.total === 0, 'Business B filtering on A’s group finds nothing (the filter never widens)');

@@ -199,7 +199,7 @@ async function all() {
   let r = await req('GET', '/ai/status', { s: S.userA });
   check(r.status === 200 && r.data?.enabled === false, 'ai/status says off on a fresh install', msg(r));
   r = await req('POST', `/endpoints/${a1.id}/ai/explain`, { s: S.userA, body: evSrc(0) });
-  check(r.status === 409 && code(r) === 'AI_NOT_CONFIGURED' && /Settings → AI/.test(r.body?.message ?? ''), 'asking says "Not configured — … Settings → AI"', msg(r));
+  check(r.status === 409 && code(r) === 'AI_NOT_CONFIGURED' && /Administration → AI/.test(r.body?.message ?? ''), 'asking says "Not configured — … Administration → AI"', msg(r));
   check(aiHits.length === 0, 'and nothing reached the provider');
 
   // ── Settings → AI ─────────────────────────────────────────────────────────
@@ -299,7 +299,7 @@ async function all() {
   // ── PSA ───────────────────────────────────────────────────────────────────
   section('PSA: nothing connected');
   r = await req('GET', `/endpoints/${a1.id}/tickets`, { s: S.userA });
-  check(r.status === 200 && r.data?.available === false && /Settings → PSA/.test(r.data?.reason ?? '') && r.data?.canCreate === true, 'tickets: not available, with the reason', msg(r));
+  check(r.status === 200 && r.data?.available === false && /Administration → PSA/.test(r.data?.reason ?? '') && r.data?.canCreate === true, 'tickets: not available, with the reason', msg(r));
   r = await req('POST', `/endpoints/${a1.id}/tickets`, { s: S.userA, body: evSrc(0) });
   check(r.status === 409 && code(r) === 'PSA_NOT_CONFIGURED', 'creating says no PSA is connected', msg(r));
 

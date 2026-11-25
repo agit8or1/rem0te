@@ -382,7 +382,7 @@ async function main() {
     const h = await hb(w2);
     check(!!h?.reinstallAgent && !h.reinstallAgent.nonce, 'the heartbeat hands out the plain reinstall (no migration nonce)', JSON.stringify(h?.reinstallAgent));
     r = await req('POST', `/endpoints/${lin.id}/agent/update`, { s: S.ownerA });
-    check(r.status === 400 && code(r) === 'LINUX_AGENT_READ_ONLY' && /Re-run the installer on the computer: curl -fsSL \S+\/install\/linux\.sh \| sudo bash/.test(r.body?.message ?? ''), 'Linux: refused, with the command to re-run', msg(r));
+    check(r.status === 400 && code(r) === 'LINUX_AGENT_READ_ONLY' && /Re-run the installer on the device: curl -fsSL \S+\/install\/linux\.sh \| sudo bash/.test(r.body?.message ?? ''), 'Linux: refused, with the command to re-run', msg(r));
     r = await req('POST', `/endpoints/${w2.id}/agent/update`, { s: S.userA });
     check(r.status === 403, 'no computers:edit: 403', msg(r));
     r = await req('POST', `/endpoints/${wC.id}/agent/update`, { s: S.ownerC });

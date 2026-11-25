@@ -2376,7 +2376,7 @@ async function seedMsa(f) {
  * first load); the Devices tab is current; no sideways scroll at 375 px.
  */
 async function msaReadinessUi(page, f, vp, theme, label) {
-  const NOTE = 'Readiness only — Managed Secure Access is not available yet; nothing has changed on this computer.';
+  const NOTE = 'Readiness only — Managed Secure Access is not available yet; nothing has changed on this device.';
   const cardState = async () => {
     const card = page.getByTestId('msa-readiness-card');
     await card.waitFor({ timeout: 15_000 });
