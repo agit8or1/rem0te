@@ -845,7 +845,13 @@ async function deviceNaming(page, f, label) {
   await page.locator('[data-testid="rename-description"]').fill('Reception, by the window');
   await page.locator('[data-testid="rename-save"]').click();
   await dlg.waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {});
-  await page.locator('[data-testid="device-description"]').waitFor({ timeout: 15_000 }).catch(() => {});
+  // Wait for the new text, not just the element: the old description is already on the page, so
+  // waiting for the element alone read the header before it refreshed (seen once in CI after 0.85.1).
+  await page.waitForFunction((n) => {
+    const h = document.querySelector('[data-testid="device-header"] h1');
+    const d = document.querySelector('[data-testid="device-description"]');
+    return h?.textContent?.trim() === n && d?.textContent?.trim() === 'Reception, by the window';
+  }, nick, { timeout: 15_000 }).catch(() => {});
   const h1 = await page.locator('[data-testid="device-header"] h1').innerText().catch(() => '');
   const desc = await page.locator('[data-testid="device-description"]').innerText().catch(() => '');
   check(h1 === nick && desc === 'Reception, by the window', `${label}: the new name and description show in the header`, JSON.stringify({ h1, desc }));
