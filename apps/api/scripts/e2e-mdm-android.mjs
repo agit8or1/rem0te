@@ -31,7 +31,16 @@
  *     not reported, a business pause skipping that enterprise, an
  *     unfinished sign-up expired;
  *   - nothing secret in a response, an audit row or the API's output; no
- *     command or device deletion was ever sent.
+ *     device deletion was ever sent.
+ *
+ * 0.86 Lighthouse (§95, decision 30): the sync no longer lists a device's
+ * Operations, so commands another EMM (or the stand-in) made never appear;
+ * and lost-device commands from Rem0te: scope and mobile:act, the fresh
+ * confirmation (mdm.act), the request's checks, lost mode refused on a
+ * personal device, the `actions` and `integration` pauses, the
+ * devices.issueCommand bodies, accepted at issue and completed only when
+ * the Operation (read by its own name) is done, a refused issue recorded as
+ * failed, and no message or phone number in any row, audit entry or log.
  *
  *   cd apps/api && npx nest build
  *   DATABASE_URL=postgresql://…/<name containing scratch or test> node scripts/e2e-mdm-android.mjs
@@ -74,6 +83,8 @@ const sha = (s) => createHash('sha256').update(s, 'utf8').digest('hex');
 const G = {
   hits: [], tokens: 0, rejectKey: false, failPolicyOnce: false, signups: new Map(), enterprises: [], policies: new Map(), tokensMade: [],
   devices: new Map(), issuedAccess: new Set(), enrollValues: [],
+  // 0.86: devices.issueCommand and operations.get.
+  issued: [], ops: new Map(), failIssue: 0,
 };
 const DEVICE_FIELDS_SEEN = [];
 function device(e, n, o = {}) {
@@ -136,6 +147,19 @@ const standin = http.createServer((req, res) => {
         qrCode: J({ 'android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME': 'com.google.android.apps.work.clouddpc/.receivers.CloudDeviceAdminReceiver', 'android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE': { 'com.google.android.apps.work.clouddpc.EXTRA_ENROLLMENT_TOKEN': value } }),
       });
     }
+    if ((m = u.pathname.match(/^\/v1\/enterprises\/([A-Za-z0-9_-]+)\/devices\/([A-Za-z0-9._-]+):issueCommand$/)) && req.method === 'POST') {
+      if (G.failIssue) { const s = G.failIssue; G.failIssue = 0; return send(s, { error: { code: s, status: 'FAILED_PRECONDITION', message: 'internal detail' } }); }
+      const b = JSON.parse(raw);
+      G.issued.push({ enterprise: m[1], device: m[2], body: b });
+      const id = String(1800000000000 + G.issued.length);
+      const op = { name: `enterprises/${m[1]}/devices/${m[2]}/operations/${id}`, metadata: { type: b.type, createTime: new Date().toISOString(), duration: b.duration } };
+      G.ops.set(`${m[2]}/${id}`, op);
+      return send(200, op);
+    }
+    if ((m = u.pathname.match(/^\/v1\/enterprises\/([A-Za-z0-9_-]+)\/devices\/([A-Za-z0-9._:-]+)\/operations\/([0-9]+)$/)) && req.method === 'GET') {
+      const op = G.ops.get(`${m[2]}/${m[3]}`);
+      return op ? send(200, op) : send(404, { error: { code: 404, status: 'NOT_FOUND' } });
+    }
     if ((m = u.pathname.match(/^\/v1\/enterprises\/([A-Za-z0-9_-]+)\/devices$/)) && req.method === 'GET') {
       DEVICE_FIELDS_SEEN.push(u.searchParams.get('fields'));
       const all = G.devices.get(m[1]) ?? [];
@@ -190,7 +214,7 @@ async function waitUp(port, p) {
 }
 async function stop(p) { if (p && p.exitCode === null && p.signalCode === null) await new Promise((r) => { p.once('exit', r); p.kill('SIGTERM'); }); }
 
-const API = `http://127.0.0.1:${PORT}/api/v1`;
+let API = `http://127.0.0.1:${PORT}/api/v1`;
 const bodies = [];
 async function req(method, p, { s, body } = {}) {
   await sleep(30);
@@ -431,6 +455,7 @@ async function all() {
   await stop(api); api = null;
   api2 = startApi(PORT + 1, { MDM_SWEEP: 'on', MDM_SWEEP_SECONDS: '2', MDM_SYNC_MINUTES: '0.02' });
   await waitUp(PORT + 1, api2);
+  API = `http://127.0.0.1:${PORT + 1}/api/v1`;
   let conA = null;
   for (let i = 0; i < 60; i++) {
     conA = await prisma.mdmConnector.findFirst({ where: { customerId: A.id, provider: 'android' } });
@@ -449,13 +474,101 @@ async function all() {
   check(d5?.ownership === 'byod' && d5.managementScope === 'work_profile' && d5.serialNumber === null, 'a work profile on a personal phone: byod, and no serial', J(d5));
   check(d7?.enrollmentState === 'unenrolled' && !mdA.some((d) => d.providerDeviceId === 'dev6'), 'a deleted device is unenrolled; an unknown state is not kept');
   check(!/49015420323|aa:bb:cc|5555550100|users\/u/.test(J(mdA)), 'no IMEI, MAC, phone number or user in any stored device');
+  // 0.86 (decision 30): a device's Operations are never listed; commands are only the ones Rem0te issued.
   const cmds = await prisma.mdmCommand.findMany({ where: { connectorId: conA?.id } });
-  const lock = cmds.find((c) => c.kind === 'lock'), wipe = cmds.find((c) => c.kind === 'wipe'), lost = cmds.find((c) => c.kind === 'lost_mode_start');
-  check(lock?.state === 'completed' && !!lock.providerAcceptedAt && !!lock.deviceCompletedAt && lock.origin === 'provider', 'a done LOCK: accepted by Google and completed, as two facts', J(lock));
-  check(wipe?.state === 'failed' && /android:grpc_9/.test(wipe.failureCode ?? '') && lost?.state === 'acknowledged' && !lost.deviceCompletedAt && !cmds.some((c) => /REBOOT/i.test(c.kind)),
-    'a failed WIPE has a code (never Google\'s text); a pending lost mode is accepted, not completed; a REBOOT is not shown', J(cmds.map((c) => [c.kind, c.state, c.failureCode])));
+  check(cmds.length === 0 && !G.hits.some((h) => /\/operations$/.test(h.path)),
+    'no Operations listing: the stand-in\'s LOCK, WIPE and lost mode (made by "another EMM") never become Rem0te commands', J(cmds.map((c) => [c.kind, c.state])));
   check(!G.hits.some((h) => /operations\/|:cancel|issueCommand|\/devices\/[^/]+$/.test(h.path) && h.method !== 'GET') && !G.hits.some((h) => h.method === 'DELETE'),
-    'nothing was sent to a device: no issueCommand, no cancel, no devices.delete', J([...new Set(G.hits.map((h) => `${h.method} ${h.path.replace(/dev\d+/, 'dev*')}`))]));
+    'nothing was sent to a device by the sync: no issueCommand, no cancel, no devices.delete', J([...new Set(G.hits.map((h) => `${h.method} ${h.path.replace(/dev\d+/, 'dev*')}`))]));
+
+  section('Lost-device commands (0.86, §95): lock and lost mode through devices.issueCommand');
+  const devOf = async (con, pid) => prisma.mobileDevice.findFirst({ where: { connectorId: con.id, providerDeviceId: pid } });
+  const m1 = await devOf(conA, 'dev1'), m5 = await devOf(conA, 'dev5');
+  for (let i = 0; i < 40 && !(await prisma.mobileDevice.count({ where: { connectorId: conB?.id } })); i++) await sleep(500);
+  const mB1 = await devOf(conB, 'dev1');
+  const SO = { owner: await login(owner.email), admin: await login(admin.email) };
+  const FO = await stepUp(SO.owner);
+  const postCmd = (id, body, s = FO) => req('POST', `/mobile-devices/${id}/commands`, { s, body });
+  const issuedBefore = G.issued.length;
+  r = await postCmd(m1.id, { kind: 'lock' }, SO.owner);
+  check(r.status === 403 && code(r) === 'STEP_UP_REQUIRED' && r.body?.action === 'mdm.act', 'a lock without a fresh confirmation: 403 naming mdm.act', msg(r));
+  r = await postCmd(mB1?.id ?? 'x', { kind: 'lock' });
+  check(r.status === 404, 'another business\'s device: 404 (the Business Owner of A holds mobile:act only for A)', msg(r));
+  const bad = [
+    [{ kind: 'wipe' }, 400, 'MOBILE_COMMAND_INVALID'], [{ kind: 'erase' }, 400, 'MOBILE_COMMAND_INVALID'],
+    [{ kind: 'lost_mode_start' }, 400, 'MOBILE_MESSAGE_REQUIRED'], [{ kind: 'lost_mode_start', message: 'x'.repeat(161) }, 400, 'MOBILE_MESSAGE_INVALID'],
+    [{ kind: 'lost_mode_start', message: 'call \u202Eme' }, 400, 'MOBILE_MESSAGE_INVALID'], [{ kind: 'lost_mode_start', phoneNumber: 'ring me' }, 400, 'MOBILE_PHONE_INVALID'],
+    [{ kind: 'lost_mode_stop', message: 'hi' }, 400, 'MOBILE_MESSAGE_NOT_TAKEN'], [{ kind: 'lock', message: 'Android shows none' }, 409, 'MOBILE_MESSAGE_NOT_TAKEN'],
+  ];
+  const badOut = [];
+  for (const [b, s, c] of bad) { const x = await postCmd(m1.id, b); badOut.push(x.status === s && code(x) === c ? 'ok' : `${b.kind}:${x.status}:${code(x)}`); }
+  check(badOut.every((x) => x === 'ok'), 'an unknown or destructive kind, a missing, long, bidi or control-character message, a bad phone number and a message where none is shown are refused', badOut.join(','));
+  r = await postCmd(m5.id, { kind: 'lost_mode_start', message: 'Please return this phone' });
+  check(r.status === 409 && code(r) === 'LOST_MODE_NOT_ON_PERSONAL', 'lost mode on a personal (work profile) device is refused', msg(r));
+  r = await req('GET', `/mobile-devices/${m5.id}/commands`, { s: SO.owner });
+  const o5 = Object.fromEntries((r.data?.actions ?? []).map((a) => [a.kind, a]));
+  check(r.status === 200 && r.data.canSend === true && o5.lock?.available === true && o5.lost_mode_start?.available === false && o5.lost_mode_start.code === 'LOST_MODE_NOT_ON_PERSONAL',
+    'the device\'s command list offers lock and says why lost mode is not available', msg(r).slice(0, 300));
+  const aP = await prisma.containmentPause.create({ data: { scope: 'BUSINESS', customerId: A.id, kinds: ['actions'], reason: `e2e-mdm-android ${sfx}`, setById: admin.id, setBy: 'msp' } });
+  created.pauses.push(aP.id);
+  r = await postCmd(m1.id, { kind: 'lock' });
+  check(r.status === 409 && code(r) === 'MDM_ACTIONS_PAUSED', 'the business\'s `actions` pause refuses a lock', msg(r));
+  await prisma.containmentPause.update({ where: { id: aP.id }, data: { clearedAt: new Date() } });
+  const iP = await prisma.containmentPause.create({ data: { scope: 'GLOBAL', kinds: ['integration'], reason: `e2e-mdm-android ${sfx}`, setById: admin.id, setBy: 'msp' } });
+  created.pauses.push(iP.id);
+  r = await postCmd(m1.id, { kind: 'lock' });
+  check(r.status === 409 && code(r) === 'MDM_INTEGRATION_PAUSED', 'a global `integration` pause refuses it too (sending is a call to Google)', msg(r));
+  await prisma.containmentPause.update({ where: { id: iP.id }, data: { clearedAt: new Date() } });
+  check(G.issued.length === issuedBefore, 'none of those reached Google');
+
+  r = await postCmd(m1.id, { kind: 'lock' });
+  const lockCmd = r.data?.command;
+  const iLock = G.issued.at(-1);
+  check(r.status === 200 && lockCmd?.state === 'acknowledged' && lockCmd.providerAccepted.done && !lockCmd.deviceCompleted.done && lockCmd.waitingFor === 'device' && lockCmd.origin === 'portal',
+    'a lock: sent, and accepted by Google (its Operation), not yet completed on the device', msg(r));
+  check(J(iLock?.body) === J({ type: 'LOCK', duration: '604800s' }) && iLock.device === 'dev1' && iLock.enterprise === entA.enterpriseId,
+    'devices.issueCommand got exactly { type: LOCK, duration: 7 days }', J(iLock));
+  const MSG = `Lost phone ${sfx}, please call`, PHONE = '+44 20 7946 0000';
+  r = await postCmd(m1.id, { kind: 'lost_mode_start', message: MSG, phoneNumber: PHONE });
+  const iLost = G.issued.at(-1);
+  check(r.status === 200 && r.data.command.state === 'acknowledged'
+    && J(iLost?.body) === J({ type: 'START_LOST_MODE', duration: '604800s', startLostModeParams: { lostMessage: { defaultMessage: MSG }, lostPhoneNumber: { defaultMessage: PHONE } } }),
+    'start lost mode: the message and phone number as Google\'s UserFacingMessages, nothing else', J(iLost?.body));
+  G.failIssue = 400;
+  r = await postCmd(m1.id, { kind: 'lost_mode_stop' });
+  const failedRow = await prisma.mdmCommand.findFirst({ where: { mobileDeviceId: m1.id, kind: 'lost_mode_stop', origin: 'portal' }, orderBy: { requestedAt: 'desc' } });
+  check(r.status === 502 && code(r) === 'MDM_SEND_FAILED' && failedRow?.state === 'failed' && failedRow.failureCode === 'provider_rejected:refused'
+    && !r.text.includes('internal detail'), 'Google refusing the issue: 502, the command failed with a code, never Google\'s text', `${msg(r)} ${J(failedRow)}`);
+  r = await postCmd(m1.id, { kind: 'lost_mode_stop' });
+  check(r.status === 200 && J(G.issued.at(-1).body) === J({ type: 'STOP_LOST_MODE', duration: '604800s', stopLostModeParams: {} }), 'stop lost mode: { type: STOP_LOST_MODE, stopLostModeParams: {} }', J(G.issued.at(-1)?.body));
+
+  // The device finishes the lock; the sync reads that Operation by its own name.
+  const lockOp = [...G.ops.entries()].find(([, o]) => o.metadata.type === 'LOCK')[1];
+  lockOp.done = true;
+  G.hits.length = 0;
+  await resync(conA.id);
+  const lockRow = await prisma.mdmCommand.findUnique({ where: { id: lockCmd.id } });
+  check(lockRow.state === 'completed' && lockRow.providerAcceptedAt && lockRow.deviceCompletedAt && lockRow.providerAcceptedAt <= lockRow.deviceCompletedAt,
+    'once its Operation is done the lock is completed: accepted and completed, two facts', J(lockRow));
+  const opGets = G.hits.filter((h) => /\/operations/.test(h.path));
+  check(opGets.length >= 1 && opGets.every((h) => h.method === 'GET' && /\/devices\/dev1\/operations\/18\d+$/.test(h.path)) && !G.hits.some((h) => /\/operations$/.test(h.path)),
+    'the sync asked only for the Operations Rem0te issued, each by name; never a listing', J(opGets.map((h) => h.path)));
+  await resync(conA.id);
+  G.hits.length = 0;
+  await resync(conA.id);
+  check(!G.hits.some((h) => h.path.endsWith(`/operations/${lockRow.providerCommandId.split(':')[1]}`)), 'a completed command is not asked about again', J(G.hits.map((h) => h.path)));
+  r = await req('GET', `/mobile-devices/${m1.id}/commands`, { s: SO.owner });
+  const hist = (r.data?.commands ?? []).filter((c) => c.origin === 'portal');
+  check(r.status === 200 && hist.length === 4 && hist.every((c) => c.requestedBy === owner.email) && hist.some((c) => c.state === 'completed' && c.deviceCompleted.done && c.providerAccepted.done)
+    && hist.some((c) => c.state === 'failed'), 'the history: four portal commands, who asked, accepted and completed apart', msg(r).slice(0, 400));
+  const lostAudits = await prisma.activityLog.findMany({ where: { action: { in: ['MDM_COMMAND_REQUESTED', 'MDM_COMMAND_SENT', 'MDM_COMMAND_SEND_FAILED'] }, createdAt: { gte: started } } });
+  check(lostAudits.filter((a) => a.action === 'MDM_COMMAND_REQUESTED').length === 4 && lostAudits.filter((a) => a.action === 'MDM_COMMAND_SENT').length === 3
+    && lostAudits.filter((a) => a.action === 'MDM_COMMAND_SEND_FAILED').length === 1 && lostAudits.every((a) => a.actorId === owner.id),
+    'every command audited when requested and when sent (or refused), as the person who asked', J(lostAudits.map((a) => a.action)));
+  const stored = J(lostAudits.map((a) => a.metadata)) + J(await prisma.mdmCommand.findMany({ where: { connectorId: conA.id } }));
+  const logsNow = (api?.log ?? '') + (api2?.log ?? '');
+  check(!stored.includes(MSG) && !stored.includes(PHONE) && !logsNow.includes(MSG) && !logsNow.includes(PHONE) && lostAudits.some((a) => a.metadata.hasMessage === true && a.metadata.hasPhoneNumber === true),
+    'the message and phone number are in no audit row, command row or log line (only whether they were given)');
 
   // A device gone from a complete listing; then a business pause.
   G.devices.set(entA.enterpriseId, devsA.filter((d) => !d.name.endsWith('/dev2')));

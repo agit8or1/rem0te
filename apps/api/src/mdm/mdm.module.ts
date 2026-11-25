@@ -5,6 +5,7 @@ import { AppleDeviceController, AppleAdminController } from './apple/apple.contr
 import { AppleEnrollmentService } from './apple/apple-enrollment.service';
 import { AppleMdmService } from './apple/apple-mdm.service';
 import { AppleRawBodyMiddleware } from './apple/apple-raw-body.middleware';
+import { MdmActionService } from './mdm-action.service';
 import { MdmController } from './mdm.controller';
 import { MdmService } from './mdm.service';
 import { MdmSyncService } from './mdm-sync.service';
@@ -16,8 +17,9 @@ import { MdmSetupService } from './setup/mdm-setup.service';
   // 0.83: Settings → Mobile devices (mdm/setup/, §92), Platform Admin only.
   // 0.84: Rem0te's own Apple MDM server (mdm/apple/, §93).
   // 0.85: Rem0te as the EMM for Android (mdm/android/, drivers/android/, §94).
+  // 0.86: lost-device commands (MdmActionService, §95).
   controllers: [MdmSetupController, MdmController, AppleDeviceController, AppleAdminController, AndroidSignupCallbackController, AndroidAdminController],
-  providers: [MdmService, MdmSyncService, MdmSetupService, AppleEnrollmentService, AppleMdmService, AndroidEmmService],
+  providers: [MdmService, MdmActionService, MdmSyncService, MdmSetupService, AppleEnrollmentService, AppleMdmService, AndroidEmmService],
 })
 export class MdmModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

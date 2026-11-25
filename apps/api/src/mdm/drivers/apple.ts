@@ -12,11 +12,23 @@
  * the provider, so that is its acceptance), acknowledged is completed, an
  * error is the device's failure code, a command cancelled before it was
  * fetched is a rejection.
+ *
+ * 0.86 (§95): the three lost-device commands appear as `lock`,
+ * `lost_mode_start` and `lost_mode_stop`, with the same meaning (accepted
+ * when the device fetched it, completed on Acknowledged). send() puts one in
+ * Rem0te's own queue through the reader's queueLostDevice, under the id
+ * Rem0te's command row already holds, so the sync finds that row and never
+ * makes a second one. It still makes no call of its own.
  */
 import type { AppleDevice } from '@prisma/client';
 import type { AppleReader } from '../apple/apple-mdm.service';
-import type { MdmDriver, RawPage } from '../driver';
+import { isLostType, LOST_TYPE_KIND, type LostType } from '../apple/protocol';
+import { MdmSendError, type MdmDriver, type RawPage } from '../driver';
+import type { LostDeviceKind } from '../lost-device';
 import { PAGE_MAX } from '../schemas';
+
+/** Each lost-device kind's Apple request type (0.86). */
+export const APPLE_LOST_TYPE: Record<LostDeviceKind, LostType> = { lock: 'DeviceLock', lost_mode_start: 'EnableLostMode', lost_mode_stop: 'DisableLostMode' };
 
 /** Commands older than this are not listed (they are final, and the listing stays bounded). */
 export const APPLE_COMMAND_WINDOW_MS = 14 * 24 * 3_600_000;
@@ -51,7 +63,7 @@ export function commandRecord(c: Awaited<ReturnType<AppleReader['commands']>>[nu
   return {
     id: c.id,
     deviceId: c.appleDeviceId,
-    kind: 'sync',
+    kind: isLostType(c.requestType) ? LOST_TYPE_KIND[c.requestType] : 'sync',
     requestedAt: c.queuedAt.toISOString(),
     expiresAt: c.expiresAt.toISOString(),
     acceptedAt: iso(c.sentAt),
@@ -75,6 +87,14 @@ export function appleDriver(reader: AppleReader): MdmDriver {
     async listCommands(row, cursor): Promise<RawPage> {
       const rows = await reader.commands(row.customerId, cursor, PAGE_MAX, new Date(Date.now() - APPLE_COMMAND_WINDOW_MS));
       return { records: rows.map(commandRecord), next: rows.length === PAGE_MAX ? rows[rows.length - 1].id : null };
+    },
+    async send(row, device, cmd) {
+      const r = await reader.queueLostDevice({
+        id: cmd.ref, customerId: row.customerId, appleDeviceId: device.providerDeviceId, type: APPLE_LOST_TYPE[cmd.kind],
+        text: { message: cmd.message, phoneNumber: cmd.phoneNumber }, expiresAt: cmd.expiresAt,
+      });
+      if (!r.ok) throw new MdmSendError(r.code === 'not_supervised' ? 'unsupported' : r.code === 'not_enrolled' ? 'refused' : 'conflict');
+      return { providerCommandId: cmd.ref, acceptedAt: null };
     },
   };
 }

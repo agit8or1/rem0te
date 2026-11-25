@@ -88,6 +88,16 @@ export const CAP = {
   // (a grant naming computers cannot name a phone).
   MOBILE_VIEW: 'mobile:view',
 
+  // Mobile devices (0.86 Lighthouse): sending one of the three lost-device
+  // commands to a phone or tablet this business manages — lock, start lost
+  // mode, stop lost mode (docs/own-mdm.md M4). Separate from `mobile:view`
+  // because locking somebody's phone is an action on a device in a person's
+  // hand, not a read. Off by default for a Business User, no technician
+  // preset produces it, and a technician needs it on a whole-business
+  // assignment, as for mobile:view. Never erase, wipe or retire: those are
+  // M5's, behind a second person (decision 16).
+  MOBILE_ACT: 'mobile:act',
+
   // Backups (0.81). Seeing a business's backup status: what is protected,
   // its jobs, recovery points, restore drills and RPO/RTO. Separate from
   // `computers:view` on purpose, like event logs: a business's recovery gaps
@@ -224,6 +234,7 @@ export const CAPABILITY_GROUPS: {
     group: 'Mobile devices',
     items: [
       { key: CAP.MOBILE_VIEW, label: 'View mobile devices', description: "See this business's phones and tablets as its MDM provider reports them: model, OS, ownership, compliance and command history. Read-only; nothing can be sent to a device. A technician needs it on an assignment covering the whole business." },
+      { key: CAP.MOBILE_ACT, label: 'Lock mobile devices and use lost mode', description: "Lock this business's phones and tablets, and start or stop lost mode with a message and a contact number on the lock screen. Needs View mobile devices too. Lost mode only on a supervised iPhone or iPad, or a company-owned Android device. Never erases or wipes anything. A technician needs it on an assignment covering the whole business." },
     ],
   },
 ];

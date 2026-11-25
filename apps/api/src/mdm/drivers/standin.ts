@@ -16,10 +16,13 @@
  *     → { "devices" | "commands": [...], "next": <cursor> | null }
  *
  * Nothing is sent but the tenant id and the cursor, both charset-checked.
+ *
+ * 0.86: it takes no command. `send()` refuses (`unsupported`) before
+ * anything is read, and the console never offers one (lost-device.ts).
  */
 import type { MdmConnector } from '@prisma/client';
 import { OutboundError, safeGet, testLoopbackAllowed } from '../../common/safe-https';
-import { MdmDriverError, type MdmDriver, type RawPage } from '../driver';
+import { MdmDriverError, MdmSendError, type MdmDriver, type RawPage } from '../driver';
 import { CURSOR_RE, EXTERNAL_TENANT_RE } from '../model';
 import { CommandPage, DevicePage } from '../schemas';
 
@@ -75,4 +78,5 @@ export const standinDriver: MdmDriver = {
   },
   listDevices: (row, cursor) => getPage(row, 'devices', cursor),
   listCommands: (row, cursor) => getPage(row, 'commands', cursor),
+  send: () => Promise.reject(new MdmSendError('unsupported')),
 };

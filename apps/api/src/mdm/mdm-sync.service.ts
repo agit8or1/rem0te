@@ -56,6 +56,13 @@ export const CONNECTORS_PER_PASS = 20;
 export const DEVICE_PAGES = 20;
 export const COMMAND_PAGES = 10;
 export const CLAIM_STALE_MS = 15 * 60_000;
+/**
+ * 0.86 (§95): a connector with a lost-device command still open is read
+ * again after this long, not MDM_SYNC_MINUTES, so "accepted" and "completed
+ * on the device" show within a sweep or two. Bounded like every read: the
+ * same CONNECTORS_PER_PASS, and only connectors with an open portal command.
+ */
+export const OPEN_COMMAND_RESYNC_MS = 60_000;
 /** A provider command with no expiry of its own expires after this long without finishing. */
 export const DEFAULT_COMMAND_TTL_MS = 7 * 24 * 3_600_000;
 
@@ -108,8 +115,15 @@ export class MdmSyncService implements OnModuleInit, OnModuleDestroy {
       await this.android.pass(now);
       await this.ensureAndroidConnectors();
       const due = new Date(now.getTime() - syncMinutes() * 60_000);
+      const open = await this.prisma.mdmCommand.findMany({
+        where: { origin: 'portal', state: { in: ['sent', 'acknowledged'] } }, distinct: ['connectorId'], select: { connectorId: true }, take: CONNECTORS_PER_PASS,
+      });
+      const soon = new Date(now.getTime() - OPEN_COMMAND_RESYNC_MS);
       const rows = await this.prisma.mdmConnector.findMany({
-        where: { enabled: true, OR: [{ lastSyncAt: null }, { lastSyncAt: { lt: due } }] },
+        where: {
+          enabled: true,
+          OR: [{ lastSyncAt: null }, { lastSyncAt: { lt: due } }, ...(open.length ? [{ id: { in: open.map((o) => o.connectorId) }, lastSyncAt: { lt: soon } }] : [])],
+        },
         orderBy: [{ lastSyncAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
         take: CONNECTORS_PER_PASS,
       });

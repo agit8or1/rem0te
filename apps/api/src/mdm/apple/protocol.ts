@@ -15,12 +15,45 @@
 import { isDict, type PlistDict, type PlistValue } from './plist';
 
 /**
- * The commands Rem0te can send in M2: inventory only, in this order. No lock,
- * lost mode, erase or profile removal (M4 and M5).
+ * The commands Rem0te can send, in this order: the five inventory commands
+ * (M2), then the three lost-device commands (0.86, M4). No erase or profile
+ * removal (M5). 0103's CHECK is this list, word for word.
  */
-export const REQUEST_TYPES = ['DeviceInformation', 'SecurityInfo', 'InstalledApplicationList', 'ProfileList', 'CertificateList'] as const;
+export const REQUEST_TYPES = [
+  'DeviceInformation', 'SecurityInfo', 'InstalledApplicationList', 'ProfileList', 'CertificateList',
+  'DeviceLock', 'EnableLostMode', 'DisableLostMode',
+] as const;
 export type RequestType = (typeof REQUEST_TYPES)[number];
 export const isRequestType = (v: unknown): v is RequestType => typeof v === 'string' && (REQUEST_TYPES as readonly string[]).includes(v);
+
+/** The inventory commands, queued at enrollment and every day (M2). Never a lost-device one. */
+export const INVENTORY_TYPES = ['DeviceInformation', 'SecurityInfo', 'InstalledApplicationList', 'ProfileList', 'CertificateList'] as const satisfies readonly RequestType[];
+export type InventoryType = (typeof INVENTORY_TYPES)[number];
+export const isInventoryType = (v: unknown): v is InventoryType => typeof v === 'string' && (INVENTORY_TYPES as readonly string[]).includes(v);
+
+/**
+ * The lost-device commands (0.86), only ever queued by a person through
+ * MdmActionService, and held (never handed out) while the business is under
+ * an `actions` containment pause. Lost mode is supervised-only (Apple's
+ * EnableLostMode and DisableLostMode pages); DeviceLock is not.
+ */
+export const LOST_TYPES = ['DeviceLock', 'EnableLostMode', 'DisableLostMode'] as const satisfies readonly RequestType[];
+export type LostType = (typeof LOST_TYPES)[number];
+export const isLostType = (v: unknown): v is LostType => typeof v === 'string' && (LOST_TYPES as readonly string[]).includes(v);
+/** Each lost-device request type's Rem0te kind (0096's list). */
+export const LOST_TYPE_KIND: Record<LostType, 'lock' | 'lost_mode_start' | 'lost_mode_stop'> = {
+  DeviceLock: 'lock', EnableLostMode: 'lost_mode_start', DisableLostMode: 'lost_mode_stop',
+};
+
+/** The lock-screen text a lost-device command carries, already checked (lost-device.ts) and checked again here. */
+export interface LockText { message: string | null; phoneNumber: string | null }
+// eslint-disable-next-line no-control-regex
+const LOCK_TEXT_BAD = /[\u0000-\u001F\u007F-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069]/;
+const LOCK_PHONE_RE = /^[+0-9][0-9 ().-]{2,30}$/;
+const lockText = (t: LockText | null | undefined): LockText => ({
+  message: t?.message && t.message.length <= 160 && !LOCK_TEXT_BAD.test(t.message) ? t.message : null,
+  phoneNumber: t?.phoneNumber && LOCK_PHONE_RE.test(t.phoneNumber) ? t.phoneNumber : null,
+});
 
 /** Rem0te's own queue states for an Apple command (0101 CHECK). */
 export const APPLE_COMMAND_STATES = ['queued', 'sent', 'acknowledged', 'error', 'cancelled', 'expired'] as const;
@@ -61,7 +94,8 @@ export const DEVICE_INFO_QUERIES = [
  * CertificateList). Decision 25 (2026-11-23): erase is GRANTED NOW, because
  * rights are fixed at enrollment and adding it later would mean every device
  * enrolling again. Granting it sends nothing: no erase or wipe request type
- * exists in REQUEST_TYPES or 0101's CHECK, and M5 brings the second person
+ * exists in REQUEST_TYPES or 0103's CHECK (0.86 added only DeviceLock and
+ * lost mode), and M5 brings the second person
  * and the always-ask `mdm.destructive` before one can. Changing this
  * constant changes what new enrollments grant, and nothing for devices
  * already enrolled.
@@ -177,8 +211,14 @@ export function errorCode(chain: PlistValue | undefined): string {
   return `apple:${domain ? `${domain}:` : ''}${code}`.slice(0, 64);
 }
 
-/** The command body Rem0te sends for each request type: fixed, built from nothing a person typed. */
-export function commandFor(type: RequestType): PlistDict {
+/**
+ * The command body Rem0te sends for each request type, built from its type.
+ * The inventory bodies are fixed. A lost-device body adds only the
+ * lock-screen message and phone number a person gave (checked again here),
+ * as Apple's `Message` and `PhoneNumber` keys; nothing else a person typed
+ * reaches a command, and DisableLostMode takes nothing.
+ */
+export function commandFor(type: RequestType, text?: LockText | null): PlistDict {
   switch (type) {
     case 'DeviceInformation': return { RequestType: type, Queries: [...DEVICE_INFO_QUERIES] };
     case 'InstalledApplicationList': return { RequestType: type, ManagedAppsOnly: false };
@@ -186,11 +226,18 @@ export function commandFor(type: RequestType): PlistDict {
     case 'SecurityInfo':
     case 'CertificateList':
       return { RequestType: type };
+    case 'DeviceLock':
+    case 'EnableLostMode': {
+      const t = lockText(text);
+      return { RequestType: type, ...(t.message ? { Message: t.message } : {}), ...(t.phoneNumber ? { PhoneNumber: t.phoneNumber } : {}) };
+    }
+    case 'DisableLostMode':
+      return { RequestType: type };
   }
 }
 
-export function commandEnvelope(type: RequestType, commandUuid: string): PlistDict {
-  return { Command: commandFor(type), CommandUUID: commandUuid };
+export function commandEnvelope(type: RequestType, commandUuid: string, text?: LockText | null): PlistDict {
+  return { Command: commandFor(type, text), CommandUUID: commandUuid };
 }
 
 // ── What an Acknowledged result tells Rem0te ──────────────────────────────
@@ -250,6 +297,11 @@ export function inventoryFrom(type: RequestType, body: PlistDict): Inventory {
     case 'InstalledApplicationList': return { appCount: count(body.InstalledApplicationList) };
     case 'ProfileList': return { profileCount: count(body.ProfileList) };
     case 'CertificateList': return { certificateCount: count(body.CertificateList) };
+    // A lost-device command's Acknowledged carries nothing Rem0te keeps.
+    case 'DeviceLock':
+    case 'EnableLostMode':
+    case 'DisableLostMode':
+      return {};
   }
 }
 

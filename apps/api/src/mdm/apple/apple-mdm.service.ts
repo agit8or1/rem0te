@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { AppleDevice } from '@prisma/client';
 import { AuditService } from '../../audit/audit.service';
+import { activePause } from '../../containment/pause';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MdmSetupService } from '../setup/mdm-setup.service';
 import { AppleEnrollmentService } from './apple-enrollment.service';
@@ -9,7 +10,8 @@ import { ApnsClient, type PushOutcome } from './apns';
 import { MAX_CMS_BYTES, verifyDetachedCms } from './cms';
 import { buildPlist, parsePlist, type PlistDict } from './plist';
 import {
-  COMMAND_TTL_MS, commandEnvelope, inventoryFrom, isRequestType, platformOf, readCheckin, readReport, REQUEST_TYPES, type RequestType,
+  COMMAND_TTL_MS, commandEnvelope, INVENTORY_TYPES, inventoryFrom, isInventoryType, isLostType, isRequestType, LOST_TYPES, platformOf, readCheckin, readReport,
+  type InventoryType, type LockText, type LostType,
 } from './protocol';
 
 /** The lowest OS Rem0te enrolls (docs/own-mdm.md decision 24). */
@@ -30,13 +32,18 @@ export interface DeviceAnswer { status: number; body: Buffer | null }
 const refuse = (status = 401): DeviceAnswer => ({ status, body: null });
 const empty: DeviceAnswer = { status: 200, body: null };
 
-/** For the driver: the Apple tables of one business, as plain rows. */
+/** For the driver: the Apple tables of one business, as plain rows; and (0.86) the one way a lost-device command enters the queue. */
 export interface AppleReader {
   devices(customerId: string, cursor: string | null, take: number): Promise<AppleDevice[]>;
   commands(customerId: string, cursor: string | null, take: number, since: Date): Promise<Array<{
     id: string; appleDeviceId: string; requestType: string; state: string; queuedAt: Date; sentAt: Date | null; respondedAt: Date | null; errorCode: string | null; expiresAt: Date;
   }>>;
+  queueLostDevice(q: LostQueueRequest): Promise<LostQueueOutcome>;
 }
+
+/** A lost-device command for one enrolled device (0.86, §95). `id` is the AppleCommand's id, chosen by Rem0te's command row. */
+export interface LostQueueRequest { id: string; customerId: string; appleDeviceId: string; type: LostType; text: LockText; expiresAt: Date }
+export type LostQueueOutcome = { ok: true } | { ok: false; code: 'not_enrolled' | 'not_supervised' | 'conflict' };
 
 /**
  * Rem0te's own Apple MDM server (0.84 Harbor, docs/own-mdm.md M2, §93).
@@ -50,12 +57,18 @@ export interface AppleReader {
  *
  * Check-ins are always answered, under any containment pause (the design's
  * containment table: refusing them only makes a device retry and loses the
- * CheckOut). Pushes and inventory are not gated either: the table gates
- * lost-device and destructive commands (M4), and none exists here.
+ * CheckOut). Pushes and inventory are not gated either. 0.86 (§95): the
+ * lost-device commands are. Under the business's `actions` pause the queue
+ * hands out no DeviceLock, EnableLostMode or DisableLostMode (they stay
+ * queued, as the table says) and pushes no device for them alone; the send
+ * path refuses new ones before they are queued.
  *
  * The only writer of AppleDevice and AppleCommand. The queue holds the five
- * inventory request types and nothing else (protocol.ts REQUEST_TYPES, 0101's
- * CHECK). No command is built from anything a person or a device typed.
+ * inventory request types and, from 0.86, the three lost-device ones
+ * (protocol.ts REQUEST_TYPES, 0103's CHECK). An inventory command is built
+ * from its type alone; a lost-device one adds only the lock-screen message
+ * and phone number a person gave, which 0103's trigger clears when the
+ * command is final.
  */
 @Injectable()
 export class AppleMdmService implements AppleReader {
@@ -185,7 +198,7 @@ export class AppleMdmService implements AppleReader {
         if (r.status === 'Acknowledged') {
           const inv = inventoryFrom(cmd.requestType, r.body);
           const moved = await this.prisma.appleCommand.updateMany({ where: { id: cmd.id, state: 'sent' }, data: { state: 'acknowledged', respondedAt: now } });
-          if (moved.count === 1) {
+          if (moved.count === 1 && isInventoryType(cmd.requestType)) {
             await this.prisma.appleDevice.update({
               where: { id: dev.id },
               data: { ...inv, ...(inv.productName ? { platform: platformOf(inv.productName) ?? dev.platform } : {}), ...(cmd.requestType === 'DeviceInformation' ? { lastInventoryAt: now } : {}) },
@@ -203,13 +216,20 @@ export class AppleMdmService implements AppleReader {
     return this.next(dev, now);
   }
 
-  /** The device's oldest queued, unexpired command, marked sent conditionally; or an empty 200. */
+  /**
+   * The device's oldest queued, unexpired command, marked sent conditionally;
+   * or an empty 200. Under the business's `actions` pause the lost-device
+   * commands are held: they stay queued and only inventory is handed out.
+   */
   private async next(dev: AppleDevice, now: Date): Promise<DeviceAnswer> {
+    const held = await activePause(this.prisma, 'actions', dev.customerId) ? [...LOST_TYPES] : [];
     for (let i = 0; i < 3; i++) {
-      const c = await this.prisma.appleCommand.findFirst({ where: { appleDeviceId: dev.id, state: 'queued', expiresAt: { gt: now } }, orderBy: { queuedAt: 'asc' } });
+      const c = await this.prisma.appleCommand.findFirst({
+        where: { appleDeviceId: dev.id, state: 'queued', expiresAt: { gt: now }, ...(held.length ? { requestType: { notIn: held } } : {}) }, orderBy: { queuedAt: 'asc' },
+      });
       if (!c || !isRequestType(c.requestType)) return empty;
       const r = await this.prisma.appleCommand.updateMany({ where: { id: c.id, state: 'queued' }, data: { state: 'sent', sentAt: now } });
-      if (r.count === 1) return { status: 200, body: Buffer.from(buildPlist(commandEnvelope(c.requestType, c.commandUuid)), 'utf8') };
+      if (r.count === 1) return { status: 200, body: Buffer.from(buildPlist(commandEnvelope(c.requestType, c.commandUuid, { message: c.lockMessage, phoneNumber: c.lockPhone })), 'utf8') };
     }
     return empty;
   }
@@ -217,7 +237,7 @@ export class AppleMdmService implements AppleReader {
   /** Queue the five inventory commands. An open command of a type is never stacked (0101's partial unique index). */
   async queueInventory(dev: Pick<AppleDevice, 'id' | 'tenantId' | 'customerId'>, now: Date): Promise<number> {
     const r = await this.prisma.appleCommand.createMany({
-      data: REQUEST_TYPES.map((t: RequestType) => ({
+      data: INVENTORY_TYPES.map((t: InventoryType) => ({
         tenantId: dev.tenantId, customerId: dev.customerId, appleDeviceId: dev.id, commandUuid: randomUUID().toUpperCase(), requestType: t,
         queuedAt: now, expiresAt: new Date(now.getTime() + COMMAND_TTL_MS),
       })),
@@ -225,6 +245,37 @@ export class AppleMdmService implements AppleReader {
     });
     await this.prisma.appleDevice.update({ where: { id: dev.id }, data: { lastInventoryQueuedAt: now } });
     return r.count;
+  }
+
+  /**
+   * Queue one lost-device command (0.86, §95), for the `apple` driver's
+   * send() only: MdmActionService has already checked scope, mobile:act, the
+   * fresh confirmation, the `actions` pause and written the audit row. The
+   * device must be enrolled in that business, and lost mode needs a device
+   * that reported itself supervised (checked again here, whatever the caller
+   * decided). One open command of a type per device (0101's partial unique
+   * index): a second is `conflict`. The device is then pushed at once, so a
+   * lost phone that is online hears about it now, not at the next sweep.
+   */
+  async queueLostDevice(q: LostQueueRequest): Promise<LostQueueOutcome> {
+    if (!isLostType(q.type)) return { ok: false, code: 'conflict' };
+    const now = new Date();
+    const dev = await this.prisma.appleDevice.findFirst({ where: { id: q.appleDeviceId, customerId: q.customerId, state: 'enrolled' }, select: { id: true, tenantId: true, customerId: true, supervised: true } });
+    if (!dev) return { ok: false, code: 'not_enrolled' };
+    if (q.type !== 'DeviceLock' && dev.supervised !== true) return { ok: false, code: 'not_supervised' };
+    const text = q.type === 'DisableLostMode' ? { message: null, phoneNumber: null } : q.text;
+    try {
+      await this.prisma.appleCommand.create({
+        data: {
+          id: q.id, tenantId: dev.tenantId, customerId: dev.customerId, appleDeviceId: dev.id, commandUuid: randomUUID().toUpperCase(), requestType: q.type,
+          lockMessage: text.message, lockPhone: text.phoneNumber, queuedAt: now, expiresAt: q.expiresAt,
+        },
+      });
+    } catch {
+      return { ok: false, code: 'conflict' };
+    }
+    await this.pushPass(now, dev.id);
+    return { ok: true };
   }
 
   // ── The sweep's part (MdmSyncService calls pass(); MDM_SWEEP=off stops it) ─
@@ -254,15 +305,22 @@ export class AppleMdmService implements AppleReader {
    * An unregistered or bad token stops pushing that device until its next
    * TokenUpdate; a refused certificate or topic stops the pass.
    */
-  async pushPass(now: Date): Promise<number> {
-    const due = await this.prisma.appleDevice.findMany({
+  async pushPass(now: Date, onlyDeviceId?: string): Promise<number> {
+    const found = await this.prisma.appleDevice.findMany({
       where: {
+        ...(onlyDeviceId ? { id: onlyDeviceId } : {}),
         state: 'enrolled', pushToken: { not: null }, pushTokenInvalidAt: null,
         commands: { some: { state: 'queued', expiresAt: { gt: now } } },
         OR: [{ lastPushAt: null }, { lastPushAt: { lt: new Date(now.getTime() - REPUSH_MS) } }, { commands: { some: { state: 'queued', pushedAt: null } } }],
       },
       take: PUSHES_PER_PASS, orderBy: { lastPushAt: { sort: 'asc', nulls: 'first' } },
+      include: { commands: { where: { state: 'queued', expiresAt: { gt: now } }, select: { requestType: true }, take: 20 } },
     });
+    // 0.86: a device whose only queued work is lost-device commands held by its business's `actions` pause is not woken for them.
+    const due: typeof found = [];
+    for (const d of found) {
+      if (d.commands.some((c) => !isLostType(c.requestType)) || !(await activePause(this.prisma, 'actions', d.customerId))) due.push(d);
+    }
     if (!due.length) return 0;
     const identity = await this.setup.openPushIdentity(now);
     if (!identity) return 0;

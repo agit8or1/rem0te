@@ -4588,6 +4588,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'mdm/apple/apple.controller.ts': ['mdm.enroll'],
     // 0.85 (§94): the Android connection test, sign-up and policy (mdm.setup); an enrollment token (mdm.enroll).
     'mdm/android/android.controller.ts': ['mdm.enroll', 'mdm.setup'],
+    // 0.86 (§95): sending a lost-device command to a phone or tablet.
+    'mdm/mdm-action.service.ts': ['mdm.act'],
     'msa/msa-grant.controller.ts': ['msa.grant'],
     'msa/msa-managed.controller.ts': ['msa.cutover', 'msa.reveal'],
     'msa/msa-cutover-runs.controller.ts': ['msa.cutover'],
@@ -7883,8 +7885,11 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const drv = code(read(`${DIR}/driver.ts`));
   const iface = (drv.match(/export interface MdmDriver \{([\s\S]*?)\n\}/) ?? [])[1] ?? '';
   const members = [...iface.matchAll(/^\s*([a-zA-Z]+)[(:]/gm)].map((m) => m[1]);
-  check('mdm: MdmDriver reads only — provider, label, ready, listDevices, listCommands; no send, cancel or wipe',
-    JSON.stringify(members) === JSON.stringify(['provider', 'label', 'ready', 'listDevices', 'listCommands']), JSON.stringify(members));
+  // 0.86 (§95): and send(), for the three lost-device kinds only; still no cancel, wipe, retire or erase.
+  check('mdm: MdmDriver reads, and sends only lost-device commands — provider, label, ready, listDevices, listCommands, send; no cancel, wipe, retire or erase',
+    JSON.stringify(members) === JSON.stringify(['provider', 'label', 'ready', 'listDevices', 'listCommands', 'send'])
+      && /send\(row: MdmConnector, device: MobileDevice, cmd: OutgoingCommand\): Promise<SendResult>;/.test(iface) && /kind: LostDeviceKind;/.test(drv)
+      && !/cancel|wipe|retire|erase/i.test(iface), JSON.stringify(members));
   const outbound = walk(SRC).filter((f) => !f.startsWith(DIR) ? false : /from 'https?'|from 'node:https?'|from '(node:)?http2'|require\('https?'\)|\bfetch\(|axios|undici/.test(read(f)));
   check('mdm: no HTTP client in the module except common/safe-https (and, for APNs only, common/safe-h2: §93)', outbound.length === 0 && mdmFiles.filter((f) => /safeGet|safePost|safePatch|safeDelete/.test(read(f))).every((f) => (f.startsWith(`${DIR}/drivers/android/`) ? /from '\.\.\/\.\.\/\.\.\/common\/safe-https'/ : /from '\.\.\/\.\.\/common\/safe-https'/).test(read(f)))
       // 0.85 (§94): Android's calls are made in one file, drivers/android/amapi.ts.
@@ -7952,9 +7957,10 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 
   const ctl = code(read(`${DIR}/mdm.controller.ts`));
   const routes = [...ctl.matchAll(/@(Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)')?\s*\)\s*\n\s*@RequireCapability\(([A-Z_.]+)\)/g)].map((m) => `${m[1].toUpperCase()} ${m[2] ?? ''} ${m[3]}`);
-  check('mdm: four GETs under mobile-devices, each @RequireCapability(CAP.MOBILE_VIEW), behind JwtAuthGuard and CapabilitiesGuard; no write route',
-    JSON.stringify(routes) === JSON.stringify(['GET setup CAP.MOBILE_VIEW', 'GET  CAP.MOBILE_VIEW', 'GET :id CAP.MOBILE_VIEW', 'GET :id/commands CAP.MOBILE_VIEW'])
-      && /@Controller\('mobile-devices'\)\s*\n@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)/.test(ctl) && !/@(Post|Put|Patch|Delete)\(|@Public\(\)/.test(ctl),
+  // 0.86 (§95): and one POST, sending a lost-device command, needing mobile:act (the service checks it in scope again).
+  check('mdm: four GETs under mobile-devices, each @RequireCapability(CAP.MOBILE_VIEW), and one POST :id/commands needing CAP.MOBILE_ACT, behind JwtAuthGuard and CapabilitiesGuard; nothing else writes',
+    JSON.stringify(routes) === JSON.stringify(['GET setup CAP.MOBILE_VIEW', 'GET  CAP.MOBILE_VIEW', 'GET :id CAP.MOBILE_VIEW', 'GET :id/commands CAP.MOBILE_VIEW', 'POST :id/commands CAP.MOBILE_ACT'])
+      && /@Controller\('mobile-devices'\)\s*\n@UseGuards\(JwtAuthGuard, CapabilitiesGuard\)/.test(ctl) && (ctl.match(/@(Post|Put|Patch|Delete)\(/g) ?? []).length === 1 && !/@Public\(\)/.test(ctl),
     JSON.stringify(routes));
   const svc = code(read(`${DIR}/mdm.service.ts`));
   const readers = ['async setup(', 'async list(', 'private async visible('];
@@ -7973,14 +7979,18 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /MOBILE_VIEW: 'mobile:view'/.test(capBody) && !/MOBILE_VIEW/.test(defBody) && !/MOBILE_VIEW/.test(legacy)
       && !/MOBILE_VIEW|mobile:view/.test(read(`${SRC}/security-controls/presets.ts`)) && /MOBILE_VIEW: 'mobile:view'/.test(read('apps/web/lib/auth.ts')),
     'capabilities.ts / presets.ts');
-  const writers = walk(SRC).filter((f) => f !== `${DIR}/mdm-sync.service.ts`)
+  // 0.86 (§95): MdmActionService also writes MdmCommand — it creates a `portal` command and moves it once, after the send; nothing else.
+  const act = read(`${DIR}/mdm-action.service.ts`);
+  const writers = walk(SRC).filter((f) => f !== `${DIR}/mdm-sync.service.ts` && f !== `${DIR}/mdm-action.service.ts`)
     .filter((f) => /\.(mdmConnector|mobileDevice|mdmCommand)\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/.test(read(f)));
+  const actWrites = [...code(act).matchAll(/\.(mdmConnector|mobileDevice|mdmCommand)\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/g)].map((m) => `${m[1]}.${m[2]}`);
   // 0.84 (§93): the sync creates connectors in one place, ensureAppleConnectors, and only `apple` ones.
   // 0.85 (§94): and in a second, ensureAndroidConnectors: an enabled `android` one per bound enterprise, named by its id.
   const ensure = (sync.match(/async ensureAppleConnectors\([\s\S]*?\n  \}\n/) ?? [''])[0];
   const ensureA = (sync.match(/async ensureAndroidConnectors\([\s\S]*?\n  \}\n/) ?? [''])[0];
-  check('mdm: only MdmSyncService writes the MDM tables; it creates connectors in two places only: an enabled `apple` one (ensureAppleConnectors) and an enabled `android` one per bound enterprise (ensureAndroidConnectors)',
-    writers.length === 0 && (sync.match(/mdmConnector\.(create|createMany|upsert)\(/g) ?? []).length === 2 && /this\.prisma\.mdmConnector\.createMany\(\{/.test(ensure)
+  check('mdm: only MdmSyncService writes the MDM tables (and MdmActionService one portal command: one create, one conditional move); it creates connectors in two places only: an enabled `apple` one (ensureAppleConnectors) and an enabled `android` one per bound enterprise (ensureAndroidConnectors)',
+    writers.length === 0 && JSON.stringify(actWrites) === JSON.stringify(['mdmCommand.create', 'mdmCommand.updateMany']) && /origin: 'portal', requestedById: actor\.userId/.test(act)
+      && /where: \{ id: commandId, state: 'queued' \},/.test(act) && (sync.match(/mdmConnector\.(create|createMany|upsert)\(/g) ?? []).length === 2 && /this\.prisma\.mdmConnector\.createMany\(\{/.test(ensure)
       && /provider: 'apple', externalTenantId: 'rem0te', enabled: true/.test(ensure) && /skipDuplicates: true/.test(ensure)
       && /this\.prisma\.androidEnterprise\.findMany\(\{/.test(ensureA) && /provider: 'android', externalTenantId: e\.enterpriseId, enabled: true/.test(ensureA) && /skipDuplicates: true/.test(ensureA),
     writers.join(', '));
@@ -8351,6 +8361,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const mw = read(`${D}/apple-raw-body.middleware.ts`), mod = read(`${SRC}/mdm/mdm.module.ts`), sync = read(`${SRC}/mdm/mdm-sync.service.ts`);
   const setup = read(`${SRC}/mdm/setup/mdm-setup.service.ts`);
   const sql = read('apps/api/prisma/migrations/0101_mdm_apple/migration.sql');
+  // 0.86 (§95): 0103 re-made the request-type CHECK with the three lost-device commands.
+  const sql103 = read('apps/api/prisma/migrations/0103_mdm_lost_device/migration.sql');
 
   // 1–2. Hosts and the one push site.
   const appleHost = all.filter((f) => /api\.push\.apple\.com|api\.sandbox\.push\.apple\.com/.test(read(f)));
@@ -8405,23 +8417,30 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     acmeRoutes.join(' | '));
 
   // 5. Closed commands.
-  const tsList = (name) => { const mm = proto.match(new RegExp(`export const ${name} = \\[([^\\]]*)\\] as const;`)); return mm ? [...mm[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null; };
-  const sqlList = (c, col) => { const mm = sql.match(new RegExp(`CONSTRAINT "${c}" CHECK \\("${col}" IN \\(([^)]*)\\)`)); return mm ? [...mm[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null; };
+  const tsList = (name) => { const mm = proto.match(new RegExp(`export const ${name} = \\[([^\\]]*)\\] as const(?: satisfies readonly RequestType\\[\\])?;`)); return mm ? [...mm[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null; };
+  const sqlList = (c, col) => { const mm = (c === 'AppleCommand_requestType_check' ? sql103 : sql).match(new RegExp(`CONSTRAINT "${c}" CHECK \\("${col}" IN \\(([^)]*)\\)`)); return mm ? [...mm[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null; };
   const lp = [['REQUEST_TYPES', 'AppleCommand_requestType_check', 'requestType'], ['APPLE_COMMAND_STATES', 'AppleCommand_state_check', 'state'],
     ['APPLE_DEVICE_STATES', 'AppleDevice_state_check', 'state'], ['LINK_STATES', 'AppleEnrollmentLink_state_check', 'state']];
   const lbad = lp.filter(([a, c, col]) => { const x = tsList(a), y = sqlList(c, col); return !x || !y || JSON.stringify(x) !== JSON.stringify(y); });
-  check('closed: the request types and the command, device and link states are 0101\'s CHECKs, word for word and in order', lbad.length === 0, lbad.map((b) => b[1]).join(', '));
-  check('closed: the request types are the five inventory commands, in order; no lost-device or destructive type exists anywhere in mdm/apple',
-    JSON.stringify(tsList('REQUEST_TYPES')) === JSON.stringify(['DeviceInformation', 'SecurityInfo', 'InstalledApplicationList', 'ProfileList', 'CertificateList'])
-      && !walk(D).some((f) => /EraseDevice|DeviceLock|EnableLostMode|DisableLostMode|ClearPasscode|RemoveProfile|InstallProfile|InstallApplication|RestartDevice|ShutDownDevice|DeviceConfigured|Settings'/.test(code(read(f)))),
+  check('closed: the request types and the command, device and link states are 0101\'s (0103\'s for the request types) CHECKs, word for word and in order', lbad.length === 0, lbad.map((b) => b[1]).join(', '));
+  // 0.86 (§95): the five inventory commands, then the three lost-device ones. Still no erase, profile removal or anything destructive.
+  check('closed: the request types are the five inventory commands then DeviceLock, EnableLostMode, DisableLostMode, in order; no erase, profile removal or other type exists anywhere in mdm/apple',
+    JSON.stringify(tsList('REQUEST_TYPES')) === JSON.stringify(['DeviceInformation', 'SecurityInfo', 'InstalledApplicationList', 'ProfileList', 'CertificateList', 'DeviceLock', 'EnableLostMode', 'DisableLostMode'])
+      && JSON.stringify(tsList('INVENTORY_TYPES')) === JSON.stringify(['DeviceInformation', 'SecurityInfo', 'InstalledApplicationList', 'ProfileList', 'CertificateList'])
+      && JSON.stringify(tsList('LOST_TYPES')) === JSON.stringify(['DeviceLock', 'EnableLostMode', 'DisableLostMode'])
+      && !walk(D).some((f) => /EraseDevice|ClearPasscode|RemoveProfile|InstallProfile|InstallApplication|RestartDevice|ShutDownDevice|DeviceConfigured|Settings'|PlayLostModeSound|DeviceLocation|ClearRestrictionsPassword/.test(code(read(f)))),
     JSON.stringify(tsList('REQUEST_TYPES')));
   // Decision 25 (2026-11-23): erase (8) is granted at enrollment so M5 needs no re-enrollment; it stays unsendable (the check above).
   check('closed: AccessRights is one constant, 1+4+8+16+256+1024 (erase granted, no profile or app install), named only by the profile',
     /export const ACCESS_RIGHTS = 1 \+ 4 \+ 8 \+ 16 \+ 256 \+ 1024;/.test(proto) && JSON.stringify(all.filter((f) => /\bACCESS_RIGHTS\b/.test(code(read(f)))).sort()) === JSON.stringify([`${D}/profile.ts`, `${D}/protocol.ts`])
       && /AccessRights: ACCESS_RIGHTS,/.test(prof), 'protocol.ts / profile.ts');
-  check('closed: every command body is built from its type alone (commandFor); the queue creates only REQUEST_TYPES',
-    /export function commandFor\(type: RequestType\): PlistDict \{\s*switch \(type\) \{/.test(proto) && /data: REQUEST_TYPES\.map\(\(t: RequestType\) => \(\{/.test(mdm)
-      && (code(mdm).match(/appleCommand\.(create|createMany)\(/g) ?? []).length === 1, 'protocol.ts / apple-mdm.service.ts');
+  // 0.86 (§95): a lost-device body adds only the checked lock-screen message and phone number; the inventory queue creates only INVENTORY_TYPES; one more create, queueLostDevice's.
+  check('closed: every command body is built from its type (commandFor), a lost-device one adding only the checked Message and PhoneNumber; the inventory queue creates only INVENTORY_TYPES and queueLostDevice only LOST_TYPES',
+    /export function commandFor\(type: RequestType, text\?: LockText \| null\): PlistDict \{\s*switch \(type\) \{/.test(proto) && /data: INVENTORY_TYPES\.map\(\(t: InventoryType\) => \(\{/.test(mdm)
+      && /const t = lockText\(text\);\s*\n\s*return \{ RequestType: type, \.\.\.\(t\.message \? \{ Message: t\.message \} : \{\}\), \.\.\.\(t\.phoneNumber \? \{ PhoneNumber: t\.phoneNumber \} : \{\}\) \};/.test(proto)
+      && /case 'DisableLostMode':\s*\n\s*return \{ RequestType: type \};/.test(proto)
+      && (code(mdm).match(/appleCommand\.(create|createMany)\(/g) ?? []).length === 2 && /if \(!isLostType\(q\.type\)\) return \{ ok: false, code: 'conflict' \};/.test(mdm),
+    'protocol.ts / apple-mdm.service.ts');
 
   // 6. Device messages verified first.
   const fn = (src, name) => (src.match(new RegExp(`async ${name}\\([\\s\\S]*?\\n  \\}\\n`)) ?? [''])[0];
@@ -8473,7 +8492,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const devTable = (sql.match(/CREATE TABLE "AppleDevice" \(([\s\S]*?)\n\);/) ?? ['', ''])[1];
   check('kept: no IMEI, MEID, phone number, MAC, user or UnlockToken column; the check-in never reads them; a link is corporate only',
     devTable.length > 500 && !/imei|meid|phone|mac\b|wifi|bluetooth|"user|email|unlock/i.test(devTable)
-      && !/UnlockToken|IMEI|MEID|PhoneNumber|WiFiMAC|BluetoothMAC|UserID|UserShortName/.test(code(proto).replace("if (d.EnrollmentID !== undefined || d.UserID !== undefined) return { type: 'invalid', why: 'user_channel' };", '')) && /CHECK \("ownership" IN \('corporate'\)\)/.test(sql), 'protocol.ts / 0101');
+      // 0.86: Apple's PhoneNumber key appears once, as the finder's contact number on a lock screen (commandFor), never a device's own number.
+      && !/UnlockToken|IMEI|MEID|PhoneNumber|WiFiMAC|BluetoothMAC|UserID|UserShortName/.test(code(proto).replace("if (d.EnrollmentID !== undefined || d.UserID !== undefined) return { type: 'invalid', why: 'user_channel' };", '').replace('...(t.phoneNumber ? { PhoneNumber: t.phoneNumber } : {})', '')) && /CHECK \("ownership" IN \('corporate'\)\)/.test(sql), 'protocol.ts / 0101');
   // Decision 28: SHA-1 accepted for now; every device's digest is recorded, from verified() only, against a closed list.
   const dgSql = (sql.match(/CONSTRAINT "AppleDevice_signatureDigest_check" CHECK \("signatureDigest" IN \(([^)]*)\)\)/) ?? ['', ''])[1];
   check('digest: every verified message records its digest (signer.digest, from verifyDetachedCms); SIGNATURE_DIGESTS is 0101\'s CHECK',
@@ -8487,8 +8507,12 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   check('sweep: no new timer — AppleMdmService.pass runs only from MdmSyncService.sweep, so MDM_SWEEP=off stops pushes, re-queues and expiry',
     JSON.stringify(all.filter((f) => /this\.apple\.pass\(/.test(code(read(f))))) === JSON.stringify([`${SRC}/mdm/mdm-sync.service.ts`]) && /await this\.apple\.pass\(now\);/.test(sync)
       && !walk(D).some((f) => /setInterval|setTimeout\(|OnModuleInit|process\.env\.\w*SWEEP/.test(code(read(f)))), 'mdm/apple');
-  check('containment: check-ins are always answered and inventory is not gated (the design\'s table); no mdm/apple code consults a pause, so no destructive kind can hide behind one',
-    !walk(D).some((f) => /activePause|ContainmentService/.test(read(f))), 'mdm/apple');
+  // 0.86 (§95): the one pause the Apple code consults is `actions`, and only to hold the lost-device commands (next() and the push).
+  const pauseUses = walk(D).flatMap((f) => [...code(read(f)).matchAll(/activePause\(this\.prisma, '([a-z]+)'/g)].map((m) => `${f.slice(D.length + 1)}:${m[1]}`));
+  check('containment: check-ins are always answered and inventory is not gated (the design\'s table); the only pause mdm/apple consults is `actions`, to hold the lost-device commands in next() and the push',
+    JSON.stringify(pauseUses) === JSON.stringify(['apple-mdm.service.ts:actions', 'apple-mdm.service.ts:actions']) && !walk(D).some((f) => /ContainmentService/.test(read(f)))
+      && /const held = await activePause\(this\.prisma, 'actions', dev\.customerId\) \? \[\.\.\.LOST_TYPES\] : \[\];/.test(mdm)
+      && /requestType: \{ notIn: held \}/.test(mdm), JSON.stringify(pauseUses));
 
   // Suites.
   check('suites: unit-mdm-apple.mjs in CI; e2e-mdm-apple in run-e2e.sh; CI builds mdmb at a pinned commit and step-ca at a pinned SHA-256',
@@ -8504,7 +8528,8 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
 //       - Google's hosts are constants in drivers/android/amapi.ts only (§90
 //         holds the list); the stand-in is test-only and loopback-only, and
 //         NODE_ENV=test without one never reaches Google;
-//       - no command at all: no issueCommand, no devices.delete, no DELETE;
+//       - no destructive command: no devices.delete, no DELETE (0.86, §95:
+//         issueCommand for the three lost-device commands only);
 //       - the default policy is exact; network info is never asked for;
 //       - the sign-up state is 32 random bytes, kept as a SHA-256, claimed by
 //         one conditional update before anything is read;
@@ -8538,12 +8563,15 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /from '\.\.\/\.\.\/\.\.\/common\/safe-https'/.test(amapi) && !walk(V).some((f) => /\bfetch\(|from '(node:)?https?'|PrismaService|prisma\./.test(code(read(f))))
       && !/safeDelete/.test(code(amapi)), 'drivers/android');
 
-  // No command at all in M3.
-  const cmdHits = all.filter((f) => /issueCommand|:issueCommand|devices\.delete|safeDelete\(/.test(code(read(f))) && f !== `${SRC}/common/safe-https.ts`);
-  check('no command: nothing in apps/api/src issues a device command, deletes a device or calls safeDelete (M4/M5)',
-    cmdHits.length === 0 && !/'DELETE'/.test(code(amapi)) && !/'(POST|PATCH)', `\/v1\/enterprises\/\$\{[^}]*\}\/devices/.test(code(amapi)), cmdHits.join(', '));
-  check('no command: the driver reads only (listDevices, listCommands, ready); the client\'s writes are exactly sign-up, enterprise, the default policy and a token',
-    (code(amapi).match(/call\(c, '(POST|PATCH)'/g) ?? []).length === 4
+  // No destructive command. 0.86 (§95): issueCommand exists, in amapi.ts only, called by the driver's send() only, for LOCK / START_LOST_MODE / STOP_LOST_MODE (§95 holds the body).
+  const cmdHits = all.filter((f) => /devices\.delete|safeDelete\(/.test(code(read(f))) && f !== `${SRC}/common/safe-https.ts`);
+  const issueHits = all.filter((f) => /issueCommand/.test(code(read(f))));
+  check('no destructive command: nothing in apps/api/src deletes a device or calls safeDelete (M5); issueCommand only in drivers/android (amapi.ts, the driver), on devices/<id>:issueCommand alone',
+    cmdHits.length === 0 && JSON.stringify(issueHits.sort()) === JSON.stringify([`${V}/amapi.ts`, `${V}/index.ts`].sort()) && !/'DELETE'/.test(code(amapi))
+      && (code(amapi).match(/'(POST|PATCH)', `\/v1\/enterprises\/\$\{[^}]*\}\/devices/g) ?? []).length === 1
+      && /call\(c, 'POST', `\/v1\/enterprises\/\$\{eid\(enterpriseId\)\}\/devices\/\$\{deviceId\}:issueCommand`, \{\}, body\)/.test(amapi), [...cmdHits, ...issueHits].join(', '));
+  check('no destructive command: the client\'s writes are exactly sign-up, enterprise, the default policy, a token and (0.86) issueCommand',
+    (code(amapi).match(/call\(c, '(POST|PATCH)'/g) ?? []).length === 5
       && /call\(c, 'POST', '\/v1\/signupUrls'/.test(amapi) && /call\(c, 'POST', '\/v1\/enterprises', \{ projectId: c\.projectId, signupUrlName, enterpriseToken \}, \{\}\)/.test(amapi)
       && /call\(c, 'PATCH', `\/v1\/enterprises\/\$\{eid\(enterpriseId\)\}\/policies\/\$\{POLICY_ID\}`, \{\}, DEFAULT_POLICY\)/.test(amapi)
       && /call\(c, 'POST', `\/v1\/enterprises\/\$\{eid\(enterpriseId\)\}\/enrollmentTokens`/.test(amapi),
@@ -8643,6 +8671,140 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     /unit-mdm-android\.mjs/.test(read('.github/workflows/ci.yml')) && /\bmdm-android\b/.test(read('scripts/run-e2e.sh'))
       && /AMAPI_TEST_BASE_URL/.test(read('apps/api/scripts/e2e-mdm-android.mjs')) && /mdm-android-step-test/.test(read('apps/web/scripts/e2e-ui.mjs')),
     'ci.yml / run-e2e.sh / e2e-ui.mjs');
+}
+
+// ── §95 (0.86 Lighthouse): lost-device commands — lock, start and stop lost mode ──
+//     docs/own-mdm.md M4. The first time Rem0te sends anything to a phone or
+//     tablet. Exactly three commands, never erase, wipe or retire (M5):
+//       - lost-device.ts is pure and holds the kinds, the request's checks
+//         and the device's refusals (Apple lost mode only supervised, Android
+//         lost mode never personal); the console's buttons are its answer;
+//       - one sender, MdmActionService, the only caller of a driver's send():
+//         scope with mobile:act, the request, the fresh confirmation
+//         (mdm.act), the refusals, the `actions` pause (and `integration` for
+//         Android), MDM_COMMAND_REQUESTED with logOrFail, the command row,
+//         then send(), in that order;
+//       - the message and phone number reach only the driver: no audit meta,
+//         log line or MdmCommand column carries them; Apple's queue holds
+//         them only while the command is open (0103's trigger clears them);
+//       - Apple: the three lost types only through queueLostDevice, held in
+//         the queue (and not pushed) under an `actions` pause;
+//       - Android: devices.issueCommand for LOCK / START_LOST_MODE /
+//         STOP_LOST_MODE only; Operations read only for commands Rem0te
+//         issued, each by its own name (decision 30); none listed;
+//       - mobile:act is a business capability, never a default, a legacy
+//         role's or a preset's; mdm.act defaults to off;
+//       - 0103's CHECKs are the modules' lists.
+{
+  console.log('\n§95 Lost-device commands (0.86): lock and lost mode, one sender, no erase');
+  const SRC = 'apps/api/src', M = `${SRC}/mdm`;
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const all = walk(SRC);
+  const lost = read(`${M}/lost-device.ts`), act = read(`${M}/mdm-action.service.ts`), actC = code(act);
+  const svc = read(`${M}/mdm.service.ts`), ctl = read(`${M}/mdm.controller.ts`);
+  const proto = read(`${M}/apple/protocol.ts`), amdm = read(`${M}/apple/apple-mdm.service.ts`), adrv = read(`${M}/drivers/apple.ts`);
+  const shape = read(`${M}/drivers/android/shape.ts`), amapi = read(`${M}/drivers/android/amapi.ts`), andrv = read(`${M}/drivers/android/index.ts`), emm = read(`${M}/android/android-emm.service.ts`);
+  const sql = read('apps/api/prisma/migrations/0103_mdm_lost_device/migration.sql');
+  const imp = (s) => [...s.matchAll(/^import [^;]*? from '([^']+)';/gm)].map((m) => m[1]);
+  const list = (src, re) => { const mm = src.match(re); return mm ? [...mm[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : null; };
+  const KINDS = ['lock', 'lost_mode_start', 'lost_mode_stop'];
+  const fnBodyOf = (src, name) => (src.match(new RegExp(`async ${name}\\([\\s\\S]*?\\n  \\}\\n`)) ?? [''])[0];
+
+  // The pure module.
+  check('lost-device.ts is pure (imports only ./model, no clock) and names exactly lock, lost_mode_start, lost_mode_stop',
+    JSON.stringify(imp(lost)) === JSON.stringify(['./model']) && !/Date\.now\(|new Date\(/.test(code(lost))
+      && JSON.stringify(list(lost, /export const LOST_DEVICE_KINDS = \[([^\]]*)\] as const/)) === JSON.stringify(KINDS) && !/erase|wipe|retire/i.test(code(lost)),
+    JSON.stringify(imp(lost)));
+  check('the device\'s refusals: Apple lost mode only when supervised === true (unknown is not supervised) and only under device enrollment; Android lost mode only on a corporate device; lock always',
+    /if \(kind === 'lock'\) return null;/.test(lost) && /if \(d\.managementScope !== 'device'\)/.test(lost) && /if \(d\.supervised !== true\)/.test(lost)
+      && /if \(d\.ownership !== 'corporate'\)/.test(lost) && /if \(d\.enrollmentState !== 'enrolled'\)/.test(lost) && /if \(!d\.connectorEnabled\)/.test(lost), 'lost-device.ts');
+  check('the request is refused, not trimmed into something else: at most MESSAGE_MAX (160) printable characters, no controls or bidi overrides, PHONE_RE',
+    /export const MESSAGE_MAX = 160;/.test(lost) && /export const PHONE_RE = \/\^\[\+0-9\]\[0-9 \(\)\.-\]\{2,30\}\$\/;/.test(lost)
+      && /const CONTROL = \/\[\\u0000-\\u001F\\u007F-\\u009F\\u2028\\u2029\\u202A-\\u202E\\u2066-\\u2069\]\/;/.test(lost), 'lost-device.ts');
+
+  // One sender, in order.
+  const senders = walk(M).filter((f) => /\bdrv\.send\(|\.send\(connector, /.test(code(read(f))));
+  check('one sender: MdmActionService is the only caller of a driver\'s send()', JSON.stringify(senders) === JSON.stringify([`${M}/mdm-action.service.ts`]), senders.join(', '));
+  const at = (re) => { const m = actC.match(re); return m ? m.index : -1; };
+  const order = [
+    at(/await this\.mdm\.visibleForAct\(actor, id, q\)/), at(/parseLostDeviceRequest\(body\)/), at(/assertFresh\(freshMethod, \{ action: 'mdm\.act'/),
+    at(/lostDeviceRefusal\(r\.kind, await this\.mdm\.facts\(d\), r\)/), at(/activePause\(this\.prisma, 'actions', d\.customerId\)/),
+    at(/activePause\(this\.prisma, 'integration', d\.customerId\)/), at(/action: 'MDM_COMMAND_REQUESTED'/), at(/this\.prisma\.mdmCommand\.create\(/), at(/drv\.send\(connector, d, /),
+  ];
+  check('the send path, in order: scope with mobile:act, the request, assertFresh naming mdm.act, the device\'s refusals, the actions pause, Android\'s integration pause, MDM_COMMAND_REQUESTED, the row, send()',
+    order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1])) && /await this\.audit\.logOrFail\(\{\s*\n\s*action: 'MDM_COMMAND_REQUESTED'/.test(act)
+      && /if \(d\.provider === 'android'\) \{\s*\n\s*const ip = await activePause\(this\.prisma, 'integration'/.test(act), JSON.stringify(order));
+  check('scope first: visibleForAct is actScope (scope() with mobile:view, then mobile:act, 403 MOBILE_ACT_REQUIRED) then the scoped read; a technician needs mobile:act on a whole-business grant',
+    /async visibleForAct\(actor: ActorContext, id: string, q: Query\) \{\s*\n\s*this\.actScope\(actor, q\.businessId\);\s*\n\s*return this\.visible\(actor, id, q\);/.test(svc)
+      && /const where = this\.scope\(actor, requestedBusinessId\);\s*\n\s*if \(!this\.mayAct\(actor\)\) \{\s*\n\s*throw new ForbiddenException\(\{\s*\n\s*code: 'MOBILE_ACT_REQUIRED'/.test(svc)
+      && /s\.endpointIds === null && \(s\.capabilities as string\[\]\)\.includes\(CAP\.MOBILE_ACT\)/.test(svc)
+      && /@Post\(':id\/commands'\)\s*\n\s*@RequireCapability\(CAP\.MOBILE_ACT\)\s*\n\s*@RateLimit\(10\)/.test(ctl), 'mdm.service.ts / mdm.controller.ts');
+  const metas = [...actC.matchAll(/meta: \{([^}]*)\}/g)].map((m) => m[1]);
+  check('the message and phone number reach only the driver: no audit meta carries them (only hasMessage / hasPhoneNumber), the service logs nothing, and MdmCommand has no column for them',
+    metas.length === 2 && metas.every((m) => !/r\.message\b(?! !== null)|r\.phoneNumber\b(?! !== null)|text/.test(m)) && /hasMessage: r\.message !== null, hasPhoneNumber: r\.phoneNumber !== null/.test(act)
+      && !/Logger|console\.|this\.logger/.test(actC) && (actC.match(/r\.message\b/g) ?? []).length === 2
+      && !/lockMessage|lockPhone|message|phone/i.test((read('apps/api/prisma/schema.prisma').match(/\nmodel MdmCommand \{[\s\S]*?\n\}/) ?? [''])[0].replace(/\/\/.*$/gm, '')),
+    JSON.stringify(metas));
+  check('a portal command is created once, queued, with Rem0te\'s own id and who asked; moved once, conditionally on `queued`, through the state machine',
+    (actC.match(/mdmCommand\.create\(/g) ?? []).length === 1 && /kind: r\.kind, origin: 'portal', requestedById: actor\.userId, requestedAt: now, state: start\.state, expiresAt,/.test(act)
+      && /providerCommandId: ref,/.test(act) && /const ref = `mc\$\{randomBytes\(12\)\.toString\('hex'\)\}`;/.test(act) && /const start = queuedCommand\(expiresAt\);/.test(act), 'mdm-action.service.ts');
+
+  // Apple.
+  const lostQueuers = walk(M).filter((f) => /requestType: q\.type/.test(read(f)));
+  check('Apple: the lost types are queued only by queueLostDevice (enrolled in that business; lost mode only supervised === true; DisableLostMode carries no text), and pushed at once',
+    JSON.stringify(lostQueuers) === JSON.stringify([`${M}/apple/apple-mdm.service.ts`])
+      && /where: \{ id: q\.appleDeviceId, customerId: q\.customerId, state: 'enrolled' \}/.test(amdm) && /if \(q\.type !== 'DeviceLock' && dev\.supervised !== true\) return \{ ok: false, code: 'not_supervised' \};/.test(amdm)
+      && /const text = q\.type === 'DisableLostMode' \? \{ message: null, phoneNumber: null \} : q\.text;/.test(amdm) && /await this\.pushPass\(now, dev\.id\);/.test(amdm)
+      && /queueLostDevice\(\{\s*\n\s*id: cmd\.ref, customerId: row\.customerId, appleDeviceId: device\.providerDeviceId, type: APPLE_LOST_TYPE\[cmd\.kind\],/.test(adrv), lostQueuers.join(', '));
+  check('Apple: an `actions` pause holds the lost types in the queue (next() hands out only inventory) and the push skips a device whose only work is held',
+    /const held = await activePause\(this\.prisma, 'actions', dev\.customerId\) \? \[\.\.\.LOST_TYPES\] : \[\];/.test(amdm) && /requestType: \{ notIn: held \}/.test(amdm)
+      && /activePause\(this\.prisma, 'actions'/.test(fnBodyOf(amdm, 'pushPass')), 'apple-mdm.service.ts');
+  check('Apple: a lost-device Acknowledged writes no inventory; lockText checks the text again before it is put on a device',
+    /if \(moved\.count === 1 && isInventoryType\(cmd\.requestType\)\)/.test(amdm) && /const lockText = \(t: LockText \| null \| undefined\): LockText => \(\{/.test(proto) && /const t = lockText\(text\);/.test(proto), 'protocol.ts');
+
+  // Android.
+  check('Android: devices.issueCommand bodies only for LOCK, START_LOST_MODE, STOP_LOST_MODE (anything else: no body, nothing sent); lost mode without text: no body',
+    /export const ANDROID_COMMAND_TYPES = \{ lock: 'LOCK', lost_mode_start: 'START_LOST_MODE', lost_mode_stop: 'STOP_LOST_MODE' \} as const;/.test(shape)
+      && /if \(kind !== 'lost_mode_start'\) return null;/.test(shape) && /if \(!message && !phone\) return null;/.test(shape)
+      && /const body = commandBody\(kind, text, ttlSeconds\);\s*\n\s*if \(!body\) throw new AmapiError\('bad_response', null\);/.test(amapi)
+, 'shape.ts / amapi.ts');
+  check('Android (decision 30): Operations are read only for open commands Rem0te issued (origin portal), each by its own name with operations.get; no Operations listing anywhere',
+    /where: \{ connectorId, origin: 'portal', state: \{ in: \['sent', 'acknowledged'\] \}/.test(emm) && /const op = await getOperation\(c, e, ids\.deviceId, ids\.operationId\);/.test(andrv)
+      && /if \(r && r\.id === o\.providerCommandId\) records\.push\(r\);/.test(andrv) && !all.some((f) => /listOperations|\/operations`|\/operations'/.test(code(read(f)))), 'android');
+  const wrongWay = all.filter((f) => /issueCommand\(/.test(code(read(f))) && ![`${M}/drivers/android/amapi.ts`, `${M}/drivers/android/index.ts`].includes(f));
+  check('Android: issueCommand is called only by the driver\'s send()', wrongWay.length === 0 && (code(andrv).match(/issueCommand\(/g) ?? []).length === 1, wrongWay.join(', '));
+
+  // Who, and the confirmation.
+  const actHolders = all.filter((f) => /MOBILE_ACT|mobile:act/.test(code(read(f))));
+  const caps = read(`${SRC}/rbac/capabilities.ts`);
+  const defBody = (caps.match(/DEFAULT_BUSINESS_USER_CAPABILITIES: Capability\[\] = \[([\s\S]*?)\];/) ?? [])[1] ?? '';
+  const legacy = (caps.match(/LEGACY_ROLE_CAPABILITIES[^=]*= \{([\s\S]*?)\};/) ?? [])[1] ?? '';
+  check('mobile:act is a business capability named only by capabilities.ts, the controller and MdmService; never a Business User default, a legacy role\'s or a preset\'s',
+    JSON.stringify(actHolders.sort()) === JSON.stringify([`${M}/mdm.controller.ts`, `${M}/mdm.service.ts`, `${SRC}/rbac/capabilities.ts`].sort())
+      && /MOBILE_ACT: 'mobile:act'/.test(caps) && !/MOBILE_ACT/.test(defBody) && !/MOBILE_ACT/.test(legacy) && /MOBILE_ACT: 'mobile:act'/.test(read('apps/web/lib/auth.ts')),
+    actHolders.join(', '));
+  const cat = read(`${SRC}/security-controls/confirm-catalog.ts`);
+  check('mdm.act is a §62 catalog key, default off, named only by MdmActionService',
+    /key: 'mdm\.act', group: 'Integrations',[^}]*default: 'off'/.test(cat.replace(/\n\s*/g, ' ')) && all.filter((f) => /'mdm\.act'/.test(code(read(f)))).sort().join() === [`${M}/mdm-action.service.ts`, `${SRC}/security-controls/confirm-catalog.ts`].sort().join(),
+    'confirm-catalog.ts');
+
+  // 0103.
+  check('0103: the Apple request types are REQUEST_TYPES (no EraseDevice); a portal command is one of the three kinds and names who asked; one open of a kind per device; final clears the lock-screen text',
+    JSON.stringify(list(sql, /CONSTRAINT "AppleCommand_requestType_check" CHECK \("requestType" IN \(([^)]*)\)\)/)) === JSON.stringify(list(proto, /export const REQUEST_TYPES = \[([^\]]*)\] as const;/))
+      && JSON.stringify(list(sql, /"kind" IN \(([^)]*)\)\)\)/)) === JSON.stringify(KINDS) && /"origin" <> 'portal' OR \("requestedById" IS NOT NULL AND "providerCommandId" IS NOT NULL/.test(sql)
+      && /CREATE UNIQUE INDEX "MdmCommand_open_portal_key" ON "MdmCommand"\("mobileDeviceId", "kind"\) WHERE "origin" = 'portal' AND "state" IN \('queued', 'sent'\);/.test(sql)
+      && /IF NEW\."state" IN \('acknowledged', 'error', 'cancelled', 'expired'\) THEN\s*\n\s*NEW\."lockMessage" := NULL;\s*\n\s*NEW\."lockPhone" := NULL;/.test(sql)
+      && !/EraseDevice|'wipe'|'retire'/.test(sql.replace(/^--.*$/gm, '')), '0103');
+
+  // The web and the suites.
+  const web = read('apps/web/components/mobile/lost-device-actions.tsx');
+  check('web: the device page\'s actions are the server\'s (actions, canSend), ask by mdm.act, and offer nothing destructive; mobileApi has one write, send',
+    /useAsks\('mdm\.act'\)/.test(web) && /disabled=\{!a\.available \|\| send\.isPending\}/.test(web) && !/wipe|erase|retire/i.test(web.replace(/\/\*[\s\S]*?\*\//g, '').replace(/Nothing is erased|nothing can be erased/g, ''))
+      && ((read('apps/web/lib/api-client.ts').match(/export const mobileApi = \{([\s\S]*?)\n\};/) ?? [])[1] ?? '').match(/api\.(post|put|patch|delete)\(/g)?.length === 1, 'lost-device-actions.tsx / api-client.ts');
+  check('suites: unit-mdm-lost-device.mjs in CI; e2e-mdm-android (issueCommand, the pauses, operations by name) and e2e-mdm-apple (DeviceLock through the queue, held under a pause, mdmb\'s Error) in run-e2e.sh; e2e-ui opens and cancels the lock dialog',
+    /unit-mdm-lost-device\.mjs/.test(read('.github/workflows/ci.yml')) && /:issueCommand/.test(read('apps/api/scripts/e2e-mdm-android.mjs')) && /MDM_ACTIONS_PAUSED/.test(read('apps/api/scripts/e2e-mdm-android.mjs'))
+      && /DeviceLock/.test(read('apps/api/scripts/e2e-mdm-apple.mjs')) && /\bmdm-android\b/.test(read('scripts/run-e2e.sh')) && /mdm-act-confirm/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    'ci.yml / e2e suites');
 }
 
 if (failures.length > 0) {

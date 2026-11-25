@@ -1,8 +1,9 @@
-# Rem0te as its own MDM (design, 0.81.1; M1 built in 0.83.0)
+# Rem0te as its own MDM (design, 0.81.1; M1–M4 built in 0.83.0–0.86.0)
 
 *Mostly design.* **M1, Settings → Mobile devices, is built in 0.83.0 *Beacon*** ([below](#m1-as-built-0830)):
 the wizard, the Apple push key, CSR, vendor signing and push certificate, and the Google service-account key,
-all offline. Everything else on this page is still a plan. Decisions 21–24 were **decided** by the owner on
+all offline. M2 (Apple enrollment and inventory, 0.84.0), M3 (Android, 0.85.0) and **M4, lost-device commands
+(0.86.0 *Lighthouse*, [below](#m4-as-built-0860))** are built too. M5 onwards is still a plan. Decisions 21–24 were **decided** by the owner on
 2026-11-21 ([below](#owner-decisions-this-raises)). On **2026-11-21** the owner decided: *"I don't have an MDM, I want
 our OWN."* Rem0te itself becomes the mobile-device-management server for iPhones and iPads and the EMM for
 Android, instead of a reader of a third-party MDM. That **supersedes decision 18** of the
@@ -627,7 +628,7 @@ explicit approval.
 | **M1** ✅ 0.83.0 | **Settings → Mobile devices: the wizard, and Apple push certificates** | The Settings page with both cards and the four states. Apple steps 0–5 and 7: push CSR generation (key sealed), signing with an uploaded vendor certificate (sealed), the mdmcert.download path, push-certificate upload and checks (key, issuer, topic, expiry), the recorded account, renewal reminders, the same-topic rule. Android steps 0–2 and 4: instructions, key upload and offline checks (sealed), quota recorded by hand. **No outbound call.** `mdm.setup` in §62 | Unit (CSR, signing with a test vendor certificate, certificate parsing); e2e on a scratch API; browser suite | Nothing to merge. A3 (or A4′) to produce a real certificate |
 | **M2** ✅ 0.84.0 | **Apple enrollment, check-in and inventory: the first real driver** | `apple` in `PROVIDERS` and 0096's CHECK; one-time enrollment links and signed profiles; check-in and server endpoints with `Mdm-Signature` verification; the queue for the inventory commands (`DeviceInformation`, `SecurityInfo`, `InstalledApplicationList`, `ProfileList`, `CertificateList`); `safe-h2` and the APNs client; step-ca as `rem0te-mdm-ca` with its install script and the one Caddy route (documented); the `apple` driver feeding the existing sync; wizard step 6 | Unit; e2e with **mdmb** and a loopback APNs stub; step-ca ACME on loopback | A4 and A6 for a real device |
 | **M3** ✅ 0.85.0 | **Android: enterprise sign-up and read-only inventory** | `android` in `PROVIDERS`; wizard steps 3, 5 and 6: connection test, sign-up from inside Rem0te (one-time state), the default policy, one-time enrollment tokens with QR; the `android` driver (devices and Operations, polling in `MDM_SWEEP`); `safe-https` PATCH/DELETE | Unit; e2e against an AMAPI-shaped loopback stand-in | G1–G4 (and decision 21), G5 |
-| M4 | **Lost-device actions** (audit 3.3) | `send()` on the driver interface; `mobile:act`; Apple `DeviceLock`, `EnableLostMode`/`DisableLostMode` (supervised only; unsupported otherwise); Android `LOCK`, `START_LOST_MODE`/`STOP_LOST_MODE`; `actions` pause; accepted vs completed shown | e2e (mdmb, stand-in) | M2 or M3 |
+| **M4** ✅ 0.86.0 | **Lost-device actions** (audit 3.3) | `send()` on the driver interface; `mobile:act`; Apple `DeviceLock`, `EnableLostMode`/`DisableLostMode` (supervised only; unsupported otherwise); Android `LOCK`, `START_LOST_MODE`/`STOP_LOST_MODE`; `actions` pause; accepted vs completed shown ([as built](#m4-as-built-0860)) | e2e (mdmb, stand-in) | M2 or M3 |
 | M5 | **Destructive actions** (audit 3.4) | Apple `EraseDevice`, `RemoveProfile`; Android `WIPE` (device or work profile), `RELINQUISH_OWNERSHIP`, `RESET_PASSWORD`; second-person approval; `mdm.destructive` always asks; `byod` never wiped | e2e | M4 (decision 16 decided) |
 | M6 | **Apple Business Manager and Automated Device Enrollment** | Wizard step 8; ADE token (sealed); the session, device sync and profile assignment through `safe-https`; supervised devices, so lost mode | e2e against an ADE-shaped stand-in | A5 |
 | M7 | **Android Pub/Sub (pull)** | Topic and subscription set-up instructions, `enterprises.patch`, a pull consumer in the sweep | e2e against a stand-in | G2 |
@@ -854,6 +855,7 @@ There is no new secret-box purpose. The only secret is the 0.83 service-account 
   `_ENTERPRISE_BOUND`, `_POLICY_SET` and `_TOKEN_CREATED`. They carry ids, kinds and codes, never a key, a state, a
   token or a URL.
 - **No command.** There is no `issueCommand`, no `devices.delete` and no enterprise deletion. Those are M4 and M5.
+  (0.86 adds `issueCommand` for the three lost-device commands only; see [M4 as built](#m4-as-built-0860).)
 - **No new sweep.** `AndroidEmmService.pass` (sign-up expiry) and `ensureAndroidConnectors` run inside
   `MDM_SWEEP`. `MDM_SWEEP=off` stops them, as it stops the sync.
 
@@ -893,3 +895,116 @@ Before a real enterprise:
 | API (`e2e-mdm-android.mjs`, ports 4081–4083, in `run-e2e.sh`) | **Access**: Platform Admin only, and every step's fresh confirmation. **The test**: a refused key, the JWT checked against the uploaded key, exactly one read, a global pause. **The quota.** **Sign-up**: the stored SHA-256 and the callback URL. Google's redirect, simulated without a cookie, then refused for a replay, for four of five racing callbacks (one enterprise is bound), for an unknown, expired or malformed state, with no token, for an admin who is no longer one, and under a pause. **0102** refuses a reopen and a two-hour sign-up. **The policy body.** **Tokens**: work profile and fully managed, the QR, the value stored nowhere. **The sync**, with `MDM_SWEEP` on: one connector per enterprise; 130 devices over two pages; a personal device's serial dropped; an unknown state skipped; Operations as commands; a missing device marked not reported; a business pause making no call; an unfinished sign-up expired. **Secrets**: none in an answer, an audit row or the log |
 | Browser (`e2e-ui.mjs`) | Steps 3–6 shown from seeded rows, with no call made: the per-token choice, the "nothing proven" note, and the note after Google's redirect |
 | Not tested | **Google's real API, a real enterprise sign-up, a managed Google domain, quota, and a real Android device.** Whether `devices.operations.list` is served for AMAPI is unconfirmed; a `501` is read as no Operations |
+
+## M4 as built (0.86.0)
+
+Rem0te sends its first commands to phones and tablets. There are exactly three, on both platforms:
+
+| Rem0te kind | Apple (own MDM) | Android (AMAPI) | Takes a message |
+|---|---|---|---|
+| `lock` | `DeviceLock` | `LOCK` | Apple only: a lock-screen message and phone number |
+| `lost_mode_start` | `EnableLostMode` | `START_LOST_MODE` | Yes, and needs a message or a phone number |
+| `lost_mode_stop` | `DisableLostMode` | `STOP_LOST_MODE` | No |
+
+Erase, wipe, retire and removing work data are still M5's. They are in no list, CHECK or command table, so
+nothing can send one. §95 holds M4.
+
+**No real iPhone, iPad or Android device has received a command, and no call has been made to Apple or Google.**
+The Apple proof is mdmb and hand-signed device messages through a scratch step-ca, with a loopback APNs stub. The
+Android proof is the AMAPI-shaped loopback stand-in, which now also serves `devices.issueCommand` and
+`operations.get`.
+
+### What runs where
+
+| Piece | Built |
+|---|---|
+| Route | `POST /mobile-devices/:id/commands` `{kind, message?, phoneNumber?}`. It needs `mobile:act` (`@RequireCapability`) and `@RateLimit(10)`. `GET /mobile-devices/:id/commands` now also returns `canSend` and `actions`: each kind, whether this device can take it, and why not |
+| The rules | `mdm/lost-device.ts`, pure, imports only `./model`. It holds the three kinds, the request's checks (at most 160 printable characters; no control characters or bidi overrides; the phone number `^[+0-9][0-9 ().-]{2,30}$`; refused, never trimmed) and the device's refusals. The console's buttons are drawn from the same function the send path calls |
+| The sender | `MdmActionService` is the only caller of a driver's `send()`. In order: (1) scope with `mobile:view`, then `mobile:act`, and the device read through that scope (another business's is a 404); (2) the request; (3) `assertFresh` naming **`mdm.act`**; (4) the device's refusals; (5) the `actions` containment pause (business or global), and for Android also `integration`; (6) one open command of the same kind per device; (7) `MDM_COMMAND_REQUESTED` with `logOrFail`; (8) the `MdmCommand` row, `origin: portal`, queued, carrying Rem0te's own id; (9) `send()`; (10) the row moved once, through the 0.80 state machine, then `MDM_COMMAND_SENT` or `MDM_COMMAND_SEND_FAILED` |
+| Apple | `send()` puts one `AppleCommand` in Rem0te's own queue under Rem0te's id (`queueLostDevice`) and pushes the device at once. The queue re-checks everything: the device enrolled in that business, lost mode only when it reported `IsSupervised` true, the text checked again. The device fetches the command on its next connection. That is the **provider's acceptance**; the device's `Acknowledged` is **completion**, and its `Error` is a failure with Apple's code. The 0.84 sync records both, as it does inventory |
+| Android | `send()` makes one `devices.issueCommand` with exactly `{type, duration}`. `STOP_LOST_MODE` adds `stopLostModeParams: {}`. `START_LOST_MODE` adds `startLostModeParams` with the message and phone number as `defaultMessage`s. `duration` is the command's seven days. The Operation Google returns is **acceptance**, and its name becomes the command's id (`<device>:<operation>`). The Operation `done` without an error is **completion** |
+| Decision 30 | The sync no longer lists each device's Operations. It reads, by name (`operations.get`), only the Operations of commands Rem0te issued that are still open: 25 a page, 10 pages a pass. A command another EMM made never appears, and the 250-device bound is gone |
+| The sync | A connector with an open command from Rem0te is read again after a minute (`OPEN_COMMAND_RESYNC_MS`), not after `MDM_SYNC_MINUTES`. That way accepted and completed show up within a sweep or two. It is still bounded by `CONNECTORS_PER_PASS` |
+| The console | The mobile device page has a *Lost or stolen* card, shown only to someone who may send (`canSend`). Its three buttons are the server's `actions`, and an unavailable one is disabled with the server's reason. A confirmation dialog explains each command, takes the lock-screen message and phone number where the platform shows them, and asks for re-authentication when `mdm.act` asks. The history says who asked, with *accepted by the provider* and *completed on the device* side by side |
+
+### Who may send
+
+- **`mobile:act`** is a new business capability: *Lock mobile devices and use lost mode*. It is not a Business User
+  default, a legacy role's or a preset's, so it is granted by hand. A Business Owner holds every business
+  capability, so an owner holds it too (decision 35). A technician needs it on an assignment covering the whole
+  business, as with `mobile:view`. A Platform Admin may send to any business's device.
+- **`mdm.act`** is the new §62 key, *Mobile device lock and lost mode*. Like every key it defaults to `off`, so with
+  no saved choice only sign-in is asked (decision 36).
+- **Personal devices.** On a personal Android device lost mode is refused (`LOST_MODE_NOT_ON_PERSONAL`), because
+  Google offers it only on company-owned devices. A lock is allowed (decision 33). Every Apple enrollment in Rem0te
+  is corporate (0.84). On Apple, lost mode needs supervision (`LOST_MODE_NEEDS_SUPERVISION`), and a device that has
+  not reported is treated as unsupervised. It is never sent "to find out".
+
+### What is kept
+
+- **The lock-screen message and phone number are not kept on `MdmCommand`** and never reach an audit row or a log
+  line. The audit meta says only `hasMessage` and `hasPhoneNumber`. Android's are sent once and stored nowhere.
+- **Apple's queue must hold them** until the device fetches the command. `AppleCommand.lockMessage` and `lockPhone`
+  exist only on an open `DeviceLock` or `EnableLostMode`. 0103's CHECK bounds them, and its trigger clears them the
+  moment the command is final (acknowledged, error, cancelled or expired). Decision 32 asks whether that is right.
+- **Who asked** (`requestedById`) is on every Rem0te command. 0103 refuses a portal command without it.
+
+### Containment and the record
+
+- **`actions`** (its label is now *approved actions, patch rings and mobile lost-device commands*) refuses every
+  kind at the send. On Apple it also **holds** commands already queued: `next()` hands the device only inventory,
+  and the push skips a device whose only work is held. Lifting the pause releases them.
+- **`integration`** also refuses an Android send, because the send is a call to Google. An Apple send is not a call
+  out: the device fetches the command, so `integration` is not consulted.
+- **Three audit actions**: `MDM_COMMAND_REQUESTED` (with `logOrFail`, before anything is sent),
+  `MDM_COMMAND_SENT` and `MDM_COMMAND_SEND_FAILED`. They carry the command, the device, the kind, the provider and
+  a code, never text.
+
+Migration 0103:
+
+- adds the three audit actions;
+- re-makes the Apple request-type CHECK with the three lost-device types, still without `EraseDevice`;
+- adds `lockMessage` and `lockPhone`, with a CHECK and the clearing trigger;
+- adds a CHECK that a portal command names who asked, carries an id and is one of the three kinds;
+- adds a partial unique index allowing one portal command of a kind per device while it waits for the provider.
+
+### Differences from the plan, and why
+
+- **Accepted means different things on each platform, and the page says which.** On Apple, acceptance is the
+  device fetching the command: Rem0te *is* the provider, so "queued in Rem0te" is not acceptance. On Android it is
+  Google's Operation.
+- **No `locate`.** Apple's `DeviceLocation` and `PlayLostModeSound` need lost mode and send a location to the
+  server. They are not in M4's scope, and a location is personal data the design has not decided to keep.
+- **The 160-character message.** Apple and Google document no limit that fits every lock screen. 160 fits one on
+  every device we found described.
+- **The UI suite never confirms a command.** It opens the lock dialog on an Apple device and cancels it. The API
+  suites send.
+
+### Owner decisions this raises (proposed, not yet decided)
+
+| # | Decision | Options | Recommendation |
+|---|---|---|---|
+| 32 | **The lock-screen text in Apple's queue** | (a) keep it on the open `AppleCommand` until it is final, then clear it (as built); (b) seal it under its own secret-box purpose while it waits; (c) send no message on Apple | **(a)**: the device must be handed the text, it is shown on a lock screen to whoever holds the device, and it is cleared the moment the command is final. Sealing it protects nothing the queue row does not already protect |
+| 33 | **Lock on a personal Android device** | (a) allow it (as built); (b) refuse it like lost mode | **(a)**: a lost work phone with company data is the main case. With a separate work challenge Google locks only the profile, and the page says that without one the whole phone locks |
+| 34 | **How long a lost-device command waits** | (a) seven days (as built); (b) one day; (c) thirty days, Google's maximum | **(a)**: a lost phone may be off for days, and after a week the situation has usually moved on to M5's erase |
+| 35 | **Business Owners and `mobile:act`** | (a) an owner holds it, as every business capability (as built); (b) Platform Admin only until M5 | **(a)**: locking a business's own lost phone is the owner's call, the command is not destructive, and every one is audited with who asked |
+| 36 | **`mdm.act` default** | (a) `off`, like every key since 0.64 (as built); (b) `ask` | **(a)**, as the owner asked in 0.64 ("just on login"); Settings → Confirm it is you can turn it on |
+
+### Host changes at deploy (none made)
+
+1. Migration 0103: `prisma migrate deploy`, then `prisma generate` at the target.
+2. Nothing else: no unit, sudoers, Caddy or dependency change. `mobile:act` is granted to no one by the migration.
+
+Before a real command reaches a device, the M2 and M3 prerequisites still hold: a real push certificate (A3) and a
+test iPhone (A6), and Google's quota (G3) and a test phone (G5). Lost mode on an iPhone also needs supervision,
+which in practice means Apple Business Manager (M6).
+
+### What has been tested
+
+| Proof | What |
+|---|---|
+| Unit (`unit-mdm-lost-device.mjs`, in CI) | **The kinds and the request**: refusals for long, control, bidi and wrong-typed text, bad phone numbers, text on stop, lost mode without text. **The refusals matrix**: supervision, enrollment type, ownership, enrollment state, a disabled connector, the stand-in. **Apple**: the eight request types; `commandFor` carrying only checked text. **Android**: the `issueCommand` bodies, no body for anything else, and the Operation id both ways. **Both drivers' `send()`**: Apple's queue refusals as codes; Android against an in-process stand-in, with Google's errors as short codes. **Also**: the state machine (accepted is not completed) and 0103's lists. `unit-mdm-apple.mjs` and `unit-mdm-android.mjs` are updated |
+| API, Android (`e2e-mdm-android.mjs`, ports 4081–4083, in `run-e2e.sh`) | The sync no longer lists Operations: the stand-in's LOCK, WIPE and lost mode, as if from another EMM, never appear. The fresh confirmation names `mdm.act`; another business's device is a 404; eight bad requests are refused; lost mode on a personal device is refused; the `actions` and global `integration` pauses refuse with nothing sent. The exact `issueCommand` bodies. Accepted at issue, completed only when the Operation is done, read by name, never asked again. A refused issue is a 502 and a failed command with a code. The history says who asked. No message or phone number in any audit row, command row or log |
+| API, Apple (`e2e-mdm-apple.mjs`, ports 4061–4064, in `run-e2e.sh`, with mdmb and step-ca) | Lost mode is refused on a device that never reported supervision. A lock is queued under Rem0te's id with its text; a second lock is refused. Under an `actions` pause the device is handed its five inventory commands and never the lock; lifted, it fetches `DeviceLock` with its `Message` and `PhoneNumber`. Fetched is accepted; `Acknowledged` is completed, and 0103's trigger cleared the text. Once supervised, lost mode carries only what was given, and the device's `Error` is a failure. 0103 refuses `EraseDevice`. mdmb, which implements no lock, answers `Error 12021`, a failed command |
+| Browser (`e2e-ui.mjs`) | A stand-in device: all three buttons disabled with the reason. An Apple device: Lock offered, lost mode not ("supervised"), the dialog's fields and a bad phone number refused, then cancelled with nothing sent |
+| Not tested | **A real iPhone, iPad or Android device, APNs, and Google's real `issueCommand` and `operations.get`.** Whether a real device shows a 160-character message whole is unconfirmed |

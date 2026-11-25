@@ -27,7 +27,8 @@
  *     stays sent; a rejection is failed with no acceptance.
  *   - The database refuses a cross-business row, a completion without an
  *     acceptance, a BYOD serial and moving a final command.
- *   - The API has no write route for mobile devices.
+ *   - The API has no write route for mobile devices (0.86: one, for lost-device
+ *     commands; a wipe is refused and the stand-in takes none).
  *
  *   cd apps/api && npx nest build
  *   DATABASE_URL=postgresql://…/<name containing scratch or test> node scripts/e2e-mdm.mjs
@@ -285,7 +286,9 @@ async function all() {
   const ipad = byId['a-ipad-1'];
   r = await req('GET', `/mobile-devices/${ipad.id}/commands`, { s: SOAm });
   const vAcc = r.data?.commands?.find((c) => c.kind === 'lock');
-  check(r.status === 200 && vAcc?.state === 'acknowledged' && vAcc.stateLabel === 'Accepted by provider' && vAcc.providerAccepted.done === true && vAcc.deviceCompleted.done === false && vAcc.waitingFor === 'device' && r.data.canSend === false,
+  check(r.status === 200 && vAcc?.state === 'acknowledged' && vAcc.stateLabel === 'Accepted by provider' && vAcc.providerAccepted.done === true && vAcc.deviceCompleted.done === false && vAcc.waitingFor === 'device'
+    // 0.86: a Business Owner holds mobile:act, but the read-only stand-in takes no command.
+    && r.data.canSend === true && r.data.actions.length === 3 && r.data.actions.every((a) => !a.available && a.code === 'MOBILE_COMMAND_UNSUPPORTED'),
     'the command history shows the lock as accepted by the provider and NOT completed on the device', msg(r));
   const vDone = r.data?.commands?.find((c) => c.kind === 'sync');
   check(vDone?.providerAccepted.done && vDone.deviceCompleted.done && vDone.providerAccepted.at !== vDone.deviceCompleted.at, 'the completed sync shows both, each with its own time', J(vDone));
@@ -383,11 +386,13 @@ async function all() {
   check(r.status === 404, 'a malformed id: 404', msg(r));
 
   // ── 7. No writes ────────────────────────────────────────────────────────
-  section('Read-only: no write route exists');
-  for (const [m, p] of [['POST', '/mobile-devices'], ['POST', `/mobile-devices/${ipad.id}/commands`], ['PUT', `/mobile-devices/${ipad.id}`], ['DELETE', `/mobile-devices/${ipad.id}`], ['POST', '/mobile-devices/setup']]) {
+  section('No write route but the lost-device one (0.86), which sends nothing destructive and nothing to the stand-in');
+  for (const [m, p] of [['POST', '/mobile-devices'], ['PUT', `/mobile-devices/${ipad.id}`], ['DELETE', `/mobile-devices/${ipad.id}`], ['POST', '/mobile-devices/setup']]) {
     r = await req(m, p, { s: SAdm, body: { kind: 'wipe' } });
     check(r.status === 404, `${m} ${p.replace(ipad.id, ':id')}: 404`, msg(r));
   }
+  r = await req('POST', `/mobile-devices/${ipad.id}/commands`, { s: SAdm, body: { kind: 'wipe' } });
+  check(r.status === 400 && code(r) === 'MOBILE_COMMAND_INVALID', 'POST :id/commands with a wipe: 400, not a kind Rem0te sends', msg(r));
   check((await prisma.mdmCommand.count({ where: { origin: 'portal' } })) === 0, 'no portal-origin command exists');
 
   // ── 8. The database's own rules ─────────────────────────────────────────

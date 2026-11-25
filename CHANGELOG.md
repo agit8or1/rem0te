@@ -5,6 +5,124 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.86.0] — 2026-11-25 · *Lighthouse*
+
+**Lost-device commands: step M4 of [own-mdm.md](docs/own-mdm.md).** This is the first time Rem0te sends anything to
+a phone or tablet. On a mobile device's page, under **Lost or stolen**, someone holding the new
+**Lock mobile devices and use lost mode** permission (`mobile:act`) can send one of exactly three commands:
+
+| Kind | Apple (Rem0te's own MDM) | Android (AMAPI) |
+|---|---|---|
+| Lock | `DeviceLock`, with an optional lock-screen message and phone number | `LOCK` |
+| Start lost mode | `EnableLostMode`, **supervised devices only** | `START_LOST_MODE`, **company-owned devices only** |
+| Stop lost mode | `DisableLostMode` | `STOP_LOST_MODE` |
+
+Nothing can be erased, wiped or retired. Those stay M5's, behind a second person, and they are in no list, CHECK or
+command table. *Accepted by the provider* and *completed on the device* stay two separate facts. On Apple,
+acceptance is the device fetching the command from Rem0te's queue; on Android it is Google's Operation.
+
+**No real iPhone, iPad or Android device has received a command, and nothing has called Apple or Google.** The Apple
+proof is mdmb and hand-signed device messages through a scratch step-ca, with the loopback APNs stub. The Android
+proof is the AMAPI-shaped loopback stand-in, which now also serves `devices.issueCommand` and `operations.get`.
+
+Migration 0103 is included. There is one new confirm key, `mdm.act` (default `off`), and one new business capability,
+`mobile:act`, which the migration grants to no one. Nothing else changes: no new secret-box purpose, sweep or off
+switch, and no agent, signer, sudoers, Caddy or dependency change.
+
+### Added
+
+- **`POST /mobile-devices/:id/commands`** `{kind, message?, phoneNumber?}`, the controller's one write. It needs
+  `mobile:act` and is rate-limited to 10. `GET /mobile-devices/:id/commands` now also returns `canSend` and
+  `actions`: each kind, whether this device can take it, and the reason when it cannot.
+- **`mdm/lost-device.ts`**, pure. It holds:
+  - the three kinds;
+  - the request's checks: a message of at most 160 printable characters, with no control characters or bidi
+    overrides, and a phone number matching `^[+0-9][0-9 ().-]{2,30}$`. Bad text is refused, never trimmed;
+  - the device's refusals. Apple lost mode needs a device that reported itself supervised; one that has not reported
+    is treated as unsupervised, never sent the command "to find out". Android lost mode is refused on a personal
+    device. A message on an Android lock is refused, because Android shows none, rather than silently dropped.
+
+  The console's buttons and the send path use the same function. The send path asks again after the fresh
+  confirmation.
+- **`MdmActionService`**, the only caller of a driver's `send()`. In order:
+  1. scope with `mobile:view`, then `mobile:act`; another business's device is a 404;
+  2. the request;
+  3. `assertFresh` naming `mdm.act`;
+  4. the device's refusals;
+  5. the `actions` containment pause, and for Android also `integration`, because the send is a call to Google;
+  6. one open command of a kind per device;
+  7. `MDM_COMMAND_REQUESTED` with `logOrFail`;
+  8. the command row, carrying Rem0te's own id;
+  9. `send()`;
+  10. one conditional move of the row through the 0.80 state machine, then `MDM_COMMAND_SENT` or
+      `MDM_COMMAND_SEND_FAILED`.
+
+  A refused send is a 502 `MDM_SEND_FAILED`. The row is then `failed` with `provider_rejected:<code>`, never the
+  provider's text.
+- **`send()` on the driver interface.** The read-only stand-in answers `unsupported`.
+  - **Apple**: one `AppleCommand` in Rem0te's own queue under Rem0te's id (`queueLostDevice`), then an immediate
+    push. The queue checks again that the device is enrolled in that business, that it is supervised for lost mode,
+    and the text.
+  - **Android**: one `devices.issueCommand` with exactly `{type, duration}`. `STOP_LOST_MODE` adds
+    `stopLostModeParams: {}`, and `START_LOST_MODE` adds the message and phone number as `defaultMessage`s. The
+    command waits seven days. The Operation's name becomes the command's id, `<device>:<operation>`.
+- **The Apple request types** are now eight: the five inventory commands, then `DeviceLock`, `EnableLostMode` and
+  `DisableLostMode`. `commandFor` adds only a checked `Message` and `PhoneNumber`, and a lost-device `Acknowledged`
+  writes no inventory.
+- **The console.** A *Lost or stolen* card, shown only to someone who may send. Each command has a confirmation
+  dialog that explains it, takes the lock-screen message and phone number where the platform shows them, and says
+  *(re-authenticate)* when `mdm.act` asks. Unavailable buttons are disabled with the server's reason. The command
+  history says who asked, and refreshes every 10 s while one of Rem0te's commands is still on its way.
+- **`mobile:act`**, *Lock mobile devices and use lost mode*, in the Mobile devices group. A Business Owner holds it
+  as every business capability; it is not a Business User default, a legacy role's or a preset's. A technician
+  needs it on an assignment covering the whole business.
+- **`mdm.act`**, *Mobile device lock and lost mode*, in *Settings → Confirm it is you*. It defaults to `off`.
+- **Migration 0103.** It adds:
+  - the three audit actions;
+  - the Apple request-type CHECK, re-made with the lost-device types and still without `EraseDevice`;
+  - `AppleCommand.lockMessage` and `lockPhone`, bounded by a CHECK and allowed only on an open `DeviceLock` or
+    `EnableLostMode`, with a trigger that clears them the moment the command is final;
+  - a CHECK that a portal command names who asked, carries an id and is one of the three kinds;
+  - a partial unique index allowing one portal command of a kind per device while it waits for the provider.
+- **Invariant §95** (`scripts/check-security-invariants.mjs`, 19 checks), and a §95 paragraph in `CLAUDE.md`.
+- **`unit-mdm-lost-device.mjs`**, in CI.
+
+### Changed
+
+- **Android Operations are read only for commands Rem0te issued** (decision 30, decided in 0.85). The sync used to
+  list each device's Operations, for at most 250 devices a pass, and a larger enterprise synced as `partial`. Now it
+  lists none. It reads, by name (`operations.get`), only the Operations of open commands Rem0te issued: 25 a page,
+  10 pages a pass. The bound follows the open commands, not the size of the enterprise. A command another EMM made
+  is no longer shown.
+- **A connector with an open command from Rem0te is read again after a minute** (`OPEN_COMMAND_RESYNC_MS`), not
+  `MDM_SYNC_MINUTES`, so *accepted* and *completed* appear within a sweep or two. It is still bounded by
+  `CONNECTORS_PER_PASS`.
+- **The `actions` pause** is now labelled *approved actions, patch rings and mobile lost-device commands*. On Apple
+  it also holds lost-device commands already queued: the device is handed only inventory, and a device whose only
+  work is held is not pushed. Lifting the pause releases them.
+- **`safe-https`'s test loopback path admits `:`**, for Google's custom methods (`devices/<id>:issueCommand`) on the
+  stand-in. It still applies only under `NODE_ENV=test` to `http://127.0.0.1:<port>`.
+- **§90, §93 and §94 are amended** for the one write route, the second `MdmCommand` writer (portal commands only),
+  the eight Apple request types, the one pause the Apple code consults, and `issueCommand` as the Android client's
+  fifth write. §62's site list gains `mdm/mdm-action.service.ts` → `mdm.act`.
+- The device page's read-only note now says what can be sent: a lock and lost mode, and nothing that erases.
+
+### Owner decisions raised (proposed; [own-mdm.md](docs/own-mdm.md#m4-as-built-0860))
+
+- **32**: keep Apple's lock-screen text on the open queue row until it is final, then clear it (as built).
+- **33**: allow a lock on a personal Android device (as built). It locks only the work profile when that has its
+  own passcode.
+- **34**: lost-device commands wait seven days (as built).
+- **35**: Business Owners hold `mobile:act` (as built).
+- **36**: `mdm.act` defaults to `off`, like every key since 0.64 (as built).
+
+### Deploy
+
+1. Migration 0103: `prisma migrate deploy`, then `prisma generate` at the target.
+2. Nothing else. Granting `mobile:act` to a Business User or technician is a choice made in the console afterwards.
+
+---
+
 ## [0.85.1] — 2026-11-25 · *Mooring*
 
 The first batch of the UI/UX initiative (directive of 2026-11-25): an audit
@@ -88,6 +206,8 @@ about endpoints.
   stops warranty lookups, backup pulls and MDM syncs (F-17).
 
 See `docs/ux/UX_AUDIT.md`.
+
+---
 
 ## [0.85.0] — 2026-11-24 · *Mooring*
 

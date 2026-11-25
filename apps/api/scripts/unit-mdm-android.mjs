@@ -186,7 +186,8 @@ const srv = http.createServer((req, res) => {
     if (expire && req.headers.authorization === 'Bearer ya29.test-1') { expire = false; return send(401, { error: { code: 401, status: 'UNAUTHENTICATED' } }); }
     if (u.pathname === '/v1/enterprises' && req.method === 'GET') return send(200, { enterprises: [] });
     if (u.pathname === '/v1/enterprises/LC00abc/devices') return send(200, { devices: [dev()], nextPageToken: u.searchParams.get('pageToken') ? undefined : 'p2' });
-    if (u.pathname === '/v1/enterprises/LC00abc/devices/3f9a1b2c/operations') return send(501, { error: { code: 501, status: 'UNIMPLEMENTED' } });
+    if (u.pathname === '/v1/enterprises/LC00abc/devices/3f9a1b2c/operations/42') return send(200, { name: 'enterprises/LC00abc/devices/3f9a1b2c/operations/42', metadata: { type: 'LOCK', createTime: '2026-11-24T08:00:00Z' }, done: true });
+    if (u.pathname === '/v1/enterprises/LC00abc/devices/3f9a1b2c/operations/43') return send(200, { name: 'enterprises/LC00abc/devices/3f9a1b2c/operations/99', metadata: { type: 'LOCK', createTime: '2026-11-24T08:00:00Z' }, done: true });
     if (u.pathname === '/v1/enterprises/DENY/devices') return send(403, { error: { code: 403, status: 'PERMISSION_DENIED', message: 'Caller does not have permission' } });
     if (u.pathname === '/v1/enterprises/QUOTA/devices') return send(429, { error: { code: 429, status: 'RESOURCE_EXHAUSTED' } });
     if (u.pathname === '/v1/enterprises/BAD/devices') return send(200, { devices: 'nope' });
@@ -226,14 +227,19 @@ try {
   check(await codeOf(() => A.listDevices(cred, 'DENY', null)) === 'permission_denied:permission_denied' && await codeOf(() => A.listDevices(cred, 'QUOTA', null)) === 'quota:quota'
     && await codeOf(() => A.listDevices(cred, 'BAD', null)) === 'bad_response:bad_response' && await codeOf(() => A.listDevices(cred, '../x', null)) === 'bad_response:bad_response',
     'errors are short codes: permission denied, quota, a bad answer, a bad enterprise id (refused before any request)');
-  check(J(await A.listOperations(cred, 'LC00abc', '3f9a1b2c')) === '[]', 'an UNIMPLEMENTED operations listing reads as "no operations", never a failure');
-  const drv = D.androidDriver({ credential: async () => cred, deviceIds: async () => [{ providerDeviceId: '3f9a1b2c', managementScope: 'device' }] });
+  check(await A.getOperation(cred, 'LC00abc', '3f9a1b2c', '44') === null && !('listOperations' in A), 'operations.get of an Operation Google no longer has is null; there is no Operations listing (0.86, decision 30)');
+  const drv = D.androidDriver({ credential: async () => cred, openCommands: async () => [{ providerCommandId: '3f9a1b2c:42', managementScope: 'device' }, { providerCommandId: '3f9a1b2c:43', managementScope: 'device' }] });
   const row = { id: 'c1', externalTenantId: 'LC00abc' };
   const dp = await drv.listDevices(row, null);
   check(drv.ready(row).ok && !drv.ready({ externalTenantId: 'rem0te.x/y' }).ok && dp.records.length === 1 && SC.parseDevice(dp.records[0]).ok && dp.next === 'p2', 'the driver: ready on an enterprise id, a page of parsable records');
-  const none = D.androidDriver({ credential: async () => null, deviceIds: async () => [] });
+  hits.length = 0;
+  const cp = await drv.listCommands(row, null);
+  check(cp.records.length === 1 && cp.records[0].id === '3f9a1b2c:42' && cp.next === null && hits.every((h) => h.method === 'GET' && /\/operations\/4[23]$/.test(h.path)),
+    'listCommands reads each open command\'s Operation by name, and drops an answer naming another Operation', J(hits.map((h) => h.path)));
+  const none = D.androidDriver({ credential: async () => null, openCommands: async () => [] });
   check((await codeOf(() => none.listDevices(row, null))).startsWith('not_ready'), 'no sealed key: the driver is not_ready before any request');
-  check(!('issueCommand' in drv) && !('deleteDevice' in drv) && Object.keys(A).every((k) => !/command|delete|wipe|lock/i.test(k)), 'no command and no device deletion anywhere in the client or the driver');
+  check(!('deleteDevice' in drv) && Object.keys(A).every((k) => !/delete|wipe|cancel|relinquish|reset/i.test(k)) && J(Object.keys(A).filter((k) => /command/i.test(k))) === J(['issueCommand']),
+    'no device deletion, wipe or cancel anywhere in the client; one command call, issueCommand (0.86)');
 } finally {
   srv.close();
 }

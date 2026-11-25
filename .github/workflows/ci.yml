@@ -510,6 +510,13 @@ jobs:
       # in-process loopback stand-in in AMAPI's shape. Never reaches Google.
       - name: Android EMM tests
         run: node apps/api/scripts/unit-mdm-android.mjs
+      # 0.86 (§95): lost-device commands — the three kinds, the request's
+      # checks, which device can take what (Apple lost mode only supervised,
+      # Android lost mode never personal), the Apple and Android bodies, both
+      # drivers' send() (Android against an in-process loopback stand-in),
+      # and 0103's CHECKs. Never reaches Apple or Google.
+      - name: Lost-device command tests
+        run: node apps/api/scripts/unit-mdm-lost-device.mjs
 
       # Outbound email (0.34): the SMTP host rule (every address class, IPv4-
       # mapped IPv6, what SMTP_ALLOW_LOCAL_RELAY admits, every resolved address

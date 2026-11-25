@@ -845,7 +845,13 @@ async function deviceNaming(page, f, label) {
   await page.locator('[data-testid="rename-description"]').fill('Reception, by the window');
   await page.locator('[data-testid="rename-save"]').click();
   await dlg.waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {});
-  await page.locator('[data-testid="device-description"]').waitFor({ timeout: 15_000 }).catch(() => {});
+  // Wait for the new text, not just the element: the old description is already on the page, so
+  // waiting for the element alone read the header before it refreshed (seen once in CI after 0.85.1).
+  await page.waitForFunction((n) => {
+    const h = document.querySelector('[data-testid="device-header"] h1');
+    const d = document.querySelector('[data-testid="device-description"]');
+    return h?.textContent?.trim() === n && d?.textContent?.trim() === 'Reception, by the window';
+  }, nick, { timeout: 15_000 }).catch(() => {});
   const h1 = await page.locator('[data-testid="device-header"] h1').innerText().catch(() => '');
   const desc = await page.locator('[data-testid="device-description"]').innerText().catch(() => '');
   check(h1 === nick && desc === 'Reception, by the window', `${label}: the new name and description show in the header`, JSON.stringify({ h1, desc }));
@@ -3665,7 +3671,11 @@ async function seedMobile(f) {
   const cmd = (data) => prisma.mdmCommand.create({ data: { tenantId: f.tenant.id, customerId: f.A.id, mobileDeviceId: ipad.id, connectorId: k.id, origin: 'provider', ...data } });
   await cmd({ providerCommandId: `ui-lock-${sfx}`, kind: 'lock', state: 'acknowledged', requestedAt: new Date(now - 30 * 60_000), sentAt: new Date(now - 30 * 60_000), providerAcceptedAt: new Date(now - 29 * 60_000), expiresAt: new Date(now + 86_400_000) });
   await cmd({ providerCommandId: `ui-sync-${sfx}`, kind: 'sync', state: 'completed', requestedAt: new Date(now - 90 * 60_000), sentAt: new Date(now - 90 * 60_000), providerAcceptedAt: new Date(now - 89 * 60_000), deviceCompletedAt: new Date(now - 80 * 60_000), expiresAt: new Date(now + 86_400_000) });
-  return { E, ownerE, ipad, pixel };
+  // 0.86 (§95): an Apple device on Rem0te's own connector, so the device page offers a lock. The suite never confirms one.
+  const ka = await prisma.mdmConnector.create({ data: { tenantId: f.tenant.id, customerId: f.A.id, provider: 'apple', externalTenantId: 'rem0te', enabled: true, lastSyncAt: new Date(now - 5 * 60_000), lastSyncResult: 'ok', lastSyncDevices: 1 } });
+  const iphone = await prisma.mobileDevice.create({ data: { tenantId: f.tenant.id, customerId: f.A.id, connectorId: ka.id, provider: 'apple', providerDeviceId: `ui-iphone-${sfx}`, name: `Lighthouse ${sfx} iPhone`,
+    platform: 'ios', ownership: 'corporate', managementScope: 'device', enrollmentState: 'enrolled', complianceState: 'unknown', lastSyncedAt: new Date(now - 5 * 60_000) } });
+  return { E, ownerE, ipad, pixel, iphone };
 }
 
 async function mobileDevicesUi(page, f, vp, theme, label) {
@@ -3676,8 +3686,8 @@ async function mobileDevicesUi(page, f, vp, theme, label) {
   const setupState = await page.getByTestId('mdm-setup').getAttribute('data-state').catch(() => null);
   const rows = await page.locator('[data-testid="mdm-rows"] li').evaluateAll((els) => els.map((e) => ({ c: e.getAttribute('data-compliance'), t: e.textContent ?? '' })));
   const ours = rows.filter((r) => r.t.includes(TAG));
-  check(h1 === 'Mobile devices' && setupState === 'available' && ours.length === 2 && /Read-only/.test(await page.getByTestId('mdm-readonly-note').innerText().catch(() => '')),
-    `${label}: Mobile devices lists the two devices, says read-only, and the provider is available`, JSON.stringify({ h1, setupState, ours: ours.length }));
+  check(h1 === 'Mobile devices' && setupState === 'available' && ours.length === 3 && /nothing can be erased/.test(await page.getByTestId('mdm-readonly-note').innerText().catch(() => '')),
+    `${label}: Mobile devices lists the three devices (0.86: an iPhone joins them), says nothing can be erased, and the provider is available`, JSON.stringify({ h1, setupState, ours: ours.length }));
   const cur = await page.locator('[data-section-tabs="devices"] a[aria-current="page"]').innerText().catch(() => null);
   check(cur === 'Mobile devices', `${label}: Mobile devices is the current Devices tab`, String(cur));
   await page.getByTestId('mdm-count-noncompliant').click();
@@ -3714,7 +3724,13 @@ async function mobileDevicesUi(page, f, vp, theme, label) {
   check(await sync.getAttribute('data-state').catch(() => null) === 'completed' && await sync.getByTestId('mdm-cmd-accepted').getAttribute('data-done').catch(() => null) === 'yes'
     && await sync.getByTestId('mdm-cmd-completed').getAttribute('data-done').catch(() => null) === 'yes',
   `${label}: the sync reads both accepted and completed`);
-  check(await page.locator('main button').filter({ hasText: /^(Lock|Wipe|Retire|Send)/ }).count() === 0, `${label}: the device page offers no command to send`);
+  // 0.86: the read-only stand-in takes no command: every lost-device button is disabled, with the server's reason; nothing destructive exists.
+  await page.getByTestId('mdm-lost-actions').waitFor({ timeout: 15_000 }).catch(() => {});
+  const ipadActs = await page.locator('[data-testid="mdm-lost-actions"] button').evaluateAll((els) => els.map((e) => [e.getAttribute('data-testid'), e.hasAttribute('disabled')]));
+  check(JSON.stringify(ipadActs) === JSON.stringify([['mdm-act-lock', true], ['mdm-act-lost_mode_start', true], ['mdm-act-lost_mode_stop', true]])
+    && /cannot be sent commands/.test(await page.getByTestId('mdm-act-reason-lock').innerText().catch(() => ''))
+    && await page.locator('main button').filter({ hasText: /^(Wipe|Erase|Retire)/ }).count() === 0,
+  `${label}: a stand-in device: lock and lost mode shown disabled with the reason; no wipe, erase or retire anywhere`, JSON.stringify(ipadActs));
   await themeCheck(page, theme, `${label} mobile device`);
   if (vp === 'phone') await noSideScroll(page, `${label} mobile device`);
   await shot(page, `${label}-mobile-device`);
@@ -3729,6 +3745,31 @@ async function mobileDevicesUi(page, f, vp, theme, label) {
     `${label}: the personal Pixel: work profile only, no serial kept, no commands`, JSON.stringify({ pOwn, pSerial }).slice(0, 300));
   if (vp === 'phone') await noSideScroll(page, `${label} personal mobile device`);
   await cleanCheck(page, `${label} personal mobile device`);
+
+  // 0.86 (§95): an Apple device on Rem0te's own connector. Lock is offered; lost mode says why not; the dialog is opened and cancelled, never confirmed.
+  await go(page, `/mobile-devices/${m.iphone.id}`);
+  await page.getByTestId('mdm-lost-actions').waitFor({ timeout: 15_000 }).catch(() => {});
+  const lockBtn = page.getByTestId('mdm-act-lock');
+  const lostWhy = await page.getByTestId('mdm-act-reason-lost_mode_start').innerText().catch(() => '');
+  check(await lockBtn.getAttribute('data-available').catch(() => null) === 'yes' && await page.getByTestId('mdm-act-lost_mode_start').getAttribute('data-available').catch(() => null) === 'no'
+    && /supervised/.test(lostWhy), `${label}: an Apple device: Lock is offered; lost mode is not, because it never said it is supervised`, lostWhy);
+  await lockBtn.click();
+  await page.getByTestId('mdm-act-dialog').waitFor({ timeout: 10_000 }).catch(() => {});
+  await page.getByTestId('mdm-act-message').fill(`Found? ${sfx}`).catch(() => {});
+  await page.getByTestId('mdm-act-phone').fill('ring me').catch(() => {});
+  const dlg = await page.getByTestId('mdm-act-dialog').innerText().catch(() => '');
+  const confirmDisabled = await page.getByTestId('mdm-act-confirm').isDisabled().catch(() => null);
+  await page.getByTestId('mdm-act-phone').fill('+44 20 7946 0000').catch(() => {});
+  const confirmEnabled = await page.getByTestId('mdm-act-confirm').isEnabled().catch(() => null);
+  check(/Lock this device\?/.test(dlg) && /Nothing is erased/.test(dlg) && /Rem0te does not keep it/.test(dlg) && confirmDisabled === true && confirmEnabled === true,
+    `${label}: the lock dialog explains, takes a lock-screen message and phone number, and refuses a bad number`, dlg.slice(0, 300));
+  await themeCheck(page, theme, `${label} lock dialog`);
+  if (vp === 'phone') await noSideScroll(page, `${label} lock dialog`);
+  await shot(page, `${label}-mobile-lock-dialog`);
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByTestId('mdm-act-dialog').waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {});
+  check(await prisma.mdmCommand.count({ where: { mobileDeviceId: m.iphone.id } }) === 0, `${label}: cancelling sends nothing`);
+  await cleanCheck(page, `${label} Apple mobile device`);
 }
 
 /** A Business Owner whose business has no provider: Requires setup, what each provider needs, the empty state. */

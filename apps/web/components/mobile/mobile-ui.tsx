@@ -23,7 +23,7 @@ export interface MobileDevice {
 }
 
 export interface MobileCommand {
-  id: string; kind: string; kindLabel: string; destructive: boolean; origin: 'portal' | 'provider';
+  id: string; kind: string; kindLabel: string; destructive: boolean; origin: 'portal' | 'provider'; requestedBy?: string | null;
   state: CommandState; stateLabel: string; requestedAt: string; sentAt: string | null;
   providerAccepted: { done: boolean; at: string | null };
   deviceCompleted: { done: boolean; at: string | null };
@@ -72,4 +72,8 @@ export function formatBytes(n: number | null | undefined): string {
   return `${v >= 10 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 }
 
-export const READ_ONLY_NOTE = 'Read-only: Rem0te shows what the MDM provider reports. Nothing can be sent to a phone or tablet from here yet.';
+/**
+ * 0.86: a phone or tablet can be locked, or put in and out of lost mode,
+ * from its own page by someone holding mobile:act. Nothing can be erased.
+ */
+export const READ_ONLY_NOTE = 'Rem0te shows what the phone or tablet reports. From a device\'s page it can be locked, or put in and out of lost mode; nothing can be erased or wiped from Rem0te.';

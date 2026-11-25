@@ -14,9 +14,12 @@
  *     (schemas.ts), reading only the fields named in DEVICE_FIELDS: no
  *     networkInfo, telephony, user, IMEI, MEID, phone number or MAC is ever
  *     asked for or read;
- *   - an Operation turned into a provider-neutral command record. In M3
- *     Rem0te issues no command (no issueCommand, no devices.delete), so this
- *     only reports what exists.
+ *   - an Operation turned into a provider-neutral command record;
+ *   - 0.86 (M4, §95): the body of devices.issueCommand for the three
+ *     lost-device commands, and nothing else. LOCK takes nothing;
+ *     START_LOST_MODE only the lock-screen message and phone number a person
+ *     gave, as UserFacingMessages; STOP_LOST_MODE nothing. There is no WIPE,
+ *     RELINQUISH_OWNERSHIP or RESET_PASSWORD body (M5), and no devices.delete.
  */
 import { createPrivateKey, sign, type KeyObject } from 'node:crypto';
 import { EXTERNAL_TENANT_RE, PROVIDER_ID_RE } from '../../model';
@@ -88,6 +91,59 @@ export function signJwt(c: { clientEmail: string; privateKeyId: string; key: Key
 }
 
 // ── Requests ────────────────────────────────────────────────────────────────
+
+/** The only Android commands Rem0te issues (0.86), by Rem0te kind. */
+export const ANDROID_COMMAND_TYPES = { lock: 'LOCK', lost_mode_start: 'START_LOST_MODE', lost_mode_stop: 'STOP_LOST_MODE' } as const;
+export type AndroidLostKind = keyof typeof ANDROID_COMMAND_TYPES;
+// eslint-disable-next-line no-control-regex
+const LOST_TEXT_BAD = /[\u0000-\u001F\u007F-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069]/;
+const LOST_PHONE_RE = /^[+0-9][0-9 ().-]{2,30}$/;
+
+/**
+ * devices.issueCommand's body for one lost-device command. `duration` is how
+ * long the command waits for the device (Google's default is ten minutes;
+ * a lost phone may be off for days). The message and phone number are
+ * checked again here and sent as UserFacingMessage `defaultMessage`s; any
+ * other kind, or text that fails the check, gives null and nothing is sent.
+ */
+export function commandBody(kind: string, text: { message: string | null; phoneNumber: string | null }, ttlSeconds: number): Record<string, unknown> | null {
+  if (!Number.isInteger(ttlSeconds) || ttlSeconds < 60 || ttlSeconds > 30 * 86_400) return null;
+  const duration = `${ttlSeconds}s`;
+  if (kind === 'lock') return { type: ANDROID_COMMAND_TYPES.lock, duration };
+  if (kind === 'lost_mode_stop') return { type: ANDROID_COMMAND_TYPES.lost_mode_stop, duration, stopLostModeParams: {} };
+  if (kind !== 'lost_mode_start') return null;
+  const message = text.message && text.message.length <= 160 && !LOST_TEXT_BAD.test(text.message) ? text.message : null;
+  const phone = text.phoneNumber && LOST_PHONE_RE.test(text.phoneNumber) ? text.phoneNumber : null;
+  if (!message && !phone) return null;
+  return {
+    type: ANDROID_COMMAND_TYPES.lost_mode_start, duration,
+    startLostModeParams: { ...(message ? { lostMessage: { defaultMessage: message } } : {}), ...(phone ? { lostPhoneNumber: { defaultMessage: phone } } : {}) },
+  };
+}
+
+/**
+ * The Operation devices.issueCommand returns, as Rem0te's command id
+ * (`<device>:<operation>`) and Google's acceptance time; null when it is not
+ * an Operation on that device.
+ */
+export function issuedOperation(v: unknown, deviceId: string): { providerCommandId: string; createdAt: string | null } | null {
+  const o = obj(v);
+  const name = str(o?.name, 400) ?? '';
+  const m = name.match(OPERATION_NAME_RE);
+  const dev = name.match(/^enterprises\/[A-Za-z0-9_-]{1,64}\/devices\/([A-Za-z0-9._:-]{1,128})\/operations\//)?.[1];
+  if (!m || dev !== deviceId) return null;
+  const id = `${deviceId}:${m[1]}`;
+  if (!PROVIDER_ID_RE.test(id)) return null;
+  return { providerCommandId: id, createdAt: isoOrNull(obj(o?.metadata)?.createTime) };
+}
+
+/** Rem0te's command id back into the device and operation ids (the operation id has no colon). */
+export function operationIdsOf(providerCommandId: string): { deviceId: string; operationId: string } | null {
+  const i = providerCommandId.lastIndexOf(':');
+  if (i <= 0) return null;
+  const deviceId = providerCommandId.slice(0, i), operationId = providerCommandId.slice(i + 1);
+  return /^[A-Za-z0-9._:-]{1,128}$/.test(deviceId) && /^[A-Za-z0-9._-]{1,100}$/.test(operationId) ? { deviceId, operationId } : null;
+}
 
 export function enrollmentTokenBody(enterpriseId: string, usage: PersonalUsage, minutes: number) {
   return {

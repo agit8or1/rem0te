@@ -1408,6 +1408,9 @@ export const mobileApi = {
     api.get('/mobile-devices', { params }),
   get: (id: string) => api.get(`/mobile-devices/${encodeURIComponent(id)}`),
   commands: (id: string) => api.get(`/mobile-devices/${encodeURIComponent(id)}/commands`),
+  /** 0.86 (§95): lock, start or stop lost mode. mobile:act; asks for fresh authentication when mdm.act asks. */
+  send: (id: string, body: { kind: 'lock' | 'lost_mode_start' | 'lost_mode_stop'; message?: string; phoneNumber?: string }) =>
+    api.post(`/mobile-devices/${encodeURIComponent(id)}/commands`, body),
 };
 
 /**
