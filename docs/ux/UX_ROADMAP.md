@@ -213,3 +213,16 @@ reason to build the feature. Each stays on its own roadmap:
 8. **The public `/download` page asks `api.github.com`** from the customer's
    browser for RustDesk's latest version. (a) Keep, with its fallback; (b) have
    the server answer from the version it already tracks. *Recommend (b).*
+
+### Navigation redesign decisions (0.87, decided 2026-11-25, "accept recs")
+
+Numbered N1–N4 to keep them apart from the audit's eight.
+
+- **N1. Sidebar at tablet width (820 px).** Decided: collapse to the icon rail
+  by default below 1024 px (follow-up; 0.87 shows it at full width).
+- **N2. Density.** Decided: extend compact/comfortable from the menu to tables
+  and cards, in P1.
+- **N3. `e2e-navigation.mjs`.** Decided: give it a seeded fixture so CI runs it
+  (follow-up; manual against the docs stack in 0.87).
+- **N4. The 13 in-page "Settings → Security" strings.** Decided: fix them in the
+  P1-1 wording pass, not in 0.87.
