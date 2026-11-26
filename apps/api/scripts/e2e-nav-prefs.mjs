@@ -208,7 +208,7 @@ async function all() {
   check(before.status === 403, 'and still may not open a Platform Admin route (GET /admin/update-trust)', msg(before));
   r = await nav(S.ownerA);
   check(r.data?.preferences?.workspace === 'all', 'one person\'s workspace is not another\'s', JSON.stringify(r.data?.preferences));
-  r = await prefs(S.userA, { workspace: 'all' });
+  await prefs(S.userA, { workspace: 'all' }); // put it back
 
   section('Preferences: the context customer is checked against GET /businesses\' rule');
   r = await prefs(S.ownerA, { contextBusinessId: B.id });
