@@ -28,6 +28,7 @@ import { useTheme } from '@/lib/theme-provider';
 import { targetOf, useNavCtx, useNavigation } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
 import { allPages, locate, pageLabel, visibleItems } from './nav-model';
+import { WORKSPACES, type WorkspaceId } from '@/lib/workspace-modes';
 
 export const headerButton = 'flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent data-[state=open]:text-accent-foreground';
 
@@ -342,6 +343,22 @@ export function ProfileMenu() {
           <DropdownMenuRadioItem value="standard" data-testid="mode-standard" title="Everyday pages; the rest are tabs on them and in search">Standard</DropdownMenuRadioItem>
           <DropdownMenuRadioItem value="advanced" data-testid="mode-advanced" title="Every page in the menu">Advanced</DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        {/* 0.90 (P1-4): which pages the menu puts in front. Presentation only: it grants and removes nothing. */}
+        <DropdownMenuLabel className="text-xs text-muted-foreground">Workspace</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={prefs.workspace} onValueChange={(v) => setPrefs({ workspace: v as WorkspaceId })}>
+          {WORKSPACES.map((w) => (
+            <DropdownMenuRadioItem key={w.id} value={w.id} data-testid={`workspace-${w.id}`} title={w.description}>
+              <span className="min-w-0">
+                <span className="block">{w.label}</span>
+                <span className="block text-xs text-muted-foreground">{w.description}</span>
+              </span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+        <p className="px-2 pb-1 text-xs text-muted-foreground" data-testid="workspace-note">
+          A workspace changes the menu, not what you may do: every page is still in search.
+        </p>
         <DropdownMenuSeparator />
         {!isPlatformAdmin && <DropdownMenuItem asChild><Link href="/about" className="gap-2"><Info className="h-4 w-4" />About</Link></DropdownMenuItem>}
         {staff && (

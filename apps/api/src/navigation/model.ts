@@ -17,6 +17,15 @@ import { z } from 'zod';
 /** Standard (the default) only regroups: both modes reach the same pages. */
 export const MODES = ['standard', 'advanced'] as const;
 export const DENSITIES = ['comfortable', 'compact'] as const;
+/**
+ * Technician workspaces (0.90, UX P1-4, directive §11): which pages the
+ * sidebar puts in front. `all` is every page the menu offers (the default);
+ * `l1`, `l2` and `l3` narrow the sidebar to a role's everyday pages. A
+ * presentation preference only: it grants nothing, hides nothing from
+ * search, tabs or a typed URL, and every page and route still checks for
+ * itself. The pages each one names are the web's (lib/workspace-modes.ts).
+ */
+export const WORKSPACES = ['all', 'l1', 'l2', 'l3'] as const;
 /** The sidebar's groups (apps/web/components/layout/nav-model.ts NAV ids, in order). */
 export const GROUP_IDS = ['dashboard', 'devices', 'remote', 'monitoring', 'patching', 'automation', 'reports', 'security', 'admin'] as const;
 export const LISTS = ['favorite', 'recent'] as const;
@@ -48,6 +57,7 @@ export const PrefsDto = z.object({
   sidebarCollapsed: z.boolean().optional(),
   pinnedGroups: z.array(z.enum(GROUP_IDS)).max(PINNED_CAP).optional(),
   density: z.enum(DENSITIES).optional(),
+  workspace: z.enum(WORKSPACES).optional(),
   /** The customer the header context selector names; a hint, never a scope (null clears it). */
   contextBusinessId: z.string().regex(RECORD_REF).nullable().optional(),
 }).strict();
@@ -59,7 +69,7 @@ export const ItemDto = z.object({
 }).strict().refine((v) => refOk(v.kind, v.ref), { message: 'ref is not a record id or a console page path', path: ['ref'] });
 export type ItemInput = z.infer<typeof ItemDto>;
 
-export const DEFAULT_PREFS = { mode: 'standard', sidebarCollapsed: false, pinnedGroups: [] as string[], density: 'comfortable', contextBusinessId: null as string | null };
+export const DEFAULT_PREFS = { mode: 'standard', sidebarCollapsed: false, pinnedGroups: [] as string[], density: 'comfortable', workspace: 'all', contextBusinessId: null as string | null };
 
 /** Distinct, in GROUP_IDS order, so a stored list is canonical. */
 export function canonicalGroups(ids: readonly string[]): string[] {

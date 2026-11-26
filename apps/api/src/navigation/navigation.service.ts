@@ -78,6 +78,7 @@ export class NavigationService {
         sidebarCollapsed: row?.sidebarCollapsed ?? DEFAULT_PREFS.sidebarCollapsed,
         pinnedGroups: row?.pinnedGroups ?? DEFAULT_PREFS.pinnedGroups,
         density: row?.density ?? DEFAULT_PREFS.density,
+        workspace: row?.workspace ?? DEFAULT_PREFS.workspace,
         contextBusiness: context,
       },
       favorites: resolved.filter((r) => r.list === 'favorite'),
@@ -182,6 +183,7 @@ export class NavigationService {
       ...(d.sidebarCollapsed !== undefined ? { sidebarCollapsed: d.sidebarCollapsed } : {}),
       ...(d.pinnedGroups !== undefined ? { pinnedGroups: canonicalGroups(d.pinnedGroups) } : {}),
       ...(d.density !== undefined ? { density: d.density } : {}),
+      ...(d.workspace !== undefined ? { workspace: d.workspace } : {}),
       ...(d.contextBusinessId !== undefined ? { contextBusinessId: d.contextBusinessId } : {}),
     };
     await this.prisma.userNavPreference.upsert({ where: { userId: actor.userId }, create: { userId: actor.userId, ...data }, update: data });

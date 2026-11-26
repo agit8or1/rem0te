@@ -181,7 +181,7 @@ async function all() {
   check(r.status === 401, 'unauthenticated is a 401', msg(r));
   r = await nav(S.ownerA);
   check(r.status === 200 && /no-store/.test(r.headers.get('cache-control') ?? ''), 'GET /me/navigation is 200, no-store', msg(r));
-  check(JSON.stringify(r.data?.preferences) === JSON.stringify({ mode: 'standard', sidebarCollapsed: false, pinnedGroups: [], density: 'comfortable', contextBusiness: null }), 'defaults: Standard, expanded, nothing pinned, comfortable, no customer', JSON.stringify(r.data?.preferences));
+  check(JSON.stringify(r.data?.preferences) === JSON.stringify({ mode: 'standard', sidebarCollapsed: false, pinnedGroups: [], density: 'comfortable', workspace: 'all', contextBusiness: null }), 'defaults: Standard, expanded, nothing pinned, comfortable, every page, no customer', JSON.stringify(r.data?.preferences));
   check(r.data?.caps?.favorites === 50 && r.data?.caps?.recent === 15, 'caps are 50 favourites and 15 recent', JSON.stringify(r.data?.caps));
   r = await prefs(S.ownerA, { mode: 'advanced', sidebarCollapsed: true, pinnedGroups: ['security', 'devices', 'security'], density: 'compact' });
   check(r.status === 200 && r.data.preferences.mode === 'advanced' && r.data.preferences.sidebarCollapsed === true && r.data.preferences.density === 'compact', 'every field is saved', msg(r));
@@ -191,11 +191,24 @@ async function all() {
   for (const [label, body] of [
     ['an unknown mode', { mode: 'expert' }], ['an unknown density', { density: 'tiny' }], ['an unknown group', { pinnedGroups: ['settings'] }],
     ['an extra field', { mode: 'standard', theme: 'dark' }], ['ten groups', { pinnedGroups: Array(10).fill('devices') }],
-    ['a non-boolean collapsed', { sidebarCollapsed: 'yes' }], ['a malformed customer id', { contextBusinessId: 'x' }], ['an array body', [1]],
+    ['a non-boolean collapsed', { sidebarCollapsed: 'yes' }], ['an unknown workspace', { workspace: 'l4' }], ['a workspace in capitals', { workspace: 'L1' }], ['a malformed customer id', { contextBusinessId: 'x' }], ['an array body', [1]],
   ]) {
     r = await prefs(S.ownerA, body);
     check(r.status === 400, `${label} is a 400`, msg(r));
   }
+
+  section('Preferences: a technician workspace (0.90) is presentation only');
+  for (const w of ['l1', 'l2', 'l3', 'all']) {
+    r = await prefs(S.ownerA, { workspace: w });
+    check(r.status === 200 && r.data.preferences.workspace === w && r.data.preferences.mode === 'advanced', `workspace ${w} is saved and keeps the other fields`, msg(r));
+  }
+  r = await prefs(S.userA, { workspace: 'l3' });
+  check(r.status === 200 && r.data.preferences.workspace === 'l3', 'a Business User may choose the L3 workspace (it is only a menu)', msg(r));
+  const before = await call(S.userA, 'GET', '/admin/update-trust');
+  check(before.status === 403, 'and still may not open a Platform Admin route (GET /admin/update-trust)', msg(before));
+  r = await nav(S.ownerA);
+  check(r.data?.preferences?.workspace === 'all', 'one person\'s workspace is not another\'s', JSON.stringify(r.data?.preferences));
+  r = await prefs(S.userA, { workspace: 'all' });
 
   section('Preferences: the context customer is checked against GET /businesses\' rule');
   r = await prefs(S.ownerA, { contextBusinessId: B.id });

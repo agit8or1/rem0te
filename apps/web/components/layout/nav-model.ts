@@ -34,6 +34,7 @@ import {
   WifiOff, Workflow, Wrench, Zap, PenLine, Download,
 } from 'lucide-react';
 import { CAP, type Capability } from '@/lib/auth';
+import { inWorkspace, workspaceOf } from '@/lib/workspace-modes';
 
 export type NavCtx = {
   can: (cap: Capability) => boolean;
@@ -230,9 +231,15 @@ export function visibleItems(section: NavSection, ctx: NavCtx): NavLeaf[] {
   return section.items.filter((i) => i.show(ctx));
 }
 
-/** What the sidebar lists under a group in a mode. Standard leaves out advanced entries (still tabs and palette pages). */
-export function sidebarItems(section: NavSection, ctx: NavCtx, mode: 'standard' | 'advanced'): NavLeaf[] {
+/**
+ * What the sidebar lists under a group. Standard leaves out advanced entries
+ * (still tabs and palette pages). A technician workspace (0.90,
+ * lib/workspace-modes.ts) instead lists exactly its own pages, of those this
+ * person may see: it never adds an entry `show` hides.
+ */
+export function sidebarItems(section: NavSection, ctx: NavCtx, mode: 'standard' | 'advanced', workspace: string = 'all'): NavLeaf[] {
   const items = visibleItems(section, ctx);
+  if (workspaceOf(workspace).pages) return items.filter((i) => inWorkspace(workspace, i.href));
   return mode === 'advanced' ? items : items.filter((i) => i.tier === 'standard');
 }
 

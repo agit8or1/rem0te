@@ -8909,6 +8909,26 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
       && same(tsList('KINDS'), sqlList(/"kind" IN \(([^)]*)\)/)) && same(tsList('GROUP_IDS'), webGroups)
       && /cardinality\("pinnedGroups"\), 0\) <= 9/.test(sql),
     `web ${webGroups.join(',')}`);
+  // 0.90 (P1-4): technician workspaces are presentation only.
+  const sql105 = read('apps/api/prisma/migrations/0105_nav_workspace/migration.sql');
+  const wsWeb = code(read('apps/web/lib/workspace-modes.ts'));
+  const webWs = [...wsWeb.matchAll(/^ {4}id: '([a-z0-9]+)', label: /gm)].map((m) => m[1]);
+  check('0105\'s CHECK names model.ts\'s WORKSPACES, in order, and the web\'s workspaces are the same ids',
+    same(tsList('WORKSPACES'), [...((sql105.match(/"workspace" IN \(([^)]*)\)/) ?? ['', ''])[1]).matchAll(/'([^']+)'/g)].map((x) => x[1])) && same(tsList('WORKSPACES'), webWs)
+      && /DEFAULT 'all'/.test(sql105) && /workspace: 'all'/.test(model),
+    `web ${webWs.join(',')}`);
+  check('lib/workspace-modes.ts is pure and names no permission: no import, no capability, no role, no fetch',
+    !/^\s*import\b/m.test(wsWeb) && !/\bCAP\b|\bcan\(|isPlatformAdmin|isBusinessOwner|technician:|fetch\(|api\./.test(wsWeb));
+  const navModel = code(read('apps/web/components/layout/nav-model.ts'));
+  const sbFn = (navModel.match(/export function sidebarItems\([^)]*\)[^{]*\{([\s\S]*?)\n\}/) ?? ['', ''])[1];
+  check('a workspace only narrows the sidebar: sidebarItems starts from visibleItems (each entry\'s show) and filters it',
+    /const items = visibleItems\(section, ctx\);/.test(sbFn) && /return items\.filter\(\(i\) => inWorkspace\(workspace, i\.href\)\)/.test(sbFn) && !/\.concat\(|\[\.\.\.items,/.test(sbFn));
+  const navSvc = code(read('apps/api/src/navigation/navigation.service.ts'));
+  // The table itself is read and written only by the navigation service (the writers check above).
+  check('the workspace is the caller\'s own preference, echoed and stored and used for nothing else in the API',
+    /\.\.\.\(d\.workspace !== undefined \? \{ workspace: d\.workspace \} : \{\}\)/.test(navSvc)
+      && /workspace: row\?\.workspace \?\? DEFAULT_PREFS\.workspace,/.test(navSvc) && (navSvc.match(/\bworkspace\b/g) ?? []).length === 6,
+    `${(navSvc.match(/\bworkspace\b/g) ?? []).length} uses`);
   const pageRe = (model.match(/export const PAGE_REF = \/(.*)\/;/) ?? ['', ''])[1].replace(/\(\?:/g, '(').replace(/\\\//g, '/');
   const recRe = (model.match(/export const RECORD_REF = \/(.*)\/;/) ?? ['', ''])[1];
   check('a page reference is a console path (PAGE_REF = 0104\'s ref CHECK, ≤ 120); a record reference is an id (RECORD_REF = the CHECK)',

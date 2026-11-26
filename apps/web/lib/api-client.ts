@@ -1064,6 +1064,8 @@ export interface NavPreferences {
   sidebarCollapsed: boolean;
   pinnedGroups: string[];
   density: 'comfortable' | 'compact';
+  /** 0.90: a technician workspace; presentation only (lib/workspace-modes.ts). */
+  workspace: 'all' | 'l1' | 'l2' | 'l3';
   contextBusiness: { id: string; name: string } | null;
 }
 export interface NavigationState { preferences: NavPreferences; favorites: NavItem[]; recent: NavItem[]; caps: { favorites: number; recent: number } }
