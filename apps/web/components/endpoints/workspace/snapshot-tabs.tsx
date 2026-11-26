@@ -124,7 +124,7 @@ export function automaticBlocker(s: Snapshot): string | null {
 
 
 /** A snapshot older than this is called out: it is a picture, not a live view. */
-const OLD_MS = 24 * 3600_000;
+export const OLD_MS = 24 * 3600_000;
 
 const arr = <T = Record<string, unknown>>(v: unknown) => (Array.isArray(v) ? (v as T[]) : []);
 const txt = (v: unknown) => (v === null || v === undefined || v === '' ? '—' : String(v));
@@ -157,6 +157,27 @@ function useSnapshot(endpointId: string, key: SnapshotKey) {
     // automatic snapshot shows up without a reload.
     refetchInterval: (q) => (q.state.data?.pending ? SNAPSHOT_PENDING_REFETCH_MS : SNAPSHOT_REFETCH_MS),
   });
+}
+
+/** The tab each snapshot belongs to (0.88). */
+export const SNAPSHOT_OF_TAB: Partial<Record<string, SnapshotKey>> = {
+  processes: 'process_list', services: 'service_list', network: 'network_adapters',
+};
+
+/**
+ * When the open snapshot tab's snapshot was taken, for the page's freshness
+ * line (0.88). The same query and key as the tab, so React Query shares one
+ * request; nothing is read for any other tab.
+ */
+export function useSnapshotTakenAt(endpointId: string, tab: string): { takenAt: string | null; loaded: boolean } {
+  const key = SNAPSHOT_OF_TAB[tab];
+  const q = useQuery({
+    queryKey: ['diagnostics-snapshot', endpointId, key],
+    queryFn: () => api.get(`/endpoints/${endpointId}/diagnostics/snapshots/${key}`).then((r) => r.data?.data as Snapshot),
+    refetchInterval: (qq) => (qq.state.data?.pending ? SNAPSHOT_PENDING_REFETCH_MS : SNAPSHOT_REFETCH_MS),
+    enabled: !!key,
+  });
+  return { takenAt: q.data?.takenAt ?? null, loaded: !!q.data };
 }
 
 /** The frame every snapshot tab shares: when, how old, Refresh, and why it might not work. */

@@ -149,7 +149,7 @@ publishes). **Recommended next.**
 | Item | § | Notes |
 |---|---|---|
 | P1-1 Terminology: Customer and Device in visible text | §6 | Owner decision 1. Wording only; models, routes, API and contract unchanged. Browser suite selectors updated in the same commit |
-| P1-2 Device workspace | §10 | 15 tabs grouped into secondary navigation; a compact header (today ≈ 440 px before the first tab at 1280, ≈ 575 px at 390); freshness on every panel; the "Run action unavailable" line moved into the button's reason (owner decision 5) |
+| P1-2 Device workspace | §10 | 15 tabs grouped into secondary navigation; a compact header (today ≈ 440 px before the first tab at 1280, ≈ 575 px at 390); freshness on every panel; the "Run action unavailable" line moved into the button's reason (owner decision 5). **Done in 0.88.0** (*Bridge*): compact header, one row of buttons on a phone, a freshness line on every tab that shows reported state, the header sharing the tabs' catalog read. Fewer requests per load beyond that is P1-16 |
 | P1-3 Device list | §9 | Customer and site visible on phones when names repeat; default views (§9 list); favourites; mobile toolbar in one row |
 | P1-4 Technician workspace modes | §11 | Presentation only; never changes authorization |
 | P1-5 Remote support states | §12 | The eight states in every place a launch is shown; Managed Secure Access fields per §12 (no fleet enablement) |

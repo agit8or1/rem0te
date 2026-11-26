@@ -13,14 +13,17 @@ import { useNavigation } from '@/lib/navigation';
 import type { NavItemKind } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 
-export function FavoriteButton({ kind, refId, label }: { kind: NavItemKind; refId: string; label: string }) {
+export function FavoriteButton({ kind, refId, label, compact = false }: { kind: NavItemKind; refId: string; label: string; compact?: boolean }) {
   const { favoriteOf, toggleFavorite, favPending, ready } = useNavigation();
   const on = !!favoriteOf(kind, refId);
+  const title = on ? `Remove ${label} from favourites` : `Add ${label} to favourites`;
   return (
-    <Button size="sm" variant="outline" disabled={!ready || favPending} onClick={() => toggleFavorite(kind, refId)} aria-pressed={on}
-      data-testid="record-favorite" title={on ? `Remove ${label} from favourites` : `Add ${label} to favourites`}>
-      {/* 0.87 review: on a phone the label took a row of its own; the star alone says it there. */}
-      <Star className={cn('h-4 w-4 sm:mr-1.5', on && 'fill-amber-400 text-amber-500')} aria-hidden="true" /><span className="sr-only sm:not-sr-only">{on ? 'Favourite' : 'Add to favourites'}</span>
+    <Button size="sm" variant={compact ? 'ghost' : 'outline'} className={compact ? 'h-8 w-8 p-0' : undefined} disabled={!ready || favPending}
+      onClick={() => toggleFavorite(kind, refId)} aria-pressed={on} data-testid="record-favorite" title={title} aria-label={compact ? title : undefined}>
+      {/* 0.87 review: on a phone the label took a row of its own; the star alone says it there.
+          0.88: `compact` (the device header) is the star alone at every width; the name says the rest. */}
+      <Star className={cn('h-4 w-4', !compact && 'sm:mr-1.5', on && 'fill-amber-400 text-amber-500')} aria-hidden="true" />
+      {!compact && <span className="sr-only sm:not-sr-only">{on ? 'Favourite' : 'Add to favourites'}</span>}
     </Button>
   );
 }

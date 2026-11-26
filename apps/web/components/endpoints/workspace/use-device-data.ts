@@ -73,10 +73,16 @@ export function useInventory(endpointId: string, enabled = true) {
   });
 }
 
-export function useActionCatalog(enabled = true) {
+/**
+ * 0.88 (P1-2): the device's own catalog read — the same query and key as the
+ * Actions and Patches tabs, the Tools panel and the Services and Processes
+ * controls — so the header and the tab share one request instead of reading
+ * the catalog twice. The answer is the global catalog plus the approval mode.
+ */
+export function useActionCatalog(endpointId: string, enabled = true) {
   return useQuery<ActionCatalog>({
-    queryKey: ['actions-catalog'],
-    queryFn: () => actionsApi.catalog().then((r) => r.data.data as ActionCatalog),
+    queryKey: ['actions-catalog', endpointId],
+    queryFn: () => actionsApi.catalog(endpointId).then((r) => r.data.data as ActionCatalog),
     retry: false,
     enabled,
   });

@@ -272,7 +272,14 @@ async function agentCardChecks(page, who, endpointId) {
       reason: !!el.querySelector('[data-testid="header-upgrade-reason"] a[href="/endpoints/full-agent"]'),
     };
   }).catch(() => null);
-  if (who === 'admin') check(!!hdr?.any, 'the device header offers the agent buttons to a Platform Admin (0.37)', JSON.stringify(hdr));
+  // 0.88: a signed agent's "Check for update now" is in More, not the header row.
+  let inMore = false;
+  if (who === 'admin' && !hdr?.any) {
+    await page.click('[data-testid="action-more"]').catch(() => {});
+    inMore = await page.waitForSelector('[role="menu"] [data-testid="header-update-agent"]', { timeout: 5_000 }).then(() => true).catch(() => false);
+    await page.keyboard.press('Escape').catch(() => {});
+  }
+  if (who === 'admin') check(!!hdr?.any || inMore, 'the device header offers the agent buttons to a Platform Admin (0.37; a signed agent\'s check is in More from 0.88)', JSON.stringify({ hdr, inMore }));
   if (hdr?.up) {
     check(hdr.up.tag === 'BUTTON' && (hdr.up.state !== 'blocked' || (hdr.up.disabled && hdr.reason)),
       'the header\'s Upgrade to full agent is a button; disabled, it says why and links to Full agent (0.37)', JSON.stringify(hdr));

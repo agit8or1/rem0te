@@ -834,6 +834,20 @@ async function devicesAndWorkspace(page, f, vp, label) {
   const tabs = (await page.locator('[data-testid="workspace-groups"] [data-tabs]').evaluateAll((els) => els.map((e) => e.getAttribute('data-tabs')))).join(' ').split(' ').filter(Boolean);
   const expected = ['overview', 'performance', 'monitoring', 'software', 'processes', 'services', 'network', 'patches', 'events', 'diagnostics', 'actions', 'history'];
   check(expected.every((t) => tabs.includes(t)), `${label}: all twelve workspace tabs for a Windows agent`, tabs.join(','));
+  // 0.88 (P1-2): the compact header. Before it the first tab's content started
+  // at ≈ 458 px (1280 wide) and ≈ 680 px (390 wide); the bounds leave room for
+  // a fixture device's longer name and chips, and fail on a return to that.
+  const geo = await page.evaluate(() => {
+    const panel = document.querySelector('[role="tabpanel"][data-state="active"]');
+    const btns = [...document.querySelectorAll('[data-testid="device-actions"] :is([data-testid="action-connect"], [data-testid="action-terminal"], [data-testid="action-tools"], [data-testid="action-more"])')]
+      .filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
+      .map((e) => Math.round(e.getBoundingClientRect().top));
+    return { panelTop: panel ? Math.round(panel.getBoundingClientRect().top + window.scrollY) : null, rows: new Set(btns).size, buttons: btns.length };
+  });
+  const bound = vp === 'phone' ? 540 : 380;
+  check(geo.panelTop !== null && geo.panelTop <= bound, `${label}: the first tab's content starts within ${bound} px (compact header, 0.88)`, JSON.stringify(geo));
+  if (vp === 'phone') check(geo.buttons >= 3 && geo.rows === 1, `${label}: on a phone Connect, Terminal, Tools and More are one row; Diagnose, Run action and Patch are in More`, JSON.stringify(geo));
+  check(await page.locator('[data-testid="device-actions"] [data-testid="header-full-agent"]').count() === 0, `${label}: no green "Full agent" chip in the header`);
   await cleanCheck(page, `${label} workspace`);
   // What each tab must show from the fixtures, so "renders" means rendered.
   const proof = {
@@ -853,6 +867,19 @@ async function devicesAndWorkspace(page, f, vp, label) {
     const p = proof[t];
     const ok = p ? await p(text) : text.length > 0;
     check(ok && await page.locator(`[data-testid="tab-${t}"]`).getAttribute('aria-selected') === 'true', `${label}: the ${t} tab renders${p ? ' the fixture data' : ''}`, text.slice(0, 200));
+    // 0.88: every tab showing reported state says how old it is, in one place;
+    // the others (request lists, live views) say nothing there.
+    const FRESH = { overview: 'Inventory collected', software: 'Inventory collected', performance: 'Last check-in', monitoring: 'Last monitoring report', patches: 'Update scan', processes: 'Snapshot taken', services: 'Snapshot taken', network: 'Snapshot taken' };
+    const fl = page.locator('[data-testid="freshness"]');
+    if (FRESH[t]) {
+      await fl.first().waitFor({ timeout: 10_000 }).catch(() => {});
+      const ft = await fl.first().innerText().catch(() => '');
+      const verdict = await fl.first().getAttribute('data-verdict').catch(() => null);
+      check(await fl.count() === 1 && ft.includes(FRESH[t]) && ['fresh', 'stale', 'none', 'unknown'].includes(verdict ?? '') && (verdict === 'unknown' ? /not reported yet/.test(ft) : /ago|just now/.test(ft)),
+        `${label}: the ${t} tab says how old its data is (${FRESH[t]})`, `${ft} [${verdict}]`);
+    } else {
+      check(await fl.count() === 0, `${label}: the ${t} tab has no freshness line (its rows carry their own times)`);
+    }
     if (vp === 'phone') await noSideScroll(page, `${label} ${t} tab`);
     if (['performance', 'processes', 'network'].includes(t)) await shot(page, `${label}-tab-${t}`);
     await cleanCheck(page, `${label} ${t} tab`);
@@ -3166,11 +3193,19 @@ async function headerAgentUpgrade(page, f, vp, theme, label) {
     } finally { signedRelease(false); }
   }
 
-  // A signed agent: "Full agent", no upgrade.
+  // A signed agent: no upgrade, no green "Full agent" chip (0.88: it read as a
+  // health status; the attention strip names the agent), and Check for update
+  // now in More rather than on the header row.
   await go(page, `/endpoints/${f.c.chat.id}`);
-  await hdr.getByTestId('header-full-agent').waitFor({ timeout: 15_000 }).catch(() => {});
-  check(await hdr.getByTestId('header-full-agent').isVisible() && await hdr.getByTestId('header-upgrade-full-agent').count() === 0 && /Check for update now/.test(await hdr.getByTestId('header-update-agent').innerText().catch(() => '')),
-    `${label}: a signed agent shows "Full agent" and Check for update now, and no upgrade button`);
+  await page.getByTestId('attention-agent').waitFor({ timeout: 15_000 }).catch(() => {});
+  check(/Signed agent/.test(await page.getByTestId('attention-agent').innerText().catch(() => '')) && await hdr.getByTestId('header-full-agent').count() === 0
+      && await hdr.getByTestId('header-upgrade-full-agent').count() === 0 && await hdr.getByTestId('header-update-agent').count() === 0,
+    `${label}: a signed agent is named in the attention strip, with no "Full agent" chip, upgrade button or update button on the header row`);
+  await hdr.getByTestId('action-more').click();
+  const signedCheck = page.locator('[role="menu"] [data-testid="header-update-agent"]');
+  await signedCheck.waitFor({ timeout: 5_000 }).catch(() => {});
+  check(/Check for update now/.test(await signedCheck.innerText().catch(() => '')), `${label}: …and Check for update now is in More`, await signedCheck.innerText().catch(() => ''));
+  await page.keyboard.press('Escape');
   await fits('signed agent');
   await cleanCheck(page, `${label} header signed agent`);
   // 0.70.1: the same signed computer, reporting the published build while its

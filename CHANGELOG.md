@@ -5,6 +5,107 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.88.0] — 2026-11-26 · *Bridge*
+
+The device workspace: UX_ROADMAP.md P1-2 (audit F-7). The device page is the
+one a technician spends most time on, and it spent most of the first screen
+before saying anything about the device. At 1280 × 800 the first tab's content
+started at about 458 px, after a name row, an identity row, a wrapping row of
+nine buttons (the last one alone on a second line), a row of chips, a Tasks
+card saying "None in progress", the section buttons and a second row of tabs.
+At 390 px it started at about 680 px, below the fold. 0.87's new section row
+and Tasks card made it worse than the audit's 440 / 575. It also never said how
+old most of what it showed was, so a three-day-old inventory looked as current
+as one taken a minute ago.
+
+This release changes presentation only: no route, permission, migration or
+agent change. Nothing here is evidence about devices.
+
+### Changed
+
+- **A compact header.** Name, status, customer, site, last seen and hostname
+  are one row, wrapping only on a narrow window. Rename and Favourite are icon
+  buttons (with names for screen readers). The attention chips are one row that
+  scrolls sideways on a phone instead of stacking. Measured on the docs stack
+  (HARB-DISPATCH-01, light, network idle), from the top of the page to the
+  first tab's content:
+
+  | Width | 0.87.1 | 0.88.0 |
+  |---|---|---|
+  | 1280 | 458 px | 298–320 px |
+  | 390 | 680 px | 400–422 px |
+
+  The range is the freshness line (below) fitting on the tab row or wrapping
+  under it, depending on how many tabs the section has.
+- **One row of buttons.** The green *Full agent* badge is gone: it sat among
+  the buttons, looked like a health status and repeated the attention strip's
+  *Signed agent · v…*. A signed agent's *Check for update now* is in **More**;
+  when the agent is out of date, the *Agent out of date* chip runs it, as
+  before. A standard agent keeps *Upgrade to full agent* and *Update agent* on
+  the row, because there they are the next step. On a phone, *Diagnose*, *Run
+  action* and *Patch* are in **More** too, and *Terminal* and *More* are icons
+  with names, so Connect, Terminal, Tools and More fit one row at 375 px.
+- **Tasks with nothing in progress is one line**, not a card. It keeps "Last
+  checked", *Show recent* and *All tasks*; a task in flight still opens the
+  card.
+- **Sections and tabs share a row** where there is room, and the page's
+  vertical spacing is tighter.
+- **The header reads the action catalog through the device's own query** (the
+  same key as the Actions and Patches tabs, the Tools panel and the Services
+  and Processes controls). The Patches and Actions tabs fetched
+  `/actions/catalog` twice on every load; now once. The answer it uses is the
+  same: the per-device read is the catalog plus the approval mode, and a
+  signer that cannot be reached answers `null`, never an error.
+
+### Added
+
+- **How old each tab's data is.** Every tab that shows state the device
+  reported has one line at the end of the tab row: *Inventory collected*
+  (Overview, Software), *Last check-in* (Performance), *Last monitoring report*
+  (Monitoring), *Update scan* (Patches) and *Snapshot taken* (Processes,
+  Services, Network). The time is the device's report, never the moment the
+  browser fetched it.
+  - *Stale* is said only where a rule already existed: the 30-minute
+    check-in window (`HEARTBEAT_STALE_MS`, §49), the server's own verdict on
+    the update scan, and the snapshot tabs' "over a day old". Inventory and
+    the monitoring report show their age with no verdict, because nothing
+    defines one. A missing or unreadable time is *not reported yet*, never
+    fresh, and the line is not drawn until its source has loaded.
+  - Diagnostics, Actions, Event logs, Terminal, Files, Chat and History have
+    no line: they are request lists and live views, and each row carries its
+    own time.
+  - The rule is `apps/web/lib/device-freshness.ts`, pure (no imports, no
+    clock). The snapshot time is read through the tab's own query key, so it
+    costs no request.
+
+### Not changed, with the reason
+
+- **Requests per load** are 22–27, as before, less the duplicate catalog read.
+  About half are the shell's on every page (session, customers, chat inbox,
+  containment banner, app version, navigation, my tasks, confirm policy, the
+  alert badge). The device's own each feed a card that is on screen. Fewer
+  needs the API to answer in fewer reads, which is P1-16. `/me/navigation` is
+  still read twice per page: recording the visit refreshes the recent list.
+- **The Agent card** keeps every button it had, *Check for update now*
+  included.
+
+### Tests
+
+- `apps/web/scripts/unit-device-freshness.mjs` (69 checks, in CI as *Device tab
+  freshness (unit)*): every tab and its source, stale only under an existing
+  rule and at each window's boundary, unknown never fresh, relative ages, and
+  that the page passes `HEARTBEAT_STALE_MS` and the snapshot tabs' `OLD_MS`
+  rather than literals.
+- `e2e-ui.mjs`: the first tab's content starts within 380 px at 1440 and
+  540 px at 375; on a phone Connect, Terminal, Tools and More are one row; no
+  *Full agent* badge; every tab's freshness line (or its absence); a signed
+  agent is named in the attention strip and its *Check for update now* is in
+  More.
+- `e2e-navigation.mjs`: a Platform Admin is offered the agent's update, on the
+  row or in More.
+
+---
+
 ## [0.87.1] — 2026-11-25 · *Compass*
 
 The wording pass (UX_ROADMAP.md P1-1, owner decision 1a). 0.87's menu said

@@ -47,7 +47,7 @@ interface Item {
 
 function Chip({ item, onOpen }: { item: Item; onOpen: (t: WorkspaceTab) => void }) {
   const Icon = item.icon;
-  const cls = cn('inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors text-left', TONE[item.tone]);
+  const cls = cn('inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-0.5 text-xs font-medium transition-colors text-left', TONE[item.tone]);
   const body = (
     <>
       <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -170,44 +170,46 @@ export function DeviceHeader({
   const items = attentionItems(ep, mon, patches, inventory, agentAction);
 
   return (
-    <div className="space-y-2.5" data-testid="device-header">
-      <div>
-        <div className="min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-1">
-            <h1 className="text-xl font-semibold text-foreground break-words sm:text-2xl">{ep.name as string}</h1>
-            <RenameDevice endpointId={ep.id as string} ep={ep} />
-            <span className="ml-1"><FavoriteButton kind="device" refId={ep.id as string} label={ep.name as string} /></span>
-          </div>
-          {typeof ep.description === 'string' && ep.description && (
-            <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words" data-testid="device-description">{ep.description}</p>
-          )}
-          <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-            <div className="flex items-center gap-1.5" data-testid="device-status">
-              <dt className="sr-only">Status</dt>
-              <span className={cn('inline-block h-2.5 w-2.5 rounded-full shrink-0', STATUS_DOT[status.tone])} aria-hidden="true" />
-              <dd className="text-foreground font-medium" title={status.detail ?? undefined}>{status.label}</dd>
-            </div>
-            <div className="flex items-center gap-1"><dt>Customer</dt><dd className="text-foreground">{customer?.name ?? '—'}</dd></div>
-            <div className="flex items-center gap-1"><dt>Site</dt><dd className="text-foreground">{site?.name ?? '—'}</dd></div>
-            <div className="flex items-center gap-1">
-              <dt>Last seen</dt>
-              <dd className="text-foreground" title={lastSeen ? formatDate(lastSeen) : undefined}>
-                {ago(lastSeen)}
-                {lastSeenStale && status.tone !== 'offline' && (
-                  <span className="ml-1.5 rounded border border-amber-300 bg-amber-50 px-1 text-[11px] text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">stale</span>
-                )}
-              </dd>
-            </div>
-            {typeof ep.hostname === 'string' && ep.hostname && ep.hostname !== ep.name && (
-              <div className="flex items-center gap-1"><dt>Hostname</dt><dd className="font-mono text-xs text-foreground">{ep.hostname}</dd></div>
-            )}
-          </dl>
-          {status.detail && <p className="text-xs text-muted-foreground">{status.detail}</p>}
+    <div className="space-y-2" data-testid="device-header">
+      {/* 0.88 (P1-2, F-7): one row for who and where — name, status, customer,
+          site, last seen — wrapping only where the window is narrow. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <div className="flex min-w-0 items-center gap-0.5">
+          <h1 className="text-xl font-semibold text-foreground break-words sm:text-2xl">{ep.name as string}</h1>
+          <RenameDevice endpointId={ep.id as string} ep={ep} />
+          <FavoriteButton kind="device" refId={ep.id as string} label={ep.name as string} compact />
         </div>
+        <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+          <div className="flex items-center gap-1.5" data-testid="device-status">
+            <dt className="sr-only">Status</dt>
+            <span className={cn('inline-block h-2.5 w-2.5 rounded-full shrink-0', STATUS_DOT[status.tone])} aria-hidden="true" />
+            <dd className="text-foreground font-medium" title={status.detail ?? undefined}>{status.label}</dd>
+          </div>
+          <div className="flex items-center gap-1"><dt>Customer</dt><dd className="text-foreground">{customer?.name ?? '—'}</dd></div>
+          <div className="flex items-center gap-1"><dt>Site</dt><dd className="text-foreground">{site?.name ?? '—'}</dd></div>
+          <div className="flex items-center gap-1">
+            <dt>Last seen</dt>
+            <dd className="text-foreground" title={lastSeen ? formatDate(lastSeen) : undefined}>
+              {ago(lastSeen)}
+              {lastSeenStale && status.tone !== 'offline' && (
+                <span className="ml-1.5 rounded border border-amber-300 bg-amber-50 px-1 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">stale</span>
+              )}
+            </dd>
+          </div>
+          {typeof ep.hostname === 'string' && ep.hostname && ep.hostname !== ep.name && (
+            <div className="flex items-center gap-1"><dt>Hostname</dt><dd className="font-mono text-xs text-foreground">{ep.hostname}</dd></div>
+          )}
+        </dl>
       </div>
+      {typeof ep.description === 'string' && ep.description && (
+        <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words" data-testid="device-description">{ep.description}</p>
+      )}
+      {status.detail && <p className="text-xs text-muted-foreground" data-testid="device-status-detail">{status.detail}</p>}
       {actions}
 
-      <div className="flex flex-wrap gap-2" aria-label="Needs attention" data-testid="attention-strip">
+      {/* On a phone the chips are one row that scrolls sideways (each is a
+          button or link, so the row is reachable by keyboard); wider, they wrap. */}
+      <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5 sm:flex-wrap sm:overflow-visible" aria-label="Needs attention" role="group" data-testid="attention-strip">
         {items.map((i) => <Chip key={i.key} item={i} onOpen={onOpenTab} />)}
       </div>
     </div>
