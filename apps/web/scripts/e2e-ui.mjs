@@ -1690,7 +1690,16 @@ async function deviceListP13(page, f, vp, label) {
 
     // Built-in views: the server's own filters, in the address bar.
     const views = page.locator('[data-testid="views-menu"]');
-    const openBuiltin = async (id) => { await views.click(); await page.locator(`[role="menu"] [data-testid="builtin-${id}"]`).click(); await settled(page); };
+    // Wait for the view to be applied (it empties the search box) before typing a search, or the reset wipes what was typed.
+    const openBuiltin = async (id) => {
+      await views.click();
+      const item = page.locator(`[role="menu"] [data-testid="builtin-${id}"]`);
+      const name = (await item.innerText()).trim();
+      await item.click();
+      await page.waitForFunction((n) => document.querySelector('[data-testid="views-menu"]')?.getAttribute('aria-label') === n
+        && (document.querySelector('input[aria-label="Search devices"]')?.value ?? '') === '', name, { timeout: 10_000 }).catch(() => {});
+      await settled(page);
+    };
     await views.click();
     const offered = await page.locator('[role="menu"] [data-testid^="builtin-"]').evaluateAll((els) => els.map((e) => e.getAttribute('data-testid')));
     const notOffered = await page.locator('[role="menu"] [data-testid="builtin-not-offered"]').innerText().catch(() => '');
@@ -1703,11 +1712,16 @@ async function deviceListP13(page, f, vp, label) {
     check(q.get('platform') === 'windows' && q.get('windowsRole') === 'workstation' && await page.locator('[data-testid="builtin-view"]').isVisible()
       && await views.getAttribute('aria-label') === 'Windows workstations',
     `${label}: "Windows workstations" sets platform=windows&windowsRole=workstation, names itself and says what it shows`, page.url());
+    // Type only once the view's own rows are on screen, then wait for the search to reach the address bar.
+    await rowsSettle(page, 5, true);
     await search.fill(`${TAG}-WS`);
+    await page.waitForURL((u) => u.searchParams.get('search') === `${TAG}-WS` && u.searchParams.get('windowsRole') === 'workstation', { timeout: 10_000 }).catch(() => {});
     const wsN = await rowsSettle(page, 5);
-    check(wsN === 5, `${label}: the five Windows 11 Pro fixtures are workstations`, `rows ${wsN}`);
+    check(wsN === 5, `${label}: the five Windows 11 Pro fixtures are workstations`,
+      `rows ${wsN}; url ${page.url()}; box "${await search.inputValue()}"; names ${(await page.locator('[data-testid="device-name"]').allInnerTexts()).slice(0, 6).join(', ')}`);
     await openBuiltin('windows-servers');
     await search.fill(`${TAG}-WS`);
+    await page.waitForURL((u) => u.searchParams.get('search') === `${TAG}-WS` && u.searchParams.get('windowsRole') === 'server', { timeout: 10_000 }).catch(() => {});
     const srvN = await rowsSettle(page, 0);
     check(srvN === 0, `${label}: …and none of them is a server`, `rows ${srvN}`);
 
@@ -1785,7 +1799,7 @@ async function filtersSheet(page, vp, label) {
   await rowsSettle(page, 5);
   await page.keyboard.press('Escape');
   await sheet.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
-  check((await trigger.innerText()).trim() === 'Filters', `${label}: and clearing it there puts the count back`, await trigger.innerText());
+  check(await trigger.getAttribute('aria-label') === 'Filters' && (await trigger.innerText()).trim() === '', `${label}: and clearing it there takes the count off`, `${await trigger.getAttribute('aria-label')} / ${await trigger.innerText()}`);
   await cleanCheck(page, `${label} filters sheet`);
 }
 
