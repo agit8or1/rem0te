@@ -834,19 +834,26 @@ async function devicesAndWorkspace(page, f, vp, label) {
   const tabs = (await page.locator('[data-testid="workspace-groups"] [data-tabs]').evaluateAll((els) => els.map((e) => e.getAttribute('data-tabs')))).join(' ').split(' ').filter(Boolean);
   const expected = ['overview', 'performance', 'monitoring', 'software', 'processes', 'services', 'network', 'patches', 'events', 'diagnostics', 'actions', 'history'];
   check(expected.every((t) => tabs.includes(t)), `${label}: all twelve workspace tabs for a Windows agent`, tabs.join(','));
-  // 0.88 (P1-2): the compact header. Before it the first tab's content started
-  // at ≈ 458 px (1280 wide) and ≈ 680 px (390 wide); the bounds leave room for
-  // a fixture device's longer name and chips, and fail on a return to that.
+  // 0.88 (P1-2): the compact header, checked by what it changed rather than
+  // by a total that a device's own messages and agent buttons legitimately
+  // lengthen: the identity row (name, status, customer, site, last seen) is
+  // at most two lines on a desktop and a few on a phone; Connect, Terminal,
+  // Tools and More are one row at both widths; and on a phone the attention
+  // chips are one row that scrolls sideways instead of stacking.
   const geo = await page.evaluate(() => {
-    const panel = document.querySelector('[role="tabpanel"][data-state="active"]');
+    const h = (sel) => Math.round(document.querySelector(sel)?.getBoundingClientRect().height ?? 0);
     const btns = [...document.querySelectorAll('[data-testid="device-actions"] :is([data-testid="action-connect"], [data-testid="action-terminal"], [data-testid="action-tools"], [data-testid="action-more"])')]
       .filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
       .map((e) => Math.round(e.getBoundingClientRect().top));
-    return { panelTop: panel ? Math.round(panel.getBoundingClientRect().top + window.scrollY) : null, rows: new Set(btns).size, buttons: btns.length };
+    const chips = [...document.querySelectorAll('[data-testid="attention-strip"] > *')].map((e) => Math.round(e.getBoundingClientRect().top));
+    return { identity: h('[data-testid="device-identity"]'), rows: new Set(btns).size, buttons: btns.length, chipRows: new Set(chips).size, chips: chips.length };
   });
-  const bound = vp === 'phone' ? 540 : 380;
-  check(geo.panelTop !== null && geo.panelTop <= bound, `${label}: the first tab's content starts within ${bound} px (compact header, 0.88)`, JSON.stringify(geo));
-  if (vp === 'phone') check(geo.buttons >= 3 && geo.rows === 1, `${label}: on a phone Connect, Terminal, Tools and More are one row; Diagnose, Run action and Patch are in More`, JSON.stringify(geo));
+  // Two lines on a desktop: a long status ("Reachable (RustDesk) · agent silent 57 min" with its
+  // stale mark) wraps the facts under the name, which is fine.
+  const identityMax = vp === 'phone' ? 150 : 64;
+  check(geo.identity > 0 && geo.identity <= identityMax, `${label}: the identity row (name, status, customer, site, last seen) takes at most ${identityMax} px (compact header, 0.88)`, JSON.stringify(geo));
+  check(geo.buttons >= 3 && geo.rows === 1, `${label}: Connect, Terminal, Tools and More are one row${vp === 'phone' ? '; Diagnose, Run action and Patch are in More' : ''}`, JSON.stringify(geo));
+  if (vp === 'phone') check(geo.chips > 0 && geo.chipRows === 1, `${label}: on a phone the attention chips are one row that scrolls, not a stack`, JSON.stringify(geo));
   check(await page.locator('[data-testid="device-actions"] [data-testid="header-full-agent"]').count() === 0, `${label}: no green "Full agent" chip in the header`);
   await cleanCheck(page, `${label} workspace`);
   // What each tab must show from the fixtures, so "renders" means rendered.

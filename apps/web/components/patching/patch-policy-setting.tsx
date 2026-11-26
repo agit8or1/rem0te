@@ -85,7 +85,7 @@ export function PatchPolicySetting({ endpointId }: { endpointId: string }) {
           </p>
         )}
         <div className="flex flex-wrap items-center gap-2">
-          <select aria-label="Patch policy" className={selectClass} value={value} disabled={!p.mayEdit} onChange={(e) => setValue(e.target.value)}>
+          <select aria-label="Patch policy" className={`${selectClass} max-w-full min-w-0`} value={value} disabled={!p.mayEdit} onChange={(e) => setValue(e.target.value)}>
             <option value="inherit">Inherit{p.companyWide ? ` — the company-wide policy "${p.companyWide.name}"` : ' (this customer has no company-wide policy)'}</option>
             <option value="exclude">Exclude — no automatic patching</option>
             {p.choices.map((c) => <option key={c.id} value={`policy:${c.id}`}>Use policy &quot;{c.name}&quot;</option>)}

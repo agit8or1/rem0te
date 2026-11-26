@@ -173,7 +173,7 @@ export function DeviceHeader({
     <div className="space-y-2" data-testid="device-header">
       {/* 0.88 (P1-2, F-7): one row for who and where — name, status, customer,
           site, last seen — wrapping only where the window is narrow. */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1" data-testid="device-identity">
         <div className="flex min-w-0 items-center gap-0.5">
           <h1 className="text-xl font-semibold text-foreground break-words sm:text-2xl">{ep.name as string}</h1>
           <RenameDevice endpointId={ep.id as string} ep={ep} />

@@ -78,6 +78,15 @@ agent change. Nothing here is evidence about devices.
     clock). The snapshot time is read through the tab's own query key, so it
     costs no request.
 
+### Fixed
+
+- **The Patches tab no longer scrolls sideways on a phone.** The per-device
+  *Patch policy* select sizes itself to its longest option, and 0.87.1's
+  *Inherit (this customer has no company-wide policy)* renders a little wider
+  than *business* did, which pushed it 40 px past a 375 px screen. It is now
+  capped at its container's width (the option text is unchanged and still
+  shows in full when the list is open). Found by the browser suite's phone run.
+
 ### Not changed, with the reason
 
 - **Requests per load** are 22–27, as before, less the duplicate catalog read.
@@ -96,8 +105,11 @@ agent change. Nothing here is evidence about devices.
   rule and at each window's boundary, unknown never fresh, relative ages, and
   that the page passes `HEARTBEAT_STALE_MS` and the snapshot tabs' `OLD_MS`
   rather than literals.
-- `e2e-ui.mjs`: the first tab's content starts within 380 px at 1440 and
-  540 px at 375; on a phone Connect, Terminal, Tools and More are one row; no
+- `e2e-ui.mjs`: the identity row takes at most two lines at 1440 (≤ 64 px)
+  and ≤ 150 px at 375; Connect, Terminal, Tools and More are one row at
+  both widths; on a phone the attention chips are one row. These check what
+  changed, not the header's total height, which a device's own messages and
+  a standard agent's upgrade buttons legitimately lengthen; no
   *Full agent* badge; every tab's freshness line (or its absence); a signed
   agent is named in the attention strip and its *Check for update now* is in
   More.
