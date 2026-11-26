@@ -400,7 +400,8 @@ const SECTIONS: Section[] = [
           so monitoring, patching and actions are not reporting; try <strong className="text-foreground">Update
           agent</strong> on its Agent card. Grey is offline. The Online filter has all three, the dashboard counts
           agent-silent devices apart from online ones, and the CSV has a Connectivity column. On a phone the
-          filters sit behind a <strong className="text-foreground">Filters (n)</strong> button. To be alerted
+          toolbar is one row (0.89): search, <strong className="text-foreground">Filters</strong> (with how many are
+          set), Views and a ⋯ menu for compact rows and the CSV export. To be alerted
           when an agent goes silent, add the <em>Agent silent</em> monitor in Monitoring → Monitoring policies (<em>Add recommended</em> includes it).
         </p>
         <p>
@@ -420,8 +421,19 @@ const SECTIONS: Section[] = [
           user from 2000, so a 1920-pixel screen shows everything but Logged-in user. The column picker shows each
           one&apos;s width, a column you chose is only hidden while the window is narrower, and the dot beside each
           name still shows whether it is online. Alerts is off by
-          default, because Health already shows the worst open alert. Device names never wrap, long customer and site
-          names are cut short with the full name on hover, and Connect stays on the right.
+          default, because Health already shows the worst open alert. Device names never wrap on a desktop, long customer and site
+          names are cut short with the full name on hover, and Connect stays on the right. When another device you can
+          see has the same name, the row says its customer and site under the name, at every width (0.89); on a phone
+          every row does, and long names wrap instead of sliding under Connect.
+        </p>
+        <p>
+          <strong className="text-foreground">Built-in views (0.89)</strong>, at the top of Views: My favourites,
+          Recently opened, Critical alerts, Offline, Windows servers, Windows workstations, Linux, macOS, Restart
+          pending, Security or critical updates pending, Agent needs an update and Warranty ending. Each only sets the
+          list&apos;s own filters, keeping the customer you chose. A Windows device that reports no edition (only
+          &ldquo;Windows NT 10.0&hellip;&rdquo;) is in neither Windows view, and only a signed agent&apos;s update scan
+          can say an update is security or critical. Add a device to your favourites from its row&apos;s ⋯ menu or its
+          page; favourites and recent devices are yours alone and never part of a rule group.
         </p>
         <p>
           <strong className="text-foreground">Columns</strong> and row density are remembered in this browser.{' '}

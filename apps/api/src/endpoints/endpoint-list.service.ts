@@ -42,6 +42,8 @@ import { likeEscape } from '../common/like';
 import { groupsCell } from '../device-views/rules';
 import { ruleFilters, ruleNeedsAlerts } from '../device-views/group-rule';
 import { warrantyState, WARRANTY_STATE_LABEL } from '../warranty/vendors';
+import { myDeviceIds } from '../navigation/my-device-items';
+import { CLASSIFICATIONS } from '../patching/posture';
 export { SORT_KEYS, LIST_FILTER_KEYS, parseListQuery } from './list-query';
 export type { SortKey, ListQuery } from './list-query';
 
@@ -81,6 +83,8 @@ const CONNECTIVITY_CSV: Record<Connectivity, string> = { online: 'agent checking
 export type RuleGroup = { id: string; name: string; customerId: string; rule: ListFilters | null };
 /** Rule groups evaluated at once; each is one or two queries. */
 const RULE_EVAL_CONCURRENCY = 6;
+/** 0.89: "Security Updates" and "Critical Updates", by their Windows Update classification GUIDs (patching/posture.ts). */
+const CRITICAL_CLASSES = Object.keys(CLASSIFICATIONS).filter((g) => CLASSIFICATIONS[g] === 'Security Updates' || CLASSIFICATIONS[g] === 'Critical Updates');
 /** Version strings padded to four parts, so 1.4 and 1.4.0 compare equal. */
 const pad4 = (p: number[]) => [...p, 0, 0, 0, 0].slice(0, 4);
 const OTHER_PLATFORM: Prisma.EndpointWhereInput[] = [
@@ -204,6 +208,17 @@ export class EndpointListService {
       const sha = this.updateTrust.agentTarget()?.sha256 ?? null;
       out.push(Prisma.sql`((e."updateChannel" IS DISTINCT FROM 'signed' AND e.platform ILIKE 'win%' AND av.parts IS NOT NULL AND ${served}::int[] IS NOT NULL AND av.parts < ${served}::int[]) OR (e."updateChannel" = 'signed' AND ${sha}::text IS NOT NULL AND e."agentSha256" IS DISTINCT FROM ${sha}::text))`);
     }
+    // 0.89: a security or critical update pending, by the classification a
+    // signed agent's scan records per update (patching/posture.ts). A
+    // standard agent's scan carries none, so it never matches.
+    if (f.patches === 'critical') out.push(Prisma.sql`EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(i."patchPosture"->'updates') = 'array' THEN i."patchPosture"->'updates' ELSE '[]'::jsonb END) u WHERE u->>'classification' = ANY(${CRITICAL_CLASSES}::text[]))`);
+    // 0.89: Windows server or workstation, from the reported OS name only
+    // (the inventory caption, else the recorded OS version). A name that says
+    // neither — none reported, a bare build number, or "Microsoft Windows NT
+    // 10.0.26100.0", which names no edition (build 26100 is both Windows 11
+    // 24H2 and Server 2025) — matches neither role.
+    if (f.windowsRole === 'server') out.push(Prisma.sql`e.platform ILIKE 'win%' AND coalesce(i."osCaption", e."osVersion") ILIKE '%server%'`);
+    if (f.windowsRole === 'workstation') out.push(Prisma.sql`e.platform ILIKE 'win%' AND coalesce(i."osCaption", e."osVersion") ILIKE '%windows%' AND coalesce(i."osCaption", e."osVersion") NOT ILIKE '%server%' AND coalesce(i."osCaption", e."osVersion") NOT ILIKE '%windows nt %'`);
     const min = versionParts(f.rustdeskMin), max = versionParts(f.rustdeskMax);
     if (min) out.push(Prisma.sql`rv.parts >= ${pad4(min)}::int[]`);
     if (max) out.push(Prisma.sql`rv.parts <= ${pad4(max)}::int[]`);
@@ -221,6 +236,9 @@ export class EndpointListService {
       and.push({ groupMemberships: { some: { endpointGroupId: q.groupId } } });
     }
     if (q.ids) and.push({ id: { in: q.ids } });
+    // 0.89: the caller's own favourites or recent devices, read by withMine.
+    // Unread is nothing, never everything.
+    if (q.mine) and.push({ id: { in: q.mineIds ?? [] } });
     return { AND: and };
   }
 
@@ -340,6 +358,32 @@ export class EndpointListService {
     if (q.groupRule && ruleNeedsAlerts(q.groupRule.rule)) {
       throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'This rule group selects devices by their alerts, which needs the monitoring:alerts permission.' });
     }
+  }
+
+  /** 0.89: the caller's own favourite or recent device ids, when the view asks for them. */
+  private async withMine(actor: ActorContext, q: ListQuery): Promise<ListQuery> {
+    if (!q.mine || q.mineIds) return q;
+    return { ...q, mineIds: await myDeviceIds(this.prisma, actor, q.mine) };
+  }
+
+  /**
+   * 0.89 (UX P1-3, directive §9: "make the customer and site visible when
+   * device names are duplicated"): which of these rows share their name,
+   * case-insensitively, with another device the caller can see (same
+   * visibility and archived filter as the list, every page). The list then
+   * shows the row's customer and site beside its name. Names only; the row
+   * is still identified by its id.
+   */
+  private async sharedNames(actor: ActorContext, rows: SqlRow[], status: ListQuery['status']): Promise<Set<string>> {
+    const names = [...new Set(rows.map((r) => r.name.toLowerCase()))];
+    if (!names.length) return new Set();
+    const same = await this.prisma.endpoint.findMany({
+      where: { AND: [this.scopedWhere(actor, { status }), { OR: names.map((n) => ({ name: { equals: n, mode: 'insensitive' as const } })) }] },
+      select: { name: true },
+    });
+    const n = new Map<string, number>();
+    for (const r of same) n.set(r.name.toLowerCase(), (n.get(r.name.toLowerCase()) ?? 0) + 1);
+    return new Set([...n].filter(([, c]) => c > 1).map(([k]) => k));
   }
 
   // ── Rule groups (0.34) ────────────────────────────────────────────────────
@@ -515,7 +559,7 @@ export class EndpointListService {
   }
 
   private async ids(actor: ActorContext, q: ListQuery): Promise<string[]> {
-    const rows = await this.prisma.endpoint.findMany({ where: this.filteredWhere(actor, q), select: { id: true } });
+    const rows = await this.prisma.endpoint.findMany({ where: this.filteredWhere(actor, await this.withMine(actor, q)), select: { id: true } });
     return rows.map((r) => r.id);
   }
 
@@ -538,10 +582,11 @@ export class EndpointListService {
     // The facet already evaluated every rule group over the caller's visible
     // set with this status, which contains every row of this page.
     rows = await this.withRuleGroups(actor, rows, q.status, rules);
+    const shared = await this.sharedNames(actor, rows, q.status);
     const now = Date.now();
     const served = this.updateTrust.servedAgent();
     return {
-      rows: rows.map((r) => this.rowView(r, alerts, now, served)),
+      rows: rows.map((r) => ({ ...this.rowView(r, alerts, now, served), nameShared: shared.has(r.name.toLowerCase()) })),
       total, page, pageSize: q.pageSize, pages: Math.max(1, Math.ceil(total / q.pageSize)),
       sort: q.sort, dir: q.dir,
       alertsVisible: alerts.visible,
@@ -642,7 +687,7 @@ export class EndpointListService {
           platform: q.platform ?? null, os: q.os ?? null, tag: q.tag ?? null, patches: q.patches ?? null,
           rustdeskMin: q.rustdeskMin ?? null, rustdeskMax: q.rustdeskMax ?? null,
           notSeenDays: q.notSeenDays ?? null, seenWithinDays: q.seenWithinDays ?? null,
-          warranty: q.warranty ?? null,
+          warranty: q.warranty ?? null, windowsRole: q.windowsRole ?? null, mine: q.mine ?? null,
         },
         ...(q.ids ? { selection: { requested: q.ids.length, ids: q.ids } } : {}),
         sort: q.sort, dir: q.dir, viaTechnicianAssignment: !!actor.technician,

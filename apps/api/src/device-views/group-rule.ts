@@ -22,6 +22,7 @@ import { parseListFilters, storedForm, type ListFilterKey, type ListFilters } fr
 export const RULE_KEYS = [
   'siteId', 'online', 'alerts', 'restartPending', 'agent',
   'platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays', 'warranty',
+  'windowsRole',
 ] as const satisfies readonly ListFilterKey[];
 export type RuleKey = (typeof RULE_KEYS)[number];
 
@@ -35,6 +36,7 @@ export const RULE_REFUSED: Partial<Record<ListFilterKey, string>> = {
   businessId: 'a rule group belongs to one business already',
   groupId: 'a rule cannot refer to another group',
   status: 'archived computers are governed by the list’s own Archived filter, not by the rule',
+  mine: 'favourites and recent devices are one person’s; a rule group is the same for everyone who reads it',
 };
 
 /** Rule groups per business. Each one is evaluated on every list read that shows groups, so the count is bounded. */

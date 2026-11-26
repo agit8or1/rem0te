@@ -1634,6 +1634,134 @@ async function accentPages(browser, f, theme, label) {
   }
 }
 
+/**
+ * 0.89 (UX P1-3): the device list. Two devices with one name in two customers
+ * each say which customer and site they are, at every width; on a phone every
+ * row does, the toolbar is one row and no name hides under the sticky Connect
+ * column; the built-in views set the server's own filters; a star from the row
+ * menu puts a device in "My favourites" and taking it off takes it out; the
+ * density control is a toggle named for what it does.
+ */
+async function deviceListP13(page, f, vp, label) {
+  const twin = `${TAG}-TWIN-${label.replace('/', '-').toUpperCase()}`;
+  const mkTwin = (biz) => prisma.endpoint.create({ data: {
+    tenantId: f.tenant.id, customerId: biz.id, name: twin, hostname: `${twin.toLowerCase()}.corp.example.com`, platform: 'Windows', osVersion: 'Windows 11 Pro',
+    status: 'ACTIVE', isOnline: false, isManaged: true, accessMode: 'COMPANY_WIDE', lastSeenAt: new Date(Date.now() - 86400_000), deviceClass: 'WORKSTATION', agentVersion: '0.33.0',
+  } });
+  const twins = [await mkTwin(f.A), await mkTwin(f.B)];
+  try {
+    await go(page, '/endpoints');
+    const search = page.locator('input[aria-label="Search devices"]');
+    await search.fill(twin);
+    const n = await rowsSettle(page, 2);
+    const where = await page.locator('[data-testid="device-where"]').evaluateAll((els) => els.map((e) => ({ text: e.textContent ?? '', shared: e.getAttribute('data-shared'), shown: e.getBoundingClientRect().height > 0 })));
+    check(n === 2 && where.length === 2 && where.every((w) => w.shared === 'true' && w.shown)
+      && where.some((w) => w.text.includes(`${TAG} Acme`)) && where.some((w) => w.text.includes(`${TAG} Birch`)),
+    `${label}: two devices named alike each show their customer (and site) under the name (directive §9)`, JSON.stringify(where));
+    const links = await page.locator(`table a[data-testid="device-name"]`).evaluateAll((els) => els.map((e) => e.getAttribute('href')));
+    check(new Set(links).size === 2 && twins.every((t) => links.includes(`/endpoints/${t.id}`)), `${label}: …and each still opens by its own id`, links.join(', '));
+
+    await search.fill(`${TAG}-WS`);
+    await rowsSettle(page, 5);
+    const ws = await page.locator('[data-testid="device-where"]').evaluateAll((els) => els.map((e) => ({ shared: e.getAttribute('data-shared'), shown: e.getBoundingClientRect().height > 0 })));
+    if (vp === 'phone') {
+      check(ws.length === 5 && ws.every((w) => w.shown), `${label}: on a phone every row names its customer under the device (the Customer column is hidden)`, JSON.stringify(ws));
+      const geo = await page.evaluate(() => {
+        const tb = document.querySelector('[data-testid="device-toolbar"]');
+        const vis = [...tb.querySelectorAll('button, input')].filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+        let covered = 0;
+        for (const tr of document.querySelectorAll('tbody tr')) {
+          const a = tr.querySelector('[data-testid="device-name"]')?.getBoundingClientRect(); const c = tr.lastElementChild?.getBoundingClientRect();
+          if (a && c && a.right > c.left + 1) covered++;
+        }
+        return { rows: new Set(vis.map((e) => Math.round(e.getBoundingClientRect().top))).size, controls: vis.length, covered };
+      });
+      check(geo.rows === 1 && geo.controls === 4, `${label}: the toolbar is one row — search, Filters, Views and a menu (F-21)`, JSON.stringify(geo));
+      check(geo.covered === 0, `${label}: no device name hides under the sticky Connect column`, JSON.stringify(geo));
+    } else {
+      check(ws.length === 5 && ws.every((w) => !w.shown), `${label}: on a desktop a name nobody else has needs no customer line (the Customer column says it)`, JSON.stringify(ws));
+      const dens = page.locator('[data-testid="density-toggle"]');
+      const before = await dens.getAttribute('aria-pressed');
+      await dens.click();
+      const after = await dens.getAttribute('aria-pressed');
+      check((await dens.innerText()).trim() === 'Compact rows' && before !== after, `${label}: density is a toggle named "Compact rows", its state in aria-pressed (F-21)`, `${before} → ${after}`);
+      await dens.click();
+    }
+
+    // Built-in views: the server's own filters, in the address bar.
+    const views = page.locator('[data-testid="views-menu"]');
+    // Wait for the view to be applied (it empties the search box) before typing a search, or the reset wipes what was typed.
+    const openBuiltin = async (id) => {
+      await views.click();
+      const item = page.locator(`[role="menu"] [data-testid="builtin-${id}"]`);
+      const name = (await item.innerText()).trim();
+      await item.click();
+      await page.waitForFunction((n) => document.querySelector('[data-testid="views-menu"]')?.getAttribute('aria-label') === n
+        && (document.querySelector('input[aria-label="Search devices"]')?.value ?? '') === '', name, { timeout: 10_000 }).catch(() => {});
+      await settled(page);
+    };
+    await views.click();
+    const offered = await page.locator('[role="menu"] [data-testid^="builtin-"]').evaluateAll((els) => els.map((e) => e.getAttribute('data-testid')));
+    const notOffered = await page.locator('[role="menu"] [data-testid="builtin-not-offered"]').innerText().catch(() => '');
+    await page.keyboard.press('Escape');
+    check(['favorites', 'recent', 'critical', 'offline', 'windows-servers', 'windows-workstations', 'linux', 'macos', 'restart', 'critical-updates', 'agent-outdated', 'warranty'].every((id) => offered.includes(`builtin-${id}`))
+      && /failed automation/.test(notOffered) && /aging hardware/.test(notOffered) && /backup failures/.test(notOffered),
+    `${label}: the Views menu offers the built-in views and says which of §9's are not offered yet, and why`, `${offered.join(',')} | ${notOffered}`);
+    await openBuiltin('windows-workstations');
+    const q = new URL(page.url()).searchParams;
+    check(q.get('platform') === 'windows' && q.get('windowsRole') === 'workstation' && await page.locator('[data-testid="builtin-view"]').isVisible()
+      && await views.getAttribute('aria-label') === 'Windows workstations',
+    `${label}: "Windows workstations" sets platform=windows&windowsRole=workstation, names itself and says what it shows`, page.url());
+    // Type only once the view's own rows are on screen, then wait for the search to reach the address bar.
+    await rowsSettle(page, 5, true);
+    await search.fill(`${TAG}-WS`);
+    await page.waitForURL((u) => u.searchParams.get('search') === `${TAG}-WS` && u.searchParams.get('windowsRole') === 'workstation', { timeout: 10_000 }).catch(() => {});
+    const wsN = await rowsSettle(page, 5);
+    check(wsN === 5, `${label}: the five Windows 11 Pro fixtures are workstations`,
+      `rows ${wsN}; url ${page.url()}; box "${await search.inputValue()}"; names ${(await page.locator('[data-testid="device-name"]').allInnerTexts()).slice(0, 6).join(', ')}`);
+    await openBuiltin('windows-servers');
+    await search.fill(`${TAG}-WS`);
+    await page.waitForURL((u) => u.searchParams.get('search') === `${TAG}-WS` && u.searchParams.get('windowsRole') === 'server', { timeout: 10_000 }).catch(() => {});
+    const srvN = await rowsSettle(page, 0);
+    check(srvN === 0, `${label}: …and none of them is a server`, `rows ${srvN}`);
+
+    // Favourites from the row menu, and "My favourites". Start from "not a
+    // favourite" (whatever an earlier section left), and put it back after.
+    const favWhere = { userId: f.admin.id, list: 'favorite', kind: 'device', ref: f.main.id };
+    const priorFav = await prisma.userNavItem.findFirst({ where: favWhere });
+    await prisma.userNavItem.deleteMany({ where: favWhere });
+    try {
+      await go(page, '/endpoints');
+      await search.fill(f.main.name);
+      await rowsSettle(page, 1);
+      await page.getByRole('button', { name: `More for ${f.main.name}` }).click();
+      const toggle = page.locator('[role="menu"] [data-testid="row-toggle-favorite"]');
+      check((await toggle.innerText()).includes('Add to favourites'), `${label}: the row menu offers "Add to favourites"`, await toggle.innerText());
+      await toggle.click();
+      const starRow = page.locator(`tbody tr:has(a[href="/endpoints/${f.main.id}"]) [data-testid="row-favorite"]`);
+      await starRow.waitFor({ timeout: 10_000 }).catch(() => {});
+      check(await starRow.count() === 1, `${label}: …and the row then shows a star`);
+      await openBuiltin('favorites');
+      await search.fill(f.main.name);
+      const favN = await rowsSettle(page, 1);
+      check(favN === 1 && new URL(page.url()).searchParams.get('mine') === 'favorite', `${label}: "My favourites" (mine=favorite) lists it`, `rows ${favN}, ${page.url()}`);
+      await page.getByRole('button', { name: `More for ${f.main.name}` }).click();
+      await page.locator('[role="menu"] [data-testid="row-toggle-favorite"]').click();
+      const gone = await rowsSettle(page, 0);
+      check(gone === 0, `${label}: taking the star off takes it out of "My favourites" without a reload`, `rows ${gone}`);
+    } finally {
+      await prisma.userNavItem.deleteMany({ where: favWhere });
+      if (priorFav) await prisma.userNavItem.create({ data: priorFav });
+    }
+    await go(page, '/endpoints');
+    await noSideScroll(page, `${label} device list (0.89)`);
+    await shot(page, `${label}-device-list-favourites`);
+    await cleanCheck(page, `${label} device list (0.89)`);
+  } finally {
+    await prisma.endpoint.deleteMany({ where: { id: { in: twins.map((t) => t.id) } } });
+  }
+}
+
 /** At 375 px the filters are behind "Filters (n)" in a sheet; on desktop they stay inline. */
 async function filtersSheet(page, vp, label) {
   await go(page, '/endpoints');
@@ -1645,7 +1773,8 @@ async function filtersSheet(page, vp, label) {
     check(!(await trigger.isVisible()) && await inlineOnline.isVisible(), `${label}: the filters sit inline beside the search, with no Filters button`);
     return;
   }
-  check(await trigger.isVisible() && !(await inlineOnline.isVisible()) && (await trigger.innerText()).trim() === 'Filters', `${label}: the filters are behind a "Filters" button, not stacked above the table`, await trigger.innerText());
+  // 0.89: an icon button named "Filters" (with the count when some are set), so the toolbar is one row.
+  check(await trigger.isVisible() && !(await inlineOnline.isVisible()) && await trigger.getAttribute('aria-label') === 'Filters', `${label}: the filters are behind a "Filters" button, not stacked above the table`, String(await trigger.getAttribute('aria-label')));
   const table = await page.locator('table').first().boundingBox();
   const search = await page.locator('input[aria-label="Search devices"]').boundingBox();
   check(table && search && table.y - (search.y + search.height) < 200, `${label}: the table starts within 200 px of the search box`, `search bottom ${search && Math.round(search.y + search.height)}, table top ${table && Math.round(table.y)}`);
@@ -1661,7 +1790,7 @@ async function filtersSheet(page, vp, label) {
   check(n === 4, `${label}: Online, chosen in the sheet, applies at once (four of the five are online)`, `rows ${n}`);
   await sheet.locator('[data-testid="filters-sheet-done"]').click();
   await sheet.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
-  check(!(await sheet.isVisible()) && (await trigger.innerText()).trim() === 'Filters (1)', `${label}: closing it leaves "Filters (1)" on the button`, await trigger.innerText());
+  check(!(await sheet.isVisible()) && await trigger.getAttribute('aria-label') === 'Filters (1 set)' && (await trigger.innerText()).trim() === '1', `${label}: closing it leaves the count on the button ("Filters (1 set)")`, `${await trigger.getAttribute('aria-label')} / ${await trigger.innerText()}`);
   await noSideScroll(page, `${label} filters sheet`);
   await trigger.click();
   await sheet.waitFor({ timeout: 5_000 });
@@ -1670,7 +1799,7 @@ async function filtersSheet(page, vp, label) {
   await rowsSettle(page, 5);
   await page.keyboard.press('Escape');
   await sheet.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
-  check((await trigger.innerText()).trim() === 'Filters', `${label}: and clearing it there puts the count back`, await trigger.innerText());
+  check(await trigger.getAttribute('aria-label') === 'Filters' && (await trigger.innerText()).trim() === '', `${label}: and clearing it there takes the count off`, `${await trigger.getAttribute('aria-label')} / ${await trigger.innerText()}`);
   await cleanCheck(page, `${label} filters sheet`);
 }
 
@@ -1916,6 +2045,7 @@ async function combo(browser, f, vp, theme) {
     await devicesAndWorkspace(page, f, vp, label);
     await devicePageGroups(page, f, vp, label);
     await filtersSheet(page, vp, label);
+    await deviceListP13(page, f, vp, label);
     await agentSilentUi(page, f, label);
     await alertExplanation(page, f, vp, label);
     await falsePositiveUi(page, f, vp, label);

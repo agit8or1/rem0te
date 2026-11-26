@@ -15,7 +15,26 @@ export type SortKey = (typeof SORT_KEYS)[number];
 
 export const PAGE_SIZES = [25, 50, 100, 200];
 export const PLATFORMS = ['windows', 'linux', 'macos', 'other'] as const;
-export const PATCH_STATES = ['pending', 'current', 'unknown', 'stale'] as const;
+/**
+ * 'critical' (0.89): a security or critical update pending, by the classification a
+ * signed agent's scan records per update. A standard agent's scan has no
+ * classification, so it never matches; neither does a device never scanned.
+ */
+export const PATCH_STATES = ['pending', 'current', 'unknown', 'stale', 'critical'] as const;
+/**
+ * 0.89: a Windows device's role, from the OS name it reports (inventory
+ * caption, else the recorded OS version): "server" when the name says
+ * Server, "workstation" when it names a Windows edition and not Server. A
+ * device whose OS name says neither (none reported, a bare build number, or
+ * "Windows NT 10.0.x", a version that names no edition) matches neither —
+ * the role is never guessed from the hostname or the build number.
+ */
+export const WINDOWS_ROLES = ['server', 'workstation'] as const;
+/**
+ * 0.89: the viewer's own favourite or recent devices (0.87's navigation
+ * items). Per person by definition, so never part of a rule group.
+ */
+export const MINE = ['favorite', 'recent'] as const;
 /** 0.56: the hardware warranty's end date — passed, within 30 / 60 / 90 days (cumulative), still running, or none stored. */
 export const WARRANTY_FILTERS = ['expired', 'd30', 'd60', 'd90', 'active', 'unknown'] as const;
 /** Dotted numeric versions only (1.4.2, at most four parts of up to six digits): compared as integer arrays, never as text. */
@@ -67,6 +86,15 @@ export interface ListQuery {
   seenWithinDays?: number;
   /** 0.56: by hardware warranty end date (WARRANTY_FILTERS). */
   warranty?: (typeof WARRANTY_FILTERS)[number];
+  /** 0.89: Windows server or workstation, from the reported OS name (WINDOWS_ROLES). */
+  windowsRole?: (typeof WINDOWS_ROLES)[number];
+  /** 0.89: the caller's own favourite or recent devices (MINE). */
+  mine?: (typeof MINE)[number];
+  /**
+   * Set by EndpointListService only, never parsed from a request: the ids of
+   * the caller's own `mine` list, read through navigation/my-device-items.ts.
+   */
+  mineIds?: string[];
   /**
    * Set by EndpointListService only, never parsed from a request: the rule of
    * the RULE group named by groupId, AND-ed with that group's business.
@@ -103,6 +131,7 @@ function oneOf<T extends string>(v: unknown, allowed: readonly T[], name: string
 export const LIST_FILTER_KEYS = [
   'search', 'businessId', 'siteId', 'online', 'alerts', 'restartPending', 'agent', 'status', 'groupId',
   'platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays', 'warranty',
+  'windowsRole', 'mine',
 ] as const;
 export type ListFilterKey = (typeof LIST_FILTER_KEYS)[number];
 /** The filter half of a ListQuery (no sort, page or internal fields). */
@@ -151,6 +180,8 @@ export function parseListFilters(q: Record<string, unknown>): ListFilters {
     patches: oneOf(q.patches, PATCH_STATES, 'patches'),
     rustdeskMin, rustdeskMax, notSeenDays, seenWithinDays,
     warranty: oneOf(q.warranty, WARRANTY_FILTERS, 'warranty'),
+    windowsRole: oneOf(q.windowsRole, WINDOWS_ROLES, 'windowsRole'),
+    mine: oneOf(q.mine, MINE, 'mine'),
   };
 }
 

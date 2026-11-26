@@ -87,6 +87,8 @@ jobs:
       # HEARTBEAT_STALE_MS and the snapshot tabs' OLD_MS. Pure.
       - name: Device tab freshness (unit)
         run: node apps/web/scripts/unit-device-freshness.mjs
+      - name: Device list built-in views (unit)
+        run: node apps/web/scripts/unit-device-list-views.mjs
 
       # The navigation (0.87): every entry is a page, every pre-0.87 URL is
       # still reachable (docs/NAVIGATION_MIGRATION.md's table), Standard mode
