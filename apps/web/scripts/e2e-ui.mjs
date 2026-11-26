@@ -2057,8 +2057,9 @@ async function workspaceModes(page, f, vp, label) {
     check(/L1 support/.test(await page.locator('[data-testid="nav-workspace"]').innerText().catch(() => '')), `${label}: the sidebar names the workspace at its foot`);
     check(await side.locator('[data-nav="patching"], [data-nav-item="/patching"]').count() === 0 && await side.locator('[data-nav="admin"], [data-nav-item="/settings"]').count() === 0,
       `${label}: in L1, Patching and Administration leave the sidebar`);
-    check(await side.locator('[data-nav-item="/alerts"]').count() >= 1 && await side.locator('[data-nav-item="/endpoints"]').count() >= 1,
-      `${label}: and Alerts and All devices stay`);
+    // Devices has several L1 pages, so it is a group (closed on the dashboard); Monitoring has one, Alerts, so it is a link.
+    check(await side.locator('[data-nav-item="/alerts"]').count() >= 1 && await side.locator('[data-nav="devices"]').count() >= 1,
+      `${label}: and Alerts and the Devices group stay`);
   }
   // Not a permission: Ctrl+K still offers a page outside the workspace, and its URL opens.
   if (vp === 'desktop') await page.keyboard.press('Control+k');
