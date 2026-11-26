@@ -18,7 +18,7 @@ import { DeviceOverviewTab } from '@/components/endpoints/workspace/overview-tab
 import { DeviceMonitoringTab } from '@/components/endpoints/workspace/monitoring-tab';
 import { DevicePerformanceTab } from '@/components/endpoints/workspace/performance-tab';
 import { DeviceSoftwareTab } from '@/components/endpoints/workspace/software-tab';
-import { DeviceNetworkTab, DeviceProcessesTab, DeviceServicesTab } from '@/components/endpoints/workspace/snapshot-tabs';
+import { DeviceNetworkTab, DeviceProcessesTab, DeviceServicesTab, OLD_MS as SNAPSHOT_OLD_MS, useSnapshotTakenAt } from '@/components/endpoints/workspace/snapshot-tabs';
 import { DeviceHistoryTab, type SessionRow } from '@/components/endpoints/workspace/history-tab';
 import { DeviceChatTab } from '@/components/endpoints/workspace/chat-tab';
 import { DeviceTerminalTab } from '@/components/endpoints/workspace/terminal-tab';
@@ -32,6 +32,7 @@ import { useManagedConnect } from '@/components/endpoints/msa-sessions';
 import { UPGRADE_LABEL, upgradeView, useAgentActions } from '@/components/endpoints/workspace/agent-actions';
 import type { AccessReview } from '@/components/endpoints/workspace/access-review-panel';
 import { acceptsQueuedWork, agentType, groupOf, parseTab, reportsInventory, reportsWindowsDetail, TAB_GROUPS, TAB_LABEL, type WorkspaceTab } from '@/components/endpoints/workspace/device-model';
+
 import {
   actionUnavailableReason, agentActionKeys, useActionCatalog, useInventory, useMonitoringView, usePatchStatus,
 } from '@/components/endpoints/workspace/use-device-data';
@@ -39,6 +40,9 @@ import { usePermissions, CAP } from '@/lib/auth';
 import { ToolsPanel } from '@/components/endpoints/workspace/tools-panel';
 import type { ToolTarget } from '@/lib/device-tools';
 import { useToast } from '@/hooks/use-toast';
+import { FreshnessLine } from '@/components/common/freshness';
+import { tabFreshness } from '@/lib/device-freshness';
+import { HEARTBEAT_STALE_MS } from '@/lib/connectivity';
 
 /**
  * The device workspace (0.31): one page for one computer.
@@ -110,7 +114,9 @@ export default function EndpointDetailPage() {
   const mon = useMonitoringView(id, canView);
   const patches = usePatchStatus(id, canView);
   const inventory = useInventory(id, canView);
-  const catalog = useActionCatalog(canView);
+  const catalog = useActionCatalog(id, canView);
+  // 0.88: the open snapshot tab's time, through that tab's own query (no other tab reads one).
+  const snap = useSnapshotTakenAt(id, canView ? tab : '');
   // 0.37: the agent's actions in the header, for computers:edit — the same
   // read (and key) as the Agent card, so both update together.
   const canEdit = can(CAP.COMPUTERS_EDIT);
@@ -252,6 +258,21 @@ export default function EndpointDetailPage() {
   const groups = TAB_GROUPS.map((g) => ({ ...g, tabs: g.tabs.filter((t) => tabs.includes(t)) })).filter((g) => g.tabs.length);
   const activeGroup = groupOf(active);
   const groupTabs = groups.find((g) => g.id === activeGroup)?.tabs ?? [active];
+  // 0.88 (P1-2): how old the open tab's data is, from what the page already
+  // reads (lib/device-freshness.ts). Said only once its source has loaded, so
+  // a slow read is never shown as "not reported yet".
+  const loaded = active === 'overview' || active === 'software' ? !!inventory.data
+    : active === 'monitoring' ? !!mon.data
+      : active === 'patches' ? !!patches.data
+        : active in { processes: 1, services: 1, network: 1 } ? snap.loaded : true;
+  const freshness = !loaded ? null : tabFreshness(active, {
+    lastSeenAt: (ep.lastSeenAt as string | null | undefined) ?? null,
+    inventoryAt: inventory.data?.inventory?.collectedAt ?? null,
+    monitorReportAt: mon.data?.reportedAt ?? null,
+    patchScan: patches.data?.summary ? { at: patches.data.summary.evidence.at, freshness: patches.data.summary.evidence.freshness } : null,
+    snapshotAt: snap.takenAt,
+    snapshotStaleMs: SNAPSHOT_OLD_MS,
+  }, Date.now(), HEARTBEAT_STALE_MS);
 
   // "Agent out of date" opens what the header offers: the upgrade to the full
   // agent when the server offers it, otherwise Update agent; with neither it
@@ -268,7 +289,7 @@ export default function EndpointDetailPage() {
       : { run: openAgentCard, title: 'See the Agent card on the Overview tab: it says what can be done about it.' };
 
   return (
-    <div className="p-4 sm:p-6 space-y-5">
+    <div className="p-4 sm:p-6 space-y-3">
       <DeviceHeader
         ep={ep}
         mon={{ data: mon.data, isError: mon.isError }}
@@ -322,9 +343,15 @@ export default function EndpointDetailPage() {
         {/* Scrolls sideways on a narrow window rather than wrapping into a
             second row that reads as a different set of tabs. Tabs are left out
             without the capability as a courtesy — every route re-checks. */}
-        <div ref={tabsRef} className="scroll-mt-4 space-y-1.5">
+        {/* 0.88 (P1-2): the sections and the open section's tabs share a row
+            where there is room, and the freshness of what the open tab shows
+            sits at its end. Each part scrolls sideways on a narrow window
+            rather than wrapping into rows that read as different sets of tabs.
+            Tabs are left out without the capability as a courtesy — every
+            route re-checks. */}
+        <div ref={tabsRef} className="scroll-mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5">
           {/* The groups: buttons, each opening its first tab. Pressed shows where you are. */}
-          <div className="-mx-1 flex gap-1 overflow-x-auto px-1" role="group" aria-label="Device sections" data-testid="workspace-groups">
+          <div className="-mx-1 flex max-w-full gap-1 overflow-x-auto px-1" role="group" aria-label="Device sections" data-testid="workspace-groups">
             {groups.map((g) => {
               const on = g.id === activeGroup;
               return (
@@ -338,13 +365,14 @@ export default function EndpointDetailPage() {
               );
             })}
           </div>
-          <div className="-mx-1 overflow-x-auto px-1 pb-1">
-            <TabsList className="w-max" data-testid="workspace-tabs" aria-label={groups.find((g) => g.id === activeGroup)?.label}>
+          <div className="-mx-1 max-w-full overflow-x-auto px-1">
+            <TabsList className="h-9 w-max" data-testid="workspace-tabs" aria-label={groups.find((g) => g.id === activeGroup)?.label}>
               {groupTabs.map((t) => (
                 <TabsTrigger key={t} value={t} data-testid={`tab-${t}`}>{TAB_LABEL[t]}</TabsTrigger>
               ))}
             </TabsList>
           </div>
+          {freshness && <FreshnessLine value={freshness} className="sm:ml-auto" />}
         </div>
 
         <TabsContent value="overview" className="mt-4">

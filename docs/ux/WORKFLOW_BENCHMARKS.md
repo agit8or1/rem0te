@@ -48,9 +48,9 @@ browser suite, and P1 items re-measure the rows they touch.
 ## What the numbers do not show
 
 - **Human time.** Every time above is the console's own response. The
-  slowest step for a person is reading: the device page puts about 440 px of
-  header before the first tab at 1280 px (F-7), and the dashboard clips
-  panels (F-6).
+  slowest step for a person is reading: until 0.88 the device page put about
+  440 px of header before the first tab at 1280 px (F-7; ≈ 300–320 px from
+  0.88), and the dashboard clips panels (F-6).
 - **Scale.** 34 computers. The device list, search and dashboard have not been
   timed at 1,200 or 5,000 (P-4, P1-16).
 - **Network.** Loopback, one host. A remote technician adds their round trip

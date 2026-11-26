@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import {
-  Archive, ArchiveRestore, ChevronDown, Link2, Copy, Download, Eye, Loader2, MoreHorizontal, PackageCheck, PlayCircle, ShieldCheck, SquareTerminal, Stethoscope, Wrench, FileDown, LayoutGrid,
+  Archive, ArchiveRestore, ChevronDown, Link2, Copy, Download, Eye, Loader2, MoreHorizontal, PackageCheck, PlayCircle, SquareTerminal, Stethoscope, Wrench, FileDown, LayoutGrid,
 } from 'lucide-react';
 import { endpointsApi, diagnosticsApi } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
@@ -37,8 +37,12 @@ import { AgentActionDialogs, UPGRADE_LABEL, UpgradeButton, upgradeView, type Age
  * Upgrade to full agent on a standard Windows agent (always a button —
  * disabled with its reason, the fix and Devices → Full agent when the server
  * does not offer it; "Upgrade requested — waiting for check-in" while a
- * request is open), Update agent / Check for update now, "Full agent" on a
- * signed agent, and the manual command on Linux and macOS.
+ * request is open), Update agent, and the manual command on Linux and macOS.
+ *
+ * 0.88 (P1-2): the green "Full agent" chip is gone — it read as a health
+ * status, and the attention strip already names the agent and its version. A
+ * signed agent's "Check for update now" is in More. On a phone Diagnose, Run
+ * action and Patch are in More too, so the header is one row of buttons.
  */
 
 type Confirm = 'archive' | 'restore' | 'reinstall' | null;
@@ -144,6 +148,8 @@ export function DeviceActions({
   // The agent's buttons (0.37), from GET /endpoints/:id/agent.
   const a = agent?.a;
   const up = agent ? upgradeView(a, perms.edit) : null;
+  // A signed agent's update is a check, kept in More (0.88).
+  const signedCheck = !!a && a.kind === 'signed' && !a.update.command;
   if (a && up?.state === 'blocked') {
     const extra = up.link && up.link.href !== '/endpoints/full-agent' ? up.link : null;
     reasons.push({
@@ -160,8 +166,9 @@ export function DeviceActions({
           <PlayCircle className="h-4 w-4 mr-1.5" />Connect
         </Button>
         {onTerminal && (
-          <Button size="sm" variant="outline" onClick={onTerminal} data-testid="action-terminal" title="A command prompt on this device, in the background">
-            <SquareTerminal className="h-4 w-4 mr-1.5" />Terminal
+          <Button size="sm" variant="outline" onClick={onTerminal} data-testid="action-terminal" title="A command prompt on this device, in the background" aria-label="Terminal">
+            {/* 0.88: the icon alone on a phone, so the header's buttons are one row. */}
+            <SquareTerminal className="h-4 w-4 sm:mr-1.5" aria-hidden="true" /><span className="hidden sm:inline">Terminal</span>
           </Button>
         )}
         {perms.view && onTools && (
@@ -170,12 +177,12 @@ export function DeviceActions({
           </Button>
         )}
         {perms.view && (
-          <Button size="sm" variant="outline" onClick={() => onOpenTab('diagnostics')} data-testid="action-diagnose">
+          <Button size="sm" variant="outline" className="hidden sm:inline-flex" onClick={() => onOpenTab('diagnostics')} data-testid="action-diagnose">
             <Stethoscope className="h-4 w-4 mr-1.5" />Diagnose
           </Button>
         )}
         {perms.view && (
-          <span className="inline-flex" title={actionReason && actionReason !== 'Checking…' ? `Run action unavailable: ${actionReason}` : undefined}>
+          <span className="hidden sm:inline-flex" title={actionReason && actionReason !== 'Checking…' ? `Run action unavailable: ${actionReason}` : undefined}>
             <Button size="sm" variant="outline" onClick={() => onOpenTab('actions')} disabled={!!actionReason} data-testid="action-run"
               aria-describedby={actionReason && actionReason !== 'Checking…' ? 'action-run-reason' : undefined}>
               <Wrench className="h-4 w-4 mr-1.5" />Run action
@@ -184,7 +191,7 @@ export function DeviceActions({
           </span>
         )}
         {perms.view && (
-          <Button size="sm" variant="outline" onClick={() => onOpenTab('patches')} data-testid="action-patch">
+          <Button size="sm" variant="outline" className="hidden sm:inline-flex" onClick={() => onOpenTab('patches')} data-testid="action-patch">
             <PackageCheck className="h-4 w-4 mr-1.5" />Patch
           </Button>
         )}
@@ -193,10 +200,37 @@ export function DeviceActions({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button size="sm" variant="outline" aria-label="More actions" data-testid="action-more">
-              <MoreHorizontal className="h-4 w-4 mr-1" />More<ChevronDown className="h-3.5 w-3.5 ml-1 opacity-60" />
+              <MoreHorizontal className="h-4 w-4 sm:mr-1" aria-hidden="true" /><span className="hidden sm:inline">More</span><ChevronDown className="h-3.5 w-3.5 ml-1 opacity-60" aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-64">
+            {/* 0.88 (P1-2): on a phone Diagnose, Run action and Patch live here
+                rather than taking two rows of the header; the tabs they open
+                are the same. */}
+            {perms.view && (
+              <>
+                <DropdownMenuItem className="sm:hidden" onSelect={() => onOpenTab('diagnostics')} data-testid="more-diagnose">
+                  <Stethoscope className="h-4 w-4 mr-2" />Diagnose
+                </DropdownMenuItem>
+                <DropdownMenuItem className="sm:hidden" disabled={!!actionReason} onSelect={() => onOpenTab('actions')} data-testid="more-run"
+                  title={actionReason && actionReason !== 'Checking…' ? `Run action unavailable: ${actionReason}` : undefined}>
+                  <Wrench className="h-4 w-4 mr-2" />Run action
+                </DropdownMenuItem>
+                <DropdownMenuItem className="sm:hidden" onSelect={() => onOpenTab('patches')} data-testid="more-patch">
+                  <PackageCheck className="h-4 w-4 mr-2" />Patch
+                </DropdownMenuItem>
+                <DropdownMenuSeparator className="sm:hidden" />
+              </>
+            )}
+            {/* 0.88: a signed agent's "Check for update now" is a routine check,
+                not something the header should spend a row on. When the agent is
+                out of date, the header's "Agent out of date" chip runs it. */}
+            {a && signedCheck && (
+              <DropdownMenuItem onSelect={agent!.askUpdate} disabled={!a.update.possible || agent!.update.isPending} data-testid="header-update-agent"
+                title={a.update.possible ? undefined : a.update.reason ?? undefined}>
+                {agent!.update.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Wrench className="h-4 w-4 mr-2" />}{a.update.label}
+              </DropdownMenuItem>
+            )}
             {/* View-only is enforced only for preset-backed technician grants,
                 and only by refusing a launch the computer cannot restrict. For
                 anyone else the server has never applied it, so it is not
@@ -240,17 +274,11 @@ export function DeviceActions({
           </DropdownMenuContent>
         </DropdownMenu>
         {a && up && <UpgradeButton view={up} onClick={agent!.askMigrate} testId="header-upgrade-full-agent" />}
-        {a && a.kind === 'signed' && (
-          <span className="inline-flex h-9 items-center gap-1.5 rounded-md border border-green-200 bg-green-50 px-3 text-sm font-medium text-green-900 dark:border-green-900 dark:bg-green-950/50 dark:text-green-100"
-            title="This device runs the full (signed) agent: it installs only what the signed repository lists." data-testid="header-full-agent">
-            <ShieldCheck className="h-4 w-4" aria-hidden="true" />Full agent
-          </span>
-        )}
         {a && (a.update.command ? (
           <Button size="sm" variant="outline" onClick={() => agent!.copy(a.update.command!)} title={a.update.command} data-testid="header-agent-command">
             <Copy className="h-4 w-4 mr-1.5" />Copy update command
           </Button>
-        ) : a.kind !== 'unknown' && (
+        ) : a.kind !== 'unknown' && !signedCheck && (
           <span title={a.update.possible ? undefined : a.update.reason ?? undefined} className="inline-flex max-w-full">
             <Button size="sm" variant="outline" onClick={agent!.askUpdate} disabled={!a.update.possible || agent!.update.isPending} data-testid="header-update-agent">
               {agent!.update.isPending ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Wrench className="h-4 w-4 mr-1.5" />}{a.update.label}

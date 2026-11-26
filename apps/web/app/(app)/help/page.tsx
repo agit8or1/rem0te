@@ -713,8 +713,10 @@ const SECTIONS: Section[] = [
           device&apos;s own system: a Linux server&apos;s restart comes from its package manager, not Windows. The strip under it lists what needs
           attention: open alerts, a pending restart, pending updates with the age of
           the scan, and which agent it runs. Each opens the tab that explains it.
-          Connect, Tools, Diagnose, Run action and Patch sit beside it; Archive and the other
-          rare actions are under More, each with a confirmation. The tabs are
+          Connect, Terminal, Tools, Diagnose, Run action and Patch sit beside it (on a phone the last three are in
+          More); Archive and the other rare actions are under More, each with a confirmation. Every tab that shows
+          what the device reported says how old it is at the end of the tab row, marked stale only where a rule
+          says so, and &ldquo;not reported yet&rdquo; when nothing came. The tabs are
           Overview, Performance, Monitoring, Software, Processes, Services, Network, Patches, Event logs,
           Diagnostics, Actions, Terminal (Windows, 0.77), Files (Windows, 0.78) and History (sessions, notes, the AI-written summary and who
           can connect), and

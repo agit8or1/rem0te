@@ -51,10 +51,10 @@ export function RenameDevice({ endpointId, ep }: { endpointId: string; ep: Recor
   if (!can(CAP.COMPUTERS_EDIT)) return null;
   return (
     <>
-      <Button type="button" size="sm" variant="ghost" className="h-8 px-2" data-testid="rename-device"
-        aria-label="Rename this device or edit its description"
+      <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" data-testid="rename-device"
+        aria-label="Rename this device or edit its description" title="Rename or edit the description"
         onClick={() => { setName(String(ep.name ?? '')); setDescription(String(ep.description ?? '')); save.reset(); setOpen(true); }}>
-        <Pencil className="h-4 w-4" /><span className="ml-1 text-xs">Rename</span>
+        <Pencil className="h-4 w-4" aria-hidden="true" />
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent data-testid="rename-dialog">

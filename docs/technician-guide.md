@@ -399,12 +399,29 @@ and removed in place. The Overview's **Notes** card shows the latest three notes
 and takes a new one; all of them, and editing, are on History. All of it needs
 *Rename/edit devices*, and renames and alias changes are in the audit log.
 
-**The actions:** **Connect**, **Tools** (below), **Diagnose** (opens Diagnostics), **Run action**
-(opens Actions; disabled, with the reason printed underneath, when the device
+**The actions:** **Connect**, **Terminal** (Windows), **Tools** (below), **Diagnose** (opens Diagnostics), **Run action**
+(opens Actions; disabled, with the reason as its description, when the device
 lacks the signed agent or no approval signer is configured), **Patch** (opens
 Patches) and **More**: view-only connect (technicians), the diagnostics report,
 *Reinstall agent* and *Archive device*, each behind a confirmation that says
-what it does.
+what it does. On a phone, Diagnose, Run action and Patch are in **More** as
+well, so the buttons are one row.
+
+**The agent's buttons (0.88).** A standard agent shows *Upgrade to full agent*
+and *Update agent* beside them. A signed agent's *Check for update now* is in
+**More**; when the agent is out of date, the *Agent out of date* chip runs it.
+The attention strip names the agent and its version, so there is no separate
+"Full agent" badge.
+
+**How old it is (0.88).** Every tab that shows something the device reported
+says how old it is, in one place, at the end of the tab row: *Inventory
+collected* (Overview, Software), *Last check-in* (Performance), *Last monitoring
+report* (Monitoring), *Update scan* (Patches) and *Snapshot taken* (Processes,
+Services, Network). It is marked *stale* only where a rule already says so: the
+30-minute check-in window, the server's own verdict on the update scan, and a
+snapshot over a day old. Nothing reported is *not reported yet*, never fresh.
+Diagnostics, Actions, Event logs, Terminal, Files, Chat and History have no
+such line; each row there carries its own time.
 
 **Tools (0.75).** **Tools**, beside Connect, opens one panel listing what can be
 done to this device, in eight groups: Diagnostics, PowerShell / Scripts,
