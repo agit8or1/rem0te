@@ -118,7 +118,7 @@ export default function QuickConnectPage() {
     <div className="p-6 space-y-6">
       <PageHeader
         title="Quick Connect"
-        description="Connect to a computer that is not a managed device, using an ID and password the person reads out to you."
+        description="Connect to a device that is not a managed device, using an ID and password the person reads out to you."
       />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -249,7 +249,7 @@ export default function QuickConnectPage() {
                 <li><strong className="text-foreground">5.</strong> They close the client when you are done.</li>
               </ol>
               <p className="mt-3 text-xs text-muted-foreground">
-                Nothing is installed as a service and no managed computer is created — closing the
+                Nothing is installed as a service and no managed device is created — closing the
                 client ends their availability.
               </p>
             </CardContent>

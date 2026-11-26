@@ -12,7 +12,7 @@ import { callProvider } from './client';
 import { TEST_SYSTEM, TEST_USER } from './prompt';
 
 /**
- * Settings → AI (0.48): the one provider "Ask AI" uses. Platform Admin only
+ * Administration → AI (0.48): the one provider "Ask AI" uses. Platform Admin only
  * (the controller's guard); saving needs fresh authentication (catalog key
  * ai.settings, §62) because it decides where redacted event text is sent and holds a
  * key that spends the MSP's money.

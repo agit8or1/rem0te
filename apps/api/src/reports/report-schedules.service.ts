@@ -126,7 +126,7 @@ export class ReportSchedulesService implements OnModuleInit, OnModuleDestroy {
     }
     const c = await this.prisma.customer.findUnique({ where: { id }, select: { id: true, name: true, tenantId: true } });
     if (!c || (!a.isPlatformAdmin && a.businessId !== c.id)) throw new NotFoundException('Business not found');
-    if (!this.mayOwn(a, c.id)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Scheduled reports are set up by a Business Owner of this business, or by a Platform Admin.' });
+    if (!this.mayOwn(a, c.id)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Scheduled reports are set up by a Business Owner of this customer, or by a Platform Admin.' });
     return { customerId: c.id as string | null, scopeKey: `b:${c.id}`, tenantId: c.tenantId as string | null, name: c.name as string | null };
   }
 
@@ -183,7 +183,7 @@ export class ReportSchedulesService implements OnModuleInit, OnModuleDestroy {
     if (!ID.test(id)) throw new NotFoundException('Schedule not found');
     const s = await this.prisma.reportSchedule.findUnique({ where: { id } });
     if (!s || (!a.isPlatformAdmin && s.customerId !== a.businessId)) throw new NotFoundException('Schedule not found');
-    if (!this.mayOwn(a, s.customerId)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Scheduled reports are changed by a Business Owner of this business, or by a Platform Admin.' });
+    if (!this.mayOwn(a, s.customerId)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Scheduled reports are changed by a Business Owner of this customer, or by a Platform Admin.' });
     return s;
   }
 
@@ -196,7 +196,7 @@ export class ReportSchedulesService implements OnModuleInit, OnModuleDestroy {
     const d = ScheduleInput.safeParse(merged ?? {});
     if (!d.success) throw bad(d.error);
     if (base && (d.data.businessId ?? null) !== base.customerId) {
-      throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'A schedule cannot move to another business. Create a new one there.' });
+      throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'A schedule cannot move to another customer. Create a new one there.' });
     }
     let spec: ReportScheduleSpec;
     try { spec = parseScheduleSpec(d.data); } catch (e) { throw new BadRequestException({ code: 'INVALID_SCHEDULE', message: (e as Error).message }); }
@@ -209,7 +209,7 @@ export class ReportSchedulesService implements OnModuleInit, OnModuleDestroy {
     }
     const recipientIds = await this.email.assertConfirmed(d.data.recipientIds, s.scopeKey);
     if (base === undefined && (await this.prisma.reportSchedule.count({ where: { customerId: s.customerId } })) >= MAX_SCHEDULES_PER_SCOPE) {
-      throw new BadRequestException({ code: 'TOO_MANY', message: `At most ${MAX_SCHEDULES_PER_SCOPE} scheduled reports per business.` });
+      throw new BadRequestException({ code: 'TOO_MANY', message: `At most ${MAX_SCHEDULES_PER_SCOPE} scheduled reports per customer.` });
     }
     return { d: d.data, spec, s, recipientIds };
   }

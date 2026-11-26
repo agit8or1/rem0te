@@ -13,7 +13,7 @@ import { assertFresh } from '../security-controls/review';
 import { WarrantyService } from './warranty.service';
 
 /**
- * Settings → Warranty (0.56). Platform Admin only (the class guard, before
+ * Administration → Warranty (0.56). Platform Admin only (the class guard, before
  * anything is read). Saving needs fresh authentication unless a Platform
  * Admin turned its catalog key (warranty.settings) off: it holds a vendor
  * credential and decides that serial numbers are sent to that vendor.

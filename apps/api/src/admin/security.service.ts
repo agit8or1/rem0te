@@ -20,7 +20,7 @@ import {
 } from './host-security/acceptance';
 
 /**
- * Admin → Security (rewritten in 0.74). Platform Admin only (the controller).
+ * Security → Server security (rewritten in 0.74). Platform Admin only (the controller).
  *
  * Every read of the host goes through HostRunner's closed list, and every
  * read answers with what it could not read: `state: 'unavailable'` and a
@@ -624,18 +624,18 @@ export class SecurityService {
       add({ id: 'portal.mfa.users', area: 'portal', title: 'Accounts have MFA', checkedAt: p.checkedAt, status: p.usersMfa === p.users ? 'pass' : 'fail', severity: 'medium',
         basis: { without: p.users - p.usersMfa },
         evidence: `${p.usersMfa} of ${p.users} active accounts (${pct}%) have an authenticator or passkey.`,
-        fix: 'Turn on Require MFA (Settings → Security) so every account sets one up at its next sign-in.', link: '/settings' });
+        fix: 'Turn on Require MFA (Settings → Security pages) so every account sets one up at its next sign-in.', link: '/settings' });
       const weakBg = p.admins.filter((a) => a.breakGlass && !(a.mfaMethods.some((m) => m.type === 'TOTP') && a.mfaMethods.some((m) => m.type === 'WEBAUTHN')));
       add({ id: 'portal.admins', area: 'portal', title: 'Platform Admins and break-glass accounts', checkedAt: p.checkedAt, status: weakBg.length ? 'fail' : 'info', severity: weakBg.length ? 'high' : 'info',
         evidence: `${p.admins.length} Platform Admin(s), ${p.breakGlass} break-glass account(s)${weakBg.length ? `; break-glass without both an authenticator and a passkey: ${weakBg.map((a) => a.email).join(', ')}` : ''}.`,
-        fix: weakBg.length ? 'A break-glass account needs both; see Settings → Single sign-on.' : undefined, link: '/admin/sso' });
+        fix: weakBg.length ? 'A break-glass account needs both; see Security → Single sign-on.' : undefined, link: '/admin/sso' });
       const day = 86_400_000;
       const never = p.keys.filter((k) => !k.expiresAt).length;
       const stale = p.keys.filter((k) => (k.lastUsedAt ?? k.createdAt).getTime() < Date.now() - 90 * day).length;
       add({ id: 'portal.apikeys', area: 'portal', title: 'API keys expire and are in use', checkedAt: p.checkedAt, status: never || stale ? 'fail' : p.keys.length ? 'pass' : 'info', severity: 'low',
         basis: { never, stale },
         evidence: p.keys.length ? `${p.keys.length} active key(s): ${never} never expire, ${stale} unused for 90 days or more; oldest created ${new Date(Math.min(...p.keys.map((k) => k.createdAt.getTime()))).toISOString().slice(0, 10)}.` : 'No active API keys.',
-        fix: 'Revoke keys nobody uses and re-issue the rest with an expiry (Settings → API keys).', link: '/settings/api-keys' });
+        fix: 'Revoke keys nobody uses and re-issue the rest with an expiry (Administration → API keys).', link: '/settings/api-keys' });
     }
     if (!chain.ok) unknown('portal.audit_chain', 'portal', 'The audit chain verifies', 'critical', chain.e);
     else {
@@ -643,7 +643,7 @@ export class SecurityService {
       if (c.verify.ok === null) unknown('portal.audit_chain', 'portal', 'The audit chain verifies', 'critical', 'The chain has not been verified in this database yet (it runs at start and hourly).', 'Verify it now from Audit → Integrity.', c.verify.at?.toISOString());
       else add({ id: 'portal.audit_chain', area: 'portal', title: 'The audit chain verifies', checkedAt: c.verify.at?.toISOString() ?? now, status: c.verify.ok ? 'pass' : 'fail', severity: 'critical',
         evidence: c.verify.ok ? `${c.verify.checked} sealed entries verified through #${c.verify.throughSeq}.` : `${c.verify.problems.length} problem(s), first: ${c.verify.problems[0]?.kind} at #${c.verify.problems[0]?.seq}.`,
-        fix: 'See Settings → Security → Containment (audit integrity), and compare with the off-host export (`audit verify --export`).', link: '/settings/security/containment' });
+        fix: 'See Security → Containment (audit integrity), and compare with the off-host export (`audit verify --export`).', link: '/settings/security/containment' });
       add({ id: 'portal.audit_export', area: 'portal', title: 'Audit entries are exported off the host', checkedAt: now, status: c.export.configured.length && !c.export.error ? 'pass' : 'fail', severity: 'medium',
         basis: { configured: [...c.export.configured].sort(), failing: !!c.export.error },
         evidence: c.export.configured.length ? `Exporting to ${c.export.configured.join(', ')}${c.export.error ? `; last error: ${c.export.error}` : ''}.` : 'AUDIT_EXPORT_FILE and AUDIT_EXPORT_URL are unset: someone with this host could rewrite the chain and its proof together.',

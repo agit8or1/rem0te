@@ -176,7 +176,7 @@ export interface PlanRequest {
  * freshly signed in. ClientSt0r proposals have nobody signed in behind them.
  */
 function assertDirectRequest(via: 'portal' | 'clientst0r', freshMethod: string | null | undefined) {
-  if (via === 'clientst0r') throw new ForbiddenException({ code: 'DIRECT_MODE_PORTAL_ONLY', message: 'This business is in direct mode on the approval signer: an action runs as soon as it is requested, so only a person signed in to the portal can request one. ClientSt0r proposals are refused in direct mode.' });
+  if (via === 'clientst0r') throw new ForbiddenException({ code: 'DIRECT_MODE_PORTAL_ONLY', message: 'This customer is in direct mode on the approval signer: an action runs as soon as it is requested, so only a person signed in to the portal can request one. ClientSt0r proposals are refused in direct mode.' });
   assertFresh(freshMethod ?? null, { action: 'actions.direct', message: 'Direct mode: this runs as soon as you request it, with no approval step. Confirm it is you.' });
 }
 
@@ -331,7 +331,7 @@ export class ActionsService {
     const action = r.action;
     const origin = r.origin ?? { kind: 'technician' as const, ticketRef: null, via: 'portal' as const };
     if (r.endpointIds.length < 1 || r.endpointIds.length > action.maxTargets || new Set(r.endpointIds).size !== r.endpointIds.length) {
-      throw new BadRequestException({ code: 'BAD_TARGETS', message: `This action names 1 to ${action.maxTargets} distinct computers per plan.` });
+      throw new BadRequestException({ code: 'BAD_TARGETS', message: `This action names 1 to ${action.maxTargets} distinct devices per plan.` });
     }
     const eps: Ep[] = [];
     for (const id of r.endpointIds) {
@@ -344,7 +344,7 @@ export class ActionsService {
       if (!(await this.acl.canReachEndpoint(actor, ep))) throw new NotFoundException('Computer not found');
       eps.push(ep);
     }
-    if (new Set(eps.map((e) => e.customerId)).size !== 1) throw new BadRequestException({ code: 'BAD_TARGETS', message: 'A plan names computers of one business only.' });
+    if (new Set(eps.map((e) => e.customerId)).size !== 1) throw new BadRequestException({ code: 'BAD_TARGETS', message: 'A plan names devices of one customer only.' });
     if (!action.params.safeParse(r.params).success) throw new BadRequestException({ code: 'PARAMS_NOT_ALLOWED', message: 'Those parameters are not allowed for this action.' });
     const maxWindow = action.maxWindowHours ?? MAX_WINDOW_HOURS;
     if (r.windowHours > maxWindow) throw new BadRequestException({ code: 'WINDOW_TOO_LONG', message: `This action's approval window is at most ${maxWindow} hour${maxWindow === 1 ? '' : 's'}.` });
@@ -373,7 +373,7 @@ export class ActionsService {
       }
       // One at a time, and never a retry over an outcome nobody has looked at.
       const pending = await this.blocking(ep.id, action.id);
-      if (pending?.status === 'UNKNOWN') throw new ConflictException({ code: 'ACTION_UNRECONCILED', message: 'An earlier run of this action on this computer has an uncertain outcome. Check the computer and record what you found (Reconcile) before requesting it again.', jobId: pending.jobId, endpointId: ep.id });
+      if (pending?.status === 'UNKNOWN') throw new ConflictException({ code: 'ACTION_UNRECONCILED', message: 'An earlier run of this action on this device has an uncertain outcome. Check the device and record what you found (Reconcile) before requesting it again.', jobId: pending.jobId, endpointId: ep.id });
       if (pending) throw new ConflictException({ code: 'ACTION_PENDING', message: `An earlier request for this action on ${ep.hostname ?? ep.name} is still ${pending.status.toLowerCase().replace(/_/g, ' ')}. Resolve it first.`, jobId: pending.jobId, endpointId: ep.id });
     }
     const first = eps[0];
@@ -387,7 +387,7 @@ export class ActionsService {
     }
 
     const signerPolicy = await this.signer.policy(first.customerId!);
-    if (signerPolicy.status !== 200) throw new ConflictException({ code: 'APPROVAL_SIGNER_ERROR', message: 'The approval signer did not return this business\'s policy.' });
+    if (signerPolicy.status !== 200) throw new ConflictException({ code: 'APPROVAL_SIGNER_ERROR', message: 'The approval signer did not return this customer\'s policy.' });
     // 0.40, direct mode (the signer's operator's setting, mirrored read-only):
     // the signer signs at admission, so the request itself is the decision.
     // A person must have signed in freshly; a ClientSt0r proposal, which has
@@ -418,7 +418,7 @@ export class ActionsService {
       signedAt: null,
     };
     const check = Plan.safeParse(plan);
-    if (!check.success) throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: 'A computer\'s identity is incomplete; it cannot be named in a plan.' });
+    if (!check.success) throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: 'A device\'s identity is incomplete; it cannot be named in a plan.' });
     // 0.34: the script rules the signer and the agent apply, applied here first (§ 39).
     const scriptProblem = scriptPlanProblem(check.data);
     if (scriptProblem) throw new BadRequestException({ code: 'PARAMS_NOT_ALLOWED', message: `This plan does not describe its script consistently (${scriptProblem}).` });
@@ -617,7 +617,7 @@ export class ActionsService {
 
   async cancel(actor: ActorContext, id: string) {
     const j = await this.scoped(actor, id);
-    if (!this.mayManage(actor, j)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only the requester, a Business Owner of this business or a Platform Admin can cancel.' });
+    if (!this.mayManage(actor, j)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only the requester, a Business Owner of this customer or a Platform Admin can cancel.' });
     if (j.status === 'AWAITING_APPROVAL') await this.signer.cancel(j.id).catch(() => undefined);
     // Never after delivery: once an agent may have it, only its result decides.
     const r = await this.prisma.actionJob.updateMany({ where: { id, status: { in: ['AWAITING_APPROVAL', 'APPROVED'] } }, data: { status: 'CANCELED', statusReason: `canceled by ${actor.email ?? actor.userId}` } });
@@ -637,12 +637,12 @@ export class ActionsService {
     const dto = ReconcileDto.safeParse(raw);
     if (!dto.success) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'found (running | stopped | installed | not_installed | restart_scheduled | no_restart_scheduled | other) and a note of at least 3 characters are required.' });
     const j = await this.scoped(actor, id);
-    if (!this.mayManage(actor, j)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only the requester, a Business Owner of this business or a Platform Admin can reconcile.' });
+    if (!this.mayManage(actor, j)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only the requester, a Business Owner of this customer or a Platform Admin can reconcile.' });
     const t = dto.data.endpointId ? j.targets.find((x) => x.endpointId === dto.data.endpointId) : j.targets.length === 1 ? j.targets[0] : undefined;
-    if (!t) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Name the computer to reconcile (endpointId): this plan names several.' });
-    if (t.status !== 'UNKNOWN' || t.reconciledAt) throw new ConflictException({ code: 'NOT_RECONCILABLE', message: `This computer's result is ${t.status.toLowerCase().replace(/_/g, ' ')}${t.reconciledAt ? ' and already reconciled' : ''}; only an uncertain outcome is reconciled.` });
+    if (!t) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Name the device to reconcile (endpointId): this plan names several.' });
+    if (t.status !== 'UNKNOWN' || t.reconciledAt) throw new ConflictException({ code: 'NOT_RECONCILABLE', message: `This device's result is ${t.status.toLowerCase().replace(/_/g, ' ')}${t.reconciledAt ? ' and already reconciled' : ''}; only an uncertain outcome is reconciled.` });
     if (t.result === null && now < j.notAfter) {
-      throw new ConflictException({ code: 'AGENT_MAY_STILL_RUN', message: 'The computer has not answered yet and its approval window is still open, so it could still run this. Wait for its answer or for the window to close.' });
+      throw new ConflictException({ code: 'AGENT_MAY_STILL_RUN', message: 'The device has not answered yet and its approval window is still open, so it could still run this. Wait for its answer or for the window to close.' });
     }
     const r = await this.prisma.actionTarget.updateMany({
       where: { id: t.id, status: 'UNKNOWN', reconciledAt: null },

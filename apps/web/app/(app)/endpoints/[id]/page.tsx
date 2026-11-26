@@ -140,7 +140,7 @@ export default function EndpointDetailPage() {
       } | undefined;
       const rdId = info?.rustdeskId;
       if (!rdId) {
-        toast({ title: 'Computer not ready', description: 'This computer has not finished enrollment.', variant: 'destructive' });
+        toast({ title: 'Device not ready', description: 'This device has not finished enrollment.', variant: 'destructive' });
         return;
       }
       // The browser never receives the password (0.30.1): the Connect script
@@ -155,8 +155,8 @@ export default function EndpointDetailPage() {
         toast({
           title: info?.mode === 'view_only' ? 'Starting a view-only session' : 'Starting the session',
           description: [
-            !pw ? 'No password is released for this launch. A computer installed by Rem0te accepts only its permanent password, so RustDesk may not be able to sign in.' : null,
-            info?.maxSessionMinutes ? `Policy limit: ${info.maxSessionMinutes} minutes. Nothing on the computer enforces it — end the session when the time is up.` : null,
+            !pw ? 'No password is released for this launch. A device installed by Rem0te accepts only its permanent password, so RustDesk may not be able to sign in.' : null,
+            info?.maxSessionMinutes ? `Policy limit: ${info.maxSessionMinutes} minutes. Nothing on the device enforces it — end the session when the time is up.` : null,
           ].filter(Boolean).join(' '),
         });
       }
@@ -263,8 +263,8 @@ export default function EndpointDetailPage() {
     // After the Overview has rendered.
     setTimeout(() => document.getElementById('agent-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
   };
-  const agentChip = up?.state === 'enabled' ? { run: agentActions.askMigrate, title: `${UPGRADE_LABEL}: moves this computer to the signed agent at its next check-in.` }
-    : headerAgent?.a?.update.possible && !headerAgent.a.update.command ? { run: agentActions.askUpdate, title: `${headerAgent.a.update.label}: queued for the computer’s next check-in.` }
+  const agentChip = up?.state === 'enabled' ? { run: agentActions.askMigrate, title: `${UPGRADE_LABEL}: moves this device to the signed agent at its next check-in.` }
+    : headerAgent?.a?.update.possible && !headerAgent.a.update.command ? { run: agentActions.askUpdate, title: `${headerAgent.a.update.label}: queued for the device’s next check-in.` }
       : { run: openAgentCard, title: 'See the Agent card on the Overview tab: it says what can be done about it.' };
 
   return (

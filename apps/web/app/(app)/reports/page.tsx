@@ -17,7 +17,7 @@ export default function ReportsIndex() {
   useEffect(() => { if (!isLoading && first) router.replace(first.href); }, [isLoading, first, router]);
   return (
     <div className="p-6">
-      <PageHeader title="Reports" description={isLoading || first ? 'Opening…' : 'No report is available to you: reports need the View computers or monitoring:alerts permission.'} />
+      <PageHeader title="Reports" description={isLoading || first ? 'Opening…' : 'No report is available to you: reports need the View devices or monitoring:alerts permission.'} />
     </div>
   );
 }

@@ -128,7 +128,7 @@ export const HRESULT_TEXT: Record<string, string> = {
   '0x00000000': 'success',
   '0x80240022': 'every update in the request failed (WU_E_ALL_UPDATES_FAILED)',
   '0x8024001e': 'the operation was cancelled or the service was shutting down (WU_E_SERVICE_STOP)',
-  '0x80240017': 'the update is not applicable to this computer (WU_E_NOT_APPLICABLE)',
+  '0x80240017': 'the update is not applicable to this device (WU_E_NOT_APPLICABLE)',
   '0x8024000b': 'the operation was cancelled (WU_E_CALL_CANCELLED)',
   '0x80240016': 'another installation was in progress (WU_E_INSTALL_NOT_ALLOWED)',
   '0x8024402c': 'the update server could not be reached: proxy or DNS (WU_E_PT_WINHTTP_NAME_NOT_RESOLVED)',
@@ -203,9 +203,9 @@ function linkFor(job: ActionJobRow, endpointId: string): TaskView['link'] {
 }
 
 function quietText(ep: EndpointRow | null, now: Date): string | null {
-  if (!ep?.lastSeenAt) return 'The computer has never checked in.';
+  if (!ep?.lastSeenAt) return 'The device has never checked in.';
   const quiet = now.getTime() - ep.lastSeenAt.getTime();
-  return quiet > QUIET_COMPUTER_MINUTES * 60_000 ? `The computer last checked in ${span(quiet)} ago: it may be offline or asleep.` : null;
+  return quiet > QUIET_COMPUTER_MINUTES * 60_000 ? `The device last checked in ${span(quiet)} ago: it may be offline or asleep.` : null;
 }
 
 function base(kind: TaskKind, id: string, type: TaskType, title: string, endpointId: string, ep: EndpointRow | null, requestedById: string | null, requestedAt: Date): TaskView {
@@ -226,12 +226,12 @@ function base(kind: TaskKind, id: string, type: TaskType, title: string, endpoin
  */
 export const RESTART_REASON_TEXT: Record<string, string> = {
   remote_session_open: 'a technician was connected through RustDesk',
-  session_state_unknown: 'the computer could not tell whether a technician was connected through RustDesk',
+  session_state_unknown: 'the device could not tell whether a technician was connected through RustDesk',
   window_closed: 'the plan\'s window closed before the warning could run out',
   restart_already_scheduled: 'Windows already had a restart or shutdown pending',
   install_uncertain: 'the install\'s outcome was not known',
   no_restart_required: 'Windows reported no restart required',
-  reboot_state_unknown: 'the computer could not read whether Windows requires a restart',
+  reboot_state_unknown: 'the device could not read whether Windows requires a restart',
 };
 const reasonText = (r: string | null | undefined) => (r ? RESTART_REASON_TEXT[r] ?? r.replace(/_/g, ' ') : 'no reason given');
 export const OVERRIDE_TEXT = 'restarted although a technician was connected through RustDesk';
@@ -283,10 +283,10 @@ export function actionTask(job: ActionJobRow, t: ActionTargetRow, ctx: Context):
     } else if (job.actionId === 'windows.reboot.schedule' && restartDoneText(t, r, !!plan?.display?.policy)) {
       v.text = `${restartDoneText(t, r, !!plan?.display?.policy)} Answered at ${at(t.resultAt)}${took ? `,${took}` : ''}.`;
     } else {
-      const what = { succeeded: 'Succeeded', restart_required: 'Succeeded — restart required', failed: 'Failed', refused: 'Refused by the computer', not_executed: 'Not executed', uncertain: 'Outcome uncertain' }[v.state as string] ?? 'Finished';
+      const what = { succeeded: 'Succeeded', restart_required: 'Succeeded — restart required', failed: 'Failed', refused: 'Refused by the device', not_executed: 'Not executed', uncertain: 'Outcome uncertain' }[v.state as string] ?? 'Finished';
       v.text = `${what}${t.statusReason ? ` (${t.statusReason.replace(/_/g, ' ')})` : ''}. Answered at ${at(t.resultAt)}${took ? `,${took}` : ''}.`;
     }
-    if (v.state === 'uncertain' && !t.reconciledAt) { v.inFlight = false; v.text += ' Check the computer and record what you found (Reconcile).'; }
+    if (v.state === 'uncertain' && !t.reconciledAt) { v.inFlight = false; v.text += ' Check the device and record what you found (Reconcile).'; }
     return v;
   }
 
@@ -296,15 +296,15 @@ export function actionTask(job: ActionJobRow, t: ActionTargetRow, ctx: Context):
     v.state = t.statusReason === 'window_closed' || job.status === 'EXPIRED' ? 'expired' : 'canceled';
     v.finishedAt = null;
     const why = t.statusReason ?? job.statusReason;
-    v.text = v.state === 'expired' ? `Expired: its window closed (${at(job.notAfter)}) before the computer picked it up.`
+    v.text = v.state === 'expired' ? `Expired: its window closed (${at(job.notAfter)}) before the device picked it up.`
       : job.status === 'REJECTED' ? `Rejected on the approval signer${job.statusReason ? ` (${job.statusReason})` : ''}.`
-        : `Canceled${why ? `: ${why.replace(/_/g, ' ')}` : ''}. Nothing reached the computer.`;
+        : `Canceled${why ? `: ${why.replace(/_/g, ' ')}` : ''}. Nothing reached the device.`;
     return v;
   }
 
   if (job.status === 'AWAITING_APPROVAL') {
     v.stage = 'awaiting_approval'; v.state = 'awaiting_approval'; v.waitingFor = 'approval'; v.cancelJobId = job.id;
-    v.text = `Waiting for approval on the approval signer.${job.notBefore > now ? ` Scheduled for ${at(job.notBefore)} once approved.` : ''}`;
+    v.text = `Pending approval on the approval signer.${job.notBefore > now ? ` Scheduled for ${at(job.notBefore)} once approved.` : ''}`;
     return v;
   }
 
@@ -312,17 +312,17 @@ export function actionTask(job: ActionJobRow, t: ActionTargetRow, ctx: Context):
     v.cancelJobId = job.status === 'APPROVED' ? job.id : null;
     if (now < job.notBefore) {
       v.stage = 'scheduled'; v.state = 'scheduled'; v.waitingFor = 'schedule';
-      v.text = `Scheduled for ${at(job.notBefore)} (in ${span(job.notBefore.getTime() - now.getTime())}); it may run until ${at(job.notAfter)}. Nothing is handed to the computer before then.`;
+      v.text = `Scheduled for ${at(job.notBefore)} (in ${span(job.notBefore.getTime() - now.getTime())}); it may run until ${at(job.notAfter)}. Nothing is handed to the device before then.`;
       return v;
     }
     if (ctx.held) {
       v.stage = 'queued'; v.state = 'held'; v.waitingFor = 'containment';
-      v.text = 'Held: approved actions are paused for this business (containment). It is handed out when the pause is lifted, if its window is still open.';
+      v.text = 'Held: approved actions are paused for this customer (containment). It is handed out when the pause is lifted, if its window is still open.';
       return v;
     }
     v.stage = 'queued'; v.state = 'queued'; v.waitingFor = 'check_in';
     const quiet = quietText(ctx.endpoint, now);
-    v.text = `Queued: waiting for the computer's next check-in (about every ${CHECK_IN_MINUTES} minutes). The window closes at ${at(job.notAfter)}.`;
+    v.text = `Queued: waiting for the device's next check-in (about every ${CHECK_IN_MINUTES} minutes). The window closes at ${at(job.notAfter)}.`;
     if (quiet) { v.overdue = true; v.overdueText = quiet; }
     return v;
   }
@@ -331,7 +331,7 @@ export function actionTask(job: ActionJobRow, t: ActionTargetRow, ctx: Context):
   v.stage = 'handed_out'; v.state = t.status === 'UNKNOWN' ? 'uncertain' : 'handed_out';
   const out = t.dispatchedAt ?? t.lastDeliveredAt ?? now;
   const since = now.getTime() - out.getTime();
-  v.text = `Handed to the computer at ${at(out)} (${t.deliveries} deliver${t.deliveries === 1 ? 'y' : 'ies'}${t.lastDeliveredAt && t.deliveries > 1 ? `, the last at ${at(t.lastDeliveredAt)}` : ''}). The agent runs it and reports when it finishes; it does not report progress in between.`;
+  v.text = `Handed to the device at ${at(out)} (${t.deliveries} deliver${t.deliveries === 1 ? 'y' : 'ies'}${t.lastDeliveredAt && t.deliveries > 1 ? `, the last at ${at(t.lastDeliveredAt)}` : ''}). The agent runs it and reports when it finishes; it does not report progress in between.`;
   if (t.status === 'UNKNOWN') v.text = `No result within the action's deadline; still offered, and the agent answers from its journal when it next checks in. Handed out at ${at(out)}.`;
   if (since > OVERDUE_MINUTES[type] * 60_000) {
     v.overdue = true;
@@ -358,25 +358,25 @@ export function diagnosticTask(r: DiagnosticRunRow, ep: EndpointRow | null, labe
     v.stage = 'done'; v.inFlight = false; v.finishedAt = iso(r.completedAt ?? (r.status === 'EXPIRED' ? r.expiresAt : null));
     v.state = r.status === 'COMPLETED' ? 'succeeded' : r.status === 'FAILED' ? 'failed' : 'expired';
     v.reason = r.error;
-    v.text = r.status === 'COMPLETED' ? `Done at ${at(r.completedAt ?? now)}.` : r.status === 'FAILED' ? `Failed${r.error ? `: ${r.error}` : ''}.` : `Expired${r.error ? `: ${r.error}` : ': the computer did not pick it up in time'}.`;
+    v.text = r.status === 'COMPLETED' ? `Done at ${at(r.completedAt ?? now)}.` : r.status === 'FAILED' ? `Failed${r.error ? `: ${r.error}` : ''}.` : `Expired${r.error ? `: ${r.error}` : ': the device did not pick it up in time'}.`;
     return v;
   }
   if (r.status === 'RUNNING') {
     v.stage = 'running'; v.state = 'running';
     const s = r.startedAt ?? r.deliveredAt ?? now;
-    v.text = `Running on the computer since ${at(s)}.`;
-    if (now.getTime() - s.getTime() > OVERDUE_MINUTES[type] * 60_000) { v.overdue = true; v.overdueText = `Running for ${span(now.getTime() - s.getTime())} with no result yet: the computer may be busy or offline.`; }
+    v.text = `Running on the device since ${at(s)}.`;
+    if (now.getTime() - s.getTime() > OVERDUE_MINUTES[type] * 60_000) { v.overdue = true; v.overdueText = `Running for ${span(now.getTime() - s.getTime())} with no result yet: the device may be busy or offline.`; }
     return v;
   }
   if (r.status === 'DELIVERED') {
     v.stage = 'handed_out'; v.state = 'handed_out';
     const d = r.deliveredAt ?? now;
-    v.text = `Handed to the computer at ${at(d)}; waiting for it to start.`;
+    v.text = `Handed to the device at ${at(d)}; waiting for it to start.`;
     if (now.getTime() - d.getTime() > OVERDUE_MINUTES[type] * 60_000) { v.overdue = true; v.overdueText = `Handed out ${span(now.getTime() - d.getTime())} ago, no result yet: the agent may be busy or offline.`; }
     return v;
   }
   v.stage = 'queued'; v.state = 'queued'; v.waitingFor = 'check_in';
-  v.text = `Queued: waiting for the computer's next check-in (about every ${CHECK_IN_MINUTES} minutes). It expires at ${at(r.expiresAt)} if not picked up.`;
+  v.text = `Queued: waiting for the device's next check-in (about every ${CHECK_IN_MINUTES} minutes). It expires at ${at(r.expiresAt)} if not picked up.`;
   const quiet = quietText(ep, now);
   if (quiet) { v.overdue = true; v.overdueText = quiet; }
   return v;
@@ -403,18 +403,18 @@ export function commandTask(c: CommandRow, ep: EndpointRow | null, now: Date): T
     v.stage = 'done'; v.inFlight = false; v.finishedAt = iso(c.completedAt ?? (c.status === 'EXPIRED' ? c.expiresAt : null));
     v.state = c.status === 'SUCCEEDED' ? 'succeeded' : c.status === 'FAILED' ? 'failed' : 'expired';
     v.reason = c.error;
-    v.text = c.status === 'SUCCEEDED' ? `Done at ${at(c.completedAt ?? now)}.` : c.status === 'FAILED' ? `Failed${c.error ? `: ${c.error}` : ''}.` : 'Expired: the computer did not answer in time.';
+    v.text = c.status === 'SUCCEEDED' ? `Done at ${at(c.completedAt ?? now)}.` : c.status === 'FAILED' ? `Failed${c.error ? `: ${c.error}` : ''}.` : 'Expired: the device did not answer in time.';
     return v;
   }
   if (c.status === 'DISPATCHED') {
     v.stage = 'handed_out'; v.state = 'handed_out';
     const d = c.dispatchedAt ?? now;
-    v.text = `Handed to the computer at ${at(d)} (${c.dispatchCount} deliver${c.dispatchCount === 1 ? 'y' : 'ies'}); waiting for its answer.`;
+    v.text = `Handed to the device at ${at(d)} (${c.dispatchCount} deliver${c.dispatchCount === 1 ? 'y' : 'ies'}); waiting for its answer.`;
     if (now.getTime() - d.getTime() > OVERDUE_MINUTES[m.type] * 60_000) { v.overdue = true; v.overdueText = `Handed out ${span(now.getTime() - d.getTime())} ago, no result yet: the agent may be busy or offline.`; }
     return v;
   }
   v.stage = 'queued'; v.state = 'queued'; v.waitingFor = 'check_in';
-  v.text = `Queued: waiting for the computer's next check-in (about every ${CHECK_IN_MINUTES} minutes).`;
+  v.text = `Queued: waiting for the device's next check-in (about every ${CHECK_IN_MINUTES} minutes).`;
   const quiet = quietText(ep, now);
   if (quiet) { v.overdue = true; v.overdueText = quiet; }
   return v;
@@ -440,7 +440,7 @@ export function patchScanTask(endpointId: string, ep: EndpointRow | null, reques
   v.text = `Requested; the signed agent scans at its next check-in (about every ${CHECK_IN_MINUTES} minutes) and reports the new list.`;
   if (now.getTime() - requestedAt.getTime() > OVERDUE_MINUTES.scan * 60_000) {
     v.overdue = true;
-    v.overdueText = `Requested ${span(now.getTime() - requestedAt.getTime())} ago and no scan has arrived: the computer may be offline, or Windows Update slow to answer.${quietText(ep, now) ? ` ${quietText(ep, now)}` : ''}`;
+    v.overdueText = `Requested ${span(now.getTime() - requestedAt.getTime())} ago and no scan has arrived: the device may be offline, or Windows Update slow to answer.${quietText(ep, now) ? ` ${quietText(ep, now)}` : ''}`;
   }
   return v;
 }
@@ -468,7 +468,7 @@ export function migrationTask(m: MigrationRow, ep: EndpointRow | null, st: { sta
     default: { v.stage = 'queued'; v.state = 'queued'; v.waitingFor = 'check_in'; const q = quietText(ep, now); if (q) { v.overdue = true; v.overdueText = q; } return v; }
   }
   const out = m.dispatchedAt ?? now;
-  if (now.getTime() - out.getTime() > OVERDUE_MINUTES.agent * 60_000) { v.overdue = true; v.overdueText = `Handed out ${span(now.getTime() - out.getTime())} ago and the computer still reports the standard agent.`; }
+  if (now.getTime() - out.getTime() > OVERDUE_MINUTES.agent * 60_000) { v.overdue = true; v.overdueText = `Handed out ${span(now.getTime() - out.getTime())} ago and the device still reports the standard agent.`; }
   return v;
 }
 
@@ -489,11 +489,11 @@ export function nodeTasks(n: NodeRow, ep: EndpointRow | null, now: Date): TaskVi
     v.link = { href: `/endpoints/${n.endpointId}`, label: 'Agent card' };
     if (n.reinstallDispatchedAt) {
       v.stage = 'handed_out'; v.state = 'handed_out'; v.handedOutAt = iso(n.reinstallDispatchedAt);
-      v.text = `Handed to the computer at ${at(n.reinstallDispatchedAt)}; it clears when the agent reports the reinstalled version.`;
-      if (now.getTime() - n.reinstallDispatchedAt.getTime() > OVERDUE_MINUTES.agent * 60_000) { v.overdue = true; v.overdueText = `Handed out ${span(now.getTime() - n.reinstallDispatchedAt.getTime())} ago and the agent has not reported a new version: the installer may have failed, or the computer is offline.`; }
+      v.text = `Handed to the device at ${at(n.reinstallDispatchedAt)}; it clears when the agent reports the reinstalled version.`;
+      if (now.getTime() - n.reinstallDispatchedAt.getTime() > OVERDUE_MINUTES.agent * 60_000) { v.overdue = true; v.overdueText = `Handed out ${span(now.getTime() - n.reinstallDispatchedAt.getTime())} ago and the agent has not reported a new version: the installer may have failed, or the device is offline.`; }
     } else {
       v.stage = 'queued'; v.state = 'queued'; v.waitingFor = 'check_in';
-      v.text = `Queued: waiting for the computer's next check-in (about every ${CHECK_IN_MINUTES} minutes).`;
+      v.text = `Queued: waiting for the device's next check-in (about every ${CHECK_IN_MINUTES} minutes).`;
       const q = quietText(ep, now); if (q) { v.overdue = true; v.overdueText = q; }
     }
     out.push(v);
@@ -506,7 +506,7 @@ export function nodeTasks(n: NodeRow, ep: EndpointRow | null, now: Date): TaskVi
       v.text = `Held: ${n.updateHoldReason.replace(/_/g, ' ')}. It is handed out when that changes.`;
     } else {
       v.stage = 'queued'; v.state = 'queued'; v.waitingFor = 'check_in';
-      v.text = `Queued for the computer's next check-in (about every ${CHECK_IN_MINUTES} minutes); it clears when the computer reports the new version.`;
+      v.text = `Queued for the device's next check-in (about every ${CHECK_IN_MINUTES} minutes); it clears when the device reports the new version.`;
     }
     out.push(v);
   }

@@ -85,7 +85,7 @@ export class MonitoringAdminService {
     this.acl.resolveScope(a, customerId); // 403 outside the business
     if (a.technician) {
       if (a.technician.businessId !== customerId || !a.technician.sources.some((s) => (s.capabilities as string[]).includes(CAP.MONITORING_CONFIGURE) && s.endpointIds === null)) {
-        throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Configuring monitoring needs monitoring:configure for the whole business.' });
+        throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Configuring monitoring needs monitoring:configure for the whole customer.' });
       }
       return;
     }
@@ -269,7 +269,7 @@ export class MonitoringAdminService {
   /** Resolve a requested scope into a scope key, checking the person may configure it. */
   private async scopeFor(a: ActorContext, s: { scope: 'global' | 'business' | 'site' | 'group' | 'endpoint'; businessId?: string; siteId?: string; groupId?: string; endpointId?: string }) {
     if (s.scope === 'global') {
-      if (s.businessId || s.siteId || s.endpointId || s.groupId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'A global monitor names no business, site, group or computer.' });
+      if (s.businessId || s.siteId || s.endpointId || s.groupId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'A global monitor names no customer, site, group or device.' });
       if (!this.isMsp(a)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Global monitors are set by the MSP.' });
       return { scopeKey: 'global', customerId: null as string | null, siteId: null as string | null, endpointId: null as string | null, groupId: null as string | null, tenantId: a.tenantId };
     }
@@ -278,7 +278,7 @@ export class MonitoringAdminService {
       // the caller's own (or, for the MSP, the one named, else the group's).
       // Another business's group is the same 404 as a made-up id.
       if (!s.groupId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'groupId is required.' });
-      if (s.siteId || s.endpointId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'A group monitor names no site or computer.' });
+      if (s.siteId || s.endpointId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'A group monitor names no site or device.' });
       let customerId = s.businessId ?? a.businessId ?? null;
       if (!customerId && this.isMsp(a)) customerId = (await this.prisma.endpointGroup.findUnique({ where: { id: s.groupId }, select: { customerId: true } }).catch(() => null))?.customerId ?? null;
       if (!customerId) throw new NotFoundException('Group not found');
@@ -305,7 +305,7 @@ export class MonitoringAdminService {
     }
     if (!s.endpointId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'endpointId is required.' });
     const ep = await this.acl.assertEndpointInScope(a, s.endpointId, CAP.MONITORING_CONFIGURE);
-    if (!ep.customerId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'That computer is not in a business yet.' });
+    if (!ep.customerId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'That device is not in a customer yet.' });
     this.assertConfigure(a, ep.customerId);
     return { scopeKey: scopeKeyOf({ scope: 'endpoint', id: ep.id }), customerId: ep.customerId, siteId: null, endpointId: ep.id, groupId: null, tenantId: ep.tenantId };
   }
@@ -320,7 +320,7 @@ export class MonitoringAdminService {
 
   /** A group monitor's priority must be free for its key in its business (the partial unique index says the same). */
   private priorityTaken(key: string, priority: number) {
-    return new ConflictException({ code: 'PRIORITY_TAKEN', message: `Another device-group monitor called "${key}" in this business already has priority ${priority}. Each group monitor with the same key needs its own priority, so a computer in both groups is decided by it.` });
+    return new ConflictException({ code: 'PRIORITY_TAKEN', message: `Another device-group monitor called "${key}" in this customer already has priority ${priority}. Each group monitor with the same key needs its own priority, so a device in both groups is decided by it.` });
   }
 
   /** Rules at every scope this person can see in a business, plus the global ones (read-only below the MSP). */
@@ -343,7 +343,7 @@ export class MonitoringAdminService {
     const p = parseParams(d.data.kind, d.data.params);
     if (!p.ok) throw new BadRequestException({ code: 'INVALID_PARAMS', message: p.error });
     const s = await this.scopeFor(a, d.data);
-    if (s.groupId && d.data.priority === undefined) throw new BadRequestException({ code: 'PRIORITY_REQUIRED', message: 'A device-group monitor needs a priority (1 first): it decides between two groups a computer is in that both set this key.' });
+    if (s.groupId && d.data.priority === undefined) throw new BadRequestException({ code: 'PRIORITY_REQUIRED', message: 'A device-group monitor needs a priority (1 first): it decides between two groups a device is in that both set this key.' });
     if (!s.groupId && d.data.priority !== undefined) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'Only a device-group monitor has a priority; the others are decided by how specific their scope is.' });
     const priority = s.groupId ? d.data.priority! : null;
     if (priority !== null && await this.prisma.monitorRule.findFirst({ where: { customerId: s.customerId, key: d.data.key, priority, groupId: { not: null } }, select: { id: true } })) throw this.priorityTaken(d.data.key, priority);
@@ -386,7 +386,7 @@ export class MonitoringAdminService {
     if (!ID.test(id)) throw new NotFoundException('Monitor not found');
     const r = await this.prisma.monitorRule.findUnique({ where: { id } });
     if (!r) throw new NotFoundException('Monitor not found');
-    if (r.scopeKey === 'global') { if (!this.isMsp(a)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Global monitors are changed by the MSP. Override one for your business with the same key.' }); }
+    if (r.scopeKey === 'global') { if (!this.isMsp(a)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Global monitors are changed by the MSP. Override one for your customer with the same key.' }); }
     else {
       if (!this.isMsp(a) && a.businessId !== r.customerId) throw new NotFoundException('Monitor not found');
       this.assertConfigure(a, r.customerId!);
@@ -583,7 +583,7 @@ export class MonitoringAdminService {
   async putTicketPolicy(a: ActorContext, raw: unknown) {
     const d = TicketPolicyInput.safeParse(raw ?? {});
     if (!d.success) throw bad(d.error);
-    if (d.data.scope === 'global' && d.data.businessId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'The platform rule names no business.' });
+    if (d.data.scope === 'global' && d.data.businessId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'The platform rule names no customer.' });
     const customerId = d.data.scope === 'business' ? (d.data.businessId ?? a.businessId) : null;
     if (d.data.scope === 'business' && !customerId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'businessId is required.' });
     if (customerId) {
@@ -632,7 +632,7 @@ export class MonitoringAdminService {
     if (global) return;
     const h = u.hostname.replace(/^\[|\]$/g, '').toLowerCase();
     if (u.protocol !== 'https:' || isIP(h) || h === 'localhost' || !h.includes('.') || /\.(local|internal|lan|home|corp|localdomain|localhost)$/.test(h)) {
-      throw new BadRequestException({ code: 'INVALID_DESTINATION', message: 'A business notification destination must be an https URL on a public host name.' });
+      throw new BadRequestException({ code: 'INVALID_DESTINATION', message: 'A customer notification destination must be an https URL on a public host name.' });
     }
   }
 

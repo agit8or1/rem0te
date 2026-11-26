@@ -26,7 +26,7 @@ const KIND_LABEL: Record<string, string> = {
 const MODE_LABEL: Record<string, string> = {
   CONTROL: 'Interactive control',
   ELEVATION: 'Elevation',
-  PROTECTED_EXCEPTION: 'Protected-computer exception',
+  PROTECTED_EXCEPTION: 'Protected-device exception',
 };
 
 function useNames() {
@@ -126,7 +126,7 @@ export function ReviewsPanel() {
         <CardHeader>
           <CardTitle className="text-sm">Temporary access requests</CardTitle>
           <CardDescription>
-            Time-limited control asked for by a technician on one computer. Approval alone grants nothing: the technician
+            Time-limited control asked for by a technician on one device. Approval alone grants nothing: the technician
             activates it with fresh authentication, which starts the clock.
           </CardDescription>
         </CardHeader>

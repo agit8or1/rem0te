@@ -157,7 +157,7 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
 
   private support(ep: Awaited<ReturnType<ChatService['visibleEndpoint']>>) {
     if (!ep.customerId) {
-      return { supported: false as const, reason: 'no_business' as const, message: 'Assign this computer to a business first: the chat window shows the business name.' };
+      return { supported: false as const, reason: 'no_business' as const, message: 'Assign this device to a customer first: the chat window shows the customer name.' };
     }
     return chatSupport({ ...ep, agentBound: !!ep.rustdeskNode?.agentSecretHash, trayPaired: !!ep.trayKeyId });
   }
@@ -669,7 +669,7 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
       where: { sender: 'END_USER', createdAt: { gt: new Date(Date.now() - 60_000) }, conversation: { endpointId } },
     });
     if (deviceRecent >= MAX_DEVICE_PER_MINUTE) {
-      throw new HttpException({ code: 'CHAT_RATE_LIMITED', message: `At most ${MAX_DEVICE_PER_MINUTE} messages a minute from one computer.` }, HttpStatus.TOO_MANY_REQUESTS);
+      throw new HttpException({ code: 'CHAT_RATE_LIMITED', message: `At most ${MAX_DEVICE_PER_MINUTE} messages a minute from one device.` }, HttpStatus.TOO_MANY_REQUESTS);
     }
     try {
       const m = await this.prisma.$transaction(async (tx) => {
@@ -721,7 +721,7 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     const c = await this.prisma.chatConversation.findFirst({ where: { endpointId, status: 'OPEN' } });
     if (!c) return null;
     if (c.deviceUser && localUser && c.deviceUser !== localUser) {
-      throw new ConflictException({ code: 'CHAT_OTHER_USER', message: 'This chat is with someone else signed in on this computer.' });
+      throw new ConflictException({ code: 'CHAT_OTHER_USER', message: 'This chat is with someone else signed in on this device.' });
     }
     if (!c.deviceUser && localUser) {
       await this.prisma.chatConversation.updateMany({ where: { id: c.id, deviceUser: null }, data: { deviceUser: localUser } });
@@ -739,7 +739,7 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
    */
   async endUserStart(ep: { id: string; tenantId: string | null; customerId: string | null; customerName: string | null; customerRecording: boolean | null },
     localUser: string | null, supportRequestId: string | null) {
-    if (!ep.customerId) throw new ConflictException({ code: 'CHAT_UNSUPPORTED', reason: 'no_business', message: 'This computer is not assigned to a business yet.' });
+    if (!ep.customerId) throw new ConflictException({ code: 'CHAT_UNSUPPORTED', reason: 'no_business', message: 'This device is not assigned to a customer yet.' });
     await this.containment.assertOpen('remote', ep.customerId);
     const existing = await this.prisma.chatConversation.findFirst({ where: { endpointId: ep.id, status: 'OPEN' }, select: { id: true } });
     if (existing) return { id: existing.id, existing: true };
@@ -839,7 +839,7 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
       where: { sender: 'END_USER', createdAt: { gt: new Date(Date.now() - 60_000) }, conversation: { endpointId } },
     });
     if (deviceRecent >= MAX_DEVICE_PER_MINUTE) {
-      throw new HttpException({ code: 'CHAT_RATE_LIMITED', message: `At most ${MAX_DEVICE_PER_MINUTE} messages a minute from one computer.` }, HttpStatus.TOO_MANY_REQUESTS);
+      throw new HttpException({ code: 'CHAT_RATE_LIMITED', message: `At most ${MAX_DEVICE_PER_MINUTE} messages a minute from one device.` }, HttpStatus.TOO_MANY_REQUESTS);
     }
     try {
       const m = await this.storeAttachment(c, { sender: 'END_USER', authorId: null, authorName: c.deviceUser ?? 'Person at the computer', clientId }, a, file!.buffer!);

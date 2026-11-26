@@ -42,10 +42,10 @@ export class ClientUpdatesController {
       if (e instanceof FreshAuthNeeded) {
         throw new ForbiddenException(e.key === 'agent.autoupdate.business' ? {
           code: 'STEP_UP_REQUIRED', action: 'agent.autoupdate.business',
-          message: 'Confirm it is you to continue: turning on automatic agent updates lets the server re-run the installer on this business’s outdated computers without anyone clicking Update agent.',
+          message: 'Confirm it is you to continue: turning on automatic agent updates lets the server re-run the installer on this customer’s outdated devices without anyone clicking Update agent.',
         } : {
           code: 'STEP_UP_REQUIRED', action: 'updates.schedule',
-          message: 'Confirm it is you to continue: turning on automatic client updates lets the server install software on this business’s computers without anyone clicking Update.',
+          message: 'Confirm it is you to continue: turning on automatic client updates lets the server install software on this customer’s devices without anyone clicking Update.',
         });
       }
       throw e;

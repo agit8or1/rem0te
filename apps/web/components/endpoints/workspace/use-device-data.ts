@@ -102,11 +102,11 @@ export function actionUnavailableReason(ep: Record<string, unknown>, catalog: Ac
   if (catalogError) return 'Could not read the action catalog.';
   if (!catalog) return 'Checking…';
   if (!catalog.configured) return 'No approval signer is configured on this server, so no action can be approved.';
-  if (ep.status === 'ARCHIVED') return 'This computer is archived.';
-  if (ep.updateChannel !== 'signed') return 'This computer runs the standard agent. Approved actions need the signed agent.';
+  if (ep.status === 'ARCHIVED') return 'This device is archived.';
+  if (ep.updateChannel !== 'signed') return 'This device runs the standard agent. Approved actions need the signed agent.';
   const direct = directActions(catalog);
-  if (!direct.length) return 'This server offers no action that can be requested for one computer.';
+  if (!direct.length) return 'This server offers no action that can be requested for one device.';
   const agent = agentActionKeys(ep);
-  if (!direct.some((a) => agent.includes(`${a.id}@${a.version}`))) return 'This computer’s agent does not report support for any catalog action yet. Let it update first.';
+  if (!direct.some((a) => agent.includes(`${a.id}@${a.version}`))) return 'This device’s agent does not report support for any catalog action yet. Let it update first.';
   return null;
 }

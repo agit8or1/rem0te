@@ -57,11 +57,11 @@ When the newest real drill failed, the column says so, and still shows the last 
 
 | Provider | How it reaches Rem0te | State in 0.81 |
 |---|---|---|
-| **St0r** (UrBackup) | St0r **pushes** to Rem0te with a per-business token | **Requires setup.** Rem0te accepts the push, but St0r does not send one yet: that needs a change on the St0r side |
+| **St0r** (UrBackup) | St0r **pushes** to Rem0te with a per-customer token | **Requires setup.** Rem0te accepts the push, but St0r does not send one yet: that needs a change on the St0r side |
 | **Comet Backup** | Rem0te would **read** it with a read-only Comet API token | **Planned** (roadmap 4.4). Creating a Comet connection is refused (`BACKUP_PROVIDER_NOT_AVAILABLE`) |
 | Test stand-in | Rem0te reads it | **Test only.** It works only under `NODE_ENV=test`, with `BACKUP_TEST_BASE_URL` on `127.0.0.1` |
 
-Until a Platform Admin connects a provider for the business, the page shows **Requires setup** and explains what
+Until a Platform Admin connects a provider for the customer, the page shows **Requires setup** and explains what
 is needed. Once a provider is connected but has not reported, the page shows **Waiting for the first report**.
 
 ### St0r: what it needs
@@ -70,7 +70,7 @@ St0r is the owner's front end for UrBackup. It already keeps backup, offsite rep
 separate statuses, and records simulated drills as simulated. Its routes need a signed-in user, and it has no
 service token. So Rem0te does not connect to it. St0r pushes to Rem0te instead (decision 17).
 
-1. **Create the connection.** A Platform Admin opens **Settings → Backups** (from 0.82), picks the business, and
+1. **Create the connection.** A Platform Admin opens **Administration → Backup connections** (from 0.82), picks the customer, and
    presses **Create St0r connection**. If *Settings → Confirm it is you* asks for `backup.connection`, confirm it is
    you first. The push token is shown **once**, masked until you press **Reveal**, with a **Copy** button. Rem0te
    keeps only its SHA-256 and its last four characters.
@@ -85,7 +85,7 @@ service token. So Rem0te does not connect to it. St0r pushes to Rem0te instead (
 
 **Limitations:**
 
-- One St0r manages one UrBackup server, and a business can have only one St0r connection today.
+- One St0r manages one UrBackup server, and a customer can have only one St0r connection today.
 - Drills are St0r's. Rem0te shows them, but starts none in 0.81.
 - Standby is readiness only: neither St0r nor UrBackup fails a workload over.
 
@@ -96,7 +96,7 @@ Comet is planned and is not built in 0.81. When it is built, it will need:
 - **A public address.** A Comet Server on a public DNS name with a valid certificate. A private address is refused
   (decision 17).
 - **A read-only login.** A Comet admin with a personal API token (`AuthType` `Token`), limited to the tenant that
-  matches the business.
+  matches the customer.
 
 **Limitations, from Comet's API reference:**
 
@@ -106,9 +106,9 @@ Comet is planned and is not built in 0.81. When it is built, it will need:
 - **Read-only.** Many write methods refuse token authentication. Rem0te would only read.
 - **No failover.** Standby is readiness only.
 
-## Settings → Backups (0.82)
+## Administration → Backup connections (0.82)
 
-**Settings → Backups** is where a Platform Admin sets St0r up for one business. After picking the business, the
+**Administration → Backup connections** is where a Platform Admin sets St0r up for one customer. After picking the customer, the
 page shows:
 
 - **Five steps:**
@@ -118,11 +118,11 @@ page shows:
   4. the real push;
   5. backup monitors and linking assets.
 - **The connections.** Each one shows:
-  - its last push, its last result and how many assets it reported (and how many are linked to a computer);
+  - its last push, its last result and how many assets it reported (and how many are linked to a device);
   - the token's last four characters, and when it was created and rotated;
   - why the last push was refused, if it was. This is Rem0te's own parse message, never the feed.
 - **Rotate and Revoke** for each connection.
-- **What works for this business**, each capability in one of the four states: **available**, **requires setup**,
+- **What works for this customer**, each capability in one of the four states: **available**, **requires setup**,
   **planned** or **unsupported**:
 
   | Capability | State |
@@ -136,7 +136,7 @@ page shows:
 The **Backups** page keeps a short list of the connections, for a Platform Admin, and points here. A credential is
 managed in one place.
 
-**Why only a Platform Admin.** A push token is a credential that writes a business's backup status and raises its
+**Why only a Platform Admin.** A push token is a credential that writes a customer's backup status and raises its
 alerts. 0.81 made connections a Platform Admin's, and 0.82 keeps that. A Business Owner cannot create, rotate or
 revoke one.
 
@@ -171,26 +171,26 @@ It answers `200` with:
 - `valid`, and the problems if it is not;
 - what a real push would write;
 - how each asset would link: by Rem0te id, by hostname, by a person's choice, or not at all. It never says which
-  computer;
+  device;
 - warnings, such as a drill whose recovery point Rem0te does not hold, or a simulated drill.
 
 ### Linking an asset by hand
 
-When St0r's name for a machine matches no computer, someone who configures the business can link it on the
+When St0r's name for a machine matches no device, someone who configures the customer can link it on the
 **Backups** page. That is a Business Owner, a Platform Admin, or someone with *Monitoring: configure* for the whole
-business: the same people who set RPO and RTO targets, because the link decides which computer a backup alert is
-raised on. In the asset's **Computer** column, they choose one of:
+customer: the same people who set RPO and RTO targets, because the link decides which device a backup alert is
+raised on. In the asset's **Device** column, they choose one of:
 
-- **A computer** of that business. A report never changes the link afterwards.
-- **Not a computer.** A report never links it.
+- **A device** of that customer. A report never changes the link afterwards.
+- **Not a device.** A report never links it.
 - **Automatic.** The provider's report decides again. The asset is unlinked until the next report.
 
 The rules:
 
-- **Where.** Only a computer of the asset's own business, and one the person can see.
+- **Where.** Only a device of the asset's own customer, and one the person can see.
 - **Who can see the asset.** A Business User never sees an unlinked asset, so they cannot link one either.
 - **Audit.** Every change is audited (`BACKUP_ASSET_LINKED`, before and after).
-- **When it ends.** A computer that moves to another business loses the link, and the asset goes back to automatic
+- **When it ends.** A device that moves to another customer loses the link, and the asset goes back to automatic
   (migration 0099).
 
 ## The push (St0r)
@@ -214,10 +214,10 @@ The checks run in this order, and nothing is written before they all pass:
    SHA-256 that matches the secret. The comparison is constant-time. An unknown connection, a wrong secret and a
    revoked token all get the same `401 BACKUP_PUSH_UNAUTHORIZED`.
 3. **The body.** The body must be a strict feed, or it is refused with `400 BAD_FEED`. The reason is kept on
-   the connection for Settings → Backups.
+   the connection for Administration → Backup connections.
 
-**The business comes from the token, never from the body.** The feed has no business field, so a feed that names
-one is refused. A feed that names another business's computer links nothing.
+**The customer comes from the token, never from the body.** The feed has no customer field, so a feed that names
+one is refused. A feed that names another customer's device links nothing.
 
 The route is public, rate-limited, and capped by the API's 1 MB body limit. A feed holds at most:
 
@@ -259,33 +259,33 @@ Each asset in the feed is:
 }
 ```
 
-### Linking an asset to a computer
+### Linking an asset to a device
 
-An asset is linked to a computer of the token's business in one of two ways:
+An asset is linked to a device of the token's customer in one of two ways:
 
-- **By id.** It names the computer's Rem0te id (`computer.rem0teId`).
-- **By hostname.** It names a hostname that matches **exactly one** active computer in that business.
+- **By id.** It names the device's Rem0te id (`computer.rem0teId`).
+- **By hostname.** It names a hostname that matches **exactly one** active device in that customer.
 
-An asset that matches no computer, such as a mailbox or a file share, appears on the page as **Not linked**. A
-computer that moves to another business loses its links. From 0.82, an asset can be
+An asset that matches no device, such as a mailbox or a file share, appears on the page as **Not linked**. A
+device that moves to another customer loses its links. From 0.82, an asset can be
 [linked by hand](#linking-an-asset-by-hand).
 
 ## Who can see it
 
 | Who | What they see |
 |---|---|
-| Platform Admin | Every business, or the one picked on the page |
-| Business Owner | Their business |
-| Business User with **See backup status** (`backups:view`) | Only assets linked to a computer they can see. Never an unlinked asset, because nothing they can see vouches for it |
-| Technician | Through an assignment that carries `backups:view`: the whole business on a whole-business assignment, else only assets on its computers |
+| Platform Admin | Every customer, or the one picked on the page |
+| Business Owner | Their customer |
+| Business User with **See backup status** (`backups:view`) | Only assets linked to a device they can see. Never an unlinked asset, because nothing they can see vouches for it |
+| Technician | Through an assignment that carries `backups:view`: the whole customer on a whole-customer assignment, else only assets on its devices |
 
 `backups:view` is new in 0.81. It is not given to Business Users by default.
 
-**Why it is a separate permission.** A backup report names more than the computers it protects. It can also name
-mailboxes, databases and file shares, which the computer permissions say nothing about.
+**Why it is a separate permission.** A backup report names more than the devices it protects. It can also name
+mailboxes, databases and file shares, which the device permissions say nothing about.
 
-**RPO and RTO targets** are set with *Monitoring: configure* for the whole business. They are monitor thresholds.
-A target can be set for the business, or for one asset, and an asset's own target comes first. Every change is
+**RPO and RTO targets** are set with *Monitoring: configure* for the whole customer. They are monitor thresholds.
+A target can be set for the customer, or for one asset, and an asset's own target comes first. Every change is
 audited (`BACKUP_OBJECTIVE_SET`, before and after).
 
 **Connections** are a Platform Admin's:
@@ -295,7 +295,7 @@ audited (`BACKUP_OBJECTIVE_SET`, before and after).
 - **Rotating one** (0.82) asks the same way, and is audited before the write.
 - **Revoking one** never asks. It drops the token hash and the credential, and keeps what was reported.
 
-**Linking an asset by hand** (0.82) needs what targets need: *Monitoring: configure* for the whole business, or a
+**Linking an asset by hand** (0.82) needs what targets need: *Monitoring: configure* for the whole customer, or a
 Business Owner or Platform Admin. It is audited (`BACKUP_ASSET_LINKED`).
 
 ## How RPO and RTO are measured
@@ -307,32 +307,32 @@ Business Owner or Platform Admin. It is audited (`BACKUP_ASSET_LINKED`).
 
 ## Monitors
 
-There are four new monitor kinds in **Settings → Monitoring**. None is in **Add recommended**, and none is added
+There are four new monitor kinds in **Monitoring → Monitoring policies**. None is in **Add recommended**, and none is added
 for you.
 
 | Monitor | Raises when | Clears when |
 |---|---|---|
-| **Backup stale** (`BACKUP_STALE`, default 26 h) | No successful job for this long. If the asset or business has an RPO target, that target is the window. A new asset gets the window before it alerts | A successful job arrives |
+| **Backup stale** (`BACKUP_STALE`, default 26 h) | No successful job for this long. If the asset or customer has an RPO target, that target is the window. A new asset gets the window before it alerts | A successful job arrives |
 | **Backup failed** (`BACKUP_FAILED`, default 1) | The newest finished jobs failed this many times in a row | A job succeeds |
 | **Restore drill failed** (`DRILL_FAILED`, default 30 days) | A real (not simulated) drill failed in the window, with no pass since | A later drill passes, or the failure leaves the window |
-| **RPO exceeded** (`RPO_EXCEEDED`) | The newest recovery point is older than the asset's target, else the business's. With no target, the asset is skipped unless the monitor sets `fallbackHours` | A newer point arrives |
+| **RPO exceeded** (`RPO_EXCEEDED`) | The newest recovery point is older than the asset's target, else the customer's. With no target, the asset is skipped unless the monitor sets `fallbackHours` | A newer point arrives |
 
 How the monitors behave:
 
 - **Stored rows only.** The monitoring sweep reads only what the provider reported and Rem0te stored. It checks at
   most every five minutes (`MONITOR_INVENTORY_SECONDS`, the cadence 0.55's inventory monitors use).
   `MONITOR_SWEEP=off` stops them.
-- **One alert per linked asset.** Each alert is keyed `<monitor>:<computer>:<asset>`, and is raised on the computer
+- **One alert per linked asset.** Each alert is keyed `<monitor>:<computer>:<asset>`, and is raised on the device
   the asset is linked to. So the alert list's visibility rule, notifications, maintenance windows and automatic PSA
   tickets all apply as they do for any other alert.
-- **Unlinked assets raise no alert in 0.81.** An asset with no computer shows on the page only.
-- **Unlinking closes the alert.** An asset that stops being linked to the computer closes its alert.
+- **Unlinked assets raise no alert in 0.81.** An asset with no device shows on the page only.
+- **Unlinking closes the alert.** An asset that stops being linked to the device closes its alert.
 
 ## Templates for backup agents (4.2)
 
-**Settings → Monitoring → Backup agent templates** adds service monitors for backup agents on Windows. A template
+**Monitoring → Monitoring policies → Backup agent templates** adds service monitors for backup agents on Windows. A template
 is added only when someone presses it, as ordinary audited monitors. Each one uses `alertIfMissing: false`, so a
-computer without that agent raises nothing, and it is safe to set for a whole business. Nothing changes on the
+device without that agent raises nothing, and it is safe to set for a whole customer. Nothing changes on the
 agent.
 
 | Template | Monitor | Service | Source |
@@ -366,14 +366,14 @@ agent.
   the four monitors, the push token and the templates.
 - **Behavioural:** `apps/api/scripts/e2e-backups.mjs`, on ports 4051 to 4053, with a scratch database,
   `MONITOR_SWEEP` on and a loopback stand-in. It is in `run-e2e.sh`. It proves:
-  - default deny, and refusal of another business;
+  - default deny, and refusal of another customer;
   - the push token's refusals;
   - a successful job without a drill is never verified, and nor is one with only a simulated drill;
   - a stale backup raising and clearing;
   - `DRILL_FAILED` and `RPO_EXCEEDED`;
-  - the pull sweep skipping a paused business.
+  - the pull sweep skipping a paused customer.
 - **Browser:** `apps/web/scripts/e2e-ui.mjs` drives the page at both widths and in both themes, and from 0.82
-  Settings → Backups and the link control too.
+  Administration → Backup connections and the link control too.
 - **0.82, unit:** `apps/api/scripts/unit-backup-setup.mjs`, in CI. It checks:
   - every example in the St0r push contract against the API's own schema;
   - that the JSON Schema file is regenerated identically;
@@ -385,7 +385,7 @@ agent.
   - re-sending in any order;
   - rotation refusing the old token at once;
   - linking by hand, scoped and audited;
-  - another business refused;
+  - another customer refused;
   - fresh authentication on `ask`;
   - 413 and 429.
 

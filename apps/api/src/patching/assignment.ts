@@ -166,7 +166,7 @@ export interface RingPlan {
 /** Rings for these candidates, or why there can be none. */
 export function planRings(cands: Candidate[], opts: { preferredCanary?: string | null; previousCanary?: string | null } = {}): RingPlan | { ok: false; code: string; message: string; leftOut: LeftOut[] } {
   const all = stableOrder(cands);
-  if (!all.length) return { ok: false, code: 'no_computers', message: 'No computer of this business is eligible for this policy.', leftOut: [] };
+  if (!all.length) return { ok: false, code: 'no_computers', message: 'No device of this customer is eligible for this policy.', leftOut: [] };
   const alone = all.length === 1;
   const canCanary = (c: Candidate) => c.canaryReady && (alone || !!c.resultKey);
   const by = (id: string | null | undefined) => (id ? all.find((c) => c.endpointId === id && canCanary(c)) : undefined);
@@ -181,7 +181,7 @@ export function planRings(cands: Candidate[], opts: { preferredCanary?: string |
   if (!canary) {
     return {
       ok: false, code: 'no_canary',
-      message: 'No computer can be the canary: it needs the update action ready on the published signed agent and, with other computers after it, a signed scan from a 0.34+ agent (its result key).',
+      message: 'No device can be the canary: it needs the update action ready on the published signed agent and, with other devices after it, a signed scan from a 0.34+ agent (its result key).',
       leftOut: [],
     };
   }
@@ -208,7 +208,7 @@ export function planRings(cands: Candidate[], opts: { preferredCanary?: string |
  */
 export function planAllAtOnce(cands: Candidate[]): { ok: true; rings: string[][]; leftOut: LeftOut[] } | { ok: false; code: string; message: string; leftOut: LeftOut[] } {
   const all = stableOrder(cands);
-  if (!all.length) return { ok: false, code: 'no_computers', message: 'No computer of this business is eligible for this policy.', leftOut: [] };
+  if (!all.length) return { ok: false, code: 'no_computers', message: 'No device of this customer is eligible for this policy.', leftOut: [] };
   const inPlan = all.slice(0, MAX_ALL_AT_ONCE_COMPUTERS);
   const n = Math.ceil(inPlan.length / MAX_RING_TARGETS);
   const rings: string[][] = [];
@@ -221,7 +221,7 @@ export function planAllAtOnce(cands: Candidate[]): { ok: true; rings: string[][]
   }
   const leftOut: LeftOut[] = all.slice(MAX_ALL_AT_ONCE_COMPUTERS).map((c) => ({
     endpointId: c.endpointId, hostname: c.hostname, code: 'policy_full' as const,
-    message: `the policy is full (${MAX_ALL_AT_ONCE_COMPUTERS} computers: ${MAX_POLICY_RINGS} groups of ${MAX_RING_TARGETS}, all at once). Give the rest their own policy.`,
+    message: `the policy is full (${MAX_ALL_AT_ONCE_COMPUTERS} devices: ${MAX_POLICY_RINGS} groups of ${MAX_RING_TARGETS}, all at once). Give the rest their own policy.`,
   }));
   return { ok: true, rings, leftOut };
 }
@@ -270,9 +270,9 @@ export function revisionDecision(i: RevisionInput, minutes = revisionMinutes(), 
   const now = i.now.getTime();
   const live = i.current && i.current.status === 'ACTIVE' && (i.current.expiresAt === null || i.current.expiresAt.getTime() > now) ? i.current : null;
   if (!i.desired) {
-    if (!live) return { act: 'hold', code: 'no_computers', message: 'No computer is eligible, so there is nothing to propose.' };
-    if (i.midRing) return { act: 'hold', code: 'mid_ring', message: 'No computer is eligible any more; the running revision is withdrawn once its deployment finishes.' };
-    return { act: 'withdraw', code: 'no_computers', message: 'No computer is eligible any more: the running revision is withdrawn.' };
+    if (!live) return { act: 'hold', code: 'no_computers', message: 'No device is eligible, so there is nothing to propose.' };
+    if (i.midRing) return { act: 'hold', code: 'mid_ring', message: 'No device is eligible any more; the running revision is withdrawn once its deployment finishes.' };
+    return { act: 'withdraw', code: 'no_computers', message: 'No device is eligible any more: the running revision is withdrawn.' };
   }
   const want = i.desired.fingerprint;
   if (i.pending && i.pending.fingerprint === want) {
@@ -285,21 +285,21 @@ export function revisionDecision(i: RevisionInput, minutes = revisionMinutes(), 
   else if (live.fingerprint !== want) trigger = 'membership';
   // 0.63: only a revision that expires is renewed; the renewal itself never expires, so it is the last.
   else if (live.expiresAt !== null && live.expiresAt.getTime() - now <= renewLeadMs(i.expiresInDays)) trigger = 'renewal';
-  else if (i.pending) return { act: 'drop_pending', code: 'pending_stale', message: `Revision ${i.pending.revision} no longer matches the computers (the running revision already does); it is withdrawn before anyone approves it.` };
-  else return { act: 'none', code: 'up_to_date', message: 'The running revision names exactly these computers.' };
+  else if (i.pending) return { act: 'drop_pending', code: 'pending_stale', message: `Revision ${i.pending.revision} no longer matches the devices (the running revision already does); it is withdrawn before anyone approves it.` };
+  else return { act: 'none', code: 'up_to_date', message: 'The running revision names exactly these devices.' };
 
-  if (trigger !== 'renewal' && i.rejected === want) return { act: 'hold', code: 'rejected', message: 'The approvers rejected a revision naming exactly these computers. It is proposed again only when the computers change.' };
+  if (trigger !== 'renewal' && i.rejected === want) return { act: 'hold', code: 'rejected', message: 'The approvers rejected a revision naming exactly these devices. It is proposed again only when the devices change.' };
   if (i.midRing) return { act: 'hold', code: 'mid_ring', message: 'A deployment of the running revision is in progress; a revision is proposed only between deployments.' };
   if (trigger === 'membership') {
     if (i.settle.fingerprint !== want || !i.settle.since) {
-      return { act: 'hold', code: 'settling', message: `The computers changed; the change is proposed once it has held for ${settle} minute(s).`, settle: { fingerprint: want, since: i.now }, until: new Date(now + settle * 60_000) };
+      return { act: 'hold', code: 'settling', message: `The devices changed; the change is proposed once it has held for ${settle} minute(s).`, settle: { fingerprint: want, since: i.now }, until: new Date(now + settle * 60_000) };
     }
     const due = i.settle.since.getTime() + settle * 60_000;
-    if (now < due) return { act: 'hold', code: 'settling', message: `The computers changed; the change is proposed once it has held for ${settle} minute(s).`, until: new Date(due) };
+    if (now < due) return { act: 'hold', code: 'settling', message: `The devices changed; the change is proposed once it has held for ${settle} minute(s).`, until: new Date(due) };
   }
   if (i.lastClaimAt) {
     const next = i.lastClaimAt.getTime() + minutes * 60_000;
-    if (now < next) return { act: 'hold', code: 'rate_limited', message: `This business had an automatic revision less than ${minutes} minute(s) ago; the next is proposed after ${new Date(next).toISOString()}.`, until: new Date(next) };
+    if (now < next) return { act: 'hold', code: 'rate_limited', message: `This customer had an automatic revision less than ${minutes} minute(s) ago; the next is proposed after ${new Date(next).toISOString()}.`, until: new Date(next) };
   }
   return {
     act: 'propose', trigger,

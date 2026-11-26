@@ -190,7 +190,7 @@ export const UPDATE_INSTALL: CatalogAction = {
   id: 'windows.update.install',
   version: 1,
   title: 'Install Windows updates',
-  description: 'Downloads and installs the named Windows updates from Windows Update on each named computer, then reports each update\'s result. It restarts a computer only if the plan\'s restart rule allows it and Windows says a restart is required; by default it never does.',
+  description: 'Downloads and installs the named Windows updates from Windows Update on each named device, then reports each update\'s result. It restarts a device only if the plan\'s restart rule allows it and Windows says a restart is required; by default it never does.',
   params: z.object({
     updates: z.array(UpdateIdentity).min(1).max(MAX_UPDATES_PER_PLAN)
       .refine((u) => new Set(u.map((x) => `${x.updateId}@${x.revision}`)).size === u.length, 'duplicate update'),
@@ -281,7 +281,7 @@ export const REBOOT_SCHEDULE: CatalogAction = {
   id: 'windows.reboot.schedule',
   version: 1,
   title: 'Schedule a restart',
-  description: 'Shows a fixed restart warning on the computer and restarts it when the chosen delay has passed (5 minutes to 24 hours after the computer receives the plan). Never immediately. It can be scheduled for a date and time up to 14 days ahead (0.54), and asked to restart only if Windows reports a restart required.',
+  description: 'Shows a fixed restart warning on the device and restarts it when the chosen delay has passed (5 minutes to 24 hours after the device receives the plan). Never immediately. It can be scheduled for a date and time up to 14 days ahead (0.54), and asked to restart only if Windows reports a restart required.',
   // 0.54: two optional flags, each present only when true (RestartFlags on the agent).
   params: z.object({
     delayMinutes: z.number().int().min(MIN_RESTART_DELAY_MINUTES).max(MAX_RESTART_DELAY_MINUTES),
@@ -315,7 +315,7 @@ export const REBOOT_CANCEL: CatalogAction = {
   id: 'windows.reboot.cancel',
   version: 1,
   title: 'Cancel a scheduled restart',
-  description: 'Cancels the restart or shutdown Windows has pending on this computer, if there is one.',
+  description: 'Cancels the restart or shutdown Windows has pending on this device, if there is one.',
   params: z.object({}).strict(),
   warnings: [
     'This cancels whatever restart or shutdown is pending on the computer, including one a person or another tool scheduled there, not only one scheduled from here.',
@@ -448,7 +448,7 @@ export const SOFTWARE_INSTALL: CatalogAction = {
   id: 'windows.software.install',
   version: 1,
   title: 'Install software (winget)',
-  description: 'Installs one allowlisted winget package at one exact version, machine-wide and silently. The computer downloads it from winget\'s own source, hashes the installer itself and installs only if the hash is the one pinned here.',
+  description: 'Installs one allowlisted winget package at one exact version, machine-wide and silently. The device downloads it from winget\'s own source, hashes the installer itself and installs only if the hash is the one pinned here.',
   params: SoftwareParams,
   warnings: [
     'Installing software changes the computer. An installer can replace files, add services or startup items, and change other programs.',
@@ -535,7 +535,7 @@ export const SOFTWARE_REMOVE: CatalogAction = {
   id: 'windows.software.remove',
   version: 1,
   title: 'Remove an installed program',
-  description: 'Removes one program Programs and Features lists, by its uninstall registry key. The computer reads the key itself and runs only Windows Installer (msiexec /x, for an MSI product), the program\'s own registered silent uninstall command, or its registered uninstaller in one of the silent forms the agent recognises (Inno Setup, NSIS, Chromium). RustDesk and Rem0te are never removed.',
+  description: 'Removes one program Programs and Features lists, by its uninstall registry key. The device reads the key itself and runs only Windows Installer (msiexec /x, for an MSI product), the program\'s own registered silent uninstall command, or its registered uninstaller in one of the silent forms the agent recognises (Inno Setup, NSIS, Chromium). RustDesk and Rem0te are never removed.',
   params: RemoveParams,
   warnings: [
     'Uninstalling removes the program for everyone on the computer. Its settings and data may be removed with it.',
@@ -614,9 +614,9 @@ export type ServiceRefusalCode = 'own' | 'protected' | 'keep_running' | 'no_disa
 /** Why this operation on this service is refused, or null. The same rules as the agent's ServiceRefusal. */
 export function serviceRefusal(name: string, op: ServiceOp, startType?: ServiceStartType | null): { code: ServiceRefusalCode; reason: string } | null {
   if (name.slice(0, OWN_SERVICE_PREFIX.length).toLowerCase() === OWN_SERVICE_PREFIX.toLowerCase()) return { code: 'own', reason: 'This is Rem0te\'s own service; it is never changed from here.' };
-  if (inFold(PROTECTED_SERVICES, name)) return { code: 'protected', reason: 'A protected security or core Windows service: stopping, restarting or reconfiguring it can leave the computer unprotected, unbootable or unreachable.' };
-  if (inFold(KEEP_RUNNING_SERVICES, name) && (op === 'stop' || (op === 'set_start_type' && startType !== 'automatic' && startType !== 'automatic_delayed'))) return { code: 'keep_running', reason: 'RustDesk is how this computer is reached: it can be started, restarted or set to start automatically, never stopped or set to Manual or Disabled.' };
-  if (inFold(NO_DISABLE_SERVICES, name) && op === 'set_start_type' && startType === 'disabled') return { code: 'no_disable', reason: 'A Windows Update service: disabling it stops the computer receiving updates.' };
+  if (inFold(PROTECTED_SERVICES, name)) return { code: 'protected', reason: 'A protected security or core Windows service: stopping, restarting or reconfiguring it can leave the device unprotected, unbootable or unreachable.' };
+  if (inFold(KEEP_RUNNING_SERVICES, name) && (op === 'stop' || (op === 'set_start_type' && startType !== 'automatic' && startType !== 'automatic_delayed'))) return { code: 'keep_running', reason: 'RustDesk is how this device is reached: it can be started, restarted or set to start automatically, never stopped or set to Manual or Disabled.' };
+  if (inFold(NO_DISABLE_SERVICES, name) && op === 'set_start_type' && startType === 'disabled') return { code: 'no_disable', reason: 'A Windows Update service: disabling it stops the device receiving updates.' };
   return null;
 }
 
@@ -637,7 +637,7 @@ export const SERVICE_CONTROL: CatalogAction = {
   id: 'windows.service.control',
   version: 1,
   title: 'Control a Windows service',
-  description: 'Starts, stops or restarts one Windows service, or changes its startup type (Automatic, Automatic (delayed), Manual, Disabled). Nothing else about the service is ever changed: not its program, the account it runs as, its password, recovery actions or dependencies. The computer reads the service itself and refuses if its display name is not the one shown here.',
+  description: 'Starts, stops or restarts one Windows service, or changes its startup type (Automatic, Automatic (delayed), Manual, Disabled). Nothing else about the service is ever changed: not its program, the account it runs as, its password, recovery actions or dependencies. The device reads the service itself and refuses if its display name is not the one shown here.',
   params: ServiceControlParams,
   warnings: [
     'Whatever the service was doing stops while it is stopped or restarting. Programs and other services that depend on it may stop working until it is started again.',
@@ -685,8 +685,8 @@ export function processRefusal(name: string, pid: number): { code: 'kernel' | 's
   const base = imageBase(name.trim()).toLowerCase();
   if (pid === 0 || pid === 4) return { code: 'kernel', reason: 'The System and Idle processes are the kernel\'s own; they cannot be ended.' };
   if (base === 'svchost') return { code: 'svchost', reason: 'svchost hosts Windows services: stop the service instead, from the Services tab.' };
-  if (base === 'rem0te-agent' || base === 'rem0te-tray' || base === 'rustdesk') return { code: 'rem0te', reason: 'Rem0te and RustDesk are how this computer is reached; they are never ended from here.' };
-  if (inFold(PROTECTED_PROCESSES, base)) return { code: 'protected', reason: 'A protected Windows or security process: ending it can stop Windows, sign everyone out or leave the computer unprotected.' };
+  if (base === 'rem0te-agent' || base === 'rem0te-tray' || base === 'rustdesk') return { code: 'rem0te', reason: 'Rem0te and RustDesk are how this device is reached; they are never ended from here.' };
+  if (inFold(PROTECTED_PROCESSES, base)) return { code: 'protected', reason: 'A protected Windows or security process: ending it can stop Windows, sign everyone out or leave the device unprotected.' };
   return null;
 }
 /** The closed parameters windows.process.stop signs: the process id, its name and creation time from the snapshot, and optionally its tree. */
@@ -702,7 +702,7 @@ export const PROCESS_STOP: CatalogAction = {
   id: 'windows.process.stop',
   version: 1,
   title: 'End a process',
-  description: 'Ends one process, as Task Manager\'s End task does, optionally with the processes it started. The plan names the process id, its name and when it started; the computer refuses unless all three still match, so a process id Windows has since given to another process is never ended.',
+  description: 'Ends one process, as Task Manager\'s End task does, optionally with the processes it started. The plan names the process id, its name and when it started; the device refuses unless all three still match, so a process id Windows has since given to another process is never ended.',
   params: ProcessStopParams,
   warnings: [
     'The process is ended at once, without being asked to close: anything it had not saved is lost.',

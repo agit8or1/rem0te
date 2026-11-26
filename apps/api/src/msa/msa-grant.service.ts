@@ -211,26 +211,26 @@ export class MsaGrantService implements OnModuleDestroy {
     if (!ep) throw new NotFoundException('Computer not found');
     assertAssigned(ep);
     if (!isWindowsPlatform(ep.platform) || !runsSignedAgent({ updateChannel: ep.updateChannel, signedSeenAt: ep.signedSeenAt }, new Date(now))) {
-      throw new ConflictException({ code: 'MSA_SIGNED_AGENT_REQUIRED', message: 'Managed Secure Access needs a Windows computer running the signed agent.' });
+      throw new ConflictException({ code: 'MSA_SIGNED_AGENT_REQUIRED', message: 'Managed Secure Access needs a Windows device running the signed agent.' });
     }
     const rid = ep.rustdeskNode?.rustdeskId ?? '';
     if (!RUSTDESK_ID_RE.test(rid) || !ep.rustdeskNode?.agentSecretHash) {
-      throw new ConflictException({ code: 'MSA_GRANT_NO_DEVICE', message: 'This computer has no RustDesk ID or device secret on record.' });
+      throw new ConflictException({ code: 'MSA_GRANT_NO_DEVICE', message: 'This device has no RustDesk ID or device secret on record.' });
     }
     const pause = await activePause(this.prisma, 'remote', ep.customerId);
-    if (pause) throw new ForbiddenException({ code: 'CONTAINED', message: 'Remote connections are paused for this computer: no grant was issued.', pauseId: pause.id, scope: pause.scope.toLowerCase() });
+    if (pause) throw new ForbiddenException({ code: 'CONTAINED', message: 'Remote connections are paused for this device: no grant was issued.', pauseId: pause.id, scope: pause.scope.toLowerCase() });
 
     // 0.72: a managed computer's agent ACTS on a grant. It may not exceed the
     // managed ceiling (view-only, nothing beyond), not while it rolls back,
     // and not under a key the agents cannot verify.
     const managed = await this.prisma.msaManagedComputer.findUnique({ where: { endpointId: ep.id }, select: { state: true } });
     if (managed) {
-      if ((managed.state as ManagedState) === 'rollback_pending') throw new ConflictException({ code: 'MSA_ROLLBACK_PENDING', message: 'This computer is rolling back to Legacy: no grant was issued.' });
+      if ((managed.state as ManagedState) === 'rollback_pending') throw new ConflictException({ code: 'MSA_ROLLBACK_PENDING', message: 'This device is rolling back to Legacy: no grant was issued.' });
       const perms = {
         clipboard: b.permissions?.clipboard ?? false, files: b.permissions?.files ?? false, audio: b.permissions?.audio ?? false,
         tunnel: b.permissions?.tunnel ?? false, restart: b.permissions?.restart ?? false,
       };
-      if (!withinCeiling(b.mode ?? 'view', perms)) throw new ConflictException({ code: 'MSA_ABOVE_CEILING', message: 'A managed computer allows control with clipboard, file transfer and audio, never a tunnel or a remote restart: no grant was issued.' });
+      if (!withinCeiling(b.mode ?? 'view', perms)) throw new ConflictException({ code: 'MSA_ABOVE_CEILING', message: 'A managed device allows control with clipboard, file transfer and audio, never a tunnel or a remote restart: no grant was issued.' });
       if (!(await this.activePublishedKeyId())) throw new ConflictException({ code: 'MSA_GRANT_KEY_NOT_PUBLISHED', message: 'The grant key is not in the signed release metadata yet, so the agent would refuse the grant: no grant was issued.' });
     }
 
@@ -323,7 +323,7 @@ export class MsaGrantService implements OnModuleDestroy {
       where: { id: dev.endpointId },
       select: { id: true, tenantId: true, customerId: true, platform: true, updateChannel: true, signedSeenAt: true },
     });
-    if (!ep) throw new NotFoundException('This device is not attached to a computer');
+    if (!ep) throw new NotFoundException('This device is not attached to a device');
     if (!isWindowsPlatform(ep.platform) || !runsSignedAgent({ updateChannel: ep.updateChannel, signedSeenAt: ep.signedSeenAt })) {
       throw new ForbiddenException({ code: 'MSA_SIGNED_AGENT_REQUIRED', message: 'Only the signed Windows agent may poll for grants.' });
     }
@@ -477,19 +477,19 @@ export class MsaGrantService implements OnModuleDestroy {
     if (!ep) throw new NotFoundException('Computer not found');
     assertAssigned(ep);
     if (!isWindowsPlatform(ep.platform) || !runsSignedAgent({ updateChannel: ep.updateChannel, signedSeenAt: ep.signedSeenAt }, new Date(now))) {
-      throw new ConflictException({ code: 'MSA_SIGNED_AGENT_REQUIRED', message: 'Managed Secure Access needs a Windows computer running the signed agent.' });
+      throw new ConflictException({ code: 'MSA_SIGNED_AGENT_REQUIRED', message: 'Managed Secure Access needs a Windows device running the signed agent.' });
     }
     const rid = ep.rustdeskNode?.rustdeskId ?? '';
     if (!RUSTDESK_ID_RE.test(rid) || !ep.rustdeskNode?.agentSecretHash) {
-      throw new ConflictException({ code: 'MSA_GRANT_NO_DEVICE', message: 'This computer has no RustDesk ID or device secret on record.' });
+      throw new ConflictException({ code: 'MSA_GRANT_NO_DEVICE', message: 'This device has no RustDesk ID or device secret on record.' });
     }
     const pause = await activePause(this.prisma, 'remote', ep.customerId);
-    if (pause) throw new ForbiddenException({ code: 'CONTAINED', message: 'Remote connections are paused for this computer: no grant was issued.', pauseId: pause.id, scope: pause.scope.toLowerCase() });
+    if (pause) throw new ForbiddenException({ code: 'CONTAINED', message: 'Remote connections are paused for this device: no grant was issued.', pauseId: pause.id, scope: pause.scope.toLowerCase() });
     const managed = await this.prisma.msaManagedComputer.findUnique({ where: { endpointId: ep.id }, select: { state: true } });
-    if (!managed) throw new ConflictException({ code: 'MSA_NOT_MANAGED', message: 'This computer is in Legacy mode.' });
+    if (!managed) throw new ConflictException({ code: 'MSA_NOT_MANAGED', message: 'This device is in Legacy mode.' });
     if (managed.state !== want) {
       const code = managed.state === 'rollback_pending' ? 'MSA_ROLLBACK_PENDING' : managed.state === 'enforcement_failure' ? 'MSA_ENFORCEMENT_FAILURE' : want === 'verified' ? 'MSA_NOT_VERIFIED' : 'MSA_NOT_PENDING';
-      throw new ConflictException({ code, message: `This computer is Managed (${managed.state.replace('_', ' ')}): no grant was issued.` });
+      throw new ConflictException({ code, message: `This device is Managed (${managed.state.replace('_', ' ')}): no grant was issued.` });
     }
     if (!(await this.activePublishedKeyId())) throw new ConflictException({ code: 'MSA_GRANT_KEY_NOT_PUBLISHED', message: 'The grant key is not in the signed release metadata yet, so the agent would refuse the grant: no grant was issued.' });
     return { ep, rid };
@@ -583,7 +583,7 @@ export class MsaGrantService implements OnModuleDestroy {
       select: { id: true, tenantId: true, customerId: true, rustdeskNode: { select: { rustdeskId: true } } },
     });
     if (!ep) throw new NotFoundException('Grant not found');
-    if (g.state !== 'applied') throw new ConflictException({ code: 'MSA_GRANT_NOT_APPLIED', message: 'The computer\'s agent has not applied this session (or it already ended): there is nothing to connect with.' });
+    if (g.state !== 'applied') throw new ConflictException({ code: 'MSA_GRANT_NOT_APPLIED', message: 'The device\'s agent has not applied this session (or it already ended): there is nothing to connect with.' });
     if (g.revealedAt) throw new ConflictException({ code: 'MSA_PASSWORD_ALREADY_RELEASED', message: 'This session\'s one-time password was already handed to a Connect script. Press Connect again for a new session.' });
     await this.audit.logOrFail({
       action: 'MSA_PASSWORD_RELEASED', actorId: actor.userId, actorIp: actor.ip, tenantId: ep.tenantId ?? undefined, customerId: ep.customerId ?? undefined,

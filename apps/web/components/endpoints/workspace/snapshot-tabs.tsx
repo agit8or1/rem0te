@@ -110,10 +110,10 @@ export function automaticBlocker(s: Snapshot): string | null {
   if (!a) return null;
   switch (a.reason) {
     case 'unsupported_platform': return 'Collected by the Windows agents only. The Linux and macOS agents report inventory and pending updates, and run nothing the console asks for.';
-    case 'not_bound': return 'This computer has never authenticated with a device secret, so it cannot be asked for anything. Re-run the installer on it once.';
-    case 'not_active': return 'This computer is not active (archived or not enrolled yet), so nothing is collected from it.';
-    case 'agent_unknown': return 'This computer’s agent has never reported its version, so it is not asked automatically: it probably predates 0.33, which first collected this. Reinstall the agent from the Specs tab.';
-    case 'agent_too_old': return `This computer’s agent (${s.agentVersion ?? 'unknown'}) predates 0.33, which first collected this, so it is not asked automatically and a Refresh would expire unanswered. Reinstall the agent from the Specs tab.`;
+    case 'not_bound': return 'This device has never authenticated with a device secret, so it cannot be asked for anything. Re-run the installer on it once.';
+    case 'not_active': return 'This device is not active (archived or not enrolled yet), so nothing is collected from it.';
+    case 'agent_unknown': return 'This device’s agent has never reported its version, so it is not asked automatically: it probably predates 0.33, which first collected this. Reinstall the agent from the Specs tab.';
+    case 'agent_too_old': return `This device’s agent (${s.agentVersion ?? 'unknown'}) predates 0.33, which first collected this, so it is not asked automatically and a Refresh would expire unanswered. Reinstall the agent from the Specs tab.`;
     case 'agent_silent': return `${s.isOnline ? `${connectivityLabel('agent_silent', s.lastSeenAt)}. ` : ''}Its agent has not checked in since ${ago(s.lastSeenAt)}${s.isOnline ? ', so remote control should work but' : ', so'} nothing can be collected until it does.`;
     case 'disabled': return 'Automatic snapshots are turned off on this server (Settings → Monitoring & API). Refresh still asks for one.';
     case 'process_off': return 'Automatic snapshots are switched off where this server runs (SNAPSHOT_SWEEP=off). Refresh still asks for one.';
@@ -170,7 +170,7 @@ function SnapshotFrame({ endpointId, snapKey, title, note, children }: {
   const refresh = useMutation({
     mutationFn: () => api.post(`/endpoints/${endpointId}/diagnostics/runs`, { key: snapKey }).then((r) => r.data?.data as { deduplicated: boolean }),
     onSuccess: (d) => {
-      if (d?.deduplicated) toast({ title: 'Already requested', description: 'A refresh is already waiting for this computer.' });
+      if (d?.deduplicated) toast({ title: 'Already requested', description: 'A refresh is already waiting for this device.' });
       qc.invalidateQueries({ queryKey: ['diagnostics-snapshot', endpointId, snapKey] });
       qc.invalidateQueries({ queryKey: ['diagnostics-runs', endpointId] });
     },
@@ -178,13 +178,13 @@ function SnapshotFrame({ endpointId, snapKey, title, note, children }: {
   });
 
   if (q.isLoading) return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading…</div>;
-  if (q.isError || !q.data) return <p className="text-sm text-red-600">{errText(q.error, 'Not available for this computer.')}</p>;
+  if (q.isError || !q.data) return <p className="text-sm text-red-600">{errText(q.error, 'Not available for this device.')}</p>;
   const s = q.data;
   // Refresh cannot work at all on these: the button is disabled and the reason shown.
   const blocked = !s.supported
     ? 'Collected by the Windows agents only. The Linux and macOS agents report inventory and pending updates, and run nothing the console asks for.'
     : !s.agentBound
-      ? 'This computer has never authenticated with a device secret, so it cannot be asked for anything. Re-run the installer on it once.'
+      ? 'This device has never authenticated with a device secret, so it cannot be asked for anything. Re-run the installer on it once.'
       : null;
   const auto = s.automatic;
   const why = blocked ? null : automaticBlocker(s);
@@ -207,10 +207,10 @@ function SnapshotFrame({ endpointId, snapKey, title, note, children }: {
             {s.takenAt
               ? <>Taken <span title={formatDate(s.takenAt)}>{ago(s.takenAt)}</span> ({formatDate(s.takenAt)}){by}. This is a picture of that moment, not a live view.</>
               : blocked || why
-                ? 'Never taken on this computer.'
+                ? 'Never taken on this device.'
                 : auto?.state === 'on'
-                  ? 'Not taken yet. It is asked for automatically on this computer’s next check-in; Refresh asks now.'
-                  : 'Never taken on this computer. Refresh asks for one.'}
+                  ? 'Not taken yet. It is asked for automatically on this device’s next check-in; Refresh asks now.'
+                  : 'Never taken on this device. Refresh asks for one.'}
           </p>
           {auto?.state === 'on' && !s.pending && (
             <p className="text-xs text-muted-foreground" data-testid="snapshot-next">
@@ -221,11 +221,11 @@ function SnapshotFrame({ endpointId, snapKey, title, note, children }: {
           {old && <p className="text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" />Over a day old — refresh before relying on it.</p>}
           {s.pending && (
             <p className="text-xs text-muted-foreground" data-testid="snapshot-pending">
-              {s.pending.automatic ? 'Automatic refresh' : 'Refresh'} requested {ago(s.pending.requestedAt)} — {s.pending.status === 'REQUESTED' ? 'waiting for the computer’s next check-in (normally within three minutes; it expires after fifteen).' : 'the computer is collecting it.'} This page updates when it arrives.
+              {s.pending.automatic ? 'Automatic refresh' : 'Refresh'} requested {ago(s.pending.requestedAt)} — {s.pending.status === 'REQUESTED' ? 'waiting for the device’s next check-in (normally within three minutes; it expires after fifteen).' : 'the device is collecting it.'} This page updates when it arrives.
             </p>
           )}
           {s.lastFailure?.error && <p className="text-xs text-red-600 dark:text-red-400">Last refresh {s.lastFailure.status === 'EXPIRED' ? 'expired' : 'failed'} {ago(s.lastFailure.completedAt ?? s.lastFailure.requestedAt)}: {s.lastFailure.error}</p>}
-          {!s.isOnline && s.supported && !why && <p className="text-xs text-muted-foreground">This computer looks offline (last seen {ago(s.lastSeenAt)}).</p>}
+          {!s.isOnline && s.supported && !why && <p className="text-xs text-muted-foreground">This device looks offline (last seen {ago(s.lastSeenAt)}).</p>}
         </div>
         <Button size="sm" variant="outline" disabled={!!blocked || waiting} onClick={() => refresh.mutate()} data-testid="snapshot-refresh">
           {waiting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
@@ -325,7 +325,7 @@ export function DeviceProcessesTab({ endpointId }: { endpointId: string }) {
   return (
     <>
       <SnapshotFrame endpointId={endpointId} snapKey="process_list" title="Processes"
-        note="A task-manager view of the latest process list: name, process id, total processor time since start, working set, user and start time. Command lines, paths, modules and environment are never collected, so they are not shown. End process is a signed approved action (windows.process.stop) naming the process’s id, name and start time; the computer refuses if any of the three changed.">
+        note="A task-manager view of the latest process list: name, process id, total processor time since start, working set, user and start time. Command lines, paths, modules and environment are never collected, so they are not shown. End process is a signed approved action (windows.process.stop) naming the process’s id, name and start time; the device refuses if any of the three changed.">
         {(r) => {
           const all = arr<Proc>(r.processes);
           const q = filter.trim().toLowerCase();
@@ -375,7 +375,7 @@ export function DeviceProcessesTab({ endpointId }: { endpointId: string }) {
       {ending && c && (
         <ControlDialog endpointId={endpointId} actionId={PROCESS_ACTION} title={`End ${ending.name} (PID ${ending.pid})`} onClose={() => setEnding(null)}
           send={(reason, windowHours) => processStop(endpointId, { pid: ending.pid!, name: ending.name, startedAt: ending.startedAt!, ...(tree ? { tree: true } : {}), ...(reason ? { reason } : {}), windowHours })}>
-          <p className="text-xs">Started {formatDate(ending.startedAt!)}{ending.user ? `, running as ${ending.user}` : ''}. The computer ends it only if process {ending.pid} is still {ending.name}, started at that moment.</p>
+          <p className="text-xs">Started {formatDate(ending.startedAt!)}{ending.user ? `, running as ${ending.user}` : ''}. The device ends it only if process {ending.pid} is still {ending.name}, started at that moment.</p>
           <label className="flex items-start gap-2 text-xs">
             <input type="checkbox" className="mt-0.5" checked={tree} onChange={(e) => setTree(e.target.checked)} data-testid="end-tree" />
             And the processes it started (at most {c.protected.maxTree}; if any of them is protected, nothing is ended)
@@ -404,7 +404,7 @@ export function DeviceServicesTab({ endpointId }: { endpointId: string }) {
   return (
     <>
       <SnapshotFrame endpointId={endpointId} snapKey="service_list" title="Services"
-        note={`Name, display name, state, start mode and the account each service runs as. Binary paths and arguments are never collected. Start, Stop, Restart and Startup type… are a signed approved action (windows.service.control) naming the service and its display name; the computer refuses if the display name changed. ${NOT_EDITABLE}`}>
+        note={`Name, display name, state, start mode and the account each service runs as. Binary paths and arguments are never collected. Start, Stop, Restart and Startup type… are a signed approved action (windows.service.control) naming the service and its display name; the device refuses if the display name changed. ${NOT_EDITABLE}`}>
         {(r) => {
           const all = arr<Svc>(r.services);
           const auto = (v: Svc) => v.startMode === 'Automatic' || v.startMode === 'AutomaticDelayedStart';
@@ -464,7 +464,7 @@ export function DeviceServicesTab({ endpointId }: { endpointId: string }) {
           send={(reason, windowHours) => serviceControl(endpointId, {
             service: asking.v.name, displayName: asking.v.displayName!, op: asking.op, ...(asking.op === 'set_start_type' ? { startType: startType as StartType } : {}), ...(reason ? { reason } : {}), windowHours,
           })}>
-          <p className="text-xs">{asking.v.displayName} (<span className="font-mono">{asking.v.name}</span>) is {(STATE_LABEL[asking.v.state] ?? asking.v.state).toLowerCase()}, startup type {(START_LABEL[asking.v.startMode] ?? asking.v.startMode).toLowerCase()}, in the latest list. The computer checks its display name is still this before changing anything.</p>
+          <p className="text-xs">{asking.v.displayName} (<span className="font-mono">{asking.v.name}</span>) is {(STATE_LABEL[asking.v.state] ?? asking.v.state).toLowerCase()}, startup type {(START_LABEL[asking.v.startMode] ?? asking.v.startMode).toLowerCase()}, in the latest list. The device checks its display name is still this before changing anything.</p>
           {asking.op === 'set_start_type' && (
             <div className="space-y-1">
               <Label className="text-xs">New startup type</Label>

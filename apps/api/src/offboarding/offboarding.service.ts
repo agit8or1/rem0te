@@ -46,7 +46,7 @@ export class OffboardingService {
   // ── Authorization ────────────────────────────────────────────────────────
 
   async authorize(actor: ActorContext, subjectUserId: string, businessId?: string) {
-    if (actor.technician) throw new ForbiddenException('Switch back to your own business to offboard people');
+    if (actor.technician) throw new ForbiddenException('Switch back to your own customer to offboard people');
     if (actor.userId === subjectUserId) throw new ForbiddenException('You cannot offboard yourself');
     const subject = await this.prisma.user.findUnique({
       where: { id: subjectUserId },
@@ -61,7 +61,7 @@ export class OffboardingService {
     if (businessId) {
       const scope = this.acl.requireScope(actor, businessId);
       if (!actor.isPlatformAdmin && !this.acl.isBusinessOwner(actor)) {
-        throw new ForbiddenException('Only a Business Owner can offboard people from this business');
+        throw new ForbiddenException('Only a Business Owner can offboard people from this customer');
       }
       const membership = subject.memberships.find((m) => m.customerId === scope);
       if (membership) {
@@ -70,14 +70,14 @@ export class OffboardingService {
       } else {
         const assigned = await this.prisma.technicianAssignment.count({ where: { customerId: scope, OR: [{ userId: subject.id }, { group: { members: { some: { userId: subject.id } } } }] } });
         const grants = await this.prisma.computerAccess.count({ where: { userId: subject.id, endpoint: { customerId: scope } } });
-        if (!assigned && !grants) throw new NotFoundException('That person has no access to this business');
+        if (!assigned && !grants) throw new NotFoundException('That person has no access to this customer');
       }
       return { subject, businessId: scope as string, kind: 'business' as const };
     }
 
     const isTechAccount = subject.memberships.length === 0;
     if (!actor.isPlatformAdmin && !(isTechAccount && this.acl.hasPlatformPermission(actor, PLATFORM_PERM.TECHNICIANS_MANAGE))) {
-      throw new ForbiddenException('Offboarding across every business needs a Platform Admin (or technicians:manage, for a technician account)');
+      throw new ForbiddenException('Offboarding across every customer needs a Platform Admin (or technicians:manage, for a technician account)');
     }
     return { subject, businessId: null, kind: 'platform' as const };
   }
@@ -217,7 +217,7 @@ export class OffboardingService {
     const wanted = new Set(dto.rotateEndpointIds ?? []);
     const eligible = pre.credentialsObtained.filter((c) => wanted.has(c.endpointId));
     if ([...wanted].some((id) => !eligible.some((c) => c.endpointId === id))) {
-      throw new BadRequestException('Only computers this person obtained a credential for can be rotated here');
+      throw new BadRequestException('Only devices this person obtained a credential for can be rotated here');
     }
 
     // 1. Membership(s).
@@ -236,7 +236,7 @@ export class OffboardingService {
 
     // 3. Grants, assignments, groups.
     const ca = await this.prisma.computerAccess.deleteMany({ where: { userId: subject.id, ...epFilter } });
-    steps.push({ key: 'computer_grants', label: 'Per-computer access removed', state: ca.count ? 'done' : 'skipped', count: ca.count });
+    steps.push({ key: 'computer_grants', label: 'Per-device access removed', state: ca.count ? 'done' : 'skipped', count: ca.count });
     const ta = await this.prisma.technicianAssignment.updateMany({
       where: { userId: subject.id, revokedAt: null, ...(scope ? { customerId: scope } : {}) },
       data: { revokedAt: now, revokedById: actor.userId, revokeReason: 'offboarding' },
@@ -250,7 +250,7 @@ export class OffboardingService {
         where: { customerId: scope!, revokedAt: null, group: { members: { some: { userId: subject.id } } } },
       });
       steps.push({
-        key: 'groups', label: 'Group-based access to this business', state: viaGroup ? 'pending' : 'skipped', count: viaGroup,
+        key: 'groups', label: 'Group-based access to this customer', state: viaGroup ? 'pending' : 'skipped', count: viaGroup,
         detail: viaGroup ? 'This person still reaches the business through a technician group. Remove them from the group, or revoke the group\'s assignment here.' : undefined,
       });
     }
@@ -306,7 +306,7 @@ export class OffboardingService {
   // ── Live status ──────────────────────────────────────────────────────────
 
   async list(actor: ActorContext, businessId?: string) {
-    if (actor.technician) throw new ForbiddenException('Switch back to your own business');
+    if (actor.technician) throw new ForbiddenException('Switch back to your own customer');
     const where: Prisma.OffboardingCaseWhereInput = actor.isPlatformAdmin
       ? (businessId ? { customerId: businessId } : {})
       : this.acl.isBusinessOwner(actor) ? { customerId: this.acl.requireScope(actor, businessId) }

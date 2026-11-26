@@ -425,7 +425,7 @@ async function all() {
     const okN = rs.filter((x) => x.ok).length, limited = rs.filter((x) => x.code === 'FLEET_LIMIT');
     const after = new Set((await prisma.privilegedActivity.findMany({ where: { identity: `user:${ownerA.id}` }, select: { endpointId: true } })).map((x) => x.endpointId));
     check(r.status === 200 && okN === 40 - seenBefore.size && limited.length === 42 - okN, `the member limit is 40 distinct computers: ${seenBefore.size} already used, ${okN} queued, ${limited.length} refused FLEET_LIMIT`, msg(r));
-    check(after.size === 40 && /limit on distinct computers/.test(limited[0]?.reason ?? ''), 'exactly 40 distinct computers admitted, and the refusal says why', `${after.size}`);
+    check(after.size === 40 && /limit on distinct devices/.test(limited[0]?.reason ?? ''), 'exactly 40 distinct computers admitted, and the refusal says why', `${after.size}`);
     check(await prisma.identityPause.count({ where: { identity: `user:${ownerA.id}`, clearedAt: null } }) === 0, 'nobody is paused: the guard was never asked past its limit');
   }
 

@@ -61,7 +61,7 @@ type Overview = {
 };
 
 const RECEIPT: Record<NonNullable<Message['receipt']>, string> = {
-  sent: 'Sent — not yet confirmed by the computer',
+  sent: 'Sent — not yet confirmed by the device',
   delivered: 'Delivered to the agent',
   shown: 'Shown on screen',
   read: 'Read (shown while the window was in front)',
@@ -144,7 +144,7 @@ function Transcript({ endpointId, conversationId, live, canAck }: { endpointId: 
         return (
           <div key={m.id} className={mine ? 'flex flex-col items-end' : 'flex flex-col items-start'} data-testid="chat-message">
             <div className="text-[11px] text-muted-foreground">
-              {mine ? m.authorName : `${m.authorName} (at the computer)`} · {time(m.createdAt)}
+              {mine ? m.authorName : `${m.authorName} (at the device)`} · {time(m.createdAt)}
             </div>
             <div className={`mt-0.5 max-w-[85%] whitespace-pre-wrap break-words rounded-lg px-3 py-2 text-sm ${mine ? 'bg-primary text-primary-foreground' : 'bg-background border'}`}>
               {m.attachment
@@ -225,7 +225,7 @@ export function DeviceChatTab({ endpointId }: { endpointId: string }) {
   });
 
   if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (isError || !data) return <p className="text-sm text-destructive">Chat could not be loaded for this computer.</p>;
+  if (isError || !data) return <p className="text-sm text-destructive">Chat could not be loaded for this device.</p>;
 
   const open = data.open;
   const max = data.limits.maxChars;
@@ -238,7 +238,7 @@ export function DeviceChatTab({ endpointId }: { endpointId: string }) {
       {!data.support.supported && (
         <Card data-testid="chat-unsupported">
           <CardContent className="pt-6 text-sm">
-            <p className="font-medium">Chat is not available on this computer.</p>
+            <p className="font-medium">Chat is not available on this device.</p>
             <p className="mt-1 text-muted-foreground">{data.support.message}</p>
           </CardContent>
         </Card>
@@ -268,9 +268,9 @@ export function DeviceChatTab({ endpointId }: { endpointId: string }) {
           <CardContent className="space-y-3">
             <div className="text-xs text-muted-foreground" data-testid="chat-recorded" data-recorded={open.recorded ? 'yes' : 'no'}>
               {open.recorded
-                ? `This chat is recorded: the transcript is kept for ${data.limits.retentionDays} days after it ends. The person at the computer is told so.`
-                : 'This chat is not recorded: messages are deleted once both sides have them, and everything left when it ends. The person at the computer is told so.'}
-              {open.startedBy === 'end_user' && ' The person at the computer started this chat from the tray.'}
+                ? `This chat is recorded: the transcript is kept for ${data.limits.retentionDays} days after it ends. The person at the device is told so.`
+                : 'This chat is not recorded: messages are deleted once both sides have them, and everything left when it ends. The person at the device is told so.'}
+              {open.startedBy === 'end_user' && ' The person at the device started this chat from the tray.'}
             </div>
             <Transcript endpointId={endpointId} conversationId={open.id} live canAck={data.canSend} />
             {mayWrite ? (
@@ -284,7 +284,7 @@ export function DeviceChatTab({ endpointId }: { endpointId: string }) {
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (text.trim() && !tooLong) send.mutate({ cid: open.id, body: text }); } }}
-                  placeholder="Write to the person at the computer (Enter sends, Shift+Enter for a new line)"
+                  placeholder="Write to the person at the device (Enter sends, Shift+Enter for a new line)"
                   rows={3}
                   data-testid="chat-input"
                 />
@@ -325,7 +325,7 @@ export function DeviceChatTab({ endpointId }: { endpointId: string }) {
               </form>
             ) : (
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                <span>{data.contained ? 'Writing is paused.' : 'You can read this chat. Writing in it needs the "Chat with the person at a computer" permission.'}</span>
+                <span>{data.contained ? 'Writing is paused.' : 'You can read this chat. Writing in it needs the "Chat with the person at a device" permission.'}</span>
                 {data.canSend && (
                   <Button type="button" variant="outline" size="sm" onClick={() => endChat.mutate(open.id)} disabled={endChat.isPending}>End chat</Button>
                 )}
@@ -338,8 +338,8 @@ export function DeviceChatTab({ endpointId }: { endpointId: string }) {
           <CardContent className="pt-6 space-y-3 text-sm">
             <p>
               {data.support.via === 'tray'
-                ? <>Starting a chat opens the tray&apos;s chat window on this computer, headed with the business name and your name. The person there can reply, close it and reopen it from the tray icon. The computer learns of the chat at its next check-in, normally within three minutes.</>
-                : <>Starting a chat opens a small window on this computer&apos;s desktop, headed with the business name and your name. The person there can reply or close it. The computer picks the chat up at its next check-in, normally within three minutes.</>}
+                ? <>Starting a chat opens the tray&apos;s chat window on this device, headed with the customer name and your name. The person there can reply, close it and reopen it from the tray icon. The device learns of the chat at its next check-in, normally within three minutes.</>
+                : <>Starting a chat opens a small window on this device&apos;s desktop, headed with the customer name and your name. The person there can reply or close it. The device picks the chat up at its next check-in, normally within three minutes.</>}
             </p>
             <p className="text-xs text-muted-foreground" data-testid="chat-record-new" data-recorded={data.recordNew ? 'yes' : 'no'}>
               {data.recordNew
@@ -357,7 +357,7 @@ export function DeviceChatTab({ endpointId }: { endpointId: string }) {
                 Start chat
               </Button>
             ) : (
-              <p className="text-xs text-muted-foreground">Starting a chat needs the &ldquo;Chat with the person at a computer&rdquo; permission.</p>
+              <p className="text-xs text-muted-foreground">Starting a chat needs the &ldquo;Chat with the person at a device&rdquo; permission.</p>
             )}
           </CardContent>
         </Card>
@@ -367,7 +367,7 @@ export function DeviceChatTab({ endpointId }: { endpointId: string }) {
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">Earlier chats</CardTitle>
           <p className="text-[11px] text-muted-foreground">
-            Transcripts belong to the computer: anyone who can see it can read them. They are deleted {data.limits.retentionDays} days after the chat ends. A chat that was not recorded keeps no transcript.
+            Transcripts belong to the device: anyone who can see it can read them. They are deleted {data.limits.retentionDays} days after the chat ends. A chat that was not recorded keeps no transcript.
           </p>
         </CardHeader>
         <CardContent className="space-y-2">

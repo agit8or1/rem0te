@@ -166,7 +166,7 @@ for members and Platform Admins apply none of it ([security-model.md](security-m
 | Technician → endpoint only | — | Nothing | **unsupported** (stock RustDesk). A custom client cannot do it either | — | Source |
 | Endpoint → technician only | — | Custom client only (`one-way-clipboard-redirection`, ≥ 1.3.1) | **unsupported** with the RustDesk Rem0te installs (decision 10) | — | Source; RustDesk docs |
 | Bidirectional | Managed control with `clipboard: request` (0.78.1 agent); Legacy by default | RustDesk | **requires setup** (Managed); Legacy: on, uncontrolled | As above | Lab (readback) |
-| Effective policy visible to technicians | Settings → Security features lists clipboard as *unavailable*; the Connect dialog does not show what a session will allow | Portal | **planned** | — | None |
+| Effective policy visible to technicians | Security → Security features lists clipboard as *unavailable*; the Connect dialog does not show what a session will allow | Portal | **planned** | — | None |
 | Enforced by transport or endpoint | Endpoint (RustDesk settings applied by the agent), Managed only | Signed agent + RustDesk | **requires setup** (0.78.1 agent) | As above | Lab (readback) |
 | Text vs file clipboard | File clipboard needs file transfer on; no separate switch on the controlled side | RustDesk | **unsupported** as a separate control; "text only" = file transfer off | — | Source |
 | Audit policy changes | `POLICY_*` audit on access-policy and preset changes (`policy-admin.service.ts`) | Portal | **available** | — | API |
@@ -307,7 +307,7 @@ are rollback notes, retries for repeatable actions, and concurrency.
 
 > **Superseded in part (owner, 2026-11-21): Rem0te becomes its own MDM.** The owner decided *"I don't have an
 > MDM, I want our OWN"*: Rem0te is the MDM server for iOS and iPadOS and the EMM (through the Android Management
-> API) for Android, with provider setup in **Settings → Mobile devices** as a step-by-step wizard. That replaces
+> API) for Android, with provider setup in **Administration → Mobile device setup** as a step-by-step wizard. That replaces
 > decision 18 below and the third-party connector (3.2). The design, prerequisites and the new roadmap (M1–M9)
 > are in **[own-mdm.md](own-mdm.md)**. The provider comparison below is kept as the record of what was evaluated;
 > where it disagrees with own-mdm.md (for example "Native Apple MDM last, if ever"), own-mdm.md is right.

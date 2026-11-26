@@ -40,7 +40,7 @@ and limits.
 
 - **St0r pushes; Rem0te never connects to St0r** (decision 17). St0r's routes need a signed-in user and it has no
   service token, so Rem0te does not read from it.
-- **One connection per business.** A Platform Admin creates it in Rem0te under **Settings → Backups**. Each
+- **One connection per business.** A Platform Admin creates it in Rem0te under **Administration → Backup connections**. Each
   connection has its own token. The token decides the business: the body names no business and cannot.
 - **What Rem0te does with it:**
   - shows it on **Backups**;
@@ -58,7 +58,7 @@ Authorization: Bearer rbk_<connection id>_<64 lowercase hex characters>
 Content-Type: application/json
 ```
 
-- **The URL.** Settings → Backups shows it, built from the server's public address (Settings → General → Public
+- **The URL.** Administration → Backup connections shows it, built from the server's public address (Settings → General → Public
   address). It is always HTTPS in production.
 - **The token** has the form `rbk_<connection id>_<secret>`. The page shows it **once**, when the connection is
   created or its token is rotated. Rem0te keeps only the secret's SHA-256 and compares it in constant time, so a
@@ -242,7 +242,7 @@ the same schema, and then:
   - an asset naming a computer that matches nothing.
 - **It counts towards the rate limit.**
 
-Admins see the newest dry run on Settings → Backups. `dryRun=0` or no parameter is a real push. Any other value
+Admins see the newest dry run on Administration → Backup connections. `dryRun=0` or no parameter is a real push. Any other value
 is `400`.
 
 <!-- example: response -->
@@ -285,7 +285,7 @@ An error is always JSON with a stable `code`:
 | Status | `code` | Meaning | What St0r does |
 |---|---|---|---|
 | 200 | — | Accepted (or, for a dry run, checked) | Nothing more |
-| 400 | `BAD_FEED` | The body breaks the schema. `message` gives the first five problems. Nothing was written. Admins see the reason on Settings → Backups | Fix it. Do not retry unchanged. Use a dry run to see every problem |
+| 400 | `BAD_FEED` | The body breaks the schema. `message` gives the first five problems. Nothing was written. Admins see the reason on Administration → Backup connections | Fix it. Do not retry unchanged. Use a dry run to see every problem |
 | 400 | `BAD_REQUEST` | The body is not JSON | Fix it |
 | 400 | `INVALID_REQUEST` | `dryRun` is not `1`, `true`, `0` or `false` | Fix it |
 | 401 | `BACKUP_PUSH_UNAUTHORIZED` | The token is missing, wrong, rotated or revoked | Stop pushing to this connection and tell the St0r admin to enter a new token. Do not retry in a loop |
@@ -493,7 +493,7 @@ A future contract version:
 ### From the command line
 
 ```bash
-TOKEN='rbk_…'                     # from Settings → Backups, shown once
+TOKEN='rbk_…'                     # from Administration → Backup connections, shown once
 URL='https://rmm.example.com/api/v1/backups/push'
 curl -sS -X POST "$URL?dryRun=1" \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \

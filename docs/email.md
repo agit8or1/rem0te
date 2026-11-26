@@ -4,7 +4,7 @@ From 0.34 rem0te can send email: alert notifications, scheduled reports, and the
 those need. It sends through one SMTP relay that a Platform Admin configures. **Nothing is sent until the relay is
 configured and switched on.**
 
-## The relay (Settings → Email)
+## The relay (Administration → Email)
 
 Platform Admin only. Saving asks you to confirm it is you, and every change is recorded in the audit log as
 `SMTP_SETTINGS_CHANGED` — the host, port, encryption, username and from address before and after, and whether the
@@ -28,7 +28,7 @@ address. The result (`sent`, or a short code such as `EAUTH 535` or `ECONNECTION
 
 ### Which hosts are allowed
 
-rem0te connects to the host you type and speaks SMTP to it, so the host is checked the way a business's webhook
+rem0te connects to the host you type and speaks SMTP to it, so the host is checked the way a customer's webhook
 destination is (it must be a public DNS name), and checked twice:
 
 - **When you save**, the name: no IP addresses, no `localhost`, no single-label names, no internal suffixes
@@ -52,27 +52,27 @@ judged as the IPv4 address it carries. Unencrypted SMTP goes only to a loopback 
 
 ## Who mail can go to: confirmed addresses
 
-Mail goes only to **confirmed recipients**. An address is added to a list — one per business, plus a global list for
+Mail goes only to **confirmed recipients**. An address is added to a list — one per customer, plus a global list for
 the MSP — and rem0te sends it a link. It can be used only after whoever reads that mailbox opens the link and
 presses **Confirm** (opening the page alone confirms nothing, because mail scanners follow links). The link works
 once, for 7 days; **Send link again** issues a new one (at most every five minutes).
 
-- A business's list is managed by a **Business Owner** of that business or the MSP; the global list by the MSP —
+- A customer's list is managed by a **Business Owner** of that customer or the MSP; the global list by the MSP —
   the same people who decide who is notified.
 - Adding, re-sending and removing **ask you to confirm it is you**, and are audited (`EMAIL_RECIPIENT_ADDED`,
   `EMAIL_RECIPIENT_VERIFIED`, `EMAIL_RECIPIENT_REMOVED`).
-- A business's notification policy and scheduled reports may name only that business's confirmed addresses; the
+- A customer's notification policy and scheduled reports may name only that customer's confirmed addresses; the
   global policy and platform-wide reports only the global ones. At most 25 addresses per list.
 - Removing an address stops mail to it at once, wherever it was named.
 
-**Why confirmed addresses, and not "the users of the business"?** A stolen session that can edit a policy could
+**Why confirmed addresses, and not "the users of the customer"?** A stolen session that can edit a policy could
 otherwise type any address and send alert text — or a CSV of the fleet — to it. A user's account address is not
 proof either: accounts are created by administrators and carry whatever was typed. The confirmation link proves the
 mailbox's owner asked for the mail; fresh authentication on adding an address proves the person adding it had more
 than a cookie.
 
-Where to manage them: **Settings → Monitoring → Notifications** (a business, or global for the MSP), and
-**Settings → Email** (global).
+Where to manage them: **Monitoring → Monitoring policies → Notifications** (a customer, or global for the MSP), and
+**Administration → Email** (global).
 
 ## Alert emails
 
@@ -94,7 +94,7 @@ Open it in rem0te: https://rmm.example.com/alerts?alert=…
 ```
 
 No alert detail, inventory, hostname, address or other id is included; a site outage names the site instead of a
-computer. Names that come from devices are reduced to one printable line first, so a computer name cannot add a
+device. Names that come from devices are reduced to one printable line first, so a computer name cannot add a
 header or a line of its own. When an alert resolves, every email destination that was told is told again.
 
 ## Scheduled reports (Reports → Scheduled reports)
@@ -104,11 +104,11 @@ Any of the four [reports](reports.md) can be emailed **weekly** (a day of the we
 monthly one on the last 30 (this is the period for alert frequency and offline time; patch compliance and agent
 coverage are the current state).
 
-- Set up by a **Business Owner** of the business, or by a **Platform Admin** (a platform-wide schedule is a Platform
-  Admin's alone). You need the report's own permission (View computers, or monitoring:alerts). Creating or changing
+- Set up by a **Business Owner** of the customer, or by a **Platform Admin** (a platform-wide schedule is a Platform
+  Admin's alone). You need the report's own permission (View devices, or monitoring:alerts). Creating or changing
   a schedule asks you to confirm it is you; deleting or switching one off does not. Changes are audited as
   `REPORT_SCHEDULE_CHANGED`. **Whoever saves a schedule becomes its owner.**
-- The email names the report, the business (and site), the period and links to the report. Recipients sign in to see
+- The email names the report, the customer (and site), the period and links to the report. Recipients sign in to see
   it.
 - **Attach the report as CSV** sends the same file **Export CSV** gives — the same export, the same 10,000-row limit
   (a larger report is not sent, and the recipients are told why), the same formula-cell neutralising, and the same
@@ -117,7 +117,7 @@ coverage are the current state).
 ### Evaluated as the owner, when it is sent
 
 At every send, the owner's access is rebuilt from the database. The report is computed with what they can see
-**now**. If the owner is suspended, is no longer a Business Owner of that business (or no longer a Platform Admin),
+**now**. If the owner is suspended, is no longer a Business Owner of that customer (or no longer a Platform Admin),
 or no longer has the report's permission, **it fails closed**: nothing of the report is sent, each recipient gets a
 short message saying the report was not sent and why (with nothing from the report), the schedule switches itself
 off with the reason shown, and `REPORT_SCHEDULE_FAILED` is audited. Someone who may set up schedules saves it again to
@@ -157,11 +157,11 @@ at a database with schedules in it.
 ## Containment: stopping all mail
 
 The **Outbound email** (`notifications`) containment kind stops every email: alert emails, scheduled reports,
-confirmation links and test messages, for one business or for everything. A scheduled report that falls due during
+confirmation links and test messages, for one customer or for everything. A scheduled report that falls due during
 a pause is recorded as *blocked* and is not sent later. See [Containment](containment.md).
 
 It is its own kind, not part of *ClientSt0r jobs*, because they answer different incidents. **Alert webhooks are not
-covered**: they go to systems the MSP or business configured as its own, and monitoring keeps telling people during
+covered**: they go to systems the MSP or customer configured as its own, and monitoring keeps telling people during
 a pause by design.
 
 ## Upgrading

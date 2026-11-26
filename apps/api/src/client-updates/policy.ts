@@ -144,14 +144,14 @@ export type Blocker =
   | 'offline' | 'up_to_date' | 'rollout' | 'queued';
 
 export const BLOCKER: Record<Blocker, { permanent: boolean; text: string }> = {
-  archived: { permanent: true, text: 'Archived — nothing is sent to an archived computer.' },
-  no_rustdesk: { permanent: true, text: 'No RustDesk client is linked to this computer.' },
+  archived: { permanent: true, text: 'Archived — nothing is sent to an archived device.' },
+  no_rustdesk: { permanent: true, text: 'No RustDesk client is linked to this device.' },
   not_windows: { permanent: true, text: 'Not Windows — automatic client updates re-run the Windows installer.' },
   no_device_secret: { permanent: true, text: 'Never authenticated with a device secret, so the server cannot ask it to do anything. Re-run the installer on the machine once.' },
   version_unknown: { permanent: true, text: 'Has never reported a RustDesk version (agent older than 0.8.2), so it would not understand the instruction. Reinstall the agent.' },
   offline: { permanent: false, text: 'Offline — it is queued only while online.' },
   up_to_date: { permanent: false, text: 'Already on the target version.' },
-  rollout: { permanent: false, text: 'A staged rollout owns this computer’s updates.' },
+  rollout: { permanent: false, text: 'A staged rollout owns this device’s updates.' },
   queued: { permanent: false, text: 'Already queued.' },
 };
 

@@ -1,18 +1,18 @@
 # AI and tickets
 
-From 0.48, every Windows event-log entry on a computer's **Event logs** tab, and every alert on its
+From 0.48, every Windows event-log entry on a device's **Event logs** tab, and every alert on its
 **Monitoring** tab, has two buttons:
 
 - **Ask AI** — explains what the entry means, likely causes, whether it matters and safe next steps,
-  using the AI provider a Platform Admin set under **Settings → AI**.
-- **Create ticket** — opens a ticket in whatever PSA is connected under **Settings → PSA / ticketing**:
-  the business's own connector if it has an enabled one, otherwise the platform default.
+  using the AI provider a Platform Admin set under **Administration → AI**.
+- **Create ticket** — opens a ticket in whatever PSA is connected under **Administration → PSA / ticketing**:
+  the customer's own connector if it has an enabled one, otherwise the platform default.
 
 Both buttons name the entry by reference (the stored event-log result and its position, or the
-alert's id). The server reads the entry itself from what the computer reported, so neither button
+alert's id). The server reads the entry itself from what the device reported, so neither button
 can be used to send arbitrary text to a provider or a PSA.
 
-![A computer's Event logs tab: each entry with Ask AI and Create ticket, and one entry already ticketed](screenshots/guide/event-log-ai.png)
+![A device's Event logs tab: each entry with Ask AI and Create ticket, and one entry already ticketed](screenshots/guide/event-log-ai.png)
 
 1. **Event logs** — the tab. Fetch a slice of a log first ([Inventory and event logs](inventory.md#event-logs));
    the buttons work on the stored result.
@@ -33,9 +33,9 @@ Only this, and only after redaction:
 
 | Sent | Never sent |
 |---|---|
-| Event ID, provider (source), level, log name, time | The computer's name or hostname |
-| The event message, redacted | The business or site |
-| The computer's Windows version | Who asked |
+| Event ID, provider (source), level, log name, time | The device's name or hostname |
+| The event message, redacted | The customer or site |
+| The device's Windows version | Who asked |
 
 For an alert: its kind, monitor, severity, title and detail (all redacted) and when it was first seen.
 
@@ -45,8 +45,8 @@ The whole input is capped at about 8 KB (the message at 6,000 characters).
 
 Before anything leaves this server, the entry passes through `apps/api/src/ai/redact.ts`:
 
-1. The names this server knows for the computer — its name, hostname, serial number, domain, the
-   logged-on user (both halves of `DOMAIN\user`), its business and site — are replaced wherever they
+1. The names this server knows for the device — its name, hostname, serial number, domain, the
+   logged-on user (both halves of `DOMAIN\user`), its customer and site — are replaced wherever they
    appear, along with any host under that domain (`dc01.corp.example.com`).
 2. What Windows writes about people and machines is replaced by pattern: account SIDs
    (`S-1-5-21-…`; well-known ones such as `S-1-5-18` are kept), `DOMAIN\user` (but not `NT AUTHORITY\…`,
@@ -87,7 +87,7 @@ AI can be wrong. Check its suggestions before acting on them.
 
 ### Who can ask
 
-`computers:view` on the computer (another business's computer is a 404), plus
+`computers:view` on the device (another customer's device is a 404), plus
 `computers:event_logs` for an event-log entry (the same permission that reads the log) or
 `monitoring:alerts` for an alert.
 
@@ -97,11 +97,11 @@ AI can be wrong. Check its suggestions before acting on them.
 `AI_ANSWERED` after. They hold ids, the provider and model, sizes, redaction counts and token counts —
 never the entry, the prompt or the answer.
 
-## Settings → AI (Platform Admin)
+## Administration → AI (Platform Admin)
 
-![Settings → AI: the redaction note, the provider, the model, the saved key shown only by its last four characters, Save and Test](screenshots/guide/ai-settings.png)
+![Administration → AI: the redaction note, the provider, the model, the saved key shown only by its last four characters, Save and Test](screenshots/guide/ai-settings.png)
 
-1. **Settings → AI** — Platform Admins only. Everyone else sees only whether Ask AI is on.
+1. **Administration → AI** — Platform Admins only. Everyone else sees only whether Ask AI is on.
 2. **What is sent** — the redaction, in short.
 3. **Provider** — Anthropic, OpenAI or an OpenAI-compatible service.
 4. **Model** — Anthropic's three, or *Other* to type one.
@@ -111,7 +111,7 @@ never the entry, the prompt or the answer.
 
 One provider at a time:
 
-| Provider | Endpoint | Key header |
+| Provider | Device | Key header |
 |---|---|---|
 | Anthropic | `POST https://api.anthropic.com/v1/messages` (`anthropic-version: 2023-06-01`) | `x-api-key` |
 | OpenAI | `POST https://api.openai.com/v1/chat/completions` | `Authorization: Bearer` |
@@ -138,9 +138,9 @@ OpenAI and compatible providers take a typed model id.
 or internal name, no user name, query or fragment). On every call it is resolved and every address
 checked (no private, loopback, link-local or metadata address), the connection is made to the
 checked address with the name used for the certificate check, certificates are verified, and
-redirects are never followed. Anthropic's and OpenAI's own endpoints go through the same checks.
+redirects are never followed. Anthropic's and OpenAI's own devices go through the same checks.
 
-When no provider is on, the button says *Not configured — a Platform Admin sets a provider in Settings → AI*.
+When no provider is on, the button says *Not configured — a Platform Admin sets a provider in Administration → AI*.
 
 ## Create ticket
 
@@ -148,7 +148,7 @@ When no provider is on, the button says *Not configured — a Platform Admin set
 
 ![The Create ticket dialog: where it is sent, the subject, a note, Include AI explanation and Send](screenshots/guide/create-ticket.png)
 
-1. **Where it goes** — the connector's name, and whether it is this business's or the platform default.
+1. **Where it goes** — the connector's name, and whether it is this customer's or the platform default.
 2. **Subject** — filled in for you; change it if you like.
 3. **Note** — optional, added to the ticket body.
 4. **Include AI explanation** — available once someone has asked AI about this entry.
@@ -156,23 +156,23 @@ When no provider is on, the button says *Not configured — a Platform Admin set
 
 - **Subject**: `[Rem0te] <computer> — <log>/<event id> <level>` (or the alert's title), editable before
   sending, one line, at most 200 characters.
-- **Body**: the computer, business, who asked, a link to the computer in the portal, the entry (log,
+- **Body**: the device, customer, who asked, a link to the device in the portal, the entry (log,
   event id, source, level, time and message — not redacted: it goes to your own PSA), your note, and,
   if you tick **Include AI explanation** and the entry has been asked about, the AI's answer with its
   provider and model.
 
 Afterwards the row shows **Ticket created · <ref>** when the PSA returned a reference, a `PsaTicket`
-record keeps the computer, the entry, the connector, the reference and who made it (no text), and a
-note is added to the computer's **History**.
+record keeps the device, the entry, the connector, the reference and who made it (no text), and a
+note is added to the device's **History**.
 
 ### Who can create one
 
-`computers:view` and visibility on the computer, the entry's own permission (`computers:event_logs`
+`computers:view` and visibility on the device, the entry's own permission (`computers:event_logs`
 or `monitoring:alerts`), and **`tickets:create`** ("Create PSA tickets"), which a Business Owner has
 and a Business User or technician must be given. It is not part of the L1–L3 presets.
 20 tickets per person per hour, 5 a minute per address.
 
-A **containment pause on outbound emails** (`notifications`) stops ticket sends for the business it
+A **containment pause on outbound emails** (`notifications`) stops ticket sends for the customer it
 covers, whatever the connector. A ClientSt0r connector is also stopped by an `integration` pause.
 
 ### Audit
@@ -184,7 +184,7 @@ or a webhook's host, and whether a signing secret was set — never the secret o
 
 ### Automatically, from alerts (0.55)
 
-A rule under **Settings → Monitoring → Automatic tickets** can open this same
+A rule under **Monitoring → Monitoring policies → Automatic tickets** can open this same
 ticket when an alert opens. You choose a minimum severity and, optionally,
 which kinds. It is sent through the same connector with the same draft:
 
@@ -197,12 +197,12 @@ It is sent only after the alert's notification hold, never in a maintenance
 window or under a `notifications` pause, and at most once per alert. A
 failed send is retried a bounded number of times. The audit row
 `PSA_AUTO_TICKET_REQUESTED` is written before the send. It names the
-connector, the alert, the computer, the kind, the severity and the attempt,
+connector, the alert, the device, the kind, the severity and the attempt,
 never text. See [monitoring.md](monitoring.md#automatic-tickets-055).
 
 ### From the tray (0.51)
 
-**Open a support request…** in the [tray](tray.md) appears only when the computer's business has an
+**Open a support request…** in the [tray](tray.md) appears only when the device's customer has an
 enabled connector, or the platform default is enabled. The server decides: the tray's status call
 carries `supportRequests`, and the tray hides the item (it is not greyed) when it is false. An older
 tray that sends a request anyway is refused with `409 SUPPORT_REQUEST_NOT_CONFIGURED` and a sentence
@@ -211,31 +211,31 @@ for the person, and nothing is stored.
 When one is set up, each tray request becomes a ticket through the same connector:
 
 - **Subject**: the person's own text, on one line, at most 200 characters.
-- **Body**: the computer, the business, the Windows account that sent it, the logged-on user the
-  agent last reported, a link to the computer, and the text. No connector carries files, so a ticked
+- **Body**: the device, the customer, the Windows account that sent it, the logged-on user the
+  agent last reported, a link to the device, and the text. No connector carries files, so a ticked
   screenshot or usage sample stays in Rem0te and the body links to the request in the support queue.
 - **Reference**: `source_ref` is `support:<request id>`.
 
 The request is still kept in the [support queue](support-requests.md); its history says *Sent to the PSA
-as a ticket · <ref>* (or *Could not be sent to the PSA*), and the computer's **History → Tray** shows
+as a ticket · <ref>* (or *Could not be sent to the PSA*), and the device's **History → Tray** shows
 the reference. A `PsaTicket` row records it with `createdById` `tray`; there is no History note,
 because a note needs a person as its author. The tray tells the person *Ticket <ref> opened*.
 
 A `notifications` pause stops a tray request before anything is stored (`403 CONTAINED`), like any
 other ticket. A connector that is not ready is `409 PSA_NOT_READY`. A send that fails keeps the request
 (the queue still has it) and answers `502 PSA_SEND_FAILED`. On top of the support queue's own limits
-there is a backstop of 6 tickets per computer per hour (`PSA_TRAY_TICKETS_PER_HOUR`). The audit entries
+there is a backstop of 6 tickets per device per hour (`PSA_TRAY_TICKETS_PER_HOUR`). The audit entries
 are the same two, with `source: "tray"`, the request id and no actor.
 
-## Settings → PSA / ticketing
+## Administration → PSA / ticketing
 
-A Platform Admin sets the **platform default**; a Business Owner may set their business's own
-connector, which wins for that business's computers. Every save needs a fresh sign-in.
+A Platform Admin sets the **platform default**; a Business Owner may set their customer's own
+connector, which wins for that customer's devices. Every save needs a fresh sign-in.
 
-![Settings → PSA / ticketing: the platform default set to a webhook, its host and signing, and the connector form](screenshots/guide/psa-settings.png)
+![Administration → PSA / ticketing: the platform default set to a webhook, its host and signing, and the connector form](screenshots/guide/psa-settings.png)
 
-1. **Settings → PSA / ticketing** — a Platform Admin sees the platform default; a Business Owner sees their own
-   business's connector.
+1. **Administration → PSA / ticketing** — a Platform Admin sees the platform default; a Business Owner sees their own
+   customer's connector.
 2. **Now** — the connector in use: its kind and name, and for a webhook only its host (here the documentation
    server's loopback stand-in) and whether it is signed. The full URL is never shown again.
 3. **Connector** — email-to-ticket, webhook or ClientSt0r.
@@ -248,7 +248,7 @@ connector, which wins for that business's computers. Every save needs a fresh si
 For ConnectWise, Autotask, HaloPSA, Syncro, Freshdesk, Zendesk and any other PSA with an inbound
 support address. Add the address to the scope's email addresses on the same page and pick it. It
 must be **confirmed** before any ticket is sent: the confirmation email arrives in the PSA as a
-ticket — open it and follow its link. Tickets go through the relay in **Settings → Email** with all
+ticket — open it and follow its link. Tickets go through the relay in **Administration → Email** with all
 of its rules (see [Email](email.md)).
 
 ### Webhook
@@ -286,7 +286,7 @@ URL stays the same. To show a reference in rem0te, answer with JSON naming `tick
 
 ### ClientSt0r
 
-For businesses mapped to a ClientSt0r organization. Rem0te sends a signed `ticket.create_request`
+For customers mapped to a ClientSt0r organization. Rem0te sends a signed `ticket.create_request`
 event to the peer's events URL — a **proposed** contract addition (P16 in
 `INTEGRATION_COORDINATION.md`, schemas under `docs/contracts/ticket-rmm-v1/proposed/`) that
 ClientSt0r has not agreed. It is offered only when ClientSt0r's signed capabilities document lists

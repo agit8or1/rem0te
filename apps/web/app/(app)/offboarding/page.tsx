@@ -151,7 +151,7 @@ function OffboardingInner() {
         <PageHeader title="Offboarding" />
         <Card><CardContent className="flex items-start gap-2 p-6 text-sm">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-          You are working in {technician.businessName} as a technician. Switch back to your own business to offboard people.
+          You are working in {technician.businessName} as a technician. Switch back to your own customer to offboard people.
         </CardContent></Card>
       </div>
     );
@@ -171,13 +171,13 @@ function OffboardingInner() {
     <div className="space-y-6 p-6">
       <PageHeader
         title="Offboarding"
-        description="Remove a person's access, and deal with the computer passwords they already had."
+        description="Remove a person's access, and deal with the device passwords they already had."
       >
         {isPlatformAdmin && (
           <Select value={filter} onValueChange={setFilter}>
             <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All businesses</SelectItem>
+              <SelectItem value="all">All customers</SelectItem>
               {businesses.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
             </SelectContent>
           </Select>
@@ -197,25 +197,25 @@ function OffboardingInner() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Computers with an unacknowledged rotation ({pending.length})</CardTitle>
+          <CardTitle className="text-base">Devices with an unacknowledged rotation ({pending.length})</CardTitle>
           <CardDescription>
-            A new password has been staged but the computer has not confirmed it yet. Until it does, its old password still works.
-            An offline computer stays here until it comes back.
+            A new password has been staged but the device has not confirmed it yet. Until it does, its old password still works.
+            An offline device stays here until it comes back.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {pendingError ? (
             <p className="p-4 text-sm text-muted-foreground">{errMsg(pendingError) ?? 'Could not load pending rotations.'}</p>
           ) : !isPlatformAdmin && !businessId ? (
-            <p className="p-4 text-sm text-muted-foreground">Pending rotations are listed per business; your account has none of its own.</p>
+            <p className="p-4 text-sm text-muted-foreground">Pending rotations are listed per customer; your account has none of its own.</p>
           ) : pending.length === 0 ? (
             <p className="p-4 text-sm text-muted-foreground">None.</p>
           ) : (
             <table className="w-full text-sm">
               <thead className="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
-                  <th className="px-4 py-2 font-medium">Computer</th>
-                  {isPlatformAdmin && <th className="px-4 py-2 font-medium">Business</th>}
+                  <th className="px-4 py-2 font-medium">Device</th>
+                  {isPlatformAdmin && <th className="px-4 py-2 font-medium">Customer</th>}
                   <th className="px-4 py-2 font-medium">Connectivity</th>
                   <th className="px-4 py-2 font-medium">Staged</th>
                 </tr>
@@ -263,7 +263,7 @@ function OffboardingInner() {
                   <tr key={c.id} className="hover:bg-muted/30">
                     <td className="px-4 py-2">{c.subjectEmail ?? '—'}</td>
                     <td className="px-4 py-2 text-muted-foreground">
-                      {c.businessId ? businessNames.get(c.businessId) ?? 'One business' : 'Every business'}
+                      {c.businessId ? businessNames.get(c.businessId) ?? 'One customer' : 'Every customer'}
                     </td>
                     <td className="px-4 py-2 text-xs text-muted-foreground">{formatDate(c.startedAt)}</td>
                     <td className="px-4 py-2"><RotationText r={c.rotation} /></td>
@@ -379,7 +379,7 @@ function StartOffboarding({
     }),
     onSuccess: (res) => {
       const id = res.data?.data?.id;
-      toast({ title: 'Offboarding started', description: 'Access is removed. Rotations stay pending until each computer confirms.' });
+      toast({ title: 'Offboarding started', description: 'Access is removed. Rotations stay pending until each device confirms.' });
       qc.invalidateQueries({ queryKey: ['offboarding'] });
       qc.invalidateQueries({ queryKey: ['users'] });
       qc.invalidateQueries({ queryKey: ['technicians'] });
@@ -404,45 +404,45 @@ function StartOffboarding({
             <Label>Scope</Label>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant={scope === 'business' ? 'default' : 'outline'} onClick={() => { setScope('business'); setUserId(''); }}>
-                One business
+                One customer
               </Button>
               <Button size="sm" variant={scope === 'platform' ? 'default' : 'outline'} onClick={() => { setScope('platform'); setUserId(''); }}>
-                Every business (whole account)
+                Every customer (whole account)
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
               {scope === 'business'
-                ? 'Removes their access to one business only: membership, computer grants, technician assignments into it, unused tokens for its computers, and rotation of its computers.'
+                ? 'Removes their access to one customer only: membership, device grants, technician assignments into it, unused tokens for its devices, and rotation of its devices.'
                 : isPlatformAdmin
                   ? 'Removes every membership, assignment and group membership, and all unused tokens.'
-                  : 'For MSP technician accounts (no business of their own): every assignment and group membership, the account, all unused tokens.'}
+                  : 'For MSP technician accounts (no customer of their own): every assignment and group membership, the account, all unused tokens.'}
             </p>
           </div>
         )}
         {!canBusiness && canPlatform && (
           <p className="text-xs text-muted-foreground">
-            With &ldquo;Manage technician access&rdquo; you can offboard MSP technician accounts (people with no business of their own) across every business.
+            With &ldquo;Manage technician access&rdquo; you can offboard MSP technician accounts (people with no customer of their own) across every customer.
           </p>
         )}
 
         <div className="grid gap-3 sm:grid-cols-2">
           {scope === 'business' && (
             <div className="space-y-1.5">
-              <Label>Business</Label>
+              <Label>Customer</Label>
               {isPlatformAdmin ? (
                 <Select value={pickedBusiness} onValueChange={(v) => { setPickedBusiness(v); setUserId(''); }}>
-                  <SelectTrigger><SelectValue placeholder="Choose a business" /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Choose a customer" /></SelectTrigger>
                   <SelectContent>{businesses.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}</SelectContent>
                 </Select>
               ) : (
-                <div className="rounded-md border bg-muted/30 px-3 py-2">{ownBusinessName ?? 'Your business'}</div>
+                <div className="rounded-md border bg-muted/30 px-3 py-2">{ownBusinessName ?? 'Your customer'}</div>
               )}
             </div>
           )}
           <div className="space-y-1.5">
             <Label>Person</Label>
             <Select value={userId} onValueChange={setUserId}>
-              <SelectTrigger><SelectValue placeholder={scope === 'business' && !businessId ? 'Choose a business first' : 'Choose a person'} /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder={scope === 'business' && !businessId ? 'Choose a customer first' : 'Choose a person'} /></SelectTrigger>
               <SelectContent>
                 {!knownUser && userId && <SelectItem value={userId}>{preview?.subject.email ?? 'Selected person'}</SelectItem>}
                 {candidates.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
@@ -450,7 +450,7 @@ function StartOffboarding({
             </Select>
             {scope === 'business' && (
               <p className="text-xs text-muted-foreground">
-                Lists this business&apos;s members. A technician with access here but no membership can be opened from a link with their user ID.
+                Lists this customer&apos;s members. A technician with access here but no membership can be opened from a link with their user ID.
               </p>
             )}
           </div>
@@ -477,17 +477,17 @@ function StartOffboarding({
           <DialogHeader>
             <DialogTitle>Offboard {preview?.subject.name}?</DialogTitle>
             <DialogDescription>
-              {preview?.scope === 'business' ? 'Their access to this business is removed now.' : 'Their access to every business is removed now.'}
+              {preview?.scope === 'business' ? 'Their access to this customer is removed now.' : 'Their access to every customer is removed now.'}
             </DialogDescription>
           </DialogHeader>
           <ul className="list-disc space-y-1 pl-5 text-sm">
             <li>{suspend ? 'Their account is suspended and every signed-in session ends.' : 'Their account stays active.'}</li>
             <li>
               {rotateIds.length
-                ? `${rotateIds.length} computer credential(s) will be rotated. Each stays pending, and the old password keeps working there, until the computer confirms.`
+                ? `${rotateIds.length} device credential(s) will be rotated. Each stays pending, and the old password keeps working there, until the device confirms.`
                 : 'No credentials will be rotated.'}
             </li>
-            {notRotated > 0 && <li className="text-amber-700 dark:text-amber-400">{notRotated} computer(s) they had a password for will NOT be rotated. That password keeps working.</li>}
+            {notRotated > 0 && <li className="text-amber-700 dark:text-amber-400">{notRotated} device(s) they had a password for will NOT be rotated. That password keeps working.</li>}
             <li>Sessions already open are not ended.</li>
           </ul>
           <p className="text-xs text-muted-foreground">You may be asked to confirm your identity first.</p>
@@ -515,12 +515,12 @@ function PreviewBody({
 }) {
   const w = preview.willRevoke;
   const rows: { label: string; value: string }[] = [
-    { label: preview.scope === 'business' ? 'Membership of this business' : 'Business memberships', value: w.membership ? 'Disabled' : 'None active' },
-    { label: 'Per-computer access grants', value: String(w.computerGrants) },
+    { label: preview.scope === 'business' ? 'Membership of this customer' : 'Customer memberships', value: w.membership ? 'Disabled' : 'None active' },
+    { label: 'Per-device access grants', value: String(w.computerGrants) },
     { label: 'Technician assignments (direct)', value: String(w.technicianAssignments) },
     ...(preview.scope === 'platform' ? [{ label: 'Technician group memberships', value: String(w.groupMemberships) }] : []),
     {
-      label: preview.scope === 'business' ? 'Unused launcher tokens (only those for this business are revoked)' : 'Unused launcher tokens',
+      label: preview.scope === 'business' ? 'Unused launcher tokens (only those for this customer are revoked)' : 'Unused launcher tokens',
       value: preview.scope === 'business' ? `up to ${w.unredeemedLauncherTokens}` : String(w.unredeemedLauncherTokens),
     },
     { label: 'Unused connection grants', value: String(w.unredeemedConnectionGrants) },
@@ -545,18 +545,18 @@ function PreviewBody({
         </div>
         {preview.scope === 'business' && (
           <p className="text-xs text-muted-foreground">
-            If they reach this business through a technician group, that access stays until they are removed from the group or the group&apos;s assignment is revoked. The result will say so.
+            If they reach this customer through a technician group, that access stays until they are removed from the group or the group&apos;s assignment is revoked. The result will say so.
           </p>
         )}
       </section>
 
       <section className="space-y-2">
-        <h3 className="flex items-center gap-2 font-semibold"><KeyRound className="h-4 w-4" />Computer passwords they obtained ({preview.credentialsObtained.length})</h3>
+        <h3 className="flex items-center gap-2 font-semibold"><KeyRound className="h-4 w-4" />Device passwords they obtained ({preview.credentialsObtained.length})</h3>
         <p className="text-xs text-muted-foreground">
-          Removing access does not change these passwords. Tick a computer to rotate its credential. Only computers with a Rem0te agent bound to them can be rotated from here.
+          Removing access does not change these passwords. Tick a device to rotate its credential. Only devices with a Rem0te agent bound to them can be rotated from here.
         </p>
         {preview.credentialsObtained.length === 0 ? (
-          <p className="text-muted-foreground">No record of this person revealing or being given a computer password{preview.scope === 'business' ? ' in this business' : ''}.</p>
+          <p className="text-muted-foreground">No record of this person revealing or being given a device password{preview.scope === 'business' ? ' in this customer' : ''}.</p>
         ) : (
           <>
             <div className="flex gap-2">
@@ -589,7 +589,7 @@ function PreviewBody({
                       </span>
                       {!c.canRotate && (
                         <span className="block text-xs text-amber-700 dark:text-amber-400">
-                          Cannot rotate from here: no agent is bound to this computer. Change its RustDesk password on the computer itself.
+                          Cannot rotate from here: no agent is bound to this device. Change its RustDesk password on the device itself.
                         </span>
                       )}
                       {c.canRotate && !c.online && on && (
@@ -602,7 +602,7 @@ function PreviewBody({
             </div>
             {notRotated > 0 && (
               <p className="text-xs text-amber-700 dark:text-amber-400">
-                {notRotated} computer(s) will keep the password this person saw.
+                {notRotated} device(s) will keep the password this person saw.
               </p>
             )}
           </>
@@ -613,8 +613,8 @@ function PreviewBody({
         <section className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
           <h3 className="flex items-center gap-2 font-semibold"><AlertTriangle className="h-4 w-4" />Shared passwords</h3>
           <p className="text-xs">
-            These computers use the same password. Rotating one changes only that one; the others keep the password this person may know.
-            Rotate each of them (from its computer page if it is not listed above).
+            These devices use the same password. Rotating one changes only that one; the others keep the password this person may know.
+            Rotate each of them (from its device page if it is not listed above).
           </p>
           {preview.sharedPasswords.map((g, i) => (
             <div key={i} className="flex flex-wrap gap-1">

@@ -21,7 +21,7 @@ const TIERS = ['L1', 'L2', 'L3', 'custom', 'member', 'platformAdmin', 'integrati
 type TierKey = (typeof TIERS)[number];
 const TIER_LABEL: Record<TierKey, string> = {
   L1: 'L1 Help Desk', L2: 'L2 Technician', L3: 'L3 Senior', custom: 'Custom (pre-0.23 assignments)',
-  member: 'Business members', platformAdmin: 'Platform Admins', integration: 'Integrations',
+  member: 'Customer members', platformAdmin: 'Platform Admins', integration: 'Integrations',
 };
 const LIMITS = ['devices', 'businesses', 'launches', 'writes'] as const;
 type LimitKey = (typeof LIMITS)[number];
@@ -53,16 +53,16 @@ interface Controls {
 }
 
 const CHOICES: { key: 'attendedConsent' | 'unattendedAccess' | 'clipboard' | 'fileTransfer' | 'trustedWorkstations' | 'maintenanceExceptions'; label: string; help: string; options: [string, string][] }[] = [
-  { key: 'attendedConsent', label: 'Customer consent at the endpoint', help: 'Whether an interactive session needs the person at the computer to accept it.',
+  { key: 'attendedConsent', label: 'Customer consent at the device', help: 'Whether an interactive session needs the person at the device to accept it.',
     options: [['required', 'Required'], ['not_required', 'Not required']] },
-  { key: 'unattendedAccess', label: 'Unattended access', help: 'Sessions with nobody at the computer.',
+  { key: 'unattendedAccess', label: 'Unattended access', help: 'Sessions with nobody at the device.',
     options: [['off', 'Off'], ['request', 'Request time-limited']] },
-  { key: 'clipboard', label: 'Clipboard', help: 'Enforced by RustDesk on the controlled computer. Applied per session only under Managed Secure Access (off); a Legacy computer keeps RustDesk’s default (on).',
+  { key: 'clipboard', label: 'Clipboard', help: 'Enforced by RustDesk on the controlled device. Applied per session only under Managed Secure Access (off); a Legacy device keeps RustDesk’s default (on).',
     options: [['off', 'Off'], ['request', 'Request time-limited']] },
-  { key: 'fileTransfer', label: 'File transfer', help: 'Enforced by RustDesk on the controlled computer. Applied per session only under Managed Secure Access (off); a Legacy computer keeps RustDesk’s default (on).',
+  { key: 'fileTransfer', label: 'File transfer', help: 'Enforced by RustDesk on the controlled device. Applied per session only under Managed Secure Access (off); a Legacy device keeps RustDesk’s default (on).',
     options: [['off', 'Off'], ['request', 'Request time-limited']] },
   { key: 'trustedWorkstations', label: 'Managed admin workstations', help: 'Where a session must start from a designated managed workstation through the launcher.',
-    options: [['required_for_protected', 'Required for protected computers'], ['required_for_all', 'Required for every session']] },
+    options: [['required_for_protected', 'Required for protected devices'], ['required_for_all', 'Required for every session']] },
   { key: 'maintenanceExceptions', label: 'Maintenance exceptions', help: 'Time-boxed, reviewed exceptions to the activity limits for planned work.',
     options: [['off', 'Off'], ['request', 'Request time-limited']] },
 ];
@@ -115,7 +115,7 @@ function PolicyForm({ initial, pending, canSave }: { initial: Controls; pending:
       <div className="flex items-start gap-2 rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
         <Info className="mt-0.5 h-4 w-4 shrink-0" />
         <div>
-          A change that <strong className="text-foreground">widens</strong> trust (looser consent, fewer protected computers,
+          A change that <strong className="text-foreground">widens</strong> trust (looser consent, fewer protected devices,
           longer sessions, higher activity limits, different alert contacts) is not applied: it goes to independent review and
           someone other than you must approve it. A change that <strong className="text-foreground">tightens</strong> applies at once.
           Every save needs a fresh confirmation that it is you.
@@ -164,9 +164,9 @@ function PolicyForm({ initial, pending, canSave }: { initial: Controls; pending:
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">Protected computers</CardTitle>
+          <CardTitle className="text-sm">Protected devices</CardTitle>
           <CardDescription>
-            Interactive access to a protected computer needs an independently approved exception, activated with a passkey,
+            Interactive access to a protected device needs an independently approved exception, activated with a passkey,
             from a managed admin workstation.
           </CardDescription>
         </CardHeader>
@@ -199,8 +199,8 @@ function PolicyForm({ initial, pending, canSave }: { initial: Controls; pending:
             <thead>
               <tr className="border-b text-left text-xs text-muted-foreground">
                 <th className="py-2 pr-3 font-medium">Who</th>
-                <th className="px-2 py-2 font-medium">Computers</th>
-                <th className="px-2 py-2 font-medium">Businesses</th>
+                <th className="px-2 py-2 font-medium">Devices</th>
+                <th className="px-2 py-2 font-medium">Customers</th>
                 <th className="px-2 py-2 font-medium">Launches</th>
                 <th className="px-2 py-2 font-medium">Writes</th>
               </tr>
@@ -227,7 +227,7 @@ function PolicyForm({ initial, pending, canSave }: { initial: Controls; pending:
         <CardHeader>
           <CardTitle className="text-sm">Alert contacts</CardTitle>
           <CardDescription>
-            Independent webhooks told about pauses, protected-computer exceptions and trust changes. A webhook URL is a
+            Independent webhooks told about pauses, protected-device exceptions and trust changes. A webhook URL is a
             secret: once saved only its origin is shown. Any change to this list is reviewed by someone else, and the
             previous contacts are told.
           </CardDescription>

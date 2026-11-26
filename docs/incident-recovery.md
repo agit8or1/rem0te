@@ -8,14 +8,14 @@ depend on the portal being up.
 
 ## First five minutes, whatever it is
 
-1. **Pause.** Settings → Security → Containment → *Every business*, or the affected business, with every kind
+1. **Pause.** Security → Containment → *Every customer*, or the affected customer, with every kind
    ticked. If you can't sign in, use the host CLI or the signer CLI (below).
 2. **Write down the time** and what you saw. That note is evidence too.
 3. **Don't restore, rebuild or delete anything yet.** A restore overwrites the evidence you are about to need.
 
 ## A technician account may be compromised
 
-- Suspend the businesses that technician can reach, or set a global pause covering **remote connections** and
+- Suspend the customers that technician can reach, or set a global pause covering **remote connections** and
   **approved actions**.
 - Remove the technician's assignments (Technicians), and end their sessions (Access review → sign out).
 - Look at the audit log for that user since the suspected time. Then run `rem0te-audit verify`, so you know the
@@ -57,7 +57,7 @@ Assume the portal will ignore its own pause and may lie on screen.
 | Secret | Where | Effect of rotating |
 |---|---|---|
 | `JWT_SECRET`, `LAUNCHER_TOKEN_SECRET` | `/etc/reboot-remote/api.env` | Everyone is signed out; outstanding launcher links stop working |
-| `ENCRYPTION_KEY` | `api.env` | Stored RustDesk passwords become unreadable. Re-key them (rotate the endpoint passwords), don't just change it |
+| `ENCRYPTION_KEY` | `api.env` | Stored RustDesk passwords become unreadable. Re-key them (rotate the device passwords), don't just change it |
 | `HEALTH_TOKEN`, `AUDIT_EXPORT_TOKEN` | `api.env`, and the monitor / sink | Update both ends |
 | Audit checkpoint key | `AUDIT_CHECKPOINT_KEY_FILE` | `rem0te-audit keygen` a new one and keep its public key. Old checkpoints stay verifiable with the old public key |
 | Integration keys | `INTEGRATION_PEERS_FILE` and ClientSt0r | See [ClientSt0r integration](integration-clientst0r.md) |
@@ -102,7 +102,7 @@ shows **Broken**.
 1. Don't "fix" it. There is nothing to repair, and the break is the evidence.
 2. Run `rem0te-audit verify --export …` and keep the output.
 3. `deleted` means entries are missing. `altered` means an entry no longer matches its hash. `reference_changed`
-   means a business or user id was changed rather than cleared. Treat any of them as a database compromise
+   means a customer or user id was changed rather than cleared. Treat any of them as a database compromise
    (above), unless you can show it was a restore. On a test database, test clean-ups that delete audit rows
    produce exactly this. Never run them against production.
 

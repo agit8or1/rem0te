@@ -67,7 +67,7 @@ export function DeviceMonitoringTab({ endpointId }: { endpointId: string }) {
         </CardHeader>
         <CardContent className="p-0 text-sm">
           {data.alerts === null && <p className="px-4 pb-4 text-muted-foreground">Seeing alerts needs the monitoring:alerts permission.</p>}
-          {data.alerts && active.length === 0 && <p className="px-4 pb-4 text-muted-foreground">No open alerts for this computer.</p>}
+          {data.alerts && active.length === 0 && <p className="px-4 pb-4 text-muted-foreground">No open alerts for this device.</p>}
           {active.length > 0 && <div className="border-t"><AlertList rows={active} endpointId={endpointId} /></div>}
           {resolved.length > 0 && (
             <div className="border-t">
@@ -82,7 +82,7 @@ export function DeviceMonitoringTab({ endpointId }: { endpointId: string }) {
       </Card>
 
       <Card data-testid="mon-effect">
-        <CardHeader className="pb-3"><CardTitle className="text-sm">What is watched on this computer</CardTitle></CardHeader>
+        <CardHeader className="pb-3"><CardTitle className="text-sm">What is watched on this device</CardTitle></CardHeader>
         <CardContent className="space-y-2 text-sm">
           {data.rules.length === 0 && <p className="text-muted-foreground">No monitors apply. Set them in <Link className="underline" href="/settings/monitoring">Settings › Monitoring</Link>.</p>}
           {data.rules.length > 0 && (
@@ -136,7 +136,7 @@ export function DeviceMonitoringTab({ endpointId }: { endpointId: string }) {
       </Card>
 
       <Card data-testid="mon-changes">
-        <CardHeader className="pb-3"><CardTitle className="text-sm">What changed on this computer</CardTitle></CardHeader>
+        <CardHeader className="pb-3"><CardTitle className="text-sm">What changed on this device</CardTitle></CardHeader>
         <CardContent className="text-sm">
           {data.changes.length === 0 && <p className="text-muted-foreground">No changes recorded. The first inventory is the baseline; later ones are compared with it.</p>}
           {data.changes.length > 0 && (

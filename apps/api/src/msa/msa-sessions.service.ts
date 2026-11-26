@@ -92,11 +92,11 @@ export class MsaSessionService {
 
   private refusedOf(g: GrantRow) {
     if (g.state === 'revoked' && g.revokeReason === 'timeout') {
-      return { code: 'MSA_APPLY_TIMEOUT', message: `The computer's agent did not apply the session within ${CONNECT_APPLY_TIMEOUT_MS / 1000} seconds, so it was revoked. Nothing was handed over. Check that the computer is online and try again.` };
+      return { code: 'MSA_APPLY_TIMEOUT', message: `The device's agent did not apply the session within ${CONNECT_APPLY_TIMEOUT_MS / 1000} seconds, so it was revoked. Nothing was handed over. Check that the device is online and try again.` };
     }
-    if (g.state === 'failed') return { code: 'MSA_GRANT_FAILED', message: `The computer's agent could not enforce the session (${g.outcome ?? 'failed'}); nothing weaker was substituted and nothing was handed over.` };
-    if (g.state === 'expired') return { code: 'MSA_GRANT_EXPIRED', message: 'The computer\'s agent did not collect the session within its five-minute start window.' };
-    if (g.state === 'cancelled') return { code: 'MSA_GRANT_CANCELLED', message: 'The session was replaced or the computer started rolling back before it was delivered.' };
+    if (g.state === 'failed') return { code: 'MSA_GRANT_FAILED', message: `The device's agent could not enforce the session (${g.outcome ?? 'failed'}); nothing weaker was substituted and nothing was handed over.` };
+    if (g.state === 'expired') return { code: 'MSA_GRANT_EXPIRED', message: 'The device\'s agent did not collect the session within its five-minute start window.' };
+    if (g.state === 'cancelled') return { code: 'MSA_GRANT_CANCELLED', message: 'The session was replaced or the device started rolling back before it was delivered.' };
     return undefined;
   }
 
@@ -135,15 +135,15 @@ export class MsaSessionService {
     if (!MANAGED_LAUNCH_MODES.includes(mode)) throw new BadRequestException({ code: 'MSA_MODE_INVALID', message: 'mode must be view_only, control or unattended.' });
     const ep = await this.visible(actor, endpointId);
     const row = await this.prisma.msaManagedComputer.findUnique({ where: { endpointId: ep.id }, select: { state: true, lastPollAt: true } });
-    if (!row) throw new ConflictException({ code: 'MSA_NOT_MANAGED', message: 'This computer is in Legacy mode: use the ordinary Connect.' });
-    if (row.state === 'rollback_pending') throw new ConflictException({ code: 'MSA_ROLLBACK_PENDING', message: 'This computer is rolling back to Legacy. Connect again once it has.' });
-    if (row.state === 'enforcement_failure') throw new ConflictException({ code: 'MSA_ENFORCEMENT_FAILURE', message: 'The computer\'s agent could not enforce Managed Secure Access. A Platform Admin must send a test grant that reads back, or roll it back to Legacy.' });
-    if (row.state !== 'verified') throw new ConflictException({ code: 'MSA_NOT_VERIFIED', message: 'This computer is Managed (pending): until a Platform Admin confirms it, use the ordinary Connect.' });
+    if (!row) throw new ConflictException({ code: 'MSA_NOT_MANAGED', message: 'This device is in Legacy mode: use the ordinary Connect.' });
+    if (row.state === 'rollback_pending') throw new ConflictException({ code: 'MSA_ROLLBACK_PENDING', message: 'This device is rolling back to Legacy. Connect again once it has.' });
+    if (row.state === 'enforcement_failure') throw new ConflictException({ code: 'MSA_ENFORCEMENT_FAILURE', message: 'The device\'s agent could not enforce Managed Secure Access. A Platform Admin must send a test grant that reads back, or roll it back to Legacy.' });
+    if (row.state !== 'verified') throw new ConflictException({ code: 'MSA_NOT_VERIFIED', message: 'This device is Managed (pending): until a Platform Admin confirms it, use the ordinary Connect.' });
     const pr = await this.msa.preflightReadiness(ep.id, now);
     const v = compareVersion(pr?.agentVersion ?? null, MIN_SESSION_AGENT);
-    if (v === null || v < 0) throw new ConflictException({ code: 'MSA_AGENT_TOO_OLD', message: `Connecting through a session grant needs the signed agent ${MIN_SESSION_AGENT} or later on the computer.` });
+    if (v === null || v < 0) throw new ConflictException({ code: 'MSA_AGENT_TOO_OLD', message: `Connecting through a session grant needs the signed agent ${MIN_SESSION_AGENT} or later on the device.` });
     const polling = this.grants.isHeld(ep.id) || (!!row.lastPollAt && now - row.lastPollAt.getTime() <= POLLING_FRESH_MS);
-    if (!polling) throw new ConflictException({ code: 'MSA_AGENT_NOT_POLLING', message: 'The computer\'s agent is not collecting session grants right now (offline, or its poller is not running). Nothing was issued.' });
+    if (!polling) throw new ConflictException({ code: 'MSA_AGENT_NOT_POLLING', message: 'The device\'s agent is not collecting session grants right now (offline, or its poller is not running). Nothing was issued.' });
 
     // One person at a time: another technician's live session refuses; my
     // own earlier one is ended (revoked) by this new one.
@@ -153,7 +153,7 @@ export class MsaSessionService {
     });
     const stillLive = (await this.shape(actor, live, now)).filter((s) => s.timeline.live);
     const others = stillLive.filter((s) => !s.mine);
-    if (others.length) throw new ConflictException({ code: 'MSA_SESSION_ACTIVE', message: `${others[0].technician?.name ?? 'Someone'} has a managed session open on this computer. It must end (or be disconnected) first.` });
+    if (others.length) throw new ConflictException({ code: 'MSA_SESSION_ACTIVE', message: `${others[0].technician?.name ?? 'Someone'} has a managed session open on this device. It must end (or be disconnected) first.` });
 
     const authz = await this.endpoints.canConnect(actor, ep.id, { mode, admit: 'ui', stage: 'connect', managed: true });
     if (!authz.ok) {
@@ -228,7 +228,7 @@ export class MsaSessionService {
     return { sessions: await this.shape(actor, rows, now), canRevokeAny: this.mayRevokeAny(actor, ep.customerId) };
   }
 
-  /** Live sessions on every computer this person can see (optionally one business): Devices → Managed sessions. */
+  /** Live sessions on every computer this person can see (optionally one business): Remote support → Managed sessions. */
   async active(actor: ActorContext, businessId: string | null, now = Date.now()) {
     this.assertEnabled();
     const vis = this.acl.endpointVisibilityWhere(actor, businessId && ENTITY_ID_RE.test(businessId) ? businessId : null);
@@ -254,7 +254,7 @@ export class MsaSessionService {
     const g = await this.prisma.msaGrant.findUnique({ where: { id: grantId }, select: { id: true, endpointId: true, technicianId: true, businessId: true } });
     if (!g) throw new NotFoundException('Session not found');
     await this.visible(actor, g.endpointId).catch(() => { throw new NotFoundException('Session not found'); });
-    if (!this.mayRevoke(actor, g)) throw new ForbiddenException({ code: 'MSA_REVOKE_NOT_ALLOWED', message: 'Only the technician whose session it is, the business\'s Owner or Admin, or a Platform Admin can disconnect it.' });
+    if (!this.mayRevoke(actor, g)) throw new ForbiddenException({ code: 'MSA_REVOKE_NOT_ALLOWED', message: 'Only the technician whose session it is, the customer\'s Owner or Admin, or a Platform Admin can disconnect it.' });
     const r = await this.grants.revoke(actor, g.endpointId, { grantIds: [g.id], reason: 'session' });
     return { revoked: r.revoked };
   }
@@ -286,9 +286,9 @@ export class MsaSessionService {
     }
     if (scope === 'computer') {
       const endpointId = id('endpointId');
-      if (!endpointId) throw new BadRequestException({ code: 'MSA_REVOKE_INVALID', message: 'Name the computer.' });
+      if (!endpointId) throw new BadRequestException({ code: 'MSA_REVOKE_INVALID', message: 'Name the device.' });
       const ep = await this.visible(actor, endpointId);
-      if (!this.mayRevokeAny(actor, ep.customerId)) throw new ForbiddenException({ code: 'MSA_REVOKE_NOT_ALLOWED', message: 'Disconnecting every session on a computer is for the business\'s Owner or Admin, or a Platform Admin.' });
+      if (!this.mayRevokeAny(actor, ep.customerId)) throw new ForbiddenException({ code: 'MSA_REVOKE_NOT_ALLOWED', message: 'Disconnecting every session on a device is for the customer\'s Owner or Admin, or a Platform Admin.' });
       const r = await this.grants.revoke(actor, ep.id, { all: true, reason: 'computer' });
       return { revoked: r.revoked, computers: r.revoked ? 1 : 0 };
     }
@@ -296,10 +296,10 @@ export class MsaSessionService {
       const businessId = id('businessId');
       const technicianId = scope === 'technician' ? id('technicianId') : null;
       if (scope === 'technician' && !technicianId) throw new BadRequestException({ code: 'MSA_REVOKE_INVALID', message: 'Name the technician.' });
-      if (scope === 'business' && !businessId) throw new BadRequestException({ code: 'MSA_REVOKE_INVALID', message: 'Name the business.' });
+      if (scope === 'business' && !businessId) throw new BadRequestException({ code: 'MSA_REVOKE_INVALID', message: 'Name the customer.' });
       if (!actor.isPlatformAdmin) {
         const own = businessId ?? actor.businessId;
-        if (!own || !this.mayRevokeAny(actor, own)) throw new ForbiddenException({ code: 'MSA_REVOKE_NOT_ALLOWED', message: 'Disconnecting a technician\'s or a business\'s sessions is for that business\'s Owner or Admin, or a Platform Admin.' });
+        if (!own || !this.mayRevokeAny(actor, own)) throw new ForbiddenException({ code: 'MSA_REVOKE_NOT_ALLOWED', message: 'Disconnecting a technician\'s or a customer\'s sessions is for that customer\'s Owner or Admin, or a Platform Admin.' });
       }
       const scopeBusiness = actor.isPlatformAdmin ? businessId : (businessId ?? actor.businessId);
       const rows = await this.prisma.msaGrant.findMany({
@@ -317,6 +317,6 @@ export class MsaSessionService {
       }
       return { revoked, computers };
     }
-    throw new BadRequestException({ code: 'MSA_REVOKE_INVALID', message: 'scope must be sessions, computer, technician or business.' });
+    throw new BadRequestException({ code: 'MSA_REVOKE_INVALID', message: 'scope must be sessions, device, technician or customer.' });
   }
 }

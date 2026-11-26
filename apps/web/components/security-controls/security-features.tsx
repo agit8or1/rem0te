@@ -20,25 +20,25 @@ interface Catalog { scope: { kind: 'platform' } | { kind: 'business'; business: 
 
 const STATUS: Record<Status, { label: string; className: string; help: string }> = {
   enforced: { label: 'Enforced', className: CHIP.on, help: 'The server refuses the action, and a test drives it.' },
-  partial: { label: 'Partial', className: CHIP.warn, help: 'Enforced at the portal for some people or paths; the endpoint cannot confirm it. The row says which.' },
+  partial: { label: 'Partial', className: CHIP.warn, help: 'Enforced at the portal for some people or paths; the device cannot confirm it. The row says which.' },
   advisory: { label: 'Advisory', className: CHIP.warn, help: 'Shown or recorded, but nothing refuses or ends anything.' },
   unavailable: { label: 'Unavailable', className: CHIP.bad, help: 'No component exists to enforce it, so it cannot be enabled.' },
 };
 const LAYER: Record<Layer, string> = {
-  portal: 'Portal (API)', launcher: 'Launcher', 'endpoint-agent': 'Endpoint agent', 'endpoint-rustdesk': 'Endpoint RustDesk',
+  portal: 'Portal (API)', launcher: 'Launcher', 'endpoint-agent': 'Device agent', 'endpoint-rustdesk': 'Device RustDesk',
   'technician-rustdesk': "Technician's RustDesk", 'offline-signing': 'Offline signing', 'approval-signer': 'Approval signer', none: 'Nothing',
 };
 const SOURCE: Record<string, string> = {
-  code: 'from the code', 'portal-policy': 'portal policy', 'endpoint-reports': 'observed from endpoint reports',
+  code: 'from the code', 'portal-policy': 'portal policy', 'endpoint-reports': 'observed from device reports',
   mirror: 'as served by the mirror', 'server-config': 'server configuration',
 };
 const GROUPS: [string, string][] = [
-  ['reach', 'Who can reach a computer'], ['session', 'What a session can do'], ['evidence', 'What you will have afterwards'],
+  ['reach', 'Who can reach a device'], ['session', 'What a session can do'], ['evidence', 'What you will have afterwards'],
   ['guardrails', 'Guardrails'], ['updates', 'Updates'], ['integration', 'Integration'], ['roadmap', 'Not in this build'],
 ];
 
 /**
- * Settings → Security → Security Features, and Admin → Security → Security
+ * Security → Security features, and Security → Server security → Security
  * features. Read-only. The effective column comes from the server for the
  * scope the caller may see; when the server cannot observe something it
  * sends nothing, and this renders "Unknown" — never a default dressed up as
@@ -71,9 +71,9 @@ export function SecurityFeaturesTab() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Who can reach a customer&apos;s computer, what a session can do once it starts, and what evidence you will have
+        Who can reach a customer&apos;s device, what a session can do once it starts, and what evidence you will have
         afterwards. <strong>Enforced at</strong> names the layer that refuses; a hidden button is not one, and a portal
-        audit event does not prove what happened on the computer. See{' '}
+        audit event does not prove what happened on the device. See{' '}
         <Link className="underline" href="/docs/security-model">Security model</Link>.
       </p>
       <div className="flex flex-wrap items-center gap-2">

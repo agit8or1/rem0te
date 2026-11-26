@@ -1,9 +1,9 @@
 # Inventory and event logs
 
-What a managed computer reports about itself, how it gets here, and how to ask
+What a managed device reports about itself, how it gets here, and how to ask
 it for a slice of its Windows event log.
 
-All of it lives on a computer's page, under **Devices → *the machine* →
+All of it lives on a device's page, under **Devices → *the machine* →
 Overview**, **Software** and **Event logs** (the tabs are described in
 [the technician guide](technician-guide.md#the-device-workspace-031)).
 
@@ -11,7 +11,7 @@ Overview**, **Software** and **Event logs** (the tabs are described in
 
 ## The shape of it
 
-Rem0te has no channel to reach into an endpoint. It never has — a Connect
+Rem0te has no channel to reach into a device. It never has — a Connect
 happens because the API hands out a credential, not because it talks to the
 machine. Inventory works the same way, and everything below follows from it:
 
@@ -50,7 +50,7 @@ agent**, the **RustDesk client**, and the machine's own **Windows updates** —
 and they are updated by three different mechanisms. The Overview tab names each
 rather than merging them.
 
-| What | Cadence | Cost on the endpoint |
+| What | Cadence | Cost on the device |
 |---|---|---|
 | Signed-in user, uptime, last boot, **CPU load, free memory, free system-disk space** | **Every heartbeat** (~3 min) | Three CIM queries |
 | Full specs — CPU, memory, disks, GPUs, adapters, BIOS, chassis, serial | **Every 6 hours**, or on request | A handful of CIM queries |
@@ -74,11 +74,11 @@ Everything here is still a **snapshot**, not a live feed — a gauge on that car
 is minutes old, not seconds — and every card says when its contents were taken.
 The one genuinely live view in Rem0te is the host health on System status
 (Platform Admins; it was on the dashboard until 0.31), which describes this
-server rather than an endpoint.
+server rather than a device.
 
 ---
 
-## "This computer cannot report its specs yet"
+## "This device cannot report its specs yet"
 
 Two different messages, two different causes, and they are worth telling apart.
 
@@ -104,12 +104,12 @@ the heartbeat script. That is what upgrades the agent.
 
 Use this rather than staging a client upgrade. **Updates → RustDesk Clients**
 re-runs the installer as a side effect, but it filters on the client version
-and skips any endpoint already on the latest release — so it cannot reach the
+and skips any device already on the latest release — so it cannot reach the
 machines that are otherwise healthy, which is usually most of them.
 
 > **A machine that has never authenticated with a device secret cannot be
 > reinstalled from the console**, and the button says so rather than accepting
-> the request. The heartbeat only hands work to an authenticated endpoint, so
+> the request. The heartbeat only hands work to an authenticated device, so
 > staging for an unbound one would look like it worked and never run. Run the
 > installer on that machine once, locally, and it can be managed from here
 > afterwards.
@@ -134,7 +134,7 @@ bump that constant in the same commit.
 
 ---
 
-## Linux computers (0.32)
+## Linux devices (0.32)
 
 The Linux installer (`/api/v1/public/install/linux.sh`, from **Devices → Add
 device**) now installs the **standard Linux agent** alongside RustDesk:
@@ -147,11 +147,11 @@ device**) now installs the **standard Linux agent** alongside RustDesk:
 | `/etc/rem0te-agent.secret` | The device secret, root-only (`0600`); the agent refuses to run if it is any looser |
 
 It authenticates exactly as the Windows agent does: the installer generates the
-device secret, the enrolment claim binds its hash to the computer, and every
+device secret, the enrolment claim binds its hash to the device, and every
 heartbeat carries it. There is no first-sight binding — a heartbeat whose
 secret the server does not hold gets liveness at most, and the agent logs
-that the computer needs re-installing from an enrolment link. On the device
-list and the workspace it is shown as **Standard (Linux)**; a Linux computer
+that the device needs re-installing from an enrolment link. On the device
+list and the workspace it is shown as **Standard (Linux)**; a Linux device
 installed before 0.32 never sends an agent version and stays *RustDesk only*.
 
 **What it reports.** Every heartbeat: host name, OS (`PRETTY_NAME` from
@@ -163,19 +163,19 @@ time zone, CPU model, cores, threads and speed, every real filesystem from
 `df` (pseudo-filesystems and duplicates dropped) and, where `/sys/class/dmi/id`
 is readable, manufacturer, model, serial, chassis and BIOS.
 
-**Pending updates** come from whatever the computer's package manager already
+**Pending updates** come from whatever the device's package manager already
 knows; nothing refreshes a repository or changes a package:
 
 | Package manager | Command | Restart pending |
 |---|---|---|
-| apt | `apt list --upgradable` (as of the last `apt update` on that computer; never run by the agent). `-security` pockets are marked *Security* | `/run/reboot-required`; *unknown* if `update-notifier-common` (which writes it) is absent |
+| apt | `apt list --upgradable` (as of the last `apt update` on that device; never run by the agent). `-security` pockets are marked *Security* | `/run/reboot-required`; *unknown* if `update-notifier-common` (which writes it) is absent |
 | dnf | `dnf -q -C check-update` (cache only; an empty cache is a failed scan, not "none") | `needs-restarting -r`, where installed |
 | zypper | `zypper --non-interactive --no-refresh list-updates` | `zypper needs-rebooting` |
 | none of them | — the scan is reported **failed: "Pending updates unknown"**, never as "0 pending" | unknown |
 
 A scan the agent answers with a failure is not re-staged on the next heartbeat;
 the automatic collection waits an hour before asking again (an operator's
-*Scan now* is not held back). Before this, a computer that could not answer was
+*Scan now* is not held back). Before this, a device that could not answer was
 given a fresh scan every three minutes.
 
 **What it does not do.** It is read-only and acts on nothing the server
@@ -185,7 +185,7 @@ answers with "Event logs are Windows-only" so the request closes rather than
 expiring. Credential rotation, reinstall, RustDesk client updates, monitor
 queries (services, events), diagnostics and approved actions are ignored; the
 console refuses to stage rotation, reinstall and event-log queries for a Linux
-computer (`LINUX_AGENT_READ_ONLY`), and a one-click client update skips it.
+device (`LINUX_AGENT_READ_ONLY`), and a one-click client update skips it.
 There is no software list. Everything it sends is reduced on the device to
 printable ASCII without `"` or `\`, host names to `A-Za-z0-9._-`, and the
 server strips control characters again from every device-reported name
@@ -207,13 +207,13 @@ sudo systemctl daemon-reload
 ```
 
 This removes the timer, the script, its config and the device secret; RustDesk
-stays (`apt remove rustdesk`). Archive the computer in Rem0te as well:
+stays (`apt remove rustdesk`). Archive the device in Rem0te as well:
 re-installing later needs a new enrolment link, because the server still holds
 the old secret's hash. Logs while it is installed: `journalctl -u rem0te-agent`.
 
 ---
 
-## macOS computers (0.33)
+## macOS devices (0.33)
 
 Run with `sudo` — which is how **Devices → Add device** shows the command — the macOS installer
 (`/api/v1/public/install/mac/<token>`) now installs the **standard macOS agent** alongside RustDesk. It is the
@@ -233,11 +233,11 @@ admin account, and a root daemon running a script from there could be replaced f
 its `PATH` to the system directories for the same reason.
 
 **Without `sudo`** (the plain command on the Downloads page) the installer does what it did before 0.33: RustDesk and
-a one-time registration, no agent, and it says how to add one. The computer shows as *RustDesk only*.
+a one-time registration, no agent, and it says how to add one. The device shows as *RustDesk only*.
 
 **Upgrading a Mac enrolled before 0.33.** Re-run the installer with `sudo` from a new enrolment link. Older
 installers kept the device secret in the home directory of whoever ran them; the new one keeps that secret (the
-server holds its hash, so the computer stays bound) **only if root wrote it** — owner root, mode 600, not a link —
+server holds its hash, so the device stays bound) **only if root wrote it** — owner root, mode 600, not a link —
 because a copy a user wrote is one that user knows. It then deletes every copy. A Mac whose old secret was written
 by a user gets a new one and is bound by the new link's claim.
 
@@ -307,7 +307,7 @@ sudo rmdir /Library/Rem0te
 ```
 
 This removes the daemon, the script, its config, its log and the device secret; RustDesk stays (delete
-`/Applications/RustDesk.app` to remove it). Archive the computer in Rem0te as well: re-installing later needs a new
+`/Applications/RustDesk.app` to remove it). Archive the device in Rem0te as well: re-installing later needs a new
 enrolment link.
 
 ---
@@ -333,7 +333,7 @@ talkable into opening one nobody authorised.
 Bounds, also enforced server-side: **200 events** maximum, **14 days**
 maximum, **2000 characters** per message. Those three numbers are what keep the
 API's 1 MB request body enough for a full page; raising one without the others
-turns a large query into a 413 that looks, from the endpoint, exactly like the
+turns a large query into a 413 that looks, from the device, exactly like the
 server going away.
 
 ### Who can read them
@@ -377,7 +377,7 @@ arbitrary SYSTEM execution across the whole fleet in one `INSERT`. The blast
 radius of the current design is "an attacker learns what hardware a customer
 has", which is a different order of problem.
 
-The same reasoning is why the endpoint's own report is not trusted either.
+The same reasoning is why the device's own report is not trusted either.
 Every string that arrives from a heartbeat is length-clamped, every number is
 range-checked, every array is truncated, and every unrecognised field is
 dropped rather than stored — a machine that has been taken over must not be
@@ -396,7 +396,7 @@ server, the agent and the database all refuse any other key.
 
 | Table | What |
 |---|---|
-| `EndpointInventory` | One row per endpoint, rewritten in place. A snapshot, not a history. |
+| `EndpointInventory` | One row per device, rewritten in place. A snapshot, not a history. |
 | `EndpointCommand` | The queue. Status, params, result, and who asked. Expires after 30 minutes unclaimed. |
 | `DiagnosticRun` | One-click diagnostics (0.31): catalog key, status and the time of each step, who asked, the capped result. See [diagnostics.md](diagnostics.md). |
 
@@ -411,12 +411,12 @@ numbers.
 ## Software and change history (0.29)
 
 > From 0.34 the same list is one source of evidence for [software version compliance](software-deployment.md#version-compliance)
-> (display-name rules only), and the computer's Software tab also shows **Managed software**: the catalog entries,
+> (display-name rules only), and the device's Software tab also shows **Managed software**: the catalog entries,
 > with Install / Uninstall through the software catalog's signed, two-approver plans.
 
 From 0.29 the inventory includes **installed software**: what Windows lists under Programs and Features, from
 the 64- and 32-bit uninstall registry keys, skipping system components and updates, up to 500 entries. It is
-shown on the computer's **Software** tab (0.31; before that, the Monitoring tab) with a filter, the age of the
+shown on the device's **Software** tab (0.31; before that, the Monitoring tab) with a filter, the age of the
 inventory it came from, and the latest software changes.
 
 Each inventory is also **compared with the one before**. Hardware, operating system, disks, network adapters and

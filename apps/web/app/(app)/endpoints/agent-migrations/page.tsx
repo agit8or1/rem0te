@@ -59,9 +59,9 @@ export default function AgentMigrationsPage() {
     <div className="p-4 sm:p-6 space-y-5">
       <PageHeader
         title="Agent migrations"
-        description="Computers being moved from the standard agent to the signed agent from the console, one request each. Request one from a computer's Agent card, or select several on All devices."
+        description="Devices being moved from the standard agent to the signed agent from the console, one request each. Request one from a device's Agent card, or select several on All devices."
       />
-      {!allowed ? <p className="text-sm text-muted-foreground">This page needs the View computers permission.</p> : (
+      {!allowed ? <p className="text-sm text-muted-foreground">This page needs the View devices permission.</p> : (
         <>
           {data && (
             <div className="flex flex-wrap gap-2 text-xs" data-testid="migration-counts">
@@ -88,7 +88,7 @@ export default function AgentMigrationsPage() {
                 <thead>
                   <tr className="border-b bg-muted/50 text-left">
                     <th className="px-3 py-2 font-medium">Device</th>
-                    <th className="px-3 py-2 font-medium">Business</th>
+                    <th className="px-3 py-2 font-medium">Customer</th>
                     <th className="px-3 py-2 font-medium">State</th>
                     <th className="px-3 py-2 font-medium">Agent now</th>
                     <th className="px-3 py-2 font-medium">Last update result</th>

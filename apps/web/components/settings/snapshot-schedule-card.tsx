@@ -45,7 +45,7 @@ export function SnapshotScheduleCard() {
 
   const save = useMutation({
     mutationFn: (d: SnapshotSchedule) => snapshotScheduleApi.set({ enabled: d.enabled, minutes: d.minutes, watchMinutes: d.watchMinutes }).then((r) => r.data.data),
-    onSuccess: (d) => { qc.setQueryData(['snapshot-schedule'], d); toast({ title: 'Automatic snapshots saved', description: 'Computers pick the new schedule up on their next check-in.' }); },
+    onSuccess: (d) => { qc.setQueryData(['snapshot-schedule'], d); toast({ title: 'Automatic snapshots saved', description: 'Devices pick the new schedule up on their next check-in.' }); },
     onError: (e) => toast({ title: 'Not saved', description: errMsg(e), variant: 'destructive' }),
   });
 
@@ -57,9 +57,9 @@ export function SnapshotScheduleCard() {
       <CardHeader><CardTitle className="text-sm flex items-center gap-2"><Camera className="h-4 w-4" />Automatic snapshots</CardTitle></CardHeader>
       <CardContent className="space-y-4 text-sm">
         <p className="max-w-2xl text-muted-foreground">
-          How often the server asks Windows computers (agent 0.33 or later, checking in) for the snapshots on their Processes,
-          Services and Network tabs, without anyone pressing Refresh. They are read-only and are asked for on the computer’s
-          own check-in, so a computer that is not checking in is not asked. Refresh on each tab still asks at once.
+          How often the server asks Windows devices (agent 0.33 or later, checking in) for the snapshots on their Processes,
+          Services and Network tabs, without anyone pressing Refresh. They are read-only and are asked for on the device’s
+          own check-in, so a device that is not checking in is not asked. Refresh on each tab still asks at once.
         </p>
         {isLoading && <p className="text-muted-foreground">Loading…</p>}
         {isError && <p className="text-red-600">Could not read the schedule.</p>}
@@ -90,13 +90,13 @@ export function SnapshotScheduleCard() {
                   value={draft.watchMinutes} onChange={(e) => setDraft({ ...draft, watchMinutes: Number(e.target.value) })}>
                   {[...new Set([...WATCH, draft.watchMinutes])].sort((a, b) => a - b).map((m) => <option key={m} value={m}>{m === 0 ? 'Off' : `Every ${m} minutes`}</option>)}
                 </select>
-                <p className="text-[11px] text-muted-foreground">The computer checks in every 3 minutes.</p>
+                <p className="text-[11px] text-muted-foreground">The device checks in every 3 minutes.</p>
               </div>
             </div>
             <p className="text-[11px] text-muted-foreground max-w-2xl">
               At most {data?.perMinute ?? 120} scheduled snapshots start per minute across the server (SNAPSHOT_MAX_PER_MINUTE), so the
               first round after an upgrade or an outage is spread out. Only the newest automatic snapshot of each kind is kept per
-              computer. Sizing: docs/server-sizing.md.
+              device. Sizing: docs/server-sizing.md.
             </p>
             <div className="flex justify-end">
               <Button size="sm" disabled={!dirty || save.isPending} onClick={() => save.mutate(draft)} data-testid="snapshot-schedule-save">Save</Button>

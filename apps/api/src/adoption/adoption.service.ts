@@ -121,14 +121,14 @@ export class AdoptionService {
     const parsed = Adopt.safeParse(raw);
     if (!parsed.success) throw bad('INVALID_ADOPTION', parsed.error);
     const dto = parsed.data;
-    if (new Set(dto.endpointIds).size !== dto.endpointIds.length) throw new BadRequestException({ code: 'INVALID_ADOPTION', message: 'Each computer once.' });
+    if (new Set(dto.endpointIds).size !== dto.endpointIds.length) throw new BadRequestException({ code: 'INVALID_ADOPTION', message: 'Each device once.' });
 
     const business = await this.prisma.customer.findFirst({ where: { id: dto.businessId, isArchived: false }, select: { id: true, tenantId: true, name: true } });
     if (!business) throw new NotFoundException('Business not found');
     let siteId: string | null = null;
     if (dto.siteId) {
       const site = await this.prisma.site.findFirst({ where: { id: dto.siteId, customerId: business.id, isActive: true }, select: { id: true } });
-      if (!site) throw new BadRequestException({ code: 'UNKNOWN_SITE', message: 'Unknown site for this business' });
+      if (!site) throw new BadRequestException({ code: 'UNKNOWN_SITE', message: 'Unknown site for this customer' });
       siteId = site.id;
     }
     const groupIds = [...new Set(dto.groupIds)];
@@ -137,19 +137,19 @@ export class AdoptionService {
         where: { id: { in: groupIds }, kind: 'STATIC', OR: [{ customerId: business.id }, { customerId: null, tenantId: business.tenantId }] },
         select: { id: true },
       });
-      if (groups.length !== groupIds.length) throw new BadRequestException({ code: 'UNKNOWN_GROUP', message: 'Every group must be a static group of this business.' });
+      if (groups.length !== groupIds.length) throw new BadRequestException({ code: 'UNKNOWN_GROUP', message: 'Every group must be a static group of this customer.' });
     }
     let mappingId: string | null = null;
     if (dto.mappingId) {
       const m = await this.prisma.adoptionMapping.findUnique({ where: { id: dto.mappingId }, select: { id: true, customerId: true } });
       // The rule recorded is the one that suggested THIS business.
-      if (!m || m.customerId !== business.id) throw new BadRequestException({ code: 'MAPPING_MISMATCH', message: 'That rule does not suggest this business.' });
+      if (!m || m.customerId !== business.id) throw new BadRequestException({ code: 'MAPPING_MISMATCH', message: 'That rule does not suggest this customer.' });
       mappingId = m.id;
     }
 
     assertFresh(freshMethod, {
       action: 'devices.adopt',
-      message: `Confirm it is you to assign ${dto.endpointIds.length === 1 ? 'this computer' : `${dto.endpointIds.length} computers`} to ${business.name}: everyone in that business with access will be able to see and act on ${dto.endpointIds.length === 1 ? 'it' : 'them'}.`,
+      message: `Confirm it is you to assign ${dto.endpointIds.length === 1 ? 'this computer' : `${dto.endpointIds.length} computers`} to ${business.name}: everyone at that customer with access will be able to see and act on ${dto.endpointIds.length === 1 ? 'it' : 'them'}.`,
     });
 
     const results: AdoptResult[] = [];
@@ -198,7 +198,7 @@ export class AdoptionService {
     const ids = [...new Set(parsed.data.endpointIds)];
     assertFresh(freshMethod, {
       action: 'devices.adopt',
-      message: 'Confirm it is you to forget these unassigned computers. A computer whose agent keeps running checks in again as a new unassigned entry.',
+      message: 'Confirm it is you to forget these unassigned devices. A device whose agent keeps running checks in again as a new unassigned entry.',
     });
     const results: AdoptResult[] = [];
     for (const endpointId of ids) {
@@ -260,19 +260,19 @@ export class AdoptionService {
     if (!business) throw new NotFoundException('Business not found');
     if (dto.siteId) {
       const site = await this.prisma.site.findFirst({ where: { id: dto.siteId, customerId: business.id, isActive: true }, select: { id: true } });
-      if (!site) throw new BadRequestException({ code: 'UNKNOWN_SITE', message: 'Unknown site for this business' });
+      if (!site) throw new BadRequestException({ code: 'UNKNOWN_SITE', message: 'Unknown site for this customer' });
     }
     let deploymentKeyId: string | null = null;
     if (dto.kind === 'deployment_key') {
       const key = await this.prisma.deploymentKey.findUnique({ where: { id: norm.value }, select: { id: true, customerId: true } });
       // A key is bound to one business; a rule cannot point its computers anywhere else.
-      if (!key || key.customerId !== business.id) throw new BadRequestException({ code: 'KEY_OTHER_BUSINESS', message: 'A deployment-key rule names a key of the same business.' });
+      if (!key || key.customerId !== business.id) throw new BadRequestException({ code: 'KEY_OTHER_BUSINESS', message: 'A deployment-key rule names a key of the same customer.' });
       deploymentKeyId = key.id;
     }
 
     assertFresh(freshMethod, {
       action: 'adoption.mappings',
-      message: 'Confirm it is you to add an assignment rule: it suggests a business for every unassigned computer that matches.',
+      message: 'Confirm it is you to add an assignment rule: it suggests a customer for every unassigned device that matches.',
     });
 
     let row;

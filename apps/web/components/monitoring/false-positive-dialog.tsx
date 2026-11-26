@@ -17,7 +17,7 @@ import { apiError } from '@/components/security-controls/shared';
  * Marking one alert as a false positive is a record — it may resolve that one
  * alert, and it may count towards a recommendation. It never changes a monitor
  * and never creates a rule: a rule is proposed, tested against stored history
- * and approved on Alerts → False positives & rules. The dialog says so twice,
+ * and approved on Monitoring → False positives & rules. The dialog says so twice,
  * because the difference is the whole point.
  */
 
@@ -73,7 +73,7 @@ export function FalsePositiveDialog({ alertId, onClose, onDone }: { alertId: str
               <dl className="mt-1 grid gap-x-3 gap-y-0.5 text-xs sm:grid-cols-[max-content_minmax(0,1fr)]">
                 <dt className="text-muted-foreground">Monitor</dt><dd>{data.monitor.name} (<code>{data.monitor.key}</code>, {data.monitor.severity.toLowerCase()}{data.monitor.log ? `, ${data.monitor.log} log` : ''})</dd>
                 {data.classification && <><dt className="text-muted-foreground">Classification</dt><dd>{data.classification.class.toLowerCase()} ({data.classification.basis.replace(/_/g, ' ')}{data.classification.matched ? `: ${data.classification.matched}` : ''})</dd></>}
-                <dt className="text-muted-foreground">Similar alerts</dt><dd data-testid="fp-similar">{data.similar.count} you can see, on {data.similar.computers.length} computer{data.similar.computers.length === 1 ? '' : 's'}{data.similar.businesses > 1 ? ` in ${data.similar.businesses} businesses` : ''}{data.similar.computers.length ? `: ${data.similar.computers.slice(0, 5).map((c) => `${c.name ?? c.id} (${c.alerts})`).join(', ')}` : ''}</dd>
+                <dt className="text-muted-foreground">Similar alerts</dt><dd data-testid="fp-similar">{data.similar.count} you can see, on {data.similar.computers.length} device{data.similar.computers.length === 1 ? '' : 's'}{data.similar.businesses > 1 ? ` in ${data.similar.businesses} customers` : ''}{data.similar.computers.length ? `: ${data.similar.computers.slice(0, 5).map((c) => `${c.name ?? c.id} (${c.alerts})`).join(', ')}` : ''}</dd>
                 <dt className="text-muted-foreground">Reports so far</dt><dd>{data.falsePositive.reports}{data.falsePositive.openRecommendation ? ` · an open recommendation has ${data.falsePositive.openRecommendation.reportCount}` : ''}</dd>
               </dl>
               {data.rawEvent && (

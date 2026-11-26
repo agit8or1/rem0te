@@ -31,7 +31,7 @@ export interface AccessReview {
 const VIA_LABEL: Record<AccessEntry['via'], string> = {
   PLATFORM_ADMIN: 'Platform Admin',
   BUSINESS_OWNER: 'Business Owner',
-  COMPUTER_GRANT: 'Granted on this computer',
+  COMPUTER_GRANT: 'Granted on this device',
   COMPANY_WIDE: 'Company-wide',
   TECHNICIAN_DIRECT: 'Technician (direct)',
   TECHNICIAN_GROUP: 'Technician (group)',
@@ -41,7 +41,7 @@ export function AccessReviewPanel({ review }: { review: AccessReview }) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-sm">Who can connect to this computer</CardTitle>
+        <CardTitle className="text-sm">Who can connect to this device</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
         <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">

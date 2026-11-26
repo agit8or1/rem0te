@@ -57,21 +57,21 @@ export class DeploymentKeysService {
     if (!business) throw new NotFoundException('Business not found');
     if (dto.siteId) {
       const site = await this.prisma.site.findFirst({ where: { id: dto.siteId, customerId: business.id, isActive: true }, select: { id: true } });
-      if (!site) throw new BadRequestException({ code: 'UNKNOWN_SITE', message: 'Unknown site for this business' });
+      if (!site) throw new BadRequestException({ code: 'UNKNOWN_SITE', message: 'Unknown site for this customer' });
     }
     if (dto.endpointGroupId) {
       const g = await this.prisma.endpointGroup.findFirst({
         where: { id: dto.endpointGroupId, OR: [{ customerId: business.id }, { customerId: null, tenantId: business.tenantId }] },
         select: { kind: true },
       });
-      if (!g) throw new BadRequestException({ code: 'UNKNOWN_GROUP', message: 'Unknown computer group for this business' });
-      if (g.kind === 'RULE') throw new BadRequestException({ code: 'RULE_GROUP', message: 'That is a rule group: a computer is in it when it matches the rule. Pick a static group, or none.' });
+      if (!g) throw new BadRequestException({ code: 'UNKNOWN_GROUP', message: 'Unknown device group for this customer' });
+      if (g.kind === 'RULE') throw new BadRequestException({ code: 'RULE_GROUP', message: 'That is a rule group: a device is in it when it matches the rule. Pick a static group, or none.' });
     }
     if (dto.expiresInDays > MAX_KEY_DAYS) throw new BadRequestException({ code: 'KEY_TOO_LONG', message: `A deployment key lives at most ${MAX_KEY_DAYS} days.` });
 
     assertFresh(freshMethod, {
       action: 'deployment.keys',
-      message: 'Confirm it is you to create a deployment key: it can enrol many computers for this business until it expires, is used up, or is revoked.',
+      message: 'Confirm it is you to create a deployment key: it can enrol many devices for this customer until it expires, is used up, or is revoked.',
     });
 
     const { key, hash, hint } = newDeploymentKey();

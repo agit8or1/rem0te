@@ -8,7 +8,7 @@ import { StepUpService } from '../auth/step-up.service';
 import { AgentAutoUpdateService } from './agent-auto-update.service';
 
 /**
- * Settings → Client updates → Keep agents up to date automatically (0.36).
+ * Patching → Client updates → Keep agents up to date automatically (0.36).
  * Platform-wide, so Platform Admin only — the guard before anything is read,
  * and the service checks again. A change needs fresh authentication and is
  * audited (AGENT_AUTO_UPDATE_SETTINGS_CHANGED, before and after). A

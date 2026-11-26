@@ -1,11 +1,11 @@
-# Deploying agents and adopting computers
+# Deploying agents and adopting devices
 
-Rolling the agent out to many computers at once — from Group Policy, Intune,
-another RMM, or a Linux or macOS script — and assigning the computers that
-arrive to the right business (0.57).
+Rolling the agent out to many devices at once — from Group Policy, Intune,
+another RMM, or a Linux or macOS script — and assigning the devices that
+arrive to the right customer (0.57).
 
 Everything on this page is **Platform Admin only**. A Business Owner adds
-computers one at a time from **Devices → Add device**, with a single-use code,
+devices one at a time from **Devices → Add device**, with a single-use code,
 exactly as before; nothing about that changed.
 
 ---
@@ -14,17 +14,17 @@ exactly as before; nothing about that changed.
 
 | | What it is | Where |
 |---|---|---|
-| **Deployment key** | A multi-use enrolment key for one business, with a use limit and an expiry of at most 90 days | **Devices → Deploy agents** |
-| **Unassigned computers** | Computers that enrolled through an authorised route but belong to no business yet | **Devices → Unassigned** |
-| **Assignment rules** | Explicit rules that *suggest* a business and site for an unassigned computer | **Devices → Unassigned → Assignment rules** |
+| **Deployment key** | A multi-use enrolment key for one customer, with a use limit and an expiry of at most 90 days | **Devices → Deploy agents** |
+| **Unassigned devices** | Devices that enrolled through an authorised route but belong to no customer yet | **Devices → Unassigned** |
+| **Assignment rules** | Explicit rules that *suggest* a customer and site for an unassigned device | **Devices → Unassigned → Assignment rules** |
 
-A computer reaches the unassigned list in one of three ways, shown as
+A device reaches the unassigned list in one of three ways, shown as
 *Arrived* on the list:
 
 - **Deployment key** — it enrolled with a key in *review* mode;
 - **Install script** — the installer checked in (with a device secret) before
   any claim succeeded, for example a signed install run without a code;
-- **Agent check-in** — an agent's heartbeat arrived for a computer the server
+- **Agent check-in** — an agent's heartbeat arrived for a device the server
   did not know, with a device secret.
 
 A heartbeat without a device secret creates nothing, as before.
@@ -33,19 +33,19 @@ A heartbeat without a device secret creates nothing, as before.
 
 ## Deployment keys
 
-**Devices → Deploy agents → New deployment key.** Choose the business, and
-optionally a site and one static group; give it a name; set how many computers
+**Devices → Deploy agents → New deployment key.** Choose the customer, and
+optionally a site and one static group; give it a name; set how many devices
 it may enrol (1 to 10,000) and how many days it lasts (1 to 90).
 
-Then choose what happens when a computer uses it:
+Then choose what happens when a device uses it:
 
 - **Hold it in Unassigned for review** (the default, and the recommendation).
-  The computer appears under **Devices → Unassigned**, tagged with the key, with
-  the key's business and site suggested. Nobody in the business sees it, and
+  The device appears under **Devices → Unassigned**, tagged with the key, with
+  the key's customer and site suggested. Nobody in the customer sees it, and
   nothing can connect to it, until a Platform Admin assigns it.
-- **Put it straight into this business.** The computer goes into the key's
-  business, site and group, active, with the key's access mode. Anyone holding
-  the key can add a computer to that business until the key expires, is used up
+- **Put it straight into this customer.** The device goes into the key's
+  customer, site and group, active, with the key's access mode. Anyone holding
+  the key can add a device to that customer until the key expires, is used up
   or is revoked — choose this only for a rollout you control end to end.
 
 Creating a key asks you to confirm it is you when *Settings → Confirm it is you*
@@ -60,20 +60,20 @@ option: the Windows script, `windows.exe`, the signed agent's
 `rem0te-agent.exe install --token`, `linux.sh` and `macos.sh` all work with it,
 and so does the `.msi` (0.65) as `TOKEN=`.
 
-**Uses are counted exactly.** Each computer that enrols takes one use, counted
-in one conditional database update, so twenty computers enrolling at the same
+**Uses are counted exactly.** Each device that enrols takes one use, counted
+in one conditional database update, so twenty devices enrolling at the same
 moment on a key with ten uses left produce ten enrolments and ten refusals,
-never eleven. A computer that is already enrolled — a Group Policy startup
+never eleven. A device that is already enrolled — a Group Policy startup
 script running on every boot, an Intune retry — changes nothing and uses
 nothing.
 
-**A key never moves a computer between businesses.** A computer that already
-belongs to a different business is refused, and so is one whose Remote ID is
-known with a different device secret. A key for business A cannot enrol, move
-or reveal anything of business B.
+**A key never moves a device between customers.** A device that already
+belongs to a different customer is refused, and so is one whose Remote ID is
+known with a different device secret. A key for customer A cannot enrol, move
+or reveal anything of customer B.
 
 **Revoke** a key when the rollout is done (no confirmation is asked; making
-things safer never asks). Computers it already enrolled are not affected; new
+things safer never asks). Devices it already enrolled are not affected; new
 installs using it are refused, and the install scripts stop carrying it.
 
 ---
@@ -95,7 +95,7 @@ the key as `TOKEN`.
 
 ### Group Policy (Active Directory)
 
-A computer **startup script**, which runs as SYSTEM before anyone signs in:
+A device **startup script**, which runs as SYSTEM before anyone signs in:
 
 ```powershell
 # install-rem0te.ps1 - runs as SYSTEM. Exits at once on a computer that already has the agent.
@@ -107,11 +107,11 @@ try { Invoke-RestMethod -UseBasicParsing 'https://<portal>/api/v1/public/install
 
 Group Policy Management → a new GPO → *Computer Configuration → Policies →
 Windows Settings → Scripts (Startup/Shutdown) → Startup → PowerShell Scripts*
-→ add the file, and link the GPO to the OU. Computers install on their next
+→ add the file, and link the GPO to the OU. Devices install on their next
 restart.
 
-The script lives in SYSVOL, which every computer and user in the domain can
-read. Give the key a use limit near the number of computers and an expiry near
+The script lives in SYSVOL, which every device and user in the domain can
+read. Give the key a use limit near the number of devices and an expiry near
 the end of the rollout, and revoke it afterwards.
 
 ### Intune
@@ -131,7 +131,7 @@ the end of the rollout, and revoke it afterwards.
 
 **It has never been run on real Windows.** It was built and read back on Linux
 (`msiinfo`, `msiextract`) and its parts are tested there; try it on one
-computer before a rollout, and tell us what happened.
+device before a rollout, and tell us what happened.
 
 ```text
 https://<portal>/api/v1/public/install/windows.msi                       the package, no key inside
@@ -146,7 +146,7 @@ What it is:
   `rem0te-agent.exe install --token <TOKEN> --portal <portal>`. That is the
   same command the `.exe` download runs when it is double-clicked, so nothing
   about enrolment changes: the agent verifies the installer, RustDesk and the
-  tray against signed metadata, and the claim decides where the computer lands.
+  tray against signed metadata, and the claim decides where the device lands.
   A failed install fails the `msiexec` (exit 1603), so Intune and the RMM see it.
 - **It needs a signed agent.** Only the signed agent takes a token on its
   command line. A server that does not publish one answers
@@ -158,18 +158,18 @@ What it is:
 - **Uninstalling it removes only its own entry** in *Programs and Features* (and
   the `HKLM\SOFTWARE\Rem0te\Installer` marker it writes). It installs no files
   and never removes the agent. The agent updates itself from signed releases,
-  which a Windows Installer repair would roll back, and a computer leaves
+  which a Windows Installer repair would roll back, and a device leaves
   through the console (see [offboarding.md](offboarding.md)), not through
   Programs and Features. A newer package replaces an older one's entry.
-- **Downloading it consumes nothing.** The computer's first check-in uses the
-  key, exactly as with every other method; a computer already enrolled uses
+- **Downloading it consumes nothing.** The device's first check-in uses the
+  key, exactly as with every other method; a device already enrolled uses
   nothing.
 
 **Group Policy Software Installation** cannot pass `TOKEN` on a command line.
 Use the startup script above, or download a package with the key already in it
 (`windows.msi?token=<DEPLOYMENT-KEY>`) and assign that. That copy carries the
 key in the share, like the script does, and Windows keeps a copy of every
-installed package in its installer cache on each computer: give the key a use
+installed package in its installer cache on each device: give the key a use
 limit and an expiry, and revoke it when the rollout is done.
 
 The server builds each package when it is downloaded, with `wixl` and
@@ -195,7 +195,7 @@ The other RMM's job history keeps the command, and so the key.
 
 `irm 'https://<portal>/api/v1/public/install/win/<DEPLOYMENT-KEY>' | iex` in an
 elevated PowerShell, the `windows.exe?token=` download with the key built
-in, or the `.msi` above. For a single computer, **Add device**'s single-use code is the better tool.
+in, or the `.msi` above. For a single device, **Add device**'s single-use code is the better tool.
 
 ### Linux
 
@@ -236,21 +236,21 @@ supported route.
 
 ---
 
-## Unassigned computers
+## Unassigned devices
 
-**Devices → Unassigned** lists every computer in the pool with what identifies
+**Devices → Unassigned** lists every device in the pool with what identifies
 it: hostname, Remote ID, platform, how it arrived and with which key, the
 address the server saw it connect from, first and last seen, and — once its
 first inventory arrives — manufacturer, model, serial number, operating system,
 domain, processor, memory and disk. Expand a row for the full list.
 
-**Who is signed in to the computer is never shown here and never used.** It
+**Who is signed in to the device is never shown here and never used.** It
 says who is sitting at a machine, not whose machine it is.
 
 Filter by text (name, Remote ID, address, domain, serial, key), by how it
 arrived, by platform, or by whether it has a suggestion or its rules disagree.
 
-### What an unassigned computer can and cannot do
+### What an unassigned device can and cannot do
 
 Its heartbeat records it as online and receives the automatic inventory and
 update scan — so you can see what it is — and **nothing else**: no password
@@ -259,38 +259,38 @@ diagnostic, action, patch scan, chat or tray pairing, whatever is queued.
 
 Every remote and action route refuses it with `ENDPOINT_UNASSIGNED`, for a
 Platform Admin too: a remote session, Connect and the Connect script, the
-launcher (by computer and by Remote ID), Quick Connect to its Remote ID, the
+launcher (by device and by Remote ID), Quick Connect to its Remote ID, the
 password, rotation and reinstall, agent update and migration, actions, scripts,
 diagnostics, service and process control, software install and removal, patch
 installs, RustDesk update staging, and the tray's pairing, self-help tools and
-support requests. Chat refuses it as *not assigned to a business*.
+support requests. Chat refuses it as *not assigned to a customer*.
 
-Only a Platform Admin can see it — not a Business Owner of any business, a
+Only a Platform Admin can see it — not a Business Owner of any customer, a
 Business User, a technician or an API key, in the device list, a device page,
 search, the audit log or the API.
 
 ### Assigning
 
-Tick computers, choose a business, optionally a site and up to ten static
+Tick devices, choose a customer, optionally a site and up to ten static
 groups, and **Assign**; or press **Accept** on a row's suggestion. You are asked
-to confirm it is you (**Adopting unassigned computers** in *Settings → Confirm it is you*).
+to confirm it is you (**Adopting unassigned devices** in *Settings → Confirm it is you*).
 
-Each computer moves only if it is still unassigned at that moment — two people
-assigning the same computer, or a computer assigned elsewhere meanwhile, gives
+Each device moves only if it is still unassigned at that moment — two people
+assigning the same device, or a device assigned elsewhere meanwhile, gives
 *not changed* for it rather than a second move. Each one is recorded in the
 audit log as `ENDPOINT_ADOPTED`, with who approved it, before and after
-(business, site, status), the deployment key it came with, the rule that
+(customer, site, status), the deployment key it came with, the rule that
 suggested it (if you accepted one), the groups and your step-up method.
 
-The device's own edit form can no longer move an unassigned computer into a
-business (`USE_ADOPTION`); it goes through here, so every adoption is audited
+The device's own edit form can no longer move an unassigned device into a
+customer (`USE_ADOPTION`); it goes through here, so every adoption is audited
 the same way.
 
 ### Forgetting
 
-**Forget** deletes an unassigned computer's record — for a test machine, a
+**Forget** deletes an unassigned device's record — for a test machine, a
 duplicate, or something that should not have enrolled. It asks you to confirm
-it is you and is audited (`ENDPOINT_FORGOTTEN`). A computer whose agent keeps
+it is you and is audited (`ENDPOINT_FORGOTTEN`). A device whose agent keeps
 running checks in again as a new unassigned entry: uninstall the agent, or
 revoke the key it used, first.
 
@@ -298,33 +298,33 @@ revoke the key it used, first.
 
 ## Assignment rules
 
-A rule names a business (and optionally a site) for unassigned computers that
+A rule names a customer (and optionally a site) for unassigned devices that
 match **one** explicit fact:
 
 | Kind | Matches | Example |
 |---|---|---|
-| Deployment key | Computers that enrolled with that key | *Acme GPO rollout* |
-| AD / DNS domain | The domain the computer's inventory reports, exactly, ignoring case | `acme.local`, `ACME` |
-| Address range | The address the server saw the computer connect from | `203.0.113.0/24` |
+| Deployment key | Devices that enrolled with that key | *Acme GPO rollout* |
+| AD / DNS domain | The domain the device's inventory reports, exactly, ignoring case | `acme.local`, `ACME` |
+| Address range | The address the server saw the device connect from | `203.0.113.0/24` |
 | Hostname prefix | The start of its hostname, ignoring case | `ACME-` |
 
 There is deliberately **no** rule on who is signed in, a user name or an e-mail
 address, and the code that evaluates rules cannot read them. `WORKGROUP`,
-`local` and `localdomain` are refused as domains (every computer outside a
+`local` and `localdomain` are refused as domains (every device outside a
 domain reports one of them), an address range must be at least /8 (IPv4) or
 /32 (IPv6), and a hostname prefix at least two characters.
 
 **A rule is a suggestion, never an assignment.** The list shows the suggested
-business and site and the rule that made it; a Platform Admin accepts it. No
-rule, and nothing else, assigns a computer by itself. The only automatic
+customer and site and the rule that made it; a Platform Admin accepts it. No
+rule, and nothing else, assigns a device by itself. The only automatic
 placement in the system is a deployment key created in *straight into this
-business* mode, and that business is the key's own.
+customer* mode, and that customer is the key's own.
 
 When several rules match, the order is: a rule on the deployment key; then the
-key's own business (a review key suggests its business even with no rule);
+key's own customer (a review key suggests its customer even with no rule);
 then domain, hostname prefix and address. Within a kind, the lower priority
 number wins, then the narrower range or longer prefix. When the matching rules
-name **different businesses**, the row says *Rules disagree*, lists them, and
+name **different customers**, the row says *Rules disagree*, lists them, and
 has no Accept button: assign it by hand.
 
 Adding a rule asks you to confirm it is you (**Assignment rules**), and
@@ -335,17 +335,17 @@ audited (`ADOPTION_MAPPING_DELETED`).
 
 ## What is recorded
 
-| Audit action | When | Business it is filed under |
+| Audit action | When | Customer it is filed under |
 |---|---|---|
 | `DEPLOYMENT_KEY_CREATED` | A key is made (never the key itself) | Platform |
 | `DEPLOYMENT_KEY_REVOKED` | A key is revoked | Platform |
-| `DEPLOYMENT_KEY_USED` | A computer enrols with a key | Platform for a review key; the business for a straight-in key |
-| `ENDPOINT_ADOPTED` | A computer is assigned | The business it joined |
-| `ENDPOINT_FORGOTTEN` | An unassigned computer is forgotten | Platform |
+| `DEPLOYMENT_KEY_USED` | A device enrols with a key | Platform for a review key; the customer for a straight-in key |
+| `ENDPOINT_ADOPTED` | A device is assigned | The customer it joined |
+| `ENDPOINT_FORGOTTEN` | An unassigned device is forgotten | Platform |
 | `ADOPTION_MAPPING_CREATED` / `_DELETED` | A rule is added or removed | Platform |
 
-"Platform" entries are visible only to Platform Admins; nothing about a computer
-in the pool is visible to any business until it is adopted into one.
+"Platform" entries are visible only to Platform Admins; nothing about a device
+in the pool is visible to any customer until it is adopted into one.
 
 ---
 

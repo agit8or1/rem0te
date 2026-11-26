@@ -193,7 +193,7 @@ export function ChatInbox() {
               {sound ? 'Sound on' : 'Sound off'}
             </button>
           </div>
-          {chats.length === 0 && <p className="px-2 py-3 text-sm text-muted-foreground">No open chats on computers you can see.</p>}
+          {chats.length === 0 && <p className="px-2 py-3 text-sm text-muted-foreground">No open chats on devices you can see.</p>}
           <ul className="max-h-80 overflow-y-auto">
             {chats.map((c) => (
               <li key={c.conversationId}>

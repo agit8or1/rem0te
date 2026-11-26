@@ -205,7 +205,7 @@ export function DeviceList() {
       });
       setActiveView(v);
       qc.invalidateQueries({ queryKey: ['device-views'] });
-      toast({ title: shareView ? 'View shared' : 'View saved', description: shareView ? `Everyone in ${v.business?.name ?? 'this business'} who can see devices now lists it. It shows each of them only the devices they can see.` : 'Only you can see it.' });
+      toast({ title: shareView ? 'View shared' : 'View saved', description: shareView ? `Everyone in ${v.business?.name ?? 'this customer'} who can see devices now lists it. It shows each of them only the devices they can see.` : 'Only you can see it.' });
       setSaveOpen(false); setViewName(''); setShareView(false);
     } catch (e) {
       toast({ title: 'View not saved', description: await refusalMessage(e, 'The view could not be saved.'), variant: 'destructive' });
@@ -229,7 +229,7 @@ export function DeviceList() {
     setActiveView(v);
   }
   async function deleteView(v: SavedView) {
-    if (v.shared && !window.confirm(`Delete the shared view “${v.name}” for everyone in ${v.business?.name ?? 'this business'}?`)) return;
+    if (v.shared && !window.confirm(`Delete the shared view “${v.name}” for everyone in ${v.business?.name ?? 'this customer'}?`)) return;
     try {
       await deviceViewsApi.remove(v.id);
       if (activeView?.id === v.id) setActiveView(null);
@@ -324,7 +324,7 @@ export function DeviceList() {
       const g = await deviceGroupsApi.create({ name, kind: 'rule', rule, ...(targetBusinessId ? { businessId: targetBusinessId } : {}) });
       qc.invalidateQueries({ queryKey: ['device-groups'] });
       qc.invalidateQueries({ queryKey: ['device-list'] });
-      toast({ title: 'Rule group created', description: 'It holds whichever computers match the rule each time it is read; nothing is copied.' });
+      toast({ title: 'Rule group created', description: 'It holds whichever devices match the rule each time it is read; nothing is copied.' });
       setRuleOpen(false); setRuleName('');
       setFilters({ ...EMPTY_FILTERS, ...(filters.businessId ? { businessId: filters.businessId } : {}), groupId: g.id });
       setSearchInput(''); setPage(1);
@@ -385,7 +385,7 @@ export function DeviceList() {
     const w = (desktop: string) => (sheet ? 'w-full' : desktop);
     return (
       <>
-        {(isPlatformAdmin || businesses.length > 1) && sel(filters.businessId, (v) => setFilter('businessId', v), 'Business', businesses.map((b) => [b.id, `${b.name} (${b.count})`]), w('w-[180px]'))}
+        {(isPlatformAdmin || businesses.length > 1) && sel(filters.businessId, (v) => setFilter('businessId', v), 'Customer', businesses.map((b) => [b.id, `${b.name} (${b.count})`]), w('w-[180px]'))}
         {sites.length > 0 && sel(filters.siteId, (v) => setFilter('siteId', v), 'Site', sites.map((s) => [s.id, `${s.name} (${s.count})`]), w('w-[150px]'))}
         {groupOptions.length > 0 && sel(filters.groupId, (v) => setFilter('groupId', v), 'Group', groupOptions, w('w-[160px]'))}
         {sel(filters.online, (v) => setFilter('online', v as DeviceFilters['online']), 'Online', [['online', 'Online (agent checking in)'], ['silent', 'Reachable, agent silent'], ['offline', 'Offline']], w('w-[130px]'))}
@@ -413,7 +413,7 @@ export function DeviceList() {
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative w-full sm:w-72">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Search name, host, IP, user, business…" className="pl-9 h-9" value={searchInput}
+          <Input placeholder="Search name, host, IP, user, customer…" className="pl-9 h-9" value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)} aria-label="Search devices" />
         </div>
         <div className="hidden sm:contents">{filterControls(false)}</div>
@@ -437,7 +437,7 @@ export function DeviceList() {
                 return (
                   <React.Fragment key={kind}>
                     <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                      {kind === 'personal' ? 'My views (only you see them)' : 'Shared in the business'}
+                      {kind === 'personal' ? 'My views (only you see them)' : 'Shared in the customer'}
                     </DropdownMenuLabel>
                     {kind === 'personal' && !vs.length && <p className="px-2 py-1.5 text-xs text-muted-foreground">No saved views yet.</p>}
                     {vs.map((v) => (
@@ -622,13 +622,13 @@ export function DeviceList() {
           <label className={cn('flex items-start gap-2 text-sm', !canShare && 'opacity-60')}>
             <input type="checkbox" className="h-4 w-4 mt-0.5" checked={shareView} disabled={!canShare} onChange={(e) => setShareView(e.target.checked)} />
             <span>
-              Share with everyone in {targetBusinessName ?? 'the business'}
+              Share with everyone in {targetBusinessName ?? 'the customer'}
               <span className="block text-xs text-muted-foreground">
                 {canShare
                   ? 'They see it in their Views menu; it shows each of them only what they can already see. Sharing is recorded in the audit log.'
                   : isPlatformAdmin && !filters.businessId
-                    ? 'Pick a business filter first: a shared view belongs to one business.'
-                    : 'Sharing is for a Business Owner, a technician with computers:edit over the whole business, or the MSP.'}
+                    ? 'Pick a customer filter first: a shared view belongs to one customer.'
+                    : 'Sharing is for a Business Owner, a technician with computers:edit over the whole customer, or the MSP.'}
               </span>
             </span>
           </label>
@@ -661,7 +661,7 @@ export function DeviceList() {
           <DialogHeader>
             <DialogTitle>More filters</DialogTitle>
             <DialogDescription>
-              Narrow the list further. These are also what a rule group can be made of. A computer with no reported
+              Narrow the list further. These are also what a rule group can be made of. A device with no reported
               RustDesk version, or one that is not plain numbers (a nightly build), never matches a version range.
             </DialogDescription>
           </DialogHeader>
@@ -731,8 +731,8 @@ export function DeviceList() {
           <DialogHeader>
             <DialogTitle>Save filters as a rule group</DialogTitle>
             <DialogDescription>
-              A rule group holds whichever of {targetBusinessName ?? 'the business'}’s computers match these filters each time it is
-              read — a computer that goes offline leaves an “online” group at once. Nothing is copied, and nobody adds to it by hand.
+              A rule group holds whichever of {targetBusinessName ?? 'the customer'}’s devices match these filters each time it is
+              read — a device that goes offline leaves an “online” group at once. Nothing is copied, and nobody adds to it by hand.
               Everyone sees only the members they can already see.
             </DialogDescription>
           </DialogHeader>
@@ -744,10 +744,10 @@ export function DeviceList() {
                 <p className="text-sm"><span className="text-muted-foreground">Rule: </span>{has ? describeRule(rule, siteName) : 'set at least one filter first (online, platform, site, updates…)'}</p>
                 {left.length > 0 && (
                   <p className="text-xs text-muted-foreground">
-                    Not part of the rule: {left.join(', ')} — search, business, group and the archived filter are never stored in a rule.
+                    Not part of the rule: {left.join(', ')} — search, customer, group and the archived filter are never stored in a rule.
                   </p>
                 )}
-                {isPlatformAdmin && !filters.businessId && <p className="text-xs text-muted-foreground">Pick a business filter first: a group belongs to one business.</p>}
+                {isPlatformAdmin && !filters.businessId && <p className="text-xs text-muted-foreground">Pick a customer filter first: a group belongs to one customer.</p>}
                 <Input autoFocus placeholder="e.g. Offline for a week" value={ruleName} maxLength={60}
                   onChange={(e) => setRuleName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveRuleGroup(); }} />
                 <DialogFooter>

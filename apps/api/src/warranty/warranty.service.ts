@@ -19,7 +19,7 @@ import {
  *   manual    a person with computers:edit on the computer sets or clears
  *             its dates on the device page; audited with before and after.
  *             The sweep never overwrites a manual entry.
- *   vendor    Settings → Warranty: a Platform Admin enables a vendor whose
+ *   vendor    Administration → Warranty: a Platform Admin enables a vendor whose
  *             lookup is implemented (warranty/client.ts: Dell, Lenovo, and
  *             from 0.61 HP and Apple) and
  *             gives its credential, sealed with its own purpose. Off by
@@ -170,7 +170,7 @@ export class WarrantyService implements OnModuleInit, OnModuleDestroy {
         lastAttemptAt: e.warrantyLookupAt, lastResult: e.warrantyLookupResult,
         intervalDays: LOOKUP_INTERVAL_DAYS,
       },
-      // 0.61: why there is no date, in words, and whether the fix is in Settings → Warranty.
+      // 0.61: why there is no date, in words, and whether the fix is in Administration → Warranty.
       gap: e.warrantyEndsAt ? null : warrantyGap({
         hasInventory: !!e.inventory, manufacturer: e.inventory?.manufacturer, model: e.inventory?.model,
         serial: e.inventory?.serialNumber ?? e.serialNumber, enabled, lookupResult: e.warrantyLookupResult, lookupAt: e.warrantyLookupAt,
@@ -224,9 +224,9 @@ export class WarrantyService implements OnModuleInit, OnModuleDestroy {
     const vendor = this.vendorOf(e);
     if (!vendor || !isLookupVendor(vendor)) throw new ConflictException({ code: 'WARRANTY_LOOKUP_UNSUPPORTED', message: vendor ? `There is no warranty lookup for ${VENDOR_LABEL[vendor]}. ${NO_LOOKUP_REASON[vendor as Exclude<VendorKey, LookupVendor>]} Enter the dates by hand.` : 'The manufacturer is not one with a warranty lookup. Enter the dates by hand.' });
     const creds = await this.credentials(vendor);
-    if (!creds) throw new ConflictException({ code: 'WARRANTY_LOOKUP_OFF', message: `The ${VENDOR_LABEL[vendor]} warranty lookup is not switched on (Settings → Warranty).` });
+    if (!creds) throw new ConflictException({ code: 'WARRANTY_LOOKUP_OFF', message: `The ${VENDOR_LABEL[vendor]} warranty lookup is not switched on (Administration → Warranty).` });
     const serial = this.serialOf(e);
-    if (!serial) throw new ConflictException({ code: 'NO_SERIAL', message: 'This computer has not reported a usable serial number.' });
+    if (!serial) throw new ConflictException({ code: 'NO_SERIAL', message: 'This device has not reported a usable serial number.' });
     const pause = await activePause(this.prisma, 'integration', ep.customerId);
     if (pause) throw new ForbiddenException({ code: 'CONTAINED', message: pauseMessage(pause, 'integration'), pauseId: pause.id, scope: pause.scope.toLowerCase() });
     await this.audit.logOrFail({

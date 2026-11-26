@@ -54,13 +54,13 @@ export function RestartOptions({ id, value, onChange, zones, delays = RESTART_DE
       </div>
       <ScheduleChoice id={`${id}-when`} value={value.when} onChange={(when) => onChange({ ...value, when })} zones={zones} nowLabel="At the next check-in" />
       {value.when.mode === 'schedule' && (
-        <p className="text-muted-foreground" data-testid="restart-when-note">The warning starts at that time, so the computer restarts {delayLabel(value.delayMinutes)} after it.</p>
+        <p className="text-muted-foreground" data-testid="restart-when-note">The warning starts at that time, so the device restarts {delayLabel(value.delayMinutes)} after it.</p>
       )}
       {showOnlyIfRequired && (
         <label className="flex items-start gap-2">
           <input type="checkbox" className="mt-0.5" checked={value.onlyIfRequired} data-testid="restart-only-if-required"
             onChange={(e) => onChange({ ...value, onlyIfRequired: e.target.checked })} />
-          <span>Only if Windows reports a restart is required. The computer checks when the plan runs, and does nothing if none is pending.</span>
+          <span>Only if Windows reports a restart is required. The device checks when the plan runs, and does nothing if none is pending.</span>
         </label>
       )}
       <label className="flex items-start gap-2">

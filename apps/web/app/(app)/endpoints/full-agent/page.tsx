@@ -129,8 +129,8 @@ function AutoMigration({ a, admin }: { a: Overview['steps']['computers']['auto']
       </div>
       {a.mode !== 'off' && (
         <p className="text-xs text-muted-foreground">
-          One computer moves first. The rest move only after it has reported the signed agent on the published build for {a.soakMinutes} minutes with no failed
-          update, at most {a.perHour} an hour (the automatic-update pace), skipping computers that are paused, in a staged rollout, opted out by their update
+          One device moves first. The rest move only after it has reported the signed agent on the published build for {a.soakMinutes} minutes with no failed
+          update, at most {a.perHour} an hour (the automatic-update pace), skipping devices that are paused, in a staged rollout, opted out by their update
           policy, or not checking in. A failure or no confirmation within 2 hours halts it.
         </p>
       )}
@@ -148,7 +148,7 @@ function AutoMigration({ a, admin }: { a: Overview['steps']['computers']['auto']
           {r.soakEndsAt && <p>Soak ends {formatDate(r.soakEndsAt)}.</p>}
           {r.waitText && r.waitUntil && r.state !== 'soaking' && <p className="text-muted-foreground">{r.waitText} By {formatDate(r.waitUntil)}.</p>}
           {r.halted && <p className="text-destructive" data-testid="full-agent-halted">Halted {ago(r.halted.at)}: {r.halted.reason}</p>}
-          {r.progress && <p className="text-muted-foreground">This build, all businesses: {r.progress.requested} asked, {r.progress.completed} moved, {r.progress.open} in progress, {r.progress.stopped} stopped.</p>}
+          {r.progress && <p className="text-muted-foreground">This build, all customers: {r.progress.requested} asked, {r.progress.completed} moved, {r.progress.open} in progress, {r.progress.stopped} stopped.</p>}
         </div>
       )}
       {admin ? (
@@ -180,8 +180,8 @@ function AutoMigration({ a, admin }: { a: Overview['steps']['computers']['auto']
         <p className="text-xs text-muted-foreground">A Platform Admin changes this.</p>
       )}
       <p className="text-xs text-muted-foreground">
-        To move particular computers now, select them on <Link className="underline" href="/endpoints">All devices</Link> and use <strong>Upgrade to full agent…</strong>,
-        or press <strong>Upgrade to full agent</strong> at the top of a computer&apos;s page or on its Agent card. Follow every request on <Link className="underline" href="/endpoints/agent-migrations">Agent migrations</Link>.
+        To move particular devices now, select them on <Link className="underline" href="/endpoints">All devices</Link> and use <strong>Upgrade to full agent…</strong>,
+        or press <strong>Upgrade to full agent</strong> at the top of a device&apos;s page or on its Agent card. Follow every request on <Link className="underline" href="/endpoints/agent-migrations">Agent migrations</Link>.
       </p>
       {confirm && (
         <ConfirmDialog
@@ -189,8 +189,8 @@ function AutoMigration({ a, admin }: { a: Overview['steps']['computers']['auto']
           onOpenChange={(o) => { if (!o && !act.isPending) setConfirm(null); }}
           title={confirm === 'resume' ? 'Resume with the same canary?' : 'Restart with another canary?'}
           description={confirm === 'resume'
-            ? `The same computer is asked again, and its 2-hour and soak clocks start from now. The rest still move only after it passes.${askAuto ? ' You will be asked to confirm it is you.' : ''}`
-            : `Another eligible computer is picked as the canary; this one is not picked again for this build.${askAuto ? ' You will be asked to confirm it is you.' : ''}`}
+            ? `The same device is asked again, and its 2-hour and soak clocks start from now. The rest still move only after it passes.${askAuto ? ' You will be asked to confirm it is you.' : ''}`
+            : `Another eligible device is picked as the canary; this one is not picked again for this build.${askAuto ? ' You will be asked to confirm it is you.' : ''}`}
           confirmLabel={confirm === 'resume' ? 'Resume' : 'Restart'}
           loading={act.isPending}
           onConfirm={() => act.mutate(confirm)}
@@ -216,12 +216,12 @@ export default function FullAgentPage() {
     <div className="p-4 sm:p-6 space-y-5">
       <PageHeader
         title="Full agent"
-        description="Moving computers from the standard agent to the signed agent, which runs only code signed with keys this portal never holds. Four steps; this page reads each one's state from the server."
+        description="Moving devices from the standard agent to the signed agent, which runs only code signed with keys this portal never holds. Four steps; this page reads each one's state from the server."
       />
-      {!allowed ? <p className="text-sm text-muted-foreground">This page needs the View computers permission.</p> : (
+      {!allowed ? <p className="text-sm text-muted-foreground">This page needs the View devices permission.</p> : (
         <>
           <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-xs" data-testid="full-agent-honest">
-            The signed agent and its tray have not yet run on real Windows. The first computer that moves — the canary — is the first time; that is why
+            The signed agent and its tray have not yet run on real Windows. The first device that moves — the canary — is the first time; that is why
             the rest wait for it.
           </div>
           {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -291,13 +291,13 @@ export default function FullAgentPage() {
                     <Command text={s.timestamp.command} label="the status command" />
                   </Step>
 
-                  <Step n={4} title="Computers moved" state={c.done ? 'done' : c.counts.migrating || c.counts.standard ? 'todo' : c.counts.held ? 'warn' : 'todo'}>
+                  <Step n={4} title="Devices moved" state={c.done ? 'done' : c.counts.migrating || c.counts.standard ? 'todo' : c.counts.held ? 'warn' : 'todo'}>
                     <div className="flex flex-wrap gap-2 text-xs" data-testid="full-agent-counts">
                       {(['standard', 'migrating', 'signed', 'held', 'not_eligible'] as Kind[]).map((k) => (
                         <Badge key={k} variant={k === 'held' && c.counts.held ? 'outline' : 'secondary'} data-kind={k}>{KIND_LABEL[k]}: {c.counts[k]}</Badge>
                       ))}
                     </div>
-                    {c.counts.signed > 0 && <p className="text-xs text-muted-foreground">{c.signedOnBuild} of {c.counts.signed} signed computers run the published build; the others update themselves.</p>}
+                    {c.counts.signed > 0 && <p className="text-xs text-muted-foreground">{c.signedOnBuild} of {c.counts.signed} signed devices run the published build; the others update themselves.</p>}
                     {c.counts.held > 0 && (
                       <ul className="text-xs space-y-0.5" data-testid="full-agent-holds">
                         {Object.entries(c.holds).map(([k, v]) => <li key={k}>{c.holdLabels[k] ?? k}: {v}</li>)}
@@ -312,7 +312,7 @@ export default function FullAgentPage() {
                     <AutoMigration a={c.auto} admin={data.platformAdmin} />
                     {c.rows.length > 0 && (
                       <details className="text-xs" open={c.total <= 25}>
-                        <summary className="cursor-pointer text-sm font-medium">Computers ({c.total})</summary>
+                        <summary className="cursor-pointer text-sm font-medium">Devices ({c.total})</summary>
                         <ul className="mt-2 divide-y rounded-md border" data-testid="full-agent-computers">
                           {c.rows.map((r) => (
                             <li key={r.id} className="flex flex-wrap items-start gap-x-3 gap-y-1 p-2" data-kind={r.kind}>
@@ -337,8 +337,8 @@ export default function FullAgentPage() {
           )}
           {isLoading || !s ? null : (
             <p className="text-xs text-muted-foreground">
-              More: <Link className="underline" href="/docs/update-signing#moving-computers-automatically-037">Update signing → Moving computers automatically</Link>
-              {data?.platformAdmin && <> · <Link className="underline" href="/settings/security/update-signing">Settings → Security → Update signing</Link></>}
+              More: <Link className="underline" href="/docs/update-signing#moving-devices-automatically-037">Update signing → Moving devices automatically</Link>
+              {data?.platformAdmin && <> · <Link className="underline" href="/settings/security/update-signing">Security → Update signing</Link></>}
             </p>
           )}
         </>

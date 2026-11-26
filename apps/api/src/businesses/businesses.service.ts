@@ -172,10 +172,10 @@ export class BusinessesService {
     const existing = await this.acl.assertBusinessInScope(actor, id);
 
     if (dto.isActive !== undefined && !actor.isPlatformAdmin) {
-      throw new BadRequestException('Only a Platform Admin can enable or disable a business');
+      throw new BadRequestException('Only a Platform Admin can enable or disable a customer');
     }
     if (dto.quickConnectEnabled !== undefined && !actor.isPlatformAdmin) {
-      throw new BadRequestException('Only a Platform Admin can change the Quick Connect setting for a business');
+      throw new BadRequestException('Only a Platform Admin can change the Quick Connect setting for a customer');
     }
     if (!actor.isPlatformAdmin) this.acl.assertBusinessOwner(actor);
 
@@ -260,7 +260,7 @@ export class BusinessesService {
 
     if (blockers.length > 0) {
       throw new ConflictException(
-        `This business still has ${blockers.join(', ')}. Move or remove them first, or disable the business instead.`,
+        `This customer still has ${blockers.join(', ')}. Move or remove them first, or disable the customer instead.`,
       );
     }
 
@@ -421,7 +421,7 @@ export class BusinessesService {
         user: { select: { id: true, email: true, isPlatformAdmin: true } },
       },
     });
-    if (!membership) throw new NotFoundException('User not found in this business');
+    if (!membership) throw new NotFoundException('User not found in this customer');
 
     this.acl.assertMayManage(actor, {
       roleType: membership.role.type,
@@ -431,7 +431,7 @@ export class BusinessesService {
 
     if (membership.role.type === RoleType.BUSINESS_OWNER) {
       throw new BadRequestException(
-        'A Business Owner already holds every business permission — capabilities apply to Business Users.',
+        'A Business Owner already holds every customer permission — capabilities apply to Business Users.',
       );
     }
 
@@ -470,7 +470,7 @@ export class BusinessesService {
         user: { select: { id: true, email: true, isPlatformAdmin: true } },
       },
     });
-    if (!membership) throw new NotFoundException('User not found in this business');
+    if (!membership) throw new NotFoundException('User not found in this customer');
 
     this.acl.assertMayManage(actor, {
       roleType: membership.role.type,
@@ -507,7 +507,7 @@ export class BusinessesService {
         user: { select: { id: true, email: true, isPlatformAdmin: true } },
       },
     });
-    if (!membership) throw new NotFoundException('User not found in this business');
+    if (!membership) throw new NotFoundException('User not found in this customer');
 
     this.acl.assertMayManage(actor, {
       roleType: membership.role.type,
@@ -549,7 +549,7 @@ export class BusinessesService {
         user: { select: { id: true, email: true, isPlatformAdmin: true } },
       },
     });
-    if (!membership) throw new NotFoundException('User not found in this business');
+    if (!membership) throw new NotFoundException('User not found in this customer');
 
     this.acl.assertMayManage(actor, {
       roleType: membership.role.type,

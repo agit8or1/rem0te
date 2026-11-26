@@ -316,7 +316,7 @@ async function all() {
     check(doc.task.kind === 'restart' && doc.task.rule === 'if_required' && doc.task.ignoreRemoteSession === undefined && doc.targets.kind === 'business' && doc.maxRunsPerOccurrence === 3 && doc.offline.mode === 'run_when_online',
       'the document: a restart task (no exception), the whole business, three tries a window', JSON.stringify(doc).slice(0, 400));
     const c = await req('GET', `/restart-windows/computers/${aPend.id}`, { s: S.owen });
-    check(c.data?.effective === null && c.data.notInForce?.[0]?.window?.status === 'AWAITING_APPROVAL' && /waiting for approval/.test(c.data.text), 'A-PENDING: governed by nothing yet; the card names the window waiting for approval', msg(c));
+    check(c.data?.effective === null && c.data.notInForce?.[0]?.window?.status === 'AWAITING_APPROVAL' && /pending approval/.test(c.data.text), 'A-PENDING: governed by nothing yet; the card names the window waiting for approval', msg(c));
     await sleep(4000);
     check((await attempts(aPend)).length === 0, 'two sweeps later, no restart has been asked for');
     const page = await (await fetch(acmePol.approvalUrl)).text();

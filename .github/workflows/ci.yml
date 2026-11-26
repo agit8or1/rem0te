@@ -92,6 +92,15 @@ jobs:
           node apps/web/scripts/unit-nav-model.mjs
           node apps/api/scripts/unit-navigation.mjs
 
+      # The console's words (0.87.1, UX P1-1): every text a person reads says
+      # "customer" and "device", never "business", "computer" or "endpoint",
+      # and no sentence sends someone to a menu path 0.87 retired. The kept
+      # phrases (role names, other vendors' names, an HTTP endpoint) and the
+      # files left alone are listed in the script with their reasons. Pure:
+      # parses with the workspace's TypeScript, runs nothing.
+      - name: Terminology
+        run: node apps/web/scripts/check-terminology.mjs
+
       # Contract ticket-rmm-v1: the JSON Schemas ClientSt0r validates against are
       # generated from the runtime zod schemas; drift between them, or a fixture
       # that no longer parses, fails here. Then the signing, trust-file and

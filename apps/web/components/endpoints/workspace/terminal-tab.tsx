@@ -51,11 +51,11 @@ const END_TEXT: Record<string, string> = {
   expired_max: 'Ended: the 60-minute limit',
   paused: 'Ended: remote access was paused by containment',
   exited: 'The shell exited',
-  agent_refused: 'The computer refused to start the shell',
-  agent_error: 'The computer lost the shell',
+  agent_refused: 'The device refused to start the shell',
+  agent_error: 'The device lost the shell',
   output_cap: 'Ended: the output limit (8 MB)',
   input_cap: 'Ended: the input limit (1 MB)',
-  endpoint_unavailable: 'Ended: the computer is no longer available',
+  endpoint_unavailable: 'Ended: the device is no longer available',
 };
 
 const mmss = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.max(0, s) % 60).padStart(2, '0')}`;
@@ -128,16 +128,16 @@ export function DeviceTerminalTab({ endpointId, ep }: { endpointId: string; ep: 
     <div className="space-y-4" data-testid="terminal-tab">
       <div className="flex items-start gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200" role="note" data-testid="terminal-identity">
         <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-        <p><strong>SYSTEM — full control of this computer.</strong> A terminal runs cmd or PowerShell in the background as the agent does, with no screen sharing and nothing shown to the person at the computer. Every session is recorded in the audit log with its reason; what is typed and printed is kept only when this business keeps transcripts.</p>
+        <p><strong>SYSTEM — full control of this device.</strong> A terminal runs cmd or PowerShell in the background as the agent does, with no screen sharing and nothing shown to the person at the device. Every session is recorded in the audit log with its reason; what is typed and printed is kept only when this customer keeps transcripts.</p>
       </div>
 
       {!windowsSigned ? (
         <Card><CardContent className="pt-6 text-sm text-muted-foreground" data-testid="terminal-unsupported">
-          A terminal needs a Windows computer running the full (signed) agent {minAgent} or later. {agent.explanation}
+          A terminal needs a Windows device running the full (signed) agent {minAgent} or later. {agent.explanation}
         </CardContent></Card>
       ) : !versionOk ? (
         <Card><CardContent className="pt-6 text-sm text-muted-foreground" data-testid="terminal-unsupported">
-          This computer’s agent ({String(ep.agentVersion ?? 'unknown')}) is older than {minAgent}, which first ran a terminal. Let it update first.
+          This device’s agent ({String(ep.agentVersion ?? 'unknown')}) is older than {minAgent}, which first ran a terminal. Let it update first.
         </CardContent></Card>
       ) : null}
 
@@ -164,12 +164,12 @@ export function DeviceTerminalTab({ endpointId, ep }: { endpointId: string; ep: 
                 {openM.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Open as SYSTEM
               </Button>
             </form>
-            <p className="mt-2 text-xs text-muted-foreground">It starts at the computer’s next check-in, which can take up to about three minutes. It ends after {list.data?.limits.idleMinutes ?? 15} minutes without input and after {list.data?.limits.maxMinutes ?? 60} minutes in all, whatever happens.</p>
+            <p className="mt-2 text-xs text-muted-foreground">It starts at the device’s next check-in, which can take up to about three minutes. It ends after {list.data?.limits.idleMinutes ?? 15} minutes without input and after {list.data?.limits.maxMinutes ?? 60} minutes in all, whatever happens.</p>
           </CardContent>
         </Card>
       )}
       {!canOpen && (
-        <p className="text-sm text-muted-foreground" data-testid="terminal-not-permitted">Only a Platform Admin can open a terminal. You can see who opened one here, and end a session if you may edit this computer.</p>
+        <p className="text-sm text-muted-foreground" data-testid="terminal-not-permitted">Only a Platform Admin can open a terminal. You can see who opened one here, and end a session if you may edit this device.</p>
       )}
 
       <Card>
@@ -177,13 +177,13 @@ export function DeviceTerminalTab({ endpointId, ep }: { endpointId: string; ep: 
         <CardContent>
           {list.isLoading ? <p className="text-sm text-muted-foreground">Loading…</p>
             : list.isError ? <p className="text-sm text-muted-foreground">{errText(list.error, 'Could not read the sessions.')}</p>
-              : sessions.length === 0 ? <p className="text-sm text-muted-foreground" data-testid="terminal-none">No terminal has been opened on this computer.</p>
+              : sessions.length === 0 ? <p className="text-sm text-muted-foreground" data-testid="terminal-none">No terminal has been opened on this device.</p>
                 : (
                   <ul className="divide-y text-sm" data-testid="terminal-sessions">
                     {sessions.map((s) => (
                       <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-2" data-testid="terminal-session-row" data-state={s.state}>
                         <div className="min-w-0">
-                          <div className="font-medium">{s.shell === 'cmd' ? 'cmd' : 'PowerShell'} · {s.technicianEmail ?? 'a technician'} · {s.state === 'ended' ? (END_TEXT[s.endReason ?? ''] ?? s.endReason) : s.state === 'open' ? 'Open' : 'Waiting for the computer'}</div>
+                          <div className="font-medium">{s.shell === 'cmd' ? 'cmd' : 'PowerShell'} · {s.technicianEmail ?? 'a technician'} · {s.state === 'ended' ? (END_TEXT[s.endReason ?? ''] ?? s.endReason) : s.state === 'open' ? 'Open' : 'Waiting for the device'}</div>
                           <div className="break-words text-xs text-muted-foreground">“{s.reason}” · opened {ago(s.createdAt)} · {s.bytesIn} B in, {s.bytesOut} B out{s.exitCode != null ? ` · exit ${s.exitCode}` : ''}</div>
                         </div>
                         <div className="flex gap-2">
@@ -201,7 +201,7 @@ export function DeviceTerminalTab({ endpointId, ep }: { endpointId: string; ep: 
         <DialogContent className="max-w-3xl w-[calc(100vw-1rem)]">
           <DialogHeader>
             <DialogTitle>Transcript</DialogTitle>
-            <DialogDescription>Kept because this business keeps terminal transcripts. Lines you typed start with “&gt;”.</DialogDescription>
+            <DialogDescription>Kept because this customer keeps terminal transcripts. Lines you typed start with “&gt;”.</DialogDescription>
           </DialogHeader>
           <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded bg-muted p-3 font-mono text-xs">{transcript?.text || '(empty)'}</pre>
         </DialogContent>
@@ -269,7 +269,7 @@ function LiveTerminal({ endpointId, sid, onClosed, onDismiss }: { endpointId: st
   });
   const stateText = useMemo(() => {
     if (!session) return 'Connecting…';
-    if (session.state === 'pending') return 'Waiting for the computer to start the shell (its next check-in)…';
+    if (session.state === 'pending') return 'Waiting for the device to start the shell (its next check-in)…';
     if (session.state === 'open') return 'Connected';
     return END_TEXT[session.endReason ?? ''] ?? `Ended (${session.endReason})`;
   }, [session]);
@@ -295,7 +295,7 @@ function LiveTerminal({ endpointId, sid, onClosed, onDismiss }: { endpointId: st
         )}
         <pre ref={screen} data-testid="terminal-screen" aria-live="polite"
           className="h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-zinc-950 p-3 font-mono text-xs leading-relaxed text-zinc-100 sm:h-96">
-          {text || (session?.state === 'pending' ? 'The shell starts when the computer next checks in…' : '')}
+          {text || (session?.state === 'pending' ? 'The shell starts when the device next checks in…' : '')}
         </pre>
         {live && (
           <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(e) => {

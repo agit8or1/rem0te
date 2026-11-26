@@ -151,23 +151,23 @@ export function chatSupport(ep: {
 }): ChatSupport {
   const p = String(ep.platform ?? '').toLowerCase();
   if (ep.status === 'ARCHIVED') {
-    return { supported: false, reason: 'archived', message: 'This computer is archived.' };
+    return { supported: false, reason: 'archived', message: 'This device is archived.' };
   }
   if (/^(linux|macos|mac|darwin|osx)/.test(p)) {
     return { supported: false, reason: 'platform', message: `Chat is not available on ${p.startsWith('linux') ? 'Linux' : 'macOS'} yet: only the Windows agents have a tray and a chat window.` };
   }
   if (!ep.agentBound) {
-    return { supported: false, reason: 'not_bound', message: 'This computer has never authenticated with a device secret. Re-run its installer before chatting.' };
+    return { supported: false, reason: 'not_bound', message: 'This device has never authenticated with a device secret. Re-run its installer before chatting.' };
   }
   if (ep.updateChannel === 'signed') {
     if ((ep.chatProtocol ?? 0) >= 2) return { supported: true, via: 'tray' };
     if ((ep.chatProtocol ?? 0) >= 1) return { supported: true, via: 'window' };
-    return { supported: false, reason: 'agent', message: 'This computer\'s signed agent is too old to chat. Update it to 0.34 or later.' };
+    return { supported: false, reason: 'agent', message: 'This device\'s signed agent is too old to chat. Update it to 0.34 or later.' };
   }
   if ((ep.trayProtocol ?? 0) >= 1 && ep.trayPaired) return { supported: true, via: 'tray' };
   return {
     supported: false, reason: 'agent',
-    message: 'This computer runs the standard agent, which cannot chat until its tray is installed. Re-run its installer from a 0.36 or later portal: the tray starts at the next sign-in.',
+    message: 'This device runs the standard agent, which cannot chat until its tray is installed. Re-run its installer from a 0.36 or later portal: the tray starts at the next sign-in.',
   };
 }
 
@@ -191,24 +191,24 @@ export function presence(c: { status: string; deviceState: string | null; device
   }
   if (!c.deviceState || !c.deviceSeenAt) {
     return via === 'tray'
-      ? { code: 'waiting_for_checkin', text: 'Waiting for the tray on the computer to open the chat (it learns of a new chat at the next check-in, normally within 3 minutes).' }
-      : { code: 'waiting_for_checkin', text: 'Waiting for the computer to pick the chat up at its next check-in (normally within 3 minutes).' };
+      ? { code: 'waiting_for_checkin', text: 'Waiting for the tray on the device to open the chat (it learns of a new chat at the next check-in, normally within 3 minutes).' }
+      : { code: 'waiting_for_checkin', text: 'Waiting for the device to pick the chat up at its next check-in (normally within 3 minutes).' };
   }
   // The /assist page (0.36) polls every few seconds while it is open; a page
   // that has stopped is a closed window, which the person can reopen from the
   // tray icon. That is what the page last did, not a guess about the person.
   if (via === 'tray' && now - c.deviceSeenAt.getTime() > 60_000 && c.deviceState === 'window_open') {
-    return { code: 'window_closed', text: 'The chat window on the computer is closed. The person can reopen it from the tray icon; new messages show a badge there.' };
+    return { code: 'window_closed', text: 'The chat window on the device is closed. The person can reopen it from the tray icon; new messages show a badge there.' };
   }
   if (now - c.deviceSeenAt.getTime() > 60_000 && c.deviceState !== 'no_user') {
-    return { code: 'computer_silent', text: 'The computer has not been in touch for over a minute. It may have gone offline or to sleep.' };
+    return { code: 'computer_silent', text: 'The device has not been in touch for over a minute. It may have gone offline or to sleep.' };
   }
   switch (c.deviceState) {
     case 'connecting': return { code: 'connecting', text: 'The agent is opening the chat window.' };
-    case 'window_open': return { code: 'window_open', text: 'The chat window is open on the computer.' };
-    case 'no_user': return { code: 'no_user', text: 'Nobody is signed in at the computer\'s console, so there is no desktop to show the chat on. It opens when someone signs in.' };
-    case 'window_failed': return { code: 'window_failed', text: 'The agent could not open the chat window on the computer.' };
-    default: return { code: 'user_closed', text: 'The person at the computer closed the chat window.' };
+    case 'window_open': return { code: 'window_open', text: 'The chat window is open on the device.' };
+    case 'no_user': return { code: 'no_user', text: 'Nobody is signed in at the device\'s console, so there is no desktop to show the chat on. It opens when someone signs in.' };
+    case 'window_failed': return { code: 'window_failed', text: 'The agent could not open the chat window on the device.' };
+    default: return { code: 'user_closed', text: 'The person at the device closed the chat window.' };
   }
 }
 

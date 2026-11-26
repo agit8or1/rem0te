@@ -21,7 +21,7 @@ interface PolicyRead {
  * /client-updates/policy/agent-mode), never the RustDesk client checkbox.
  * Who may change it, and when a step-up is asked, are the server's
  * decisions: anything but Off asks the person to confirm it is them. Windows,
- * site overrides and device groups stay on Settings → Client updates.
+ * site overrides and device groups stay on Patching → Client updates.
  */
 export function AgentAutoUpdateCard({ businessId }: { businessId: string }) {
   const qc = useQueryClient();
@@ -36,7 +36,7 @@ export function AgentAutoUpdateCard({ businessId }: { businessId: string }) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['client-update-policy'] });
       qc.invalidateQueries({ queryKey: ['endpoint-agent'] });
-      toast({ title: 'Saved', description: 'Automatic agent updates for this business are changed. A computer set to On or Off on its own Agent card keeps its own setting.' });
+      toast({ title: 'Saved', description: 'Automatic agent updates for this customer are changed. A device set to On or Off on its own Agent card keeps its own setting.' });
     },
     onError: (e) => toast({ title: 'Not saved', description: (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'The request failed.', variant: 'destructive' }),
   });
@@ -53,12 +53,12 @@ export function AgentAutoUpdateCard({ businessId }: { businessId: string }) {
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <p className="text-muted-foreground">
-          When a computer’s agent is older than this server’s, its next check-in updates it — never during a remote session, a
+          When a device’s agent is older than this server’s, its next check-in updates it — never during a remote session, a
           few attempts per release at most, paced across the platform. <span className="font-medium text-foreground">On by default</span>:
-          with nothing set here or on a computer, every computer updates its agent.
+          with nothing set here or on a device, every device updates its agent.
         </p>
         <div className="space-y-1 md:w-[28rem]">
-          <label htmlFor="biz-agent-auto-update" className="text-sm font-medium">For this business</label>
+          <label htmlFor="biz-agent-auto-update" className="text-sm font-medium">For this customer</label>
           <select id="biz-agent-auto-update" data-testid="business-agent-auto-update-select" className="w-full rounded-md border bg-background p-2 text-sm"
             value={value} disabled={!data.may.edit || set.isPending} onChange={(e) => set.mutate(e.target.value === '' ? null : (e.target.value as Mode))}>
             <option value="">Inherit global ({platformOn ? 'On' : 'Off'})</option>
@@ -67,14 +67,14 @@ export function AgentAutoUpdateCard({ businessId }: { businessId: string }) {
             <option value="WINDOW">In maintenance window{data.policy?.description ? ` (${data.policy.description})` : ''}</option>
           </select>
           <p className="text-xs text-muted-foreground" data-testid="business-agent-auto-update-effective">
-            Effective for this business: <span className="font-medium text-foreground">{effective}</span>.
-            {!platformOn && ' Automatic agent updates are off for the whole platform, which wins over every business and computer.'}
+            Effective for this customer: <span className="font-medium text-foreground">{effective}</span>.
+            {!platformOn && ' Automatic agent updates are off for the whole platform, which wins over every customer and device.'}
           </p>
         </div>
         <p className="text-xs text-muted-foreground">
-          A site or device group with its own setting, and a computer set to On or Off on its Agent card, win over this one
-          (computer → device group → site → business → global). The maintenance window, site overrides and device groups are set on{' '}
-          <Link className="underline" href="/settings/client-updates">Settings → Client updates</Link>. This does not change the
+          A site or device group with its own setting, and a device set to On or Off on its Agent card, win over this one
+          (device → device group → site → customer → global). The maintenance window, site overrides and device groups are set on{' '}
+          <Link className="underline" href="/settings/client-updates">Patching → Client updates</Link>. This does not change the
           RustDesk client update setting there. {askMode ? 'Off takes effect at once; anything else asks you to confirm it is you.' : 'A change takes effect at once.'}
         </p>
         {!data.may.edit && data.may.reason && <p className="text-xs text-muted-foreground">{data.may.reason}</p>}

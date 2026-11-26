@@ -16,7 +16,7 @@ import { cleanUrl } from '../ticket';
 async function target(customerId: string | null, deps: DriverDeps) {
   const trust = loadTrust();
   if (!trust || trust.peers.size === 0) return { ok: false as const, reason: 'The ClientSt0r integration is not configured on this server.' };
-  if (!customerId) return { ok: false as const, reason: 'ClientSt0r tickets need the computer to belong to a business mapped to a ClientSt0r organization.' };
+  if (!customerId) return { ok: false as const, reason: 'ClientSt0r tickets need the device to belong to a customer mapped to a ClientSt0r organization.' };
   const pause = await activePause(deps.prisma, 'integration', customerId);
   if (pause) return { ok: false as const, reason: pauseMessage(pause, 'integration') };
   const maps = (await deps.prisma.integrationOrgMapping.findMany({ where: { customerId, revokedAt: null } })).filter((m) => trust.peers.has(m.peerId));

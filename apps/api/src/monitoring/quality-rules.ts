@@ -24,7 +24,7 @@
  * A rule is HIGH RISK — two different approvers — when it could hide a
  * critical hardware, security or backup failure, or reaches past one
  * business: see riskOf. Nothing here disables a monitor: disabling one is
- * Settings → Monitoring, as before.
+ * Monitoring → Monitoring policies, as before.
  *
  * Precedence is deterministic: computer > group > business > monitor > OS >
  * platform; then the rule naming more conditions; then, between two rules
@@ -186,10 +186,10 @@ export function narrownessProblem(d: { scope: { kind: ScopeKind }; match: RuleMa
   if (!ev) {
     if (conditionsOf(d.match) > 0) return { code: 'EVENT_CONDITIONS_ON_THRESHOLD', message: 'Only an event-log monitor has event conditions. For this monitor, name only the monitor and a scope.' };
     if (d.behaviour.kind === 'require_count' || d.behaviour.kind === 'require_repeats') {
-      return { code: 'BEHAVIOUR_NEEDS_EVENTS', message: 'Raising only on a count or on repeats is for event-log monitors. Change this monitor\'s threshold under Settings → Monitoring.' };
+      return { code: 'BEHAVIOUR_NEEDS_EVENTS', message: 'Raising only on a count or on repeats is for event-log monitors. Change this monitor\'s threshold under Monitoring → Monitoring policies.' };
     }
     if ((d.scope.kind === 'platform' || d.scope.kind === 'os') && !d.allowBroad) {
-      return { code: 'RULE_TOO_BROAD', message: 'A rule that changes a threshold monitor everywhere is too broad. Scope it to a business, a group or a computer.' };
+      return { code: 'RULE_TOO_BROAD', message: 'A rule that changes a threshold monitor everywhere is too broad. Scope it to a customer, a group or a device.' };
     }
     return null;
   }
@@ -544,9 +544,9 @@ export function recommendationText(o: { ruleKey: string; fingerprint: string | n
       ...(f.level !== null && f.level >= 0 && f.level <= 5 ? { levels: [f.level] } : {}), ...(f.statusCode && STATUS_RE.test(f.statusCode) ? { statusCode: f.statusCode } : {}), ...((COMPONENTS as readonly string[]).includes(f.component ?? '') ? { component: f.component as RuleMatch['component'] } : {}) })
     : { ruleKey: o.ruleKey };
   const caution = 'Not validated yet: test the rule against stored history before anyone approves it. A description is not proof that a rule is safe.';
-  const monitorFix = (r: string) => ({ title: 'Proposed Monitor Correction', monitor: f.monitorName, issue, recommendation: r, impact: 'No rule is proposed: the monitor itself needs changing, and that is done under Settings → Monitoring by someone who configures monitoring.', caution, draft: null });
+  const monitorFix = (r: string) => ({ title: 'Proposed Monitor Correction', monitor: f.monitorName, issue, recommendation: r, impact: 'No rule is proposed: the monitor itself needs changing, and that is done under Monitoring → Monitoring policies by someone who configures monitoring.', caution, draft: null });
   if (why === 'incorrect_correlation') return monitorFix('Check that this monitor applies to the right computers and that its event conditions describe the problem it is for.');
-  if (!ev && (why === 'incorrect_threshold' || why === 'rule_too_broad')) return monitorFix('Change this monitor\'s threshold or scope under Settings → Monitoring.');
+  if (!ev && (why === 'incorrect_threshold' || why === 'rule_too_broad')) return monitorFix('Change this monitor\'s threshold or scope under Monitoring → Monitoring policies.');
   if (why === 'incorrect_severity') {
     return { title: 'Proposed Rule Improvement', monitor: f.monitorName, issue,
       recommendation: `Lower this narrowly defined ${ev ? 'event signature' : 'alert'} to warning${o.businessId ? ' for this business' : ''}, instead of ${f.monitorSeverity.toLowerCase()}.`,
@@ -615,7 +615,7 @@ export function qualityChecks(o: {
   for (const m of o.monitors) {
     if (!m.enabled) continue;
     if (m.alerts7d >= QUALITY.highVolume7d || (m.computers7d > 0 && m.alerts7d / m.computers7d >= QUALITY.highVolumePerComputer7d)) {
-      out.push({ code: 'high_volume', level: 'medium', monitor: mon(m), ruleIds: [], message: `"${m.name}" raised ${m.alerts7d} alerts in 7 days on ${m.computers7d} computer${m.computers7d === 1 ? '' : 's'}.`,
+      out.push({ code: 'high_volume', level: 'medium', monitor: mon(m), ruleIds: [], message: `"${m.name}" raised ${m.alerts7d} alerts in 7 days on ${m.computers7d} device${m.computers7d === 1 ? '' : 's'}.`,
         recommendation: 'Look at what it matches (View similar alerts) before changing it. Narrow its conditions or threshold if most of these are not actionable.', evidence: { alerts7d: m.alerts7d, computers7d: m.computers7d } });
     }
     if (m.fpReports30d >= QUALITY.fpReported30d) {
@@ -647,12 +647,12 @@ export function qualityChecks(o: {
     const fleet = m.byAgentVersion.reduce((n, v) => n + v.computers, 0);
     if (top && m.alerts7d >= QUALITY.agentSkewMin7d && m.alerts7d >= 2 * Math.max(1, m.alertsPrev7d) && top.alerts / m.alerts7d >= QUALITY.agentSkewShare && fleet > 0 && top.computers / fleet <= 0.5) {
       out.push({ code: 'after_agent_update', level: 'medium', monitor: mon(m), ruleIds: [],
-        message: `"${m.name}" alerts doubled this week, and ${Math.round((100 * top.alerts) / m.alerts7d)}% come from computers on agent ${top.version} (${top.computers} of ${fleet}).`,
+        message: `"${m.name}" alerts doubled this week, and ${Math.round((100 * top.alerts) / m.alerts7d)}% come from devices on agent ${top.version} (${top.computers} of ${fleet}).`,
         recommendation: 'Compare the events before and after that agent version. Rem0te records each computer\'s current agent version, not when it changed.', evidence: { version: top.version, alerts7d: m.alerts7d, alertsPrev7d: m.alertsPrev7d } });
     }
   }
   for (const d of o.duplicates) {
-    out.push({ code: 'duplicate_monitors', level: 'low', monitor: null, ruleIds: [], message: `One event is raising alerts from ${d.keys.length} monitors on the same computer (${d.keys.join(', ')}).`,
+    out.push({ code: 'duplicate_monitors', level: 'low', monitor: null, ruleIds: [], message: `One event is raising alerts from ${d.keys.length} monitors on the same device (${d.keys.join(', ')}).`,
       recommendation: 'Keep the monitor that describes the problem best, or narrow the others so each event belongs to one.', evidence: { endpointId: d.endpointId, fingerprint: d.fingerprint, monitors: d.keys } });
   }
   for (const c of conflictsAmong(o.rules)) {

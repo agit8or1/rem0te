@@ -20,7 +20,7 @@ const MESSAGES: Record<string, string> = {
   email_unverified: 'The provider did not supply a verified email address, so no account could be created. Ask an administrator for help.',
   email_in_use: `An account with that email address already exists, and accounts are never linked by email. ${PASSWORD_THEN_LINK}`,
   provisioned_no_access:
-    'Your account was created, but it has no access yet. Ask an administrator to add you to a business, then sign in again.',
+    'Your account was created, but it has no access yet. Ask an administrator to add you to a customer, then sign in again.',
   account: 'Your account cannot sign in right now (it may be suspended or not fully set up). Ask an administrator for help.',
   linked_elsewhere: 'That identity is already linked to a different account here, so it was not linked to yours.',
   already_linked:

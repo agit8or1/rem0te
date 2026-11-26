@@ -199,7 +199,7 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
     return { commands, diagnostics, changes, alerts, alertEvents, sessionEventsTrimmed, launcherTokens, connectionGrants, privileged };
   }
 
-  // ── Status (Settings → System status) ─────────────────────────────────────
+  // ── Status (Administration → System status) ─────────────────────────────────────
 
   /** Real counts, cached for a minute: count(*) over the audit log is not free. */
   async status(fresh = false) {

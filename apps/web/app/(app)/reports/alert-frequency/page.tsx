@@ -47,7 +47,7 @@ export default function AlertFrequencyPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <PageHeader title="Alert frequency" description="How often each business, site, computer and monitor raised alerts, and how long they took to resolve." />
+      <PageHeader title="Alert frequency" description="How often each customer, site, device and monitor raised alerts, and how long they took to resolve." />
       {!allowed ? <Refused error={{ response: { status: 403, data: { message: 'Alert reports need the monitoring:alerts permission.' } } }} /> : (
         <>
           <FilterBar facets={data?.facets} filters={filters} set={set} period report="alert-frequency" params={params} disabled={!t?.raised} />
@@ -55,7 +55,7 @@ export default function AlertFrequencyPage() {
           {data && <RetentionNote r={data.retention} />}
           {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
           {data && t && t.raised === 0 && (
-            <Empty>No alert was raised in this period for the devices you can see. Alerts are raised by monitors (Settings → Monitoring); a business with no monitors has no alerts to count.</Empty>
+            <Empty>No alert was raised in this period for the devices you can see. Alerts are raised by monitors (Monitoring → Monitoring policies); a customer with no monitors has no alerts to count.</Empty>
           )}
           {data && t && t.raised > 0 && (
             <>
@@ -74,15 +74,15 @@ export default function AlertFrequencyPage() {
                 <Table head={['Monitor type', ...head]} empty="None." rows={data.byMonitor.map((g) => [KIND[g.kind] ?? g.kind, ...cells(g)])} />
               </Section>
               {data.byBusiness.length > 1 && (
-                <Section title="By business">
-                  <Table head={['Business', ...head]} empty="None." rows={data.byBusiness.map((g) => [g.business?.name ?? 'No business', ...cells(g)])} />
+                <Section title="By customer">
+                  <Table head={['Customer', ...head]} empty="None." rows={data.byBusiness.map((g) => [g.business?.name ?? 'No customer', ...cells(g)])} />
                 </Section>
               )}
               <Section title="By site">
-                <Table head={['Business · site', ...head]} empty="None." rows={data.bySite.map((g) => [where(g.business, g.site), ...cells(g)])} />
+                <Table head={['Customer · site', ...head]} empty="None." rows={data.bySite.map((g) => [where(g.business, g.site), ...cells(g)])} />
               </Section>
-              <Section title="By computer" note={data.byComputerTotal > data.byComputer.length ? `Showing ${data.byComputer.length} of ${data.byComputerTotal}; the export has every alert` : undefined}>
-                <Table head={['Computer', 'Business · site', ...head]} empty="None."
+              <Section title="By device" note={data.byComputerTotal > data.byComputer.length ? `Showing ${data.byComputer.length} of ${data.byComputerTotal}; the export has every alert` : undefined}>
+                <Table head={['Device', 'Customer · site', ...head]} empty="None."
                   rows={data.byComputer.map((g) => [
                     g.device ? <Link key="d" href={`/endpoints/${g.device.id}?tab=monitoring`} className="font-medium hover:underline">{g.device.name}</Link> : <span key="d" className="text-muted-foreground">Site-wide</span>,
                     where(g.business, g.site), ...cells(g),

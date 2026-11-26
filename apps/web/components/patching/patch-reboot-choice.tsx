@@ -37,7 +37,7 @@ export function RebootChoice({ id, value, onChange, scope }: { id: string; value
       </select>
       {value === 'if_required_in_window' && (
         <p className="text-xs text-muted-foreground" data-testid="reboot-explained">
-          After installing, a computer that Windows says needs a restart shows a fixed warning and restarts {RESTART_WARNING_MINUTES} minutes later;
+          After installing, a device that Windows says needs a restart shows a fixed warning and restarts {RESTART_WARNING_MINUTES} minutes later;
           programs still open are closed without saving. A signed-in user does not stop the restart. They see the 15-minute warning, and unsaved work is lost. It skips the restart — and reports it deferred — if a technician is connected through RustDesk or it cannot tell{scope === 'policy' ? ' (unless the policy has the RustDesk exception below)' : ''},
           or if the restart would fall after {scope === 'policy' ? 'the maintenance window (and that ring plan\'s window) ends' : 'the window ends'}. The approvers see this rule and approve it with the plan.{' '}
           <strong>{REBOOT_UNPROVEN}</strong>

@@ -79,7 +79,7 @@ function Overview({ businessCount, userCount, adminCount }: {
     {
       title: 'PLATFORM ADMIN',
       subtitle: 'Full platform access',
-      detail: 'The Rem0te operator. Creates and manages every business, every computer and every platform setting.',
+      detail: 'The Rem0te operator. Creates and manages every customer, every device and every platform setting.',
       icon: ShieldCheck,
       count: `${adminCount} ${adminCount === 1 ? 'admin' : 'admins'}`,
       ring: 'border-purple-300 dark:border-purple-800 bg-purple-50/60 dark:bg-purple-950/30',
@@ -87,8 +87,8 @@ function Overview({ businessCount, userCount, adminCount }: {
     },
     {
       title: 'BUSINESS OWNER / ADMIN',
-      subtitle: 'Full business control',
-      detail: 'Complete control of their own business — its computers, its people, its history. Nothing outside it.',
+      subtitle: 'Full customer control',
+      detail: 'Complete control of their own customer — its devices, its people, its history. Nothing outside it.',
       icon: Building2,
       count: `${businessCount} ${businessCount === 1 ? 'business' : 'businesses'}`,
       ring: 'border-blue-300 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/30',
@@ -132,19 +132,19 @@ function Overview({ businessCount, userCount, adminCount }: {
         </CardHeader>
         <CardContent className="space-y-3 text-sm text-muted-foreground">
           <p>
-            A <strong className="text-foreground">Business</strong> is the security boundary. Its
-            computers, users, sessions and audit history belong to it and to nothing else — and
+            A <strong className="text-foreground">Customer</strong> is the security boundary. Its
+            devices, users, sessions and audit history belong to it and to nothing else — and
             that is enforced on the server, not by hiding things in this interface.
           </p>
           <p>
             A <strong className="text-foreground">Business Owner</strong> automatically holds every
-            permission inside their business. A <strong className="text-foreground">Business User</strong>{' '}
+            permission inside their customer. A <strong className="text-foreground">Business User</strong>{' '}
             holds only what the owner has explicitly granted; new users start with{' '}
-            <em>View computers</em> and <em>Remote connect</em> and nothing else.
+            <em>View devices</em> and <em>Remote connect</em> and nothing else.
           </p>
           <p>
             Quick Connect is a permission, not a level. It needs three things to line up: the
-            platform master switch, the business switch, and the individual&apos;s{' '}
+            platform master switch, the customer switch, and the individual&apos;s{' '}
             <em>Use Quick Connect</em> permission.
           </p>
         </CardContent>
@@ -175,13 +175,13 @@ function BusinessesTab() {
       ...(form.city.trim() ? { city: form.city.trim() } : {}),
     }),
     onSuccess: () => {
-      toast({ title: 'Business created' });
+      toast({ title: 'Customer created' });
       setCreating(false);
       setForm({ name: '', code: '', email: '', city: '' });
       qc.invalidateQueries({ queryKey: ['businesses'] });
     },
     onError: (e: { response?: { data?: { message?: string } } }) =>
-      toast({ title: 'Could not create business', description: e.response?.data?.message, variant: 'destructive' }),
+      toast({ title: 'Could not create customer', description: e.response?.data?.message, variant: 'destructive' }),
   });
 
   const setActive = useMutation({
@@ -201,7 +201,7 @@ function BusinessesTab() {
   const remove = useMutation({
     mutationFn: (id: string) => businessesApi.remove(id),
     onSuccess: () => {
-      toast({ title: 'Business deleted' });
+      toast({ title: 'Customer deleted' });
       qc.invalidateQueries({ queryKey: ['businesses'] });
     },
     onError: (e: { response?: { data?: { message?: string } } }) =>
@@ -214,14 +214,14 @@ function BusinessesTab() {
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search businesses..."
+            placeholder="Search customers..."
             className="pl-8"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
         <Button onClick={() => setCreating(true)}>
-          <Plus className="mr-2 h-4 w-4" /> New business
+          <Plus className="mr-2 h-4 w-4" /> New customer
         </Button>
       </div>
 
@@ -231,14 +231,14 @@ function BusinessesTab() {
             <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>
           ) : businesses.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">
-              No businesses yet. Create one to start adding computers and people to it.
+              No customers yet. Create one to start adding devices and people to it.
             </div>
           ) : (
             <table className="w-full text-sm">
               <thead className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
-                  <th className="px-4 py-3 font-medium">Business</th>
-                  <th className="px-4 py-3 font-medium">Computers</th>
+                  <th className="px-4 py-3 font-medium">Customer</th>
+                  <th className="px-4 py-3 font-medium">Devices</th>
                   <th className="px-4 py-3 font-medium">People</th>
                   <th className="px-4 py-3 font-medium">Quick Connect</th>
                   <th className="px-4 py-3 font-medium">Status</th>
@@ -284,9 +284,9 @@ function BusinessesTab() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          title="Delete — only possible when the business is empty"
+                          title="Delete — only possible when the customer is empty"
                           onClick={() => {
-                            if (confirm(`Delete ${b.name}? This only works if it has no computers, users or session history.`)) {
+                            if (confirm(`Delete ${b.name}? This only works if it has no devices, users or session history.`)) {
                               remove.mutate(b.id);
                             }
                           }}
@@ -306,14 +306,14 @@ function BusinessesTab() {
       <Dialog open={creating} onOpenChange={setCreating}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>New business</DialogTitle>
+            <DialogTitle>New customer</DialogTitle>
             <DialogDescription>
-              A business owns its own computers, people and history. Nothing is shared with any other business.
+              A customer owns its own devices, people and history. Nothing is shared with any other customer.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div>
-              <Label htmlFor="b-name">Business name</Label>
+              <Label htmlFor="b-name">Customer name</Label>
               <Input id="b-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -388,13 +388,13 @@ function PermissionsDialog({
         <DialogHeader>
           <DialogTitle>Permissions</DialogTitle>
           <DialogDescription>
-            {membership ? `${fullName(membership.user)} · ${membership.business?.name ?? 'No business'}` : ''}
+            {membership ? `${fullName(membership.user)} · ${membership.business?.name ?? 'No customer'}` : ''}
           </DialogDescription>
         </DialogHeader>
 
         {isOwner ? (
           <p className="rounded-md border bg-muted/40 p-4 text-sm text-muted-foreground">
-            This person already holds every permission in their business. Permissions are assigned
+            This person already holds every permission in their customer. Permissions are assigned
             to Business Users; change their level first if you want to restrict them.
           </p>
         ) : (
@@ -526,10 +526,10 @@ function BusinessUsersTab({ businesses }: { businesses: Business[] }) {
         {isPlatformAdmin && (
           <Select value={businessFilter} onValueChange={setBusinessFilter}>
             <SelectTrigger className="w-56">
-              <SelectValue placeholder="All businesses" />
+              <SelectValue placeholder="All customers" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All businesses</SelectItem>
+              <SelectItem value="all">All customers</SelectItem>
               {businesses.map((b) => (
                 <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
               ))}
@@ -566,7 +566,7 @@ function BusinessUsersTab({ businesses }: { businesses: Business[] }) {
               <thead className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th className="px-4 py-3 font-medium">Person</th>
-                  <th className="px-4 py-3 font-medium">Business</th>
+                  <th className="px-4 py-3 font-medium">Customer</th>
                   <th className="px-4 py-3 font-medium">Level</th>
                   <th className="px-4 py-3 font-medium">Permissions</th>
                   <th className="px-4 py-3 font-medium">Status</th>
@@ -631,7 +631,7 @@ function BusinessUsersTab({ businesses }: { businesses: Business[] }) {
                           size="sm"
                           variant="ghost"
                           onClick={() => {
-                            if (confirm(`Remove ${fullName(m.user)} from ${m.business?.name ?? 'this business'}?`)) {
+                            if (confirm(`Remove ${fullName(m.user)} from ${m.business?.name ?? 'this customer'}?`)) {
                               removeUser.mutate(m.user.id);
                             }
                           }}
@@ -658,9 +658,9 @@ function BusinessUsersTab({ businesses }: { businesses: Business[] }) {
       <Dialog open={adding} onOpenChange={(o) => { if (!o) { setAdding(false); setInviteToken(null); } }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add a person to a business</DialogTitle>
+            <DialogTitle>Add a person to a customer</DialogTitle>
             <DialogDescription>
-              Business Users start with <em>View computers</em> and <em>Remote connect</em>. You can
+              Business Users start with <em>View devices</em> and <em>Remote connect</em>. You can
               adjust that immediately afterwards.
             </DialogDescription>
           </DialogHeader>
@@ -696,9 +696,9 @@ function BusinessUsersTab({ businesses }: { businesses: Business[] }) {
                 </div>
               </div>
               <div>
-                <Label>Business</Label>
+                <Label>Customer</Label>
                 <Select value={invite.businessId} onValueChange={(v) => setInvite({ ...invite, businessId: v })}>
-                  <SelectTrigger><SelectValue placeholder="Choose a business" /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Choose a customer" /></SelectTrigger>
                   <SelectContent>
                     {businesses.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
                   </SelectContent>
@@ -780,7 +780,7 @@ function PlatformAdminsTab() {
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Platform Admins can see and change everything, in every business. Keep the list short.
+            Platform Admins can see and change everything, in every customer. Keep the list short.
           </p>
           <div className="flex gap-2">
             <Input
@@ -795,7 +795,7 @@ function PlatformAdminsTab() {
           </div>
           {searched && !found && (
             <p className="text-sm text-muted-foreground">
-              No Rem0te account with that email. Add them to a business first.
+              No Rem0te account with that email. Add them to a customer first.
             </p>
           )}
           {found && (
@@ -832,7 +832,7 @@ function PlatformAdminsTab() {
                     <td className="px-4 py-3">
                       <div className="font-medium">
                         {fullName(a)}
-                        {/* 0.59: set under Settings → Single sign-on (break-glass). */}
+                        {/* 0.59: set under Security → Single sign-on (break-glass). */}
                         {a.breakGlass && <Badge variant="warning" className="ml-2" data-testid="break-glass-badge">Break-glass</Badge>}
                       </div>
                       <div className="text-xs text-muted-foreground">{a.email}</div>
@@ -902,13 +902,13 @@ export default function AccessControlPage() {
   if (!isPlatformAdmin) {
     return (
       <div className="p-6 space-y-6">
-        <PageHeader title="Access Control" description="Who can do what in Rem0te." />
+        <PageHeader title="Access control" description="Who can do what in Rem0te." />
         <Card>
           <CardContent className="p-8 text-center text-sm text-muted-foreground">
             <Shield className="mx-auto mb-3 h-8 w-8 text-muted-foreground/50" />
-            Access Control is managed by your Rem0te administrator.
+            Access control is managed by your Rem0te administrator.
             <div className="mt-2">
-              To manage the people in your own business, use <Link href="/users" className="underline">Users</Link>.
+              To manage the people in your own customer, use <Link href="/users" className="underline">Users</Link>.
             </div>
           </CardContent>
         </Card>
@@ -919,14 +919,14 @@ export default function AccessControlPage() {
   return (
     <div className="p-6 space-y-6">
       <PageHeader
-        title="Access Control"
+        title="Access control"
         description="Three levels: Platform Admin, Business Owner, Business User."
       />
 
       <Tabs defaultValue="overview">
         <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="businesses">Businesses</TabsTrigger>
+          <TabsTrigger value="businesses">Customers</TabsTrigger>
           <TabsTrigger value="users">Business Users</TabsTrigger>
           <TabsTrigger value="admins">Platform Admins</TabsTrigger>
         </TabsList>

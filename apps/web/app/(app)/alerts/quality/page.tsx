@@ -84,7 +84,7 @@ export default function QualityPage() {
   return (
     <div className="space-y-4 p-4 md:p-6">
       <PageHeader
-        title="False Positives & Rule Improvements"
+        title="False positives & rule improvements"
         description="Reports of alerts that were not real problems, the improvements they suggest, and the approved rules that change what a monitor raises. Nothing here turns a monitor off."
         actions={configure ? <Button onClick={() => setEditor({ draft: { scope: businessId ? { kind: 'business', businessId } : { kind: 'endpoint' }, behaviour: { kind: 'suppress' }, temporary: false } })} data-testid="q-new-rule">Propose a rule</Button> : undefined}
       />
@@ -102,12 +102,12 @@ export default function QualityPage() {
           <select id="q-tech" className="rounded-md border bg-background p-2 text-sm" value={f.reportedBy ?? ''} onChange={(e) => set('reportedBy', e.target.value)}><option value="">Anyone</option>{technicians.map(([id, email]) => <option key={id} value={id}>{email}</option>)}</select></div>
         <div className="space-y-1"><Label htmlFor="q-from">From</Label><Input id="q-from" type="date" value={f.from?.slice(0, 10) ?? ''} onChange={(e) => set('from', e.target.value ? new Date(`${e.target.value}T00:00:00`).toISOString() : '')} /></div>
         <div className="space-y-1"><Label htmlFor="q-to">To</Label><Input id="q-to" type="date" value={f.to?.slice(0, 10) ?? ''} onChange={(e) => set('to', e.target.value ? new Date(`${e.target.value}T23:59:59`).toISOString() : '')} /></div>
-        {f.endpointId && <Button size="sm" variant="ghost" onClick={() => set('endpointId', '')}>Every computer</Button>}
+        {f.endpointId && <Button size="sm" variant="ghost" onClick={() => set('endpointId', '')}>Every device</Button>}
       </div>
 
       {t && (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-8" data-testid="q-totals">
-          {([['False-positive reports', t.reports], ['Pending recommendations', t.pendingRecommendations], ['Rules awaiting approval', t.pendingRules], ['Approved rules', t.approvedRules],
+          {([['False-positive reports', t.reports], ['Pending recommendations', t.pendingRecommendations], ['Rules pending approval', t.pendingRules], ['Approved rules', t.approvedRules],
             ['Temporary exceptions', t.temporaryExceptions], ['Expiring in 7 days', t.expiringSoon], ['Review due', t.reviewDue], ['Alerts prevented', t.noisePrevented]] as [string, number][]).map(([l, n]) => (
             <Card key={l}><CardContent className="pt-4"><div className="text-2xl font-semibold">{n}</div><div className="text-xs text-muted-foreground">{l}</div></CardContent></Card>
           ))}
@@ -117,8 +117,8 @@ export default function QualityPage() {
       {summary.data && (
         <div className="grid gap-3 lg:grid-cols-4" data-testid="q-top">
           <TopList title="Most reported monitors" rows={summary.data.top.monitors.map((m) => [m.key, m.reports, () => set('monitor', m.key)])} />
-          <TopList title="Most reported computers" rows={summary.data.top.computers.map((c) => [c.name ?? c.id ?? '—', c.reports, c.id ? () => set('endpointId', c.id!) : undefined])} />
-          <TopList title="Most reported businesses" rows={summary.data.top.businesses.map((b) => [b.name ?? '—', b.reports, undefined])} />
+          <TopList title="Most reported devices" rows={summary.data.top.computers.map((c) => [c.name ?? c.id ?? '—', c.reports, c.id ? () => set('endpointId', c.id!) : undefined])} />
+          <TopList title="Most reported customers" rows={summary.data.top.businesses.map((b) => [b.name ?? '—', b.reports, undefined])} />
           <TopList title="Reasons" rows={summary.data.top.reasons.map((r) => [r.label, r.reports, () => set('reason', r.reason)])} />
         </div>
       )}
@@ -154,7 +154,7 @@ export default function QualityPage() {
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold">Alert quality rules</h2>
           <select aria-label="Rule status" className="ml-auto rounded-md border bg-background p-2 text-sm" value={ruleStatus} onChange={(e) => setRuleStatus(e.target.value)}>
-            <option value="">Every status</option><option value="pending">Awaiting approval</option><option value="active">Active</option><option value="rolled_back">Rolled back</option><option value="expired">Expired</option><option value="superseded">Superseded</option><option value="rejected">Rejected</option>
+            <option value="">Every status</option><option value="pending">Pending approval</option><option value="active">Active</option><option value="rolled_back">Rolled back</option><option value="expired">Expired</option><option value="superseded">Superseded</option><option value="rejected">Rejected</option>
           </select>
         </div>
         {rules.error && <p className="text-sm text-muted-foreground">{apiError(rules.error).message}</p>}
@@ -237,7 +237,7 @@ function SimView({ s }: { s: Sim }) {
   return (
     <div className="space-y-1 rounded-md border bg-background p-2 text-xs" data-testid="q-sim">
       <p>Over the last {s.days} days: <b>{s.matched}</b> of {s.considered} alerts in scope match — {s.wouldSuppress} would not have been raised, {s.wouldDowngrade} lowered, {s.unchanged} unchanged. {s.events.fingerprints} recorded event signature{s.events.fingerprints === 1 ? '' : 's'} ({s.events.occurrences} occurrences) match.{s.truncated ? ' Only the newest 5,000 were read.' : ''}</p>
-      <p>Businesses: {s.businesses.length || 'none'} · computers: {s.computers.length || 'none'}{s.current === false ? ' · this test is for an older revision or over a week old: test again' : ''}</p>
+      <p>Customers: {s.businesses.length || 'none'} · devices: {s.computers.length || 'none'}{s.current === false ? ' · this test is for an older revision or over a week old: test again' : ''}</p>
       {s.dangerous.length > 0 && (
         <div className="rounded border border-destructive/50 p-1.5 text-destructive" data-testid="q-sim-dangerous">
           <p className="flex items-center gap-1 font-medium"><AlertTriangle className="h-3 w-3" />{s.dangerous.length} dangerous match{s.dangerous.length === 1 ? '' : 'es'}: the classifier knows these as genuine failures, or they are Security-log events.</p>
@@ -274,7 +274,7 @@ function RecCard({ r, configure, onPropose }: { r: Rec; configure: boolean; onPr
         <p><span className="text-muted-foreground">Recommendation:</span> {r.recommendation}</p>
         <p><span className="text-muted-foreground">Impact:</span> {r.impact}</p>
         <p className="text-amber-700 dark:text-amber-400"><span className="font-medium">Caution:</span> {r.caution}</p>
-        <p className="text-xs text-muted-foreground">{r.reportCount} report{r.reportCount === 1 ? '' : 's'} by {r.reporters} {r.reporters === 1 ? 'person' : 'people'} on {r.computers} computer{r.computers === 1 ? '' : 's'}; last {fmt(r.lastReportedAt)}. More reports raise its priority; they never approve anything.</p>
+        <p className="text-xs text-muted-foreground">{r.reportCount} report{r.reportCount === 1 ? '' : 's'} by {r.reporters} {r.reporters === 1 ? 'person' : 'people'} on {r.computers} device{r.computers === 1 ? '' : 's'}; last {fmt(r.lastReportedAt)}. More reports raise its priority; they never approve anything.</p>
         {r.status === 'open' && (
           <div className="flex flex-wrap gap-2 pt-1">
             {r.draft && <Button size="sm" variant="outline" disabled={pv.isPending} onClick={() => pv.mutate()}><FlaskConical className="mr-1 h-4 w-4" />Preview matching events</Button>}
@@ -426,7 +426,7 @@ function RuleEditor({ init, isPlatformAdmin, businessId, onClose, onSaved }: { i
       <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto" data-testid="q-editor">
         <DialogHeader>
           <DialogTitle>{init.editId ? 'Edit proposed rule' : d0.supersedesId ? 'Revise rule' : 'Propose an alert quality rule'}</DialogTitle>
-          <DialogDescription>A proposal changes nothing. It is tested against stored history and approved before it applies{d0.supersedesId ? ', and then replaces the rule it revises' : ''}. To turn a monitor off, use Settings → Monitoring.</DialogDescription>
+          <DialogDescription>A proposal changes nothing. It is tested against stored history and approved before it applies{d0.supersedesId ? ', and then replaces the rule it revises' : ''}. To turn a monitor off, use Monitoring → Monitoring policies.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 text-sm">
           <div className="space-y-1"><Label htmlFor="qe-name">Name</Label><Input id="qe-name" maxLength={120} value={name} onChange={(e) => setName(e.target.value)} /></div>
@@ -435,12 +435,12 @@ function RuleEditor({ init, isPlatformAdmin, businessId, onClose, onSaved }: { i
           <fieldset className="grid gap-2 rounded-md border p-2 sm:grid-cols-2">
             <legend className="px-1 text-xs font-medium">Scope</legend>
             <select aria-label="Scope" className="rounded-md border bg-background p-2" value={scope.kind} onChange={(e) => { const k = e.target.value as QualityScope['kind']; setScope(k === 'business' && businessId ? { kind: k, businessId } : { kind: k }); }}>
-              {scopeKinds.map((k) => <option key={k} value={k}>{({ endpoint: 'One computer', group: 'A device group', business: 'A business', monitor: 'One monitor', os: 'An operating system', platform: 'Every business (platform)' })[k]}</option>)}
+              {scopeKinds.map((k) => <option key={k} value={k}>{({ endpoint: 'One device', group: 'A device group', business: 'A customer', monitor: 'One monitor', os: 'An operating system', platform: 'Every customer (platform)' })[k]}</option>)}
             </select>
-            {scope.kind === 'endpoint' && <Input aria-label="Computer id" placeholder="Computer id" value={scope.endpointId ?? ''} onChange={(e) => setScope({ ...scope, endpointId: e.target.value.trim() })} />}
+            {scope.kind === 'endpoint' && <Input aria-label="Device id" placeholder="Device id" value={scope.endpointId ?? ''} onChange={(e) => setScope({ ...scope, endpointId: e.target.value.trim() })} />}
             {scope.kind === 'group' && <Input aria-label="Group id" placeholder="Group id" value={scope.groupId ?? ''} onChange={(e) => setScope({ ...scope, groupId: e.target.value.trim() })} />}
-            {scope.kind === 'business' && <Input aria-label="Business id" placeholder="Business id" value={scope.businessId ?? ''} onChange={(e) => setScope({ ...scope, businessId: e.target.value.trim() })} />}
-            {scope.kind === 'monitor' && <Input aria-label="Monitor id" placeholder="Monitor id (from Settings → Monitoring)" value={scope.monitorRuleId ?? ''} onChange={(e) => setScope({ ...scope, monitorRuleId: e.target.value.trim() })} />}
+            {scope.kind === 'business' && <Input aria-label="Customer id" placeholder="Customer id" value={scope.businessId ?? ''} onChange={(e) => setScope({ ...scope, businessId: e.target.value.trim() })} />}
+            {scope.kind === 'monitor' && <Input aria-label="Monitor id" placeholder="Monitor id (from Monitoring → Monitoring policies)" value={scope.monitorRuleId ?? ''} onChange={(e) => setScope({ ...scope, monitorRuleId: e.target.value.trim() })} />}
             {scope.kind === 'os' && (
               <select aria-label="Operating system" className="rounded-md border bg-background p-2" value={scope.osFamily ?? ''} onChange={(e) => setScope({ ...scope, osFamily: e.target.value, ...(isPlatformAdmin ? {} : { businessId: businessId ?? undefined }) })}>
                 <option value="">Choose…</option><option value="windows">Windows</option><option value="windows-client">Windows (client)</option><option value="windows-server">Windows Server</option><option value="linux">Linux</option><option value="macos">macOS</option>

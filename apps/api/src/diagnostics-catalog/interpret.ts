@@ -178,7 +178,7 @@ function secureBootTpm(r: R): Omit<Finding, 'evidenceAt'>[] {
   const sb = r.secureBoot;
   if (sb === 'on') out.push({ id: 'secure-boot', label: 'Secure Boot', state: 'healthy', detail: 'On.' });
   else if (sb === 'off') out.push({ id: 'secure-boot', label: 'Secure Boot', state: 'warning', detail: 'Off: the firmware supports it, but it is not enabled.' });
-  else if (sb === 'unsupported') out.push({ id: 'secure-boot', label: 'Secure Boot', state: 'unsupported', detail: 'This computer boots in legacy BIOS mode, which has no Secure Boot.' });
+  else if (sb === 'unsupported') out.push({ id: 'secure-boot', label: 'Secure Boot', state: 'unsupported', detail: 'This device boots in legacy BIOS mode, which has no Secure Boot.' });
   else out.push({ id: 'secure-boot', label: 'Secure Boot', state: 'unknown', detail: r.secureBootError ? `Could not be read: ${r.secureBootError}` : 'Could not be read.' });
   const t = obj(r.tpm);
   if (t.read !== true) out.push({ id: 'tpm', label: 'TPM', state: 'unknown', detail: t.error ? `Could not be read: ${t.error}` : 'Could not be read.' });
@@ -235,7 +235,7 @@ function routes(r: R): Omit<Finding, 'evidenceAt'>[] {
   if (!rs.length) return [{ id: 'default-route', label: 'Default route', state: 'unknown', detail: 'No routes reported.' }];
   const v4 = rs.filter((x) => x.destination === '0.0.0.0/0');
   const v6 = rs.filter((x) => x.destination === '::/0');
-  if (!v4.length && !v6.length) return [{ id: 'default-route', label: 'Default route', state: 'critical', detail: 'No default route: this computer can reach only its own networks.' }];
+  if (!v4.length && !v6.length) return [{ id: 'default-route', label: 'Default route', state: 'critical', detail: 'No default route: this device can reach only its own networks.' }];
   const gw = [...v4, ...v6].map((x) => x.nextHop).filter((x) => typeof x === 'string' && x !== '0.0.0.0' && x !== '::');
   return [{ id: 'default-route', label: 'Default route', state: 'healthy', detail: `${v4.length ? 'IPv4' : ''}${v4.length && v6.length ? ' and ' : ''}${v6.length ? 'IPv6' : ''}${gw.length ? ` via ${[...new Set(gw)].slice(0, 3).join(', ')}` : ''}.` }];
 }
@@ -440,7 +440,7 @@ export function osSupport(osCaption: string | null | undefined, osBuild: string 
   const name = (channel === 'server' && row.serverName) || (channel === 'ltsc' && row.ltscName) || row.name;
   const edition = channel === 'consumer' ? 'Home and Pro' : channel === 'enterprise' ? 'Enterprise and Education' : channel === 'ltsc' ? 'LTSC' : 'Server';
   const left = Math.floor((new Date(`${ends}T00:00:00Z`).getTime() - now) / DAY);
-  if (left < 0) return { ...base, build, channel, endsOn: ends, state: 'critical', detail: `${name} (${edition}) stopped receiving security updates on ${ends}, unless this computer has Extended Security Updates, which cannot be seen from here.` };
+  if (left < 0) return { ...base, build, channel, endsOn: ends, state: 'critical', detail: `${name} (${edition}) stopped receiving security updates on ${ends}, unless this device has Extended Security Updates, which cannot be seen from here.` };
   if (left <= THRESHOLDS.osEndingSoonDays) return { ...base, build, channel, endsOn: ends, state: 'warning', detail: `${name} (${edition}) stops receiving security updates on ${ends}, in ${plural(left, 'day')}.` };
   return { ...base, build, channel, endsOn: ends, state: 'healthy', detail: `${name} (${edition}) receives security updates until ${ends}.` };
 }

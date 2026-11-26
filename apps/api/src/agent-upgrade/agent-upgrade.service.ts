@@ -146,9 +146,9 @@ export class AgentUpgradeService {
     const reinstall = { pending: !!ep.rustdeskNode?.reinstallRequestedAt, dispatched: !!ep.rustdeskNode?.reinstallDispatchedAt };
     let update: { possible: boolean; label: string; reason: string | null; command?: string };
     if (os) {
-      update = { possible: false, label: 'Re-run the installer', reason: `The ${os} agent acts on nothing the server sends, so it cannot be updated from here. Re-run the installer on the computer; it keeps the enrolment.`, command: this.installerCommand(os) };
+      update = { possible: false, label: 'Re-run the installer', reason: `The ${os} agent acts on nothing the server sends, so it cannot be updated from here. Re-run the installer on the device; it keeps the enrolment.`, command: this.installerCommand(os) };
     } else if (kind === 'unknown') {
-      update = { possible: false, label: 'Update agent', reason: 'This computer has not reported an agent the console can update.' };
+      update = { possible: false, label: 'Update agent', reason: 'This device has not reported an agent the console can update.' };
     } else {
       const label = kind === 'signed' ? 'Check for update now' : 'Update agent';
       const why = ep.status === 'ARCHIVED' ? 'Archived: nothing is sent to an archived computer.'
@@ -238,7 +238,7 @@ export class AgentUpgradeService {
     if (os) {
       throw new BadRequestException({
         code: os === 'Linux' ? 'LINUX_AGENT_READ_ONLY' : 'MACOS_AGENT_READ_ONLY',
-        message: `The ${os} agent acts on nothing the server sends. Re-run the installer on the computer: ${this.installerCommand(os)}`,
+        message: `The ${os} agent acts on nothing the server sends. Re-run the installer on the device: ${this.installerCommand(os)}`,
       });
     }
     await this.containment.assertOpen('updates', ep.customerId);
@@ -261,7 +261,7 @@ export class AgentUpgradeService {
   async migrate(actor: ActorContext, id: string, reason: unknown, freshMethod: string | null, via: 'single' | 'bulk' = 'single') {
     await this.acl.assertEndpointInScope(actor, id, CAP.COMPUTERS_EDIT);
     this.acl.assertCapability(actor, CAP.COMPUTERS_EDIT);
-    assertFresh(freshMethod, { action: 'agent.migrate', message: 'Upgrading a computer to the signed agent runs a portal-served script on it once: confirm it is you.' });
+    assertFresh(freshMethod, { action: 'agent.migrate', message: 'Upgrading a device to the signed agent runs a portal-served script on it once: confirm it is you.' });
     // eslint-disable-next-line no-control-regex -- control characters are exactly what this strips
     const why = typeof reason === 'string' ? reason.replace(/[\x00-\x1f\x7f]/g, ' ').trim() : '';
     if (why.length < 3 || why.length > 400) throw new BadRequestException({ code: 'REASON_REQUIRED', message: 'Give a reason of 3 to 400 characters; it is recorded in the audit log.' });
@@ -338,7 +338,7 @@ export class AgentUpgradeService {
    */
   async bulk(a: ActorContext, action: 'agent.update' | 'agent.migrate', targets: BulkTarget[], results: Map<string, BulkResult>, opts: { reason?: string; freshMethod: string | null }) {
     if (action === 'agent.migrate') {
-      assertFresh(opts.freshMethod, { action: 'agent.migrate', message: 'Upgrading computers to the signed agent runs a portal-served script on each once: confirm it is you.' });
+      assertFresh(opts.freshMethod, { action: 'agent.migrate', message: 'Upgrading devices to the signed agent runs a portal-served script on each once: confirm it is you.' });
     }
     const identity = `user:${a.userId}`;
     const controls = await this.controls.platform();

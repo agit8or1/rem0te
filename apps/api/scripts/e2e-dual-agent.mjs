@@ -240,7 +240,7 @@ async function all() {
   r = await req('GET', `/endpoints/${dewey.id}/agent`, { s: S });
   check(ok(r) && r.data.kind === 'signed' && r.data.version === '0.47.0', 'Agent card: Signed (Windows), version 0.47.0', msg(r));
   const w = r.data?.dualAgent;
-  check(!!w && /^Two agents are reporting from this computer: /.test(w.text) && /0\.46\.0/.test(w.text) && /rem0te-agent\.exe" update$/.test(w.command) && !!w.fix,
+  check(!!w && /^Two agents are reporting from this device: /.test(w.text) && /0\.46\.0/.test(w.text) && /rem0te-agent\.exe" update$/.test(w.command) && !!w.fix,
     'it says "Two agents are reporting from this computer: …", with what to do and the command', JSON.stringify(w));
   r = await req('GET', `/endpoints?search=${encodeURIComponent(dewey.hostname)}`, { s: S });
   const row = (r.data?.endpoints ?? r.data?.items ?? []).find?.((x) => x.id === dewey.id);

@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * 0.59 "Agit8or Identity P0": the parts of Settings → Single sign-on that
+ * 0.59 "Agit8or Identity P0": the parts of Security → Single sign-on that
  * decide how far a provider is trusted, who must use it, and the break-glass
  * accounts that never depend on it. Every write goes through the API, which
  * checks it again (apps/api/src/sso/sso.service.ts settings(),
@@ -291,7 +291,7 @@ export function EnforcementCard() {
       </CardHeader>
       <CardContent>
         <ul className="divide-y">
-          <ModeRow scope="staff" label="Staff (no business)" c={data.staff} disabledReason={noProvider ?? (hasBreakGlass ? null : 'needs a break-glass account')} />
+          <ModeRow scope="staff" label="Staff (no customer)" c={data.staff} disabledReason={noProvider ?? (hasBreakGlass ? null : 'needs a break-glass account')} />
           {data.businesses.map((b) => <ModeRow key={b.id} scope={b.id} label={b.name} c={b} disabledReason={noProvider} />)}
         </ul>
       </CardContent>

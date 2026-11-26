@@ -53,8 +53,8 @@ const END_TEXT: Record<string, string> = {
   expired: 'Ended: the 60-minute limit',
   stalled: 'Ended: nothing moved for 10 minutes',
   paused: 'Ended: remote access was paused by containment',
-  endpoint_unavailable: 'Ended: the computer is no longer available',
-  agent_error: 'The computer lost the transfer',
+  endpoint_unavailable: 'Ended: the device is no longer available',
+  agent_error: 'The device lost the transfer',
   exists: 'Refused: a file is already there (tick Overwrite to replace it)',
   not_found: 'Refused: no such file',
   not_a_file: 'Refused: that is not a regular file',
@@ -62,12 +62,12 @@ const END_TEXT: Record<string, string> = {
   reparse_point: 'Refused: a link or junction is on the path',
   path_refused: 'Refused: that path is not allowed',
   path_changed: 'Refused: the path changed while it was being used',
-  too_large: 'Refused: larger than this business allows',
+  too_large: 'Refused: larger than this customer allows',
   hash_mismatch: 'Failed: the SHA-256 did not match',
   size_mismatch: 'Failed: the size did not match',
   file_changed: 'Failed: the file changed while it was being read',
-  write_failed: 'Failed: the computer could not write the file',
-  read_failed: 'Failed: the computer could not read the file',
+  write_failed: 'Failed: the device could not write the file',
+  read_failed: 'Failed: the device could not read the file',
 };
 
 const MB = 1024 * 1024;
@@ -77,7 +77,7 @@ const errText = (e: unknown, fallback: string) =>
 const errCode = (e: unknown) => (e as { response?: { data?: { code?: string } } })?.response?.data?.code;
 const errStatus = (e: unknown) => (e as { response?: { status?: number } })?.response?.status;
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const stateText = (t: Transfer) => (t.state === 'pending' ? 'Waiting for the computer'
+const stateText = (t: Transfer) => (t.state === 'pending' ? 'Waiting for the device'
   : t.state === 'transferring' ? 'Transferring' : END_TEXT[t.endReason ?? ''] ?? t.endReason ?? t.state);
 /** A Windows file name from a browser's file name. */
 const baseName = (n: string) => n.split(/[\\/]/).pop() || 'file';
@@ -166,16 +166,16 @@ export function DeviceFilesTab({ endpointId, ep }: { endpointId: string; ep: Rec
     <div className="space-y-4" data-testid="files-tab">
       <div className="flex items-start gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200" role="note" data-testid="files-identity">
         <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-        <p><strong>SYSTEM — full control of this computer.</strong> The agent reads and writes files as SYSTEM, anywhere on a local drive, with nothing shown to the person at the computer. Every transfer is recorded in the audit log with its path, reason and SHA-256; the server keeps no copy of the file.</p>
+        <p><strong>SYSTEM — full control of this device.</strong> The agent reads and writes files as SYSTEM, anywhere on a local drive, with nothing shown to the person at the device. Every transfer is recorded in the audit log with its path, reason and SHA-256; the server keeps no copy of the file.</p>
       </div>
 
       {!windowsSigned ? (
         <Card><CardContent className="pt-6 text-sm text-muted-foreground" data-testid="files-unsupported">
-          File transfer needs a Windows computer running the full (signed) agent {minAgent} or later. {agent.explanation}
+          File transfer needs a Windows device running the full (signed) agent {minAgent} or later. {agent.explanation}
         </CardContent></Card>
       ) : !versionOk ? (
         <Card><CardContent className="pt-6 text-sm text-muted-foreground" data-testid="files-unsupported">
-          This computer’s agent ({String(ep.agentVersion ?? 'unknown')}) is older than {minAgent}, which first transferred files. Let it update first.
+          This device’s agent ({String(ep.agentVersion ?? 'unknown')}) is older than {minAgent}, which first transferred files. Let it update first.
         </CardContent></Card>
       ) : null}
 
@@ -188,7 +188,7 @@ export function DeviceFilesTab({ endpointId, ep }: { endpointId: string; ep: Rec
         <div className="grid gap-4 lg:grid-cols-2">
           {canUpload && (
             <Card data-testid="files-upload">
-              <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base"><ArrowUpFromLine className="h-4 w-4" />Send a file to the computer</CardTitle></CardHeader>
+              <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base"><ArrowUpFromLine className="h-4 w-4" />Send a file to the device</CardTitle></CardHeader>
               <CardContent>
                 <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); void startUpload(); }}>
                   <div className="space-y-1">
@@ -199,10 +199,10 @@ export function DeviceFilesTab({ endpointId, ep }: { endpointId: string; ep: Rec
                         setFile(f);
                         if (f && !upPath) setUpPath(`C:\\Windows\\Temp\\${baseName(f.name)}`);
                       }} />
-                    {file && <p className={`text-xs ${tooBig ? 'text-destructive' : 'text-muted-foreground'}`}>{fmtBytes(file.size)}{tooBig && limits ? ` — this business allows up to ${fmtBytes(limits.maxBytes)}` : ''}</p>}
+                    {file && <p className={`text-xs ${tooBig ? 'text-destructive' : 'text-muted-foreground'}`}>{fmtBytes(file.size)}{tooBig && limits ? ` — this customer allows up to ${fmtBytes(limits.maxBytes)}` : ''}</p>}
                   </div>
                   <div className="space-y-1">
-                    <Label htmlFor="files-upload-path">Save as (an absolute local path on the computer)</Label>
+                    <Label htmlFor="files-upload-path">Save as (an absolute local path on the device)</Label>
                     <Input id="files-upload-path" value={upPath} onChange={(e) => setUpPath(e.target.value)} maxLength={1024} placeholder="C:\Windows\Temp\setup.msi" className="font-mono" data-testid="files-upload-path" spellCheck={false} />
                   </div>
                   <label className="flex items-center gap-2 text-sm">
@@ -223,11 +223,11 @@ export function DeviceFilesTab({ endpointId, ep }: { endpointId: string; ep: Rec
           )}
           {canDownload && (
             <Card data-testid="files-download">
-              <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base"><ArrowDownToLine className="h-4 w-4" />Fetch a file from the computer</CardTitle></CardHeader>
+              <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base"><ArrowDownToLine className="h-4 w-4" />Fetch a file from the device</CardTitle></CardHeader>
               <CardContent>
                 <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); downM.mutate(); }}>
                   <div className="space-y-1">
-                    <Label htmlFor="files-download-path">File (an absolute local path on the computer)</Label>
+                    <Label htmlFor="files-download-path">File (an absolute local path on the device)</Label>
                     <Input id="files-download-path" value={downPath} onChange={(e) => setDownPath(e.target.value)} maxLength={1024} placeholder="C:\Windows\Logs\CBS\CBS.log" className="font-mono" data-testid="files-download-path" spellCheck={false} />
                   </div>
                   <div className="space-y-1">
@@ -245,13 +245,13 @@ export function DeviceFilesTab({ endpointId, ep }: { endpointId: string; ep: Rec
       )}
       {ready && (
         <p className="text-xs text-muted-foreground">
-          A transfer starts at the computer’s next check-in (up to about three minutes) and keeps this tab busy while it runs: leave it open.
-          {limits ? ` Up to ${fmtBytes(limits.maxBytes)} for this business; it ends after ${limits.stallMinutes} minutes without progress and ${limits.maxMinutes} minutes in all.` : ''}
+          A transfer starts at the device’s next check-in (up to about three minutes) and keeps this tab busy while it runs: leave it open.
+          {limits ? ` Up to ${fmtBytes(limits.maxBytes)} for this customer; it ends after ${limits.stallMinutes} minutes without progress and ${limits.maxMinutes} minutes in all.` : ''}
           {' '}Paths are absolute and local (C:\…): no network paths, “..”, links or junctions. An existing file is never replaced unless you tick it.
         </p>
       )}
       {!canUpload && !canDownload && (
-        <p className="text-sm text-muted-foreground" data-testid="files-not-permitted">Only a Platform Admin can transfer files. You can see what was transferred here, and cancel a transfer if you may edit this computer.</p>
+        <p className="text-sm text-muted-foreground" data-testid="files-not-permitted">Only a Platform Admin can transfer files. You can see what was transferred here, and cancel a transfer if you may edit this device.</p>
       )}
 
       <Card>
@@ -259,14 +259,14 @@ export function DeviceFilesTab({ endpointId, ep }: { endpointId: string; ep: Rec
         <CardContent>
           {list.isLoading ? <p className="text-sm text-muted-foreground">Loading…</p>
             : list.isError ? <p className="text-sm text-muted-foreground">{errText(list.error, 'Could not read the transfers.')}</p>
-              : transfers.length === 0 ? <p className="text-sm text-muted-foreground" data-testid="files-none">No file has been transferred with this computer.</p>
+              : transfers.length === 0 ? <p className="text-sm text-muted-foreground" data-testid="files-none">No file has been transferred with this device.</p>
                 : (
                   <ul className="divide-y text-sm" data-testid="files-transfers">
                     {transfers.map((t) => (
                       <li key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-2" data-testid="files-row" data-state={t.state}>
                         <div className="min-w-0">
                           <div className="flex items-center gap-1 font-medium">
-                            {t.direction === 'to_computer' ? <ArrowUpFromLine className="h-3 w-3" aria-label="Sent to the computer" /> : <ArrowDownToLine className="h-3 w-3" aria-label="Fetched from the computer" />}
+                            {t.direction === 'to_computer' ? <ArrowUpFromLine className="h-3 w-3" aria-label="Sent to the device" /> : <ArrowDownToLine className="h-3 w-3" aria-label="Fetched from the device" />}
                             <span className="break-all font-mono text-xs">{t.path}</span>
                           </div>
                           <div className="break-words text-xs text-muted-foreground">
@@ -410,9 +410,9 @@ function TransferProgress({ endpointId, job, onDone, onDismiss }: { endpointId: 
   const live = !t || t.state === 'pending' || t.state === 'transferring' || (job.kind === 'download' && t.state === 'completed' && verified === null && !note);
   const failed = t && (t.state === 'failed' || t.state === 'cancelled');
   const text = !t ? 'Starting…'
-    : t.state === 'pending' ? 'Waiting for the computer (its next check-in)…'
-      : t.state === 'transferring' ? (job.kind === 'upload' ? (moved >= (size ?? 0) ? 'Sent; the computer is writing and checking it…' : 'Sending…') : 'Receiving…')
-        : t.state === 'completed' ? (job.kind === 'download' ? (verified === null ? 'Receiving…' : verified ? 'Received and verified' : 'Received, but the SHA-256 does not match: not saved') : 'Written on the computer and verified')
+    : t.state === 'pending' ? 'Waiting for the device (its next check-in)…'
+      : t.state === 'transferring' ? (job.kind === 'upload' ? (moved >= (size ?? 0) ? 'Sent; the device is writing and checking it…' : 'Sending…') : 'Receiving…')
+        : t.state === 'completed' ? (job.kind === 'download' ? (verified === null ? 'Receiving…' : verified ? 'Received and verified' : 'Received, but the SHA-256 does not match: not saved') : 'Written on the device and verified')
           : END_TEXT[t.endReason ?? ''] ?? t.endReason ?? t.state;
 
   return (
@@ -421,7 +421,7 @@ function TransferProgress({ endpointId, job, onDone, onDismiss }: { endpointId: 
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <span className="flex min-w-0 items-center gap-2">
             {job.kind === 'upload' ? <ArrowUpFromLine className="h-4 w-4 shrink-0" /> : <ArrowDownToLine className="h-4 w-4 shrink-0" />}
-            <span className="font-medium">{job.kind === 'upload' ? 'Sending to the computer' : 'Fetching from the computer'}</span>
+            <span className="font-medium">{job.kind === 'upload' ? 'Sending to the device' : 'Fetching from the device'}</span>
             <span className="break-all font-mono text-xs text-muted-foreground">{t?.path ?? ''}</span>
           </span>
           <span className="flex items-center gap-1 text-xs" data-testid="files-progress-state">

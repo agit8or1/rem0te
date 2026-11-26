@@ -137,7 +137,7 @@ export default function TechnicianApprovalsPage() {
         <PageHeader title="Technician approvals" />
         <Card><CardContent className="flex items-start gap-2 p-6 text-sm">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-          You are working in {technician.businessName} as a technician. Approvals are decided by that business&apos;s own Business Owner, from their own account.
+          You are working in {technician.businessName} as a technician. Approvals are decided by that customer&apos;s own Business Owner, from their own account.
         </CardContent></Card>
       </div>
     );
@@ -148,7 +148,7 @@ export default function TechnicianApprovalsPage() {
       <div className="p-6">
         <PageHeader title="Technician approvals" />
         <Card><CardContent className="p-6 text-sm text-muted-foreground">
-          Only the Business Owner of {businessName ?? 'this business'} (or a Platform Admin) can approve technician access to it.
+          Only the Business Owner of {businessName ?? 'this customer'} (or a Platform Admin) can approve technician access to it.
         </CardContent></Card>
       </div>
     );
@@ -159,8 +159,8 @@ export default function TechnicianApprovalsPage() {
       <PageHeader
         title="Technician approvals"
         description={isPlatformAdmin
-          ? 'Pending requests from MSP technicians, across every business.'
-          : `MSP technicians asking for access to ${businessName ?? 'your business'}.`}
+          ? 'Pending requests from MSP technicians, across every customer.'
+          : `MSP technicians asking for access to ${businessName ?? 'your customer'}.`}
       />
 
       <ApprovalSetting
@@ -174,7 +174,7 @@ export default function TechnicianApprovalsPage() {
         <CardHeader>
           <CardTitle className="text-base">Waiting for a decision ({requests.length})</CardTitle>
           <CardDescription>
-            Approving gives access to this business only. You can narrow a request (fewer permissions, fewer computers, an earlier end) but not widen it.
+            Approving gives access to this customer only. You can narrow a request (fewer permissions, fewer devices, an earlier end) but not widen it.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -208,7 +208,7 @@ export default function TechnicianApprovalsPage() {
                 </div>
                 {r.reason && <p className="rounded bg-muted/50 p-2 text-xs">“{r.reason}”</p>}
                 <div className="flex flex-wrap gap-1">
-                  <Badge variant="secondary">{r.endpointIds.length ? `${r.endpointIds.length} selected computer(s)` : 'Whole business'}</Badge>
+                  <Badge variant="secondary">{r.endpointIds.length ? `${r.endpointIds.length} selected device(s)` : 'Whole customer'}</Badge>
                   {r.expiresAt
                     ? <Badge className={TEMP_STYLE}><Clock className="mr-1 h-3 w-3" />Until {formatDate(r.expiresAt)}</Badge>
                     : <Badge variant="secondary">No end date</Badge>}
@@ -252,7 +252,7 @@ function ApprovalSetting({
     },
     onError: (e) => toast({
       title: 'Could not change the setting',
-      description: errStatus(e) === 403 ? "Only this business's Business Owner (or a Platform Admin) can change it." : errMsg(e),
+      description: errStatus(e) === 403 ? "Only this customer's Business Owner (or a Platform Admin) can change it." : errMsg(e),
       variant: 'destructive',
     }),
   });
@@ -262,7 +262,7 @@ function ApprovalSetting({
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base"><ShieldCheck className="h-4 w-4" />Require approval for technician access</CardTitle>
         <CardDescription>
-          When on, every new technician assignment to this business stays pending, and grants nothing, until you approve it.
+          When on, every new technician assignment to this customer stays pending, and grants nothing, until you approve it.
           Requests a technician sends themselves always need approval, whatever this is set to.
           Changing it does not affect assignments that already work.
         </CardDescription>
@@ -270,16 +270,16 @@ function ApprovalSetting({
       <CardContent className="space-y-3 text-sm">
         {isPlatformAdmin && (
           <Select value={businessId} onValueChange={onPick}>
-            <SelectTrigger className="max-w-sm"><SelectValue placeholder="Choose a business" /></SelectTrigger>
+            <SelectTrigger className="max-w-sm"><SelectValue placeholder="Choose a customer" /></SelectTrigger>
             <SelectContent>{businesses.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}</SelectContent>
           </Select>
         )}
         {!businessId ? (
-          <p className="text-muted-foreground">Choose a business to see its setting.</p>
+          <p className="text-muted-foreground">Choose a customer to see its setting.</p>
         ) : isLoading ? (
           <p className="text-muted-foreground">Loading…</p>
         ) : error ? (
-          <p className="text-destructive">{errMsg(error) ?? 'Could not load the business.'}</p>
+          <p className="text-destructive">{errMsg(error) ?? 'Could not load the customer.'}</p>
         ) : required === undefined ? (
           <p className="text-muted-foreground">This server did not report the current setting.</p>
         ) : (
@@ -342,8 +342,8 @@ function DecisionDialog({
   const problem = (() => {
     if (!approving || !r) return null;
     if (caps.length === 0) return 'Approving with no permissions grants nothing; deny instead.';
-    if (!whole && eps.length === 0) return 'Keep at least one computer, or deny.';
-    if (whole && narrow && eps.length === 0) return 'Pick at least one computer, or keep the whole business.';
+    if (!whole && eps.length === 0) return 'Keep at least one device, or deny.';
+    if (whole && narrow && eps.length === 0) return 'Pick at least one device, or keep the whole customer.';
     if (expires && r.expiresAt && new Date(expires) > new Date(r.expiresAt)) return 'You can only make the end earlier.';
     return null;
   })();
@@ -415,15 +415,15 @@ function DecisionDialog({
               </div>
 
               <div className="space-y-1.5">
-                <Label>Computers</Label>
+                <Label>Devices</Label>
                 {whole && (
                   <button type="button" onClick={() => setNarrow(!narrow)} className="flex items-center gap-2 text-sm">
-                    <CheckBox on={narrow} />Requested the whole business. Limit to specific computers
+                    <CheckBox on={narrow} />Requested the whole customer. Limit to specific devices
                   </button>
                 )}
                 {(!whole || narrow) && (
                   choices.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">No computers to choose from.</p>
+                    <p className="text-xs text-muted-foreground">No devices to choose from.</p>
                   ) : (
                     <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-1">
                       {choices.map((id) => {

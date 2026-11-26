@@ -98,7 +98,7 @@ export default function ReportSchedulesPage() {
   const { data: sites } = useQuery<{ id: string; name: string }[]>({
     queryKey: ['sites-for-schedules', businessId], queryFn: () => sitesApi.list(businessId ?? undefined).then((r) => ((r.data as { data?: { id: string; name: string }[] })?.data ?? [])), enabled: !!businessId,
   });
-  const bizName = (id: string | null) => (id ? businesses?.find((b) => b.id === id)?.name ?? (id === ownBusiness ? 'Your business' : id) : 'All businesses');
+  const bizName = (id: string | null) => (id ? businesses?.find((b) => b.id === id)?.name ?? (id === ownBusiness ? 'Your customer' : id) : 'All customers');
 
   const [editing, setEditing] = useState<string | null>(null);
   // A schedule keeps its business; an edit names the one it already has.
@@ -145,9 +145,9 @@ export default function ReportSchedulesPage() {
         <>
           {isPlatformAdmin && (
             <div className="space-y-1">
-              <Label htmlFor="sched-business">Business</Label>
+              <Label htmlFor="sched-business">Customer</Label>
               <select id="sched-business" className="w-full rounded-md border bg-background p-2 text-sm md:w-96" value={picked} onChange={(e) => { setPicked(e.target.value); setNotice(null); }}>
-                <option value="">All businesses (platform-wide reports)</option>
+                <option value="">All customers (platform-wide reports)</option>
                 {(businesses ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
             </div>
@@ -156,7 +156,7 @@ export default function ReportSchedulesPage() {
           {error ? <p className="text-sm text-muted-foreground">{apiError(error).message}</p> : null}
           <EmailOffNotice enabled={data?.email.enabled} />
           <Card data-testid="report-schedules">
-            <CardHeader><CardTitle className="text-sm">Schedules {businessId ? `for ${bizName(businessId)}` : isPlatformAdmin ? '(every business)' : ''}</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-sm">Schedules {businessId ? `for ${bizName(businessId)}` : isPlatformAdmin ? '(every customer)' : ''}</CardTitle></CardHeader>
             <CardContent className="space-y-2 text-sm">
               {data && data.schedules.length === 0 && <p className="text-muted-foreground">No scheduled reports yet.</p>}
               {data?.schedules.map((s) => (
@@ -169,7 +169,7 @@ export default function ReportSchedulesPage() {
                     <div className="ml-auto flex gap-1">
                       {s.businessId === businessId
                         ? <Button size="sm" variant="outline" onClick={() => edit(s)}>Edit</Button>
-                        : <Button size="sm" variant="outline" onClick={() => setPicked(s.businessId ?? '')}>Open its business</Button>}
+                        : <Button size="sm" variant="outline" onClick={() => setPicked(s.businessId ?? '')}>Open its customer</Button>}
                       <Button size="sm" variant="outline" disabled={toggle.isPending} onClick={() => toggle.mutate(s)}>{s.enabled ? 'Switch off' : 'Switch on'}</Button>
                       <Button size="sm" variant="ghost" aria-label="Delete schedule" disabled={remove.isPending} onClick={() => remove.mutate(s.id)}><Trash2 className="h-4 w-4" /></Button>
                     </div>
@@ -233,8 +233,8 @@ export default function ReportSchedulesPage() {
                 </div>
                 <p className="text-xs text-muted-foreground">Days of the month stop at 28 so every month has the day. A time skipped by a daylight-saving change is sent at the change; a time that happens twice is sent once, the first time.</p>
                 <div className="space-y-1">
-                  <Label>Send to (confirmed addresses of {businessId ? 'this business' : 'the MSP'})</Label>
-                  {data.recipients.length === 0 && <p className="text-xs text-muted-foreground">No confirmed address yet. Add and confirm one under {businessId ? 'Settings → Monitoring → Notifications' : 'Settings → Email'}.</p>}
+                  <Label>Send to (confirmed addresses of {businessId ? 'this customer' : 'the MSP'})</Label>
+                  {data.recipients.length === 0 && <p className="text-xs text-muted-foreground">No confirmed address yet. Add and confirm one under {businessId ? 'Monitoring → Monitoring policies → Notifications' : 'Administration → Email'}.</p>}
                   {data.recipients.map((r) => (
                     <label key={r.id} className="flex items-center gap-2"><input type="checkbox" checked={form.recipientIds.includes(r.id)} onChange={(e) => set({ recipientIds: e.target.checked ? [...form.recipientIds, r.id] : form.recipientIds.filter((x) => x !== r.id) })} />{r.address}{r.label ? <span className="text-muted-foreground"> — {r.label}</span> : null}</label>
                   ))}

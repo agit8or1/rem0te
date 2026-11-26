@@ -119,7 +119,7 @@ export class AiService {
     };
     if (!this.budget.take(actor.userId)) throw new HttpException({ code: 'AI_RATE_LIMITED', message: 'You have asked the AI a lot in the last hour. Try again later.' }, 429);
     const active = await this.settings.active();
-    if (!active) throw new ConflictException({ code: 'AI_NOT_CONFIGURED', message: 'Not configured — a Platform Admin sets a provider in Settings → AI.' });
+    if (!active) throw new ConflictException({ code: 'AI_NOT_CONFIGURED', message: 'Not configured — a Platform Admin sets a provider in Administration → AI.' });
     const { cfg, key } = active;
     const ids = { source: src.kind, sourceRef: src.sourceRef, provider: cfg.provider, model: cfg.model };
     const key24 = this.cacheKey(cfg.provider, cfg.model, cfg.baseUrl, src.payload.fingerprint);

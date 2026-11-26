@@ -286,7 +286,7 @@ async function all() {
   r = await req('POST', `/msa/sessions/connect/${M1.id}`, { s: SOB, body: {} });
   check(r.status === 404 || r.status === 403, `another business's owner: refused (HTTP ${r.status})`, msg(r));
   r = await req('POST', `/endpoints/${M1.id}/connect`, { s: SO });
-  check(r.status === 403 && code(r) === 'MSA_MANAGED' && /roll it back to Legacy/.test(r.body?.message ?? '') && /Connect on the computer's own page/.test(r.body?.message ?? ''),
+  check(r.status === 403 && code(r) === 'MSA_MANAGED' && /roll it back to Legacy/.test(r.body?.message ?? '') && /Connect on the device's own page/.test(r.body?.message ?? ''),
     'Legacy Connect on a verified computer: refused, pointing to the managed Connect', msg(r));
   check(await prisma.msaGrant.count({ where: { endpointId: { in: created.endpoints } } }) === 0, 'every refusal issued nothing');
 

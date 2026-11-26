@@ -93,9 +93,9 @@ export default function BackupsPage() {
         <>
           {isPlatformAdmin && (
             <div className="flex flex-wrap items-center gap-2">
-              <Label htmlFor="bk-biz" className="text-sm">Business</Label>
+              <Label htmlFor="bk-biz" className="text-sm">Customer</Label>
               <select id="bk-biz" className="h-9 max-w-full rounded-md border bg-background px-2 text-sm" value={biz} onChange={(e) => setBiz(e.target.value)} data-testid="backups-business">
-                <option value="">Every business</option>
+                <option value="">Every customer</option>
                 {(businesses.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
             </div>
@@ -114,19 +114,19 @@ export default function BackupsPage() {
               </div>}
               {t && t.assets > 0 && (
                 <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="backups-figures">
-                  <Figure label="Protected assets" value={t.assets} hint={t.unlinked ? `${t.unlinked} not linked to a computer (no alerts)` : 'Each linked to a computer'} />
+                  <Figure label="Protected assets" value={t.assets} hint={t.unlinked ? `${t.unlinked} not linked to a device (no alerts)` : 'Each linked to a device'} />
                   <Figure label="Stale or failing" value={t.stale + t.failing} tone={t.stale + t.failing ? 'bad' : 'good'} hint={`${t.stale} stale · ${t.failing} failing · ${t.never} with no backup yet`} />
                   <Figure label="Restore verified" value={t.verified} tone={t.verified < t.assets ? 'warn' : 'good'} hint={`${t.neverTested} never tested by a real drill · ${t.drillFailed} last drill failed`} />
-                  <Figure label="Over RPO / RTO" value={`${t.rpoExceeded} / ${t.rtoExceeded}`} tone={t.rpoExceeded + t.rtoExceeded ? 'bad' : undefined} hint="Measured against the asset's target, else the business's" />
+                  <Figure label="Over RPO / RTO" value={`${t.rpoExceeded} / ${t.rtoExceeded}`} tone={t.rpoExceeded + t.rtoExceeded ? 'bad' : undefined} hint="Measured against the asset's target, else the customer's" />
                 </div>
               )}
               {d.state !== 'requires_setup' && t && t.assets === 0 && (
-                <Empty>No protected assets reported{d.state === 'awaiting_data' ? ' yet' : ''}. Assets appear here once the provider reports them; an asset is linked to a computer only when the provider names its Rem0te id or a hostname that matches exactly one computer in the business.</Empty>
+                <Empty>No protected assets reported{d.state === 'awaiting_data' ? ' yet' : ''}. Assets appear here once the provider reports them; an asset is linked to a device only when the provider names its Rem0te id or a hostname that matches exactly one device in the customer.</Empty>
               )}
               {d.assets.length > 0 && (
                 <Section title="Assets" note={t && t.assets > t.shown ? `Showing ${t.shown} of ${t.assets}` : undefined}>
                   <Table
-                    head={['Asset', 'Computer', 'Backup', 'Last job', 'Integrity', 'Restore of that job', 'Last verified restore', 'RPO', 'RTO']}
+                    head={['Asset', 'Device', 'Backup', 'Last job', 'Integrity', 'Restore of that job', 'Last verified restore', 'RPO', 'RTO']}
                     empty="No assets."
                     rows={d.assets.map((a) => [
                       <span key="n" className="block min-w-[10rem]" data-asset={a.id}><span className="font-medium">{a.name}</span><span className="block text-xs text-muted-foreground">{a.type.replace('_', ' ')} · {a.business.name}</span></span>,
@@ -192,7 +192,7 @@ function Objectives({ d }: { d: Overview }) {
     onError: (e) => setNote({ ok: false, text: apiError(e).message }),
   });
   return (
-    <Section title="Recovery objectives for this business" note="An asset's own target, where set, comes first">
+    <Section title="Recovery objectives for this customer" note="An asset's own target, where set, comes first">
       <div className="space-y-3 rounded-md border bg-card p-3 text-sm" data-testid="backups-objectives">
         <p className="text-xs text-muted-foreground">RPO is how much data you can afford to lose: measured from the newest recovery point. RTO is how long a restore may take: measured only from a verified restore drill&apos;s elapsed time, never guessed. Both in minutes; leave both empty to clear.</p>
         {d.may.configure ? (
@@ -202,7 +202,7 @@ function Objectives({ d }: { d: Overview }) {
             <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>Save targets</Button>
           </div>
         ) : (
-          <p>{d.objective ? `RPO ${d.objective.rpoMinutes ? duration(d.objective.rpoMinutes) : 'not set'} · RTO ${d.objective.rtoMinutes ? duration(d.objective.rtoMinutes) : 'not set'}` : 'No targets set.'} Setting them needs monitoring:configure for the whole business.</p>
+          <p>{d.objective ? `RPO ${d.objective.rpoMinutes ? duration(d.objective.rpoMinutes) : 'not set'} · RTO ${d.objective.rtoMinutes ? duration(d.objective.rtoMinutes) : 'not set'}` : 'No targets set.'} Setting them needs monitoring:configure for the whole customer.</p>
         )}
         {note && <p className={note.ok ? 'text-green-700 dark:text-green-400' : 'text-destructive'}>{note.text}</p>}
       </div>
@@ -234,18 +234,18 @@ function LinkCell({ a, may }: { a: Asset; may: boolean }) {
     onSuccess: () => { setOpen(false); setErr(null); void qc.invalidateQueries({ queryKey: ['backups'] }); },
     onError: (e) => setErr(apiError(e).message),
   });
-  const how = a.linkSource === 'manual' ? 'linked by hand' : a.linkSource === 'none' ? 'marked as no computer' : null;
+  const how = a.linkSource === 'manual' ? 'linked by hand' : a.linkSource === 'none' ? 'marked as no device' : null;
   return (
     <span className="block min-w-[8rem]" data-link-source={a.linkSource}>
       {a.computer ? <Link href={`/endpoints/${a.computer.id}`} className="hover:underline">{a.computer.name}</Link> : <span className="text-muted-foreground">Not linked</span>}
       {how && <span className="block text-xs text-muted-foreground">{how}</span>}
-      {may && !open && <button type="button" className="block text-xs underline" onClick={() => { setOpen(true); setPick(a.computer?.id ?? ''); }} data-testid="backups-link-open">{a.computer ? 'Change' : 'Link to computer'}</button>}
+      {may && !open && <button type="button" className="block text-xs underline" onClick={() => { setOpen(true); setPick(a.computer?.id ?? ''); }} data-testid="backups-link-open">{a.computer ? 'Change' : 'Link to device'}</button>}
       {may && open && (
         <span className="mt-1 flex flex-col gap-1" data-testid="backups-link-form">
-          <select aria-label={`Computer for ${a.name}`} className="h-8 max-w-[14rem] rounded-md border bg-background px-1 text-xs" value={pick} onChange={(e) => setPick(e.target.value)} data-testid="backups-link-select">
-            <option value="">Pick a computer…</option>
+          <select aria-label={`Device for ${a.name}`} className="h-8 max-w-[14rem] rounded-md border bg-background px-1 text-xs" value={pick} onChange={(e) => setPick(e.target.value)} data-testid="backups-link-select">
+            <option value="">Pick a device…</option>
             {(computers.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}{c.hostname && c.hostname !== c.name ? ` (${c.hostname})` : ''}</option>)}
-            <option value="__none">Not a computer (never link)</option>
+            <option value="__none">Not a device (never link)</option>
             <option value="__auto">Automatic (from the provider)</option>
           </select>
           <span className="flex gap-1">
@@ -260,7 +260,7 @@ function LinkCell({ a, may }: { a: Asset; may: boolean }) {
 }
 
 /**
- * Platform Admin: the connections' status, and a pointer to Settings → Backups
+ * Platform Admin: the connections' status, and a pointer to Administration → Backup connections
  * (0.82), where St0r is set up and its token tested, rotated or revoked. One
  * place to manage a credential, not two.
  */
@@ -269,7 +269,7 @@ function Connections({ d, biz }: { d: Overview; biz: string }) {
   return (
     <Section title="Provider connections" note="Platform Admin">
       <div className="space-y-3 rounded-md border bg-card p-3 text-sm" data-testid="backups-connections">
-        {live.length === 0 && <p className="text-muted-foreground">No provider is connected{biz ? ' for this business' : ''}.</p>}
+        {live.length === 0 && <p className="text-muted-foreground">No provider is connected{biz ? ' for this customer' : ''}.</p>}
         {live.map((c) => (
           <div key={c.id} className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{c.label}</span>
@@ -278,7 +278,7 @@ function Connections({ d, biz }: { d: Overview; biz: string }) {
         ))}
         <p className="text-xs text-muted-foreground">
           Connect St0r, see what to give it, test its push, and rotate or revoke its token in{' '}
-          <Link href="/settings/backups" className="underline" data-testid="backups-settings-link">Settings → Backups</Link>. Comet is planned.
+          <Link href="/settings/backups" className="underline" data-testid="backups-settings-link">Administration → Backup connections</Link>. Comet is planned.
           Neither provider can be told to back up, restore or fail over from here.
         </p>
       </div>

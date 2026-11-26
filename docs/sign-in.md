@@ -4,20 +4,20 @@
 
 ## Password
 
-Password sign-in works unless a business (or staff) is set to **SSO required** and the account is linked to a provider ([below](#who-must-use-sso-059)). Even then, the [break-glass accounts](break-glass.md) and the recovery CLI keep a way in that does not depend on the provider. An account created through SSO provisioning has no password until one is set for it. TOTP, lockout and the tenant's *require MFA* policy apply as before.
+Password sign-in works unless a customer (or staff) is set to **SSO required** and the account is linked to a provider ([below](#who-must-use-sso-059)). Even then, the [break-glass accounts](break-glass.md) and the recovery CLI keep a way in that does not depend on the provider. An account created through SSO provisioning has no password until one is set for it. TOTP, lockout and the tenant's *require MFA* policy apply as before.
 
 **The lockout is in the database (0.59).** Failed attempts are counted in `LoginLockout`, so restarting the API no longer forgets them and every API process sees the same count. Before 0.59 the count was in memory.
 
 ## Single sign-on (OIDC)
 
-**Settings → Single sign-on** (Platform Admin). Rem0te is an OpenID Connect relying party. It uses the authorization code flow with PKCE, a `state` bound to the browser by a cookie, and a `nonce`. The ID token is verified with [openid-client](https://github.com/panva/openid-client).
+**Security → Single sign-on** (Platform Admin). Rem0te is an OpenID Connect relying party. It uses the authorization code flow with PKCE, a `state` bound to the browser by a cookie, and a `nonce`. The ID token is verified with [openid-client](https://github.com/panva/openid-client).
 
 ### Setting up a provider
 
 1. At the provider, register a web application whose redirect URI is the one shown on the page:
    `https://<your server>/api/v1/auth/sso/callback`. It must match exactly.
 2. In Rem0te, add the provider: the **issuer** exactly as the provider publishes it (`iss`), the client ID, the client secret if the client is confidential, and the redirect URI. The secret is stored encrypted and never shown again.
-3. **Test discovery**: Rem0te fetches the provider's metadata and reports its endpoints and PKCE support.
+3. **Test discovery**: Rem0te fetches the provider's metadata and reports its devices and PKCE support.
 4. **Enable** it. A new provider is always created disabled.
 
 The issuer cannot be changed later. Linked accounts are keyed by it, so add a new provider instead.
@@ -29,11 +29,11 @@ Only HTTPS issuers are accepted. `OIDC_ALLOW_INSECURE_LOOPBACK=true` relaxes tha
 **By issuer and subject (`sub`) only. Never by email.** Matching by email would let anyone who controls a provider, or a provider that lets users edit their own email, sign in as any account by naming its address. So an identity reaches an account in one of two ways:
 
 - **Linking.** A signed-in person goes to **My Account → Single sign-on → Link** (needs step-up), signs in at the provider, and that identity is attached to their account. One identity per provider per account. An identity already linked to someone else is refused.
-- **Provisioning**, only if the provider has *Create accounts* turned on. An unknown identity with a **verified** email that no Rem0te account uses gets a **new** account. That account has no business and no permissions unless a **group mapping** matches: a value in the provider's groups claim, mapped to exactly one business with exactly the listed capabilities, as a Business User. Provisioning never creates an owner or an admin. If the email already belongs to an account, sign-in is refused with a message to sign in by password and link instead.
+- **Provisioning**, only if the provider has *Create accounts* turned on. An unknown identity with a **verified** email that no Rem0te account uses gets a **new** account. That account has no customer and no permissions unless a **group mapping** matches: a value in the provider's groups claim, mapped to exactly one customer with exactly the listed capabilities, as a Business User. Provisioning never creates an owner or an admin. If the email already belongs to an account, sign-in is refused with a message to sign in by password and link instead.
 
 After the provider, the rest of sign-in is the same as for a password: account status, lockout, and **TOTP, if the account has it** or the tenant requires it. SSO does not skip Rem0te's own second factor — unless the provider's MFA is trusted (below).
 
-**Suggested links (0.59).** When someone signs in at a provider with an unlinked identity whose **verified** email matches an active account here, nothing is linked: the sign-in is refused as before and a *suggestion* is recorded. A Platform Admin sees it under **Settings → Single sign-on → Suggested links** and may confirm it (fresh confirmation, `sso.configure`; audited `SSO_LINKED {by: 'admin'}`; the account holder is emailed when their address is a confirmed mail recipient) or dismiss it. Platform Admin and break-glass accounts are never suggested.
+**Suggested links (0.59).** When someone signs in at a provider with an unlinked identity whose **verified** email matches an active account here, nothing is linked: the sign-in is refused as before and a *suggestion* is recorded. A Platform Admin sees it under **Security → Single sign-on → Suggested links** and may confirm it (fresh confirmation, `sso.configure`; audited `SSO_LINKED {by: 'admin'}`; the account holder is emailed when their address is a confirmed mail recipient) or dismiss it. Platform Admin and break-glass accounts are never suggested.
 
 ### How far a provider is trusted (0.59)
 
@@ -57,18 +57,18 @@ Each SSO sign-in records an `SsoSession`: the provider's `sid`, `acr`, `amr`, `a
 
 ### Who must use SSO (0.59)
 
-**Settings → Single sign-on → Who must use single sign-on**, per business and for staff (accounts with no business):
+**Security → Single sign-on → Who must use single sign-on**, per customer and for staff (accounts with no customer):
 
 - **Off** and **Optional** sign in the same way. Optional asks unlinked people, on My Account, to link.
 - **Required** refuses password and passkey sign-in (`403 SSO_REQUIRED`, after the password was checked, so a wrong password still says only *invalid credentials*) for every account **linked** to a provider. The last linked identity cannot be unlinked under it. It can be set only when every active account in scope is linked (the page shows the unlinked count), a provider is enabled, and — for staff — there is a break-glass account. Setting it needs a fresh confirmation (`sso.enforce`); lowering it never does. Audited `SSO_MODE_CHANGED`.
-- An account in several businesses takes the strictest mode.
+- An account in several customers takes the strictest mode.
 - [Break-glass accounts](break-glass.md) are always exempt.
 
 If the provider is down, lower the mode from the server (the recovery CLI below): `--sso-mode optional <business id | staff>`.
 
 ## Passkeys
 
-**My Account → Passkeys.** A passkey is a WebAuthn credential on a phone, computer or security key. Rem0te requires **user verification** (biometric or PIN) on every use, so a passkey sign-in counts as multi-factor on its own and skips TOTP.
+**My Account → Passkeys.** A passkey is a WebAuthn credential on a phone, device or security key. Rem0te requires **user verification** (biometric or PIN) on every use, so a passkey sign-in counts as multi-factor on its own and skips TOTP.
 
 - Challenges are stored on the server and single-use.
 - A signature counter that goes backwards (a cloned authenticator) is refused.
@@ -84,7 +84,7 @@ Some actions can need you to confirm it is you, even with a valid session: re-en
 
 **Through the provider (0.59).** An account linked to a provider can confirm there instead: the dialog's *Confirm with <provider>* sends you to the provider with `max_age=0`, `prompt=login` and the `acr` it needs. Coming back, Rem0te accepts it only for the same linked identity, with an `auth_time` after the round trip began, at the MFA level (the confirmation method is `sso-mfa`) or, for an action that needs a passkey, at the passkey level from a provider trusted for passkeys (`sso-passkey`). The request that asked for the confirmation is not kept across the round trip; do it again. An account with no password (SSO-only) confirms only this way.
 
-**A session remembers whether its sign-in passed a second factor.** A sign-in that went through the authenticator, or a passkey sign-in, is MFA-verified; a password or SSO sign-in by someone with no authenticator is not. Revealing a computer's password needs an MFA-verified session from anyone who has an authenticator, so a session that began before the authenticator was enrolled must sign in again (`403 MFA_REQUIRED`).
+**A session remembers whether its sign-in passed a second factor.** A sign-in that went through the authenticator, or a passkey sign-in, is MFA-verified; a password or SSO sign-in by someone with no authenticator is not. Revealing a device's password needs an MFA-verified session from anyone who has an authenticator, so a session that began before the authenticator was enrolled must sign in again (`403 MFA_REQUIRED`).
 
 ### Which functions ask (0.49)
 
@@ -98,7 +98,7 @@ change made with the function is still in the audit log. Everyone else sees the 
 1. **Confirm it is you** — the tab, on *Settings* (`/settings?tab=confirm`).
 2. **Don't ask for any / Ask for all** — for every function at once. The line above says how many don't ask.
 3. **A group** — *Patching & updates* here, with its own *Don't ask for any* / *Ask for all*.
-4. **One function** — *A computer's patch policy*, set to *Don't ask*.
+4. **One function** — *A device's patch policy*, set to *Don't ask*.
 5. **Install links** — still *Ask*: turning other functions off never turns this one off. (From 0.64 every function starts at *Don't ask*; this one was set to *Ask*.)
 
 Further down, *Always asks* lists the confirmations that are not settings (below).
@@ -108,8 +108,8 @@ Further down, *Always asks* lists the confirmations that are not settings (below
 | Software | `software.catalog` — adding, editing or archiving a catalog entry, one-click and bulk winget adds |
 | Patching & updates | `patching.policy` — creating or revoking a patch policy; `updates.schedule` — turning on automatic RustDesk client updates, or removing a site or group policy |
 | Approved actions & scripts | `actions.direct` — any direct-mode request (actions, patch and software rings, services, processes, script runs); `scripts.direct` — a direct-mode script allowlist proposal |
-| Agents | `agent.migrate` — upgrading to the full agent (one or a selection); `agent.autoupdate.computer`, `agent.autoupdate.business`, `agent.autoupdate` — automatic agent updates for a computer, a business, the fleet; `agent.automigrate` — widening, resuming or restarting the automatic migration |
-| Devices & enrolment | `enrollment.create` — making an install link; `credential.reveal` — revealing a computer's stored password, and any Connect that releases it |
+| Agents | `agent.migrate` — upgrading to the full agent (one or a selection); `agent.autoupdate.computer`, `agent.autoupdate.business`, `agent.autoupdate` — automatic agent updates for a device, a customer, the fleet; `agent.automigrate` — widening, resuming or restarting the automatic migration |
+| Devices & enrolment | `enrollment.create` — making an install link; `credential.reveal` — revealing a device's stored password, and any Connect that releases it |
 | Monitoring & notifications | `monitoring.notify` — changing who is notified; `monitoring.autoticket` (0.55) — changing or removing the automatic-ticket rule |
 | Reports & email | `email.relay` — the SMTP relay; `email.recipients` — adding, re-sending to or removing a recipient; `reports.schedule` — creating or changing a scheduled report |
 | Integrations | `ai.settings` — the AI provider and key; `psa.connector` — ticketing connectors; `apikey.create` — creating any API key |
@@ -142,7 +142,7 @@ as *Don't ask*, and everything else asks. Migration 0071 did that, and dropped t
 `PlatformSettings.stepUpActions` (the 0.20 per-action list, which nothing in the console could change).
 
 The API answers `403` with `code: STEP_UP_REQUIRED` and the function's key as `action`, and the web app prompts and
-retries the request. Access is always checked **first**, so someone with no business doing the action is refused
+retries the request. Access is always checked **first**, so someone with no customer doing the action is refused
 outright, not asked to re-authenticate.
 
 ### Install links and API keys
@@ -156,31 +156,31 @@ below.
 
 | Action (in the `403`) | When |
 |---|---|
-| `enrollment.create` | Making an install link (*Devices → Add device*, or `POST /enrollment/tokens`), including a re-enrol link for an existing computer. Every role: Platform Admin, Business Owner, technician or Business User with *Add computers* |
+| `enrollment.create` | Making an install link (*Devices → Add device*, or `POST /enrollment/tokens`), including a re-enrol link for an existing device. Every role: Platform Admin, Business Owner, technician or Business User with *Add devices* |
 | `apikey.create` | Creating **any** API key (0.34). 0.33 asked only for keys carrying `enrollment:write` (action `apikey.enrollment`, now retired). Revoking a key never asks |
 
-**Why every role, not only Platform Admins.** A token always covers exactly one business and does the same thing
-whoever made it: it lets any machine that runs it join that business and receive its monitoring, update policies and
+**Why every role, not only Platform Admins.** A token always covers exactly one customer and does the same thing
+whoever made it: it lets any machine that runs it join that customer and receive its monitoring, update policies and
 relay configuration. A stolen Business Owner session is as good for that as a stolen Platform Admin one, for that
-business. The cost is one confirmation per ten minutes of adding devices.
+customer. The cost is one confirmation per ten minutes of adding devices.
 
 **API keys keep the ability.** A key cannot step up — there is no person at the other end — and provisioning scripts are
 what `POST /pub/v1/enrollment/tokens` is for. The key is itself the second proof: a separate secret, bound to one
-business, carrying an explicit scope, revocable, and recorded on every token it mints (`mintedVia: "api-key"` and its
+customer, carrying an explicit scope, revocable, and recorded on every token it mints (`mintedVia: "api-key"` and its
 id in the `CLAIM_TOKEN_CREATED` audit entry; session mints record `mintedVia: "session"` and the step-up method). What
 closes the gap is that *creating* a key needs the fresh confirmation, so a stolen session cannot make a key and
 then mint with it. Keys that already had `enrollment:write` before 0.33 keep working; review them under
-*Settings → API keys* if a session may have been stolen.
+*Administration → API keys* if a session may have been stolen.
 
-**From 0.34, every API key.** A key of any scope is Business Owner access to its business, for that scope, that
+**From 0.34, every API key.** A key of any scope is Business Owner access to its customer, for that scope, that
 keeps working after the session that made it is signed out, revoked or has its password changed. A stolen session
-that could quietly mint a `computers:read` or `audit:read` key would keep reading the business long after the
+that could quietly mint a `computers:read` or `audit:read` key would keep reading the customer long after the
 session was gone, so creating any key now needs the confirmation. Keys are immutable — no route widens a key's
 scopes or restores a revoked one — so creation is the only way to get a key's access, and revoking (which only
 takes access away) never asks. In the console the prompt appears over the form and the same request is retried;
 if you cancel, nothing is created and what you typed is kept. Keys made before 0.34 keep working.
 
-**Registering a computer by RustDesk ID is not gated.** It mints nothing: no token, no device secret, no password
+**Registering a device by RustDesk ID is not gated.** It mints nothing: no token, no device secret, no password
 (Platform Admin only, unchanged). The node has no device identity, so its heartbeats are not trusted until an installer
 runs with a token — which needs the confirmation.
 

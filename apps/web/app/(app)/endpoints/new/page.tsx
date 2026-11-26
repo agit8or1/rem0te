@@ -78,7 +78,7 @@ export default function NewEndpointPage() {
     <div className="p-6 space-y-6 max-w-2xl">
       <PageHeader
         title="Register by RustDesk ID"
-        description="List a computer that already runs RustDesk, without installing anything on it. It gets no agent: no heartbeat, inventory or monitoring."
+        description="List a device that already runs RustDesk, without installing anything on it. It gets no agent: no heartbeat, inventory or monitoring."
       />
       <p className="text-sm">
         <Link href="/endpoints/enroll" className="underline">Add device</Link> is the usual way in: it installs RustDesk and the agent, and shows the device arriving.
@@ -146,13 +146,13 @@ export default function NewEndpointPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="business">Business</Label>
+                <Label htmlFor="business">Customer</Label>
                 <Select
                   value={form.customerId}
                   onValueChange={(v) => setForm((f) => ({ ...f, customerId: v, siteId: '' }))}
                 >
                   <SelectTrigger id="business">
-                    <SelectValue placeholder="Select business" />
+                    <SelectValue placeholder="Select customer" />
                   </SelectTrigger>
                   <SelectContent>
                     {businesses.map((c) => (

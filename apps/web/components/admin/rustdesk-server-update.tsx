@@ -68,7 +68,7 @@ export function RustdeskServerUpdate({ isPlatformAdmin }: { isPlatformAdmin: boo
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
           The rendezvous (hbbs) and relay (hbbr) services this platform runs — not the client
-          installed on an endpoint.
+          installed on a device.
         </p>
 
         <div className="grid gap-3 sm:grid-cols-3">
@@ -107,7 +107,7 @@ export function RustdeskServerUpdate({ isPlatformAdmin }: { isPlatformAdmin: boo
 
         {data?.websocketCapable === false && (
           <p className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
-            Endpoints on networks that only allow port 443 reach this server over{' '}
+            Devices on networks that only allow port 443 reach this server over{' '}
             <code className="font-mono">/ws/id</code> and <code className="font-mono">/ws/relay</code>.
             Versions before 1.1.16 accept the WebSocket upgrade and then immediately drop the
             connection, so those routes silently do nothing. Upgrading fixes it.
@@ -116,7 +116,7 @@ export function RustdeskServerUpdate({ isPlatformAdmin }: { isPlatformAdmin: boo
 
         <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-muted-foreground">
           <strong className="text-foreground">Upgrading restarts hbbs and hbbr.</strong> hbbs keeps
-          its online-peer map in memory only, so every endpoint reads as offline for roughly 30
+          its online-peer map in memory only, so every device reads as offline for roughly 30
           seconds while they re-register. A Connect attempted in that window fails with
           &ldquo;the target device is offline or does not exist&rdquo;. Avoid doing this mid-session.
         </div>

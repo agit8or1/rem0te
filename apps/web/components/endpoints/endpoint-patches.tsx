@@ -107,7 +107,7 @@ export function PatchSummaryCard({ s, platform, aside, className }: { s: Summary
           {row('Last boot', s.lastBootAt ? formatDate(s.lastBootAt) : 'unknown')}
           {row('Connection', connectivityOf(s.online.isOnline, s.online.lastSeenAt) === 'offline' ? `offline${s.online.lastSeenAt ? ` since ${formatDate(s.online.lastSeenAt)}` : ''}` : connectivityLabel(connectivityOf(s.online.isOnline, s.online.lastSeenAt), s.online.lastSeenAt))}
           {row('Restart pending', s.rebootRequired == null ? 'unknown' : s.rebootRequired ? 'yes' : 'no')}
-          {row('Who manages patching', <span>{posix ? (os === 'Linux' ? 'The package manager on the computer (apt, dnf or zypper)' : 'Software Update on the computer') : s.managedBy.state === 'external' ? s.managedBy.managers.map((m) => m.label).join(', ') : MANAGED[s.managedBy.state]}</span>)}
+          {row('Who manages patching', <span>{posix ? (os === 'Linux' ? 'The package manager on the device (apt, dnf or zypper)' : 'Software Update on the device') : s.managedBy.state === 'external' ? s.managedBy.managers.map((m) => m.label).join(', ') : MANAGED[s.managedBy.state]}</span>)}
           {!posix && row('Relevant KBs', s.relevantKbs.length ? s.relevantKbs.join(', ') : s.evidence.source === 'none' ? 'unknown' : 'none offered')}
           {row('Deploy from rem0te', s.deploy.possible ? 'available' : <span className="text-muted-foreground">{s.deploy.reason}</span>)}
         </dl>
@@ -179,7 +179,7 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
   const go = useMutation({
     mutationFn: () => patchingApi.install(endpointId, {
       updates: chosen.map((u) => ({ updateId: u.updateId, revision: u.revision })),
-      reboot, reason: reason.trim() || (direct ? 'Installed from the computer’s Patches tab' : ''), windowHours, ...scheduleBody(when),
+      reboot, reason: reason.trim() || (direct ? 'Installed from the device’s Patches tab' : ''), windowHours, ...scheduleBody(when),
     }),
     onSuccess: (r) => {
       const d = r.data.data as { job: { approvalUrl: string; direct?: boolean; window?: { notBefore: string } }; deployment: { id: string } };
@@ -189,14 +189,14 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
       qc.invalidateQueries({ queryKey: ['endpoint-patches', endpointId] });
       qc.invalidateQueries({ queryKey: ['tasks'] });
       toast(scheduledFor
-        ? { title: 'Scheduled', description: `Nothing is handed to the computer before ${new Date(scheduledFor).toLocaleString()}.${d.job.direct ? '' : ' It still needs its two approvals.'}` }
+        ? { title: 'Scheduled', description: `Nothing is handed to the device before ${new Date(scheduledFor).toLocaleString()}.${d.job.direct ? '' : ' It still needs its two approvals.'}` }
         : d.job.direct ? { title: 'Installing', description: DIRECT_TOAST } : { title: 'Install requested', description: 'It awaits two approvals on the approval signer.' });
     },
     onError: (e) => toast({ title: 'Not requested', description: apiMessage(e, 'The request was refused.'), variant: 'destructive' }),
   });
   const requested = done && (
     done.direct
-      ? <p>Approved automatically (direct mode). {done.scheduledFor ? `It installs at the computer’s first check-in after ${new Date(done.scheduledFor).toLocaleString()}` : 'It installs when the computer next checks in'} · <Link className="underline" href={`/patching/${done.deploymentId}`}>follow it</Link></p>
+      ? <p>Approved automatically (direct mode). {done.scheduledFor ? `It installs at the device’s first check-in after ${new Date(done.scheduledFor).toLocaleString()}` : 'It installs when the device next checks in'} · <Link className="underline" href={`/patching/${done.deploymentId}`}>follow it</Link></p>
       : <p>Requested: <a className="underline" href={done.approvalUrl} target="_blank" rel="noreferrer">its approval page</a> · <Link className="underline" href={`/patching/${done.deploymentId}`}>its deployment</Link></p>
   );
 
@@ -205,7 +205,7 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
       <Card data-testid="patch-install-unavailable">
         <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><Download className="h-4 w-4" />Install updates</CardTitle></CardHeader>
         <CardContent className="space-y-1 text-xs">
-          <p><strong>Not available on this computer.</strong> {p.install.reason}</p>
+          <p><strong>Not available on this device.</strong> {p.install.reason}</p>
           {p.install.fix && (
             <p className="text-muted-foreground">
               What to do: {p.install.fix}
@@ -234,8 +234,8 @@ function InstallUpdates({ endpointId, p, onOpenAgentCard }: { endpointId: string
       <CardContent className="space-y-3 text-xs">
         <p className="text-muted-foreground" data-testid="patch-install-mode">
           {direct
-            ? `Tick the updates to install. Direct mode is on: it is signed as soon as you ${askDirect ? 'confirm it is you' : 'request it'}, and installs on this computer when it next checks in.`
-            : 'Tick the updates to install on this computer. Two people on the approval roster approve it on the approval signer — not you, and not from here. It runs inside the window you give.'}
+            ? `Tick the updates to install. Direct mode is on: it is signed as soon as you ${askDirect ? 'confirm it is you' : 'request it'}, and installs on this device when it next checks in.`
+            : 'Tick the updates to install on this device. Two people on the approval roster approve it on the approval signer — not you, and not from here. It runs inside the window you give.'}
         </p>
         {requested}
         <div className="space-y-1" data-testid="patch-update-list">
@@ -325,7 +325,7 @@ function AfterInstallCard({ endpointId, a, checkedAt, onScan, scanning, zones }:
       qc.invalidateQueries({ queryKey: ['endpoint-patches', endpointId] });
       qc.invalidateQueries({ queryKey: ['tasks'] });
       toast(j?.direct
-        ? { title: 'Restart requested', description: `${opts.when.mode === 'schedule' ? `At ${opts.when.local.replace('T', ' ')} (${opts.when.timeZone})` : 'At its next check-in'} the computer warns whoever is signed in and restarts ${delay} minutes later. ${opts.ignoreRemoteSession ? 'It restarts even if a technician is connected through RustDesk.' : 'Nothing restarts while a technician is connected through RustDesk.'}` }
+        ? { title: 'Restart requested', description: `${opts.when.mode === 'schedule' ? `At ${opts.when.local.replace('T', ' ')} (${opts.when.timeZone})` : 'At its next check-in'} the device warns whoever is signed in and restarts ${delay} minutes later. ${opts.ignoreRemoteSession ? 'It restarts even if a technician is connected through RustDesk.' : 'Nothing restarts while a technician is connected through RustDesk.'}` }
         : { title: 'Restart requested', description: 'It awaits two approvals on the approval signer, like any restart.' });
     },
     onError: (e) => toast({ title: 'Not requested', description: apiMessage(e, 'The request was refused.'), variant: 'destructive' }),
@@ -408,7 +408,7 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
   });
   const rescan = useMutation({
     mutationFn: () => endpointsApi.refreshInventory(endpointId),
-    onSuccess: () => { setWaitUntil(Date.now() + 10 * 60_000); qc.invalidateQueries({ queryKey: ['endpoint-patches', endpointId] }); toast({ title: 'Scan requested', description: 'The computer scans at its next check-in and reports back.' }); },
+    onSuccess: () => { setWaitUntil(Date.now() + 10 * 60_000); qc.invalidateQueries({ queryKey: ['endpoint-patches', endpointId] }); toast({ title: 'Scan requested', description: 'The device scans at its next check-in and reports back.' }); },
     onError: () => toast({ title: 'Not requested', variant: 'destructive' }),
   });
 
@@ -436,7 +436,7 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
               {b?.checkedAt ? `Last scanned ${formatDate(b.checkedAt)}` : 'Not scanned yet — the agent scans automatically within 12 hours of its first check-in.'}
             </p>
             {b?.rebootRequired && (
-              <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending. Rem0te restarts a computer only through an approved restart: one requested from the Actions tab or the device list, a restart window, or a patch policy’s restart rule.</p>
+              <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending. Rem0te restarts a device only through an approved restart: one requested from the Actions tab or the device list, a restart window, or a patch policy’s restart rule.</p>
             )}
             {b?.rebootRequired && <RestartWindowSentence endpointId={endpointId} className="text-xs pl-5" />}
             {b?.checkedAt && <p className="text-xs">{b.updates.length === 0 ? (os === 'Windows' ? 'Windows Update offers nothing.' : 'No pending updates reported.') : `${b.updates.length} update${b.updates.length === 1 ? '' : 's'} offered.`}</p>}
@@ -492,7 +492,7 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
           {p.managers.length > 0 && (
             <div className="rounded-md border border-yellow-300 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-950/40 p-3 text-xs flex gap-2">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />
-              <span>Updates on this computer are managed by <strong>{p.managers.map((m) => m.label).join(', ')}</strong>. Rem0te will not install updates here — the computer itself refuses, so the two do not fight over it.</span>
+              <span>Updates on this device are managed by <strong>{p.managers.map((m) => m.label).join(', ')}</strong>. Rem0te will not install updates here — the device itself refuses, so the two do not fight over it.</span>
             </div>
           )}
           {p.reboot?.pending && (

@@ -41,7 +41,7 @@ export function policyRestartBody(d: PolicyRestartDraft, reboot: string): { rest
 export const RESTART_RULE_LABEL: Record<RestartRuleChoice, string> = {
   none: 'No restart window',
   if_required: 'Restart if required, in a restart window',
-  always: 'Restart every computer in a restart window (maintenance restart)',
+  always: 'Restart every device in a restart window (maintenance restart)',
 };
 
 export function PolicyRestartEditor({ id, value, onChange, reboot }: {
@@ -62,8 +62,8 @@ export function PolicyRestartEditor({ id, value, onChange, reboot }: {
           <WindowEditor id={`${id}-rw`} title="Restart window" value={value.window} onChange={(w) => onChange({ ...value, window: w })} />
           <p className="text-xs text-muted-foreground" data-testid={`${id}-restart-explained`}>
             {value.rule === 'if_required'
-              ? 'Inside the restart window, each computer in the policy that Windows says needs a restart is asked to restart. The computer checks again when the plan runs and does nothing if no restart is pending.'
-              : 'Inside the restart window, every computer in the policy is restarted once, whether or not Windows asks for it.'}{' '}
+              ? 'Inside the restart window, each device in the policy that Windows says needs a restart is asked to restart. The device checks again when the plan runs and does nothing if no restart is pending.'
+              : 'Inside the restart window, every device in the policy is restarted once, whether or not Windows asks for it.'}{' '}
             It warns for 15 minutes first. If a technician is connected through RustDesk the restart is deferred and asked for again 15 minutes later (at most three times in a window), and in the next restart window.
             The signer signs a restart only inside this window. Tested against a simulated agent only; it has not run on a real Windows computer.
           </p>

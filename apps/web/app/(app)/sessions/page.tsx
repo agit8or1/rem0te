@@ -40,7 +40,7 @@ function apiMessage(e: unknown, fallback: string) {
 const EVENT_LABEL: Record<string, string> = {
   launch_requested: 'Launch requested',
   launcher_acknowledged: 'Launcher acknowledged',
-  client_opened: 'RustDesk opened on the technician’s computer',
+  client_opened: 'RustDesk opened on the technician’s device',
   client_launch_failed: 'RustDesk failed to open',
   connection_confirmed: 'Connection confirmed',
   connection_observed_ambiguous: 'A connection was seen, but could not be tied to this launch',
@@ -56,7 +56,7 @@ const SOURCE_LABEL: Record<string, string> = {
   server: 'server',
   launcher: 'launcher',
   connect_script: 'Connect script',
-  endpoint_agent: 'endpoint agent',
+  endpoint_agent: 'device agent',
   technician: 'technician',
   timeout: 'timeout',
 };
@@ -75,10 +75,10 @@ function durationInfo(s: Row): { real: boolean; text: string; why?: string } {
     return { real: false, text: 'Unknown', why: 'The session is still open.' };
   }
   const why: Record<string, string> = {
-    REPORTED: 'The start or end came from a technician’s report, not from the computer, so no duration was measured.',
+    REPORTED: 'The start or end came from a technician’s report, not from the device, so no duration was measured.',
     INFERRED: 'The end was inferred from a timeout because no end signal arrived, so no duration is claimed.',
     LEGACY: 'Recorded before connection tracking: its times are launch times, not connection times.',
-    UNKNOWN: 'No connection start and end were observed by the computer.',
+    UNKNOWN: 'No connection start and end were observed by the device.',
   };
   return { real: false, text: 'Unknown', why: why[quality] ?? why.UNKNOWN };
 }
@@ -125,7 +125,7 @@ export default function SessionsPage() {
     onSuccess: async (res, endpointId) => {
       const info = res.data?.data as { rustdeskId?: string; sessionId?: string | null } | undefined;
       if (!info?.rustdeskId) {
-        toast({ title: 'Computer not ready', description: 'This computer has not finished enrollment.', variant: 'destructive' });
+        toast({ title: 'Device not ready', description: 'This device has not finished enrollment.', variant: 'destructive' });
         return;
       }
       const url = endpointsApi.connectScriptUrl(endpointId);
@@ -171,7 +171,7 @@ export default function SessionsPage() {
           </TabsTrigger>
           <TabsTrigger value="history" className="gap-2">
             <Monitor className="h-3.5 w-3.5" />
-            Session History
+            Session history
           </TabsTrigger>
         </TabsList>
 
@@ -190,7 +190,7 @@ export default function SessionsPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b bg-muted/50">
-                        <th className="text-left px-4 py-2 font-medium text-xs">Endpoint / RustDesk ID</th>
+                        <th className="text-left px-4 py-2 font-medium text-xs">Device / RustDesk ID</th>
                         <th className="text-left px-4 py-2 font-medium text-xs">Contact</th>
                         <th className="text-left px-4 py-2 font-medium text-xs">Status</th>
                         <th className="text-left px-4 py-2 font-medium text-xs">Created</th>
@@ -375,7 +375,7 @@ export default function SessionsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-muted/50">
-                    <th className="text-left px-4 py-3 font-medium">Endpoint / Target</th>
+                    <th className="text-left px-4 py-3 font-medium">Device / target</th>
                     <th className="text-left px-4 py-3 font-medium">Started by</th>
                     <th className="text-left px-4 py-3 font-medium">Launched</th>
                     <th className="text-left px-4 py-3 font-medium">Duration</th>

@@ -165,10 +165,10 @@ export default function NewSchedulePage() {
     if (!task || !targets) return null;
     return { businessId: business, name: name.trim(), reason: why, task, targets, recurrence, offline, maxRunsPerOccurrence: maxRuns, ...(q.supersedes ? { supersedes: q.supersedes } : {}) };
   }, [business, recurrence, kind, versionId, args, timeout, entryId, operation, targetKind, ids, groupId, maxTargets, name, why, offline, maxRuns, q.supersedes]);
-  const problem = !business ? 'Choose a business.' : name.trim().length < 3 ? 'Give it a name.' : why.length < 3 ? 'Say why (shown to the approvers).'
+  const problem = !business ? 'Choose a customer.' : name.trim().length < 3 ? 'Give it a name.' : why.length < 3 ? 'Say why (shown to the approvers).'
     : kind === 'script' && !versionId ? 'Choose an approved script.' : kind === 'script' && readiness.data && !readiness.data.you.canRun ? 'This script is not on the approval signer\'s allowlist (or you cannot run it).'
     : kind === 'script' && argProblem ? argProblem : kind === 'software' && !entryId ? 'Choose a catalog package.'
-    : targetKind === 'computers' && !ids.length ? 'Choose at least one computer.' : targetKind === 'group' && !groupId ? 'Choose a device group.'
+    : targetKind === 'computers' && !ids.length ? 'Choose at least one device.' : targetKind === 'group' && !groupId ? 'Choose a device group.'
     : !recurrence ? 'Finish the schedule.' : null;
 
   const create = useMutation({
@@ -181,11 +181,11 @@ export default function NewSchedulePage() {
     onError: (e) => toast({ title: 'Not created', description: apiMessage(e, 'The schedule was refused.'), variant: 'destructive' }),
   });
 
-  if (!can(CAP.COMPUTERS_VIEW)) return <div className="p-6 text-sm text-muted-foreground">You need View computers to make a schedule.</div>;
+  if (!can(CAP.COMPUTERS_VIEW)) return <div className="p-6 text-sm text-muted-foreground">You need View devices to make a schedule.</div>;
   const shown = (eps.data ?? []).filter((e) => !filter.trim() || `${e.name} ${e.hostname ?? ''}`.toLowerCase().includes(filter.toLowerCase()));
   return (
     <div className="space-y-4 p-4 sm:p-6 max-w-4xl">
-      <PageHeader title={q.supersedes ? 'Revise a schedule' : 'New schedule'} description={direct ? 'What runs, where, when, and what happens to a computer that is offline. Direct mode is on for this business: it is active as soon as you save it.' : 'What runs, where, when, and what happens to a computer that is offline. Two approvers approve it once on the approval signer.'} />
+      <PageHeader title={q.supersedes ? 'Revise a schedule' : 'New schedule'} description={direct ? 'What runs, where, when, and what happens to a device that is offline. Direct mode is on for this customer: it is active as soon as you save it.' : 'What runs, where, when, and what happens to a device that is offline. Two approvers approve it once on the approval signer.'} />
       <p className="text-xs"><Link className="underline" href="/automation/schedules">All schedules</Link></p>
       {q.supersedes && prior.data && <p className="rounded-md border p-3 text-xs" data-testid="schedule-revision">This replaces <strong>{prior.data.name}</strong> once it is approved; until then the current one keeps running. A revision is approved again from the start.</p>}
       {prior.isError && <p className="text-xs text-destructive">Could not load the schedule this revises.</p>}
@@ -195,7 +195,7 @@ export default function NewSchedulePage() {
         <CardContent className="space-y-3">
           {isPlatformAdmin && (
             <div className="space-y-1">
-              <Label htmlFor="new-biz" className="text-xs">Business</Label>
+              <Label htmlFor="new-biz" className="text-xs">Customer</Label>
               <select id="new-biz" className={selectClass} value={business} disabled={!!q.supersedes} onChange={(e) => { setBusiness(e.target.value); setIds([]); setGroupId(''); }}>
                 <option value="">Choose…</option>
                 {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
@@ -256,12 +256,12 @@ export default function NewSchedulePage() {
                   <option value="">Choose…</option>
                   {(entries.data ?? []).map((e) => <option key={e.id} value={e.id}>{e.name} {e.version} ({e.packageId})</option>)}
                 </select>
-                {entries.data && entries.data.length === 0 && <p className="text-xs text-muted-foreground">The catalog has nothing for this business. <Link className="underline" href="/automation/software">Add software</Link> first.</p>}
+                {entries.data && entries.data.length === 0 && <p className="text-xs text-muted-foreground">The catalog has nothing for this customer. <Link className="underline" href="/automation/software">Add software</Link> first.</p>}
               </div>
               <div className="space-y-1">
                 <Label htmlFor="new-op" className="text-xs">Do</Label>
                 <select id="new-op" className={selectClass} value={operation} onChange={(e) => setOperation(e.target.value as 'install' | 'uninstall')}>
-                  <option value="install">Install (the agent skips a computer that already has it)</option>
+                  <option value="install">Install (the agent skips a device that already has it)</option>
                   <option value="uninstall">Uninstall</option>
                 </select>
               </div>
@@ -274,17 +274,17 @@ export default function NewSchedulePage() {
         <CardHeader><CardTitle className="text-base">Where</CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <div className="flex gap-4 text-xs">
-            <label className="flex items-center gap-1.5"><input type="radio" name="target-kind" checked={targetKind === 'computers'} onChange={() => setTargetKind('computers')} />Named computers</label>
+            <label className="flex items-center gap-1.5"><input type="radio" name="target-kind" checked={targetKind === 'computers'} onChange={() => setTargetKind('computers')} />Named devices</label>
             <label className="flex items-center gap-1.5"><input type="radio" name="target-kind" checked={targetKind === 'group'} onChange={() => setTargetKind('group')} data-testid="target-group" />A device group</label>
           </div>
           {targetKind === 'computers' ? (
             <div className="space-y-1">
-              <Label className="text-xs">Computers ({ids.length} of at most {MAX_TARGETS})</Label>
-              {eps.isLoading ? <p className="text-xs text-muted-foreground">Loading computers…</p> : (
+              <Label className="text-xs">Devices ({ids.length} of at most {MAX_TARGETS})</Label>
+              {eps.isLoading ? <p className="text-xs text-muted-foreground">Loading devices…</p> : (
                 <>
-                  <Input placeholder="Filter computers…" value={filter} onChange={(x) => setFilter(x.target.value)} />
+                  <Input placeholder="Filter devices…" value={filter} onChange={(x) => setFilter(x.target.value)} />
                   <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-1" data-testid="schedule-computers">
-                    {shown.length === 0 && <p className="p-2 text-xs text-muted-foreground">No computers you can reach.</p>}
+                    {shown.length === 0 && <p className="p-2 text-xs text-muted-foreground">No devices you can reach.</p>}
                     {shown.map((e) => {
                       const on = ids.includes(e.id);
                       return (
@@ -308,11 +308,11 @@ export default function NewSchedulePage() {
                 </select>
               </div>
               <div className="space-y-1">
-                <Label htmlFor="new-max" className="text-xs">At most this many computers per run</Label>
+                <Label htmlFor="new-max" className="text-xs">At most this many devices per run</Label>
                 <Input id="new-max" type="number" min={1} max={MAX_TARGETS} value={maxTargets} onChange={(e) => setMaxTargets(Math.max(1, Math.min(MAX_TARGETS, Number(e.target.value) || 1)))} />
               </div>
               <p className="text-xs text-muted-foreground sm:col-span-2">
-                The group&apos;s members are worked out at every run, as you would see them then. The approval signer cannot see the group: it holds each run to this business and this cap, and the approvers are told so.
+                The group&apos;s members are worked out at every run, as you would see them then. The approval signer cannot see the group: it holds each run to this customer and this cap, and the approvers are told so.
               </p>
             </div>
           )}
@@ -336,7 +336,7 @@ export default function NewSchedulePage() {
               <select id="new-runs" className={selectClass} value={maxRuns} onChange={(e) => setMaxRuns(Number(e.target.value))}>
                 {Array.from({ length: MAX_RUNS_PER_OCCURRENCE }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}</option>)}
               </select>
-              <p className="text-xs text-muted-foreground">More than one only helps when a plan closes before the window does (skip if offline, or a short expiry): a later plan names only computers the earlier ones did not. Runs never overlap.</p>
+              <p className="text-xs text-muted-foreground">More than one only helps when a plan closes before the window does (skip if offline, or a short expiry): a later plan names only devices the earlier ones did not. Runs never overlap.</p>
             </div>
             <p className="text-xs text-muted-foreground self-end" data-testid="schedule-no-expiry">The schedule does not expire: it runs until you pause or revoke it.</p>
           </div>
@@ -356,7 +356,7 @@ export default function NewSchedulePage() {
             {create.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}{direct ? 'Create policy' : 'Propose the schedule'}{askCreate ? ' (confirm it is you)' : ''}
           </Button>
           {direct
-            ? <p className="text-xs text-muted-foreground" data-testid="schedule-direct-note">Direct mode is on for this business (set by the approval signer&apos;s operator): the schedule is active as soon as you save it.</p>
+            ? <p className="text-xs text-muted-foreground" data-testid="schedule-direct-note">Direct mode is on for this customer (set by the approval signer&apos;s operator): the schedule is active as soon as you save it.</p>
             : <p className="text-xs text-muted-foreground">Nothing runs until it is approved on the approval signer. In direct mode, which only the signer&apos;s operator can turn on, it is active as soon as you create it.</p>}
         </CardContent>
       </Card>

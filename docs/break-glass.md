@@ -18,8 +18,8 @@ A break-glass account is a Platform Admin that can always sign in with its own p
 Each sign-in by a break-glass account, by password with its TOTP code or by passkey:
 
 1. writes a sealed `BREAK_GLASS_LOGIN` audit entry **before** the session is issued — if the entry cannot be written, there is no session;
-2. raises a security alert (`break_glass_login`) to the security alert destinations (*Settings → Security → Technician access*);
-3. emails every Platform Admin whose address is a confirmed mail recipient (*Settings → Email*).
+2. raises a security alert (`break_glass_login`) to the security alert destinations (*Security → Technician access*);
+3. emails every Platform Admin whose address is a confirmed mail recipient (*Administration → Email*).
 
 A break-glass sign-in that nobody expected is an incident: see *What to do* below.
 
@@ -27,7 +27,7 @@ A break-glass sign-in that nobody expected is an incident: see *What to do* belo
 
 1. Choose two people (or two sealed envelopes held by two people). Make each a Platform Admin with a long unique password.
 2. Sign in as each one and enrol an authenticator and a passkey (*My Account*). A hardware security key kept with the envelope is the usual choice.
-3. As another Platform Admin, **Settings → Single sign-on → Break-glass accounts → Make break-glass**, and confirm it is you.
+3. As another Platform Admin, **Security → Single sign-on → Break-glass accounts → Make break-glass**, and confirm it is you.
 4. Check *Access control → Platform Admins* shows the **Break-glass** badge on both.
 5. Sign in once with each, on purpose, and check the alert and the email arrive. Note the date.
 
@@ -36,7 +36,7 @@ Do not use these accounts for daily work. Do not link them to a provider.
 ## Using one
 
 1. Sign in at `/login` with the email and password, then the authenticator code (or use the passkey).
-2. Do only what the emergency needs — usually lowering the SSO mode (*Settings → Single sign-on → Who must use single sign-on*) or disabling a provider.
+2. Do only what the emergency needs — usually lowering the SSO mode (*Security → Single sign-on → Who must use single sign-on*) or disabling a provider.
 3. Sign out. Tell the other Platform Admins what you did and why.
 
 If the console itself is unreachable, use the recovery CLI on the server instead (see [sign-in.md](sign-in.md#recovery)): `--sso-mode optional <business id | staff>`, `--disable-sso`.

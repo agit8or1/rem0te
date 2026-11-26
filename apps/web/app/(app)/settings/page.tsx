@@ -211,7 +211,7 @@ export default function SettingsPage() {
           <TabsTrigger value="quick-connect">Quick Connect</TabsTrigger>
           <TabsTrigger value="rustdesk">RustDesk</TabsTrigger>
           <TabsTrigger value="branding">Branding</TabsTrigger>
-          <TabsTrigger value="network">Network / Ports</TabsTrigger>
+          <TabsTrigger value="network">Network / ports</TabsTrigger>
           {/* F-13 (0.87): "Access Control" was a tab that left the page. It is Security → Access control in the menu now. */}
         </TabsList>
 
@@ -225,7 +225,7 @@ export default function SettingsPage() {
             <CardContent>
               <form onSubmit={(e: FormEvent) => { e.preventDefault(); updateNameMutation.mutate(); }} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="tenant-name">Platform Name</Label>
+                  <Label htmlFor="tenant-name">Platform name</Label>
                   <Input
                     id="tenant-name"
                     value={name}
@@ -241,7 +241,7 @@ export default function SettingsPage() {
           </Card>
 
           <Card>
-            <CardHeader><CardTitle className="text-sm">Download Page</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-sm">Download page</CardTitle></CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
                 The public download page (<code className="text-xs bg-muted px-1 py-0.5 rounded">/download</code>) allows
@@ -291,7 +291,7 @@ export default function SettingsPage() {
               </div>
               <p className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
                 This is the master switch. With it off, Quick Connect is unavailable everywhere,
-                whatever individual businesses or users are set to. With it on, each business can
+                whatever individual customers or users are set to. With it on, each customer can
                 still be enabled or disabled separately, and each Business User additionally needs
                 the <strong>Use Quick Connect</strong> permission.
               </p>
@@ -354,8 +354,8 @@ export default function SettingsPage() {
             <CardHeader><CardTitle className="text-sm">Monitoring</CardTitle></CardHeader>
             <CardContent className="flex flex-wrap items-center justify-between gap-3">
               <p className="max-w-xl text-sm text-muted-foreground">
-                Monitors (offline, disk, CPU, memory, services, event log, pending restart), inherited global → business →
-                site → computer; maintenance windows; and who is notified, with escalation and ClientSt0r tickets.
+                Monitors (offline, disk, CPU, memory, services, event log, pending restart), inherited global → customer →
+                site → device; maintenance windows; and who is notified, with escalation and ClientSt0r tickets.
               </p>
               <Button variant="outline" onClick={() => router.push('/settings/monitoring')}>
                 <Siren className="mr-2 h-4 w-4" />Open Monitoring
@@ -367,7 +367,7 @@ export default function SettingsPage() {
             <CardHeader><CardTitle className="text-sm">API keys</CardTitle></CardHeader>
             <CardContent className="flex flex-wrap items-center justify-between gap-3">
               <p className="max-w-xl text-sm text-muted-foreground">
-                Keys for the public API (/api/v1/pub/v1). Each belongs to one business, carries only the scopes you pick,
+                Keys for the public API (/api/v1/pub/v1). Each belongs to one customer, carries only the scopes you pick,
                 and is shown once when it is created.
               </p>
               <Button variant="outline" onClick={() => router.push('/settings/api-keys')}>
@@ -386,26 +386,26 @@ export default function SettingsPage() {
             These pages are also in the menu&apos;s <strong className="font-medium text-foreground">Security</strong> group, with containment, the audit log and access control.
           </p>
           <Card>
-            <CardHeader><CardTitle className="text-sm">Security Features</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-sm">Security features</CardTitle></CardHeader>
             <CardContent className="flex flex-wrap items-center justify-between gap-3">
               <p className="max-w-xl text-sm text-muted-foreground">
                 Read-only: every safeguard, the layer that enforces it, its default, what it needs, and — where the
                 server can observe it — the effective state. Anything it cannot observe reads Unknown.
               </p>
               <Button variant="outline" onClick={() => router.push('/settings/security/features')}>
-                <ShieldCheck className="mr-2 h-4 w-4" />Open Security Features
+                <ShieldCheck className="mr-2 h-4 w-4" />Open Security features
               </Button>
             </CardContent>
           </Card>
           <Card>
-            <CardHeader><CardTitle className="text-sm">Technician Access</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-sm">Technician access</CardTitle></CardHeader>
             <CardContent className="flex flex-wrap items-center justify-between gap-3">
               <p className="max-w-xl text-sm text-muted-foreground">
                 L1 / L2 / L3 presets, the platform access policy, the effective-access inspector, and the independent-review
                 queue for changes that widen trust.
               </p>
               <Button variant="outline" onClick={() => router.push('/settings/security/technician-access')}>
-                <ShieldCheck className="mr-2 h-4 w-4" />Open Technician Access
+                <ShieldCheck className="mr-2 h-4 w-4" />Open Technician access
               </Button>
             </CardContent>
           </Card>
@@ -413,7 +413,7 @@ export default function SettingsPage() {
             <CardHeader><CardTitle className="text-sm">Containment</CardTitle></CardHeader>
             <CardContent className="flex flex-wrap items-center justify-between gap-3">
               <p className="max-w-xl text-sm text-muted-foreground">
-                Stop approved actions, remote connections, agent updates and ClientSt0r jobs — for every business or one —
+                Stop approved actions, remote connections, agent updates and ClientSt0r jobs — for every customer or one —
                 while an incident is investigated. Also shows whether the audit log is intact.
               </p>
               <Button variant="outline" onClick={() => router.push('/settings/security/containment')}>
@@ -422,7 +422,7 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
           <Card>
-            <CardHeader><CardTitle className="text-sm">Update Signing</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-sm">Update signing</CardTitle></CardHeader>
             <CardContent className="flex flex-wrap items-center justify-between gap-3">
               <p className="max-w-xl text-sm text-muted-foreground">
                 The offline-signed update repository this portal mirrors, which agents verify what they install, and
@@ -430,17 +430,17 @@ export default function SettingsPage() {
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" onClick={() => router.push('/settings/security/update-signing')}>
-                  <ShieldCheck className="mr-2 h-4 w-4" />Open Update Signing
+                  <ShieldCheck className="mr-2 h-4 w-4" />Open Update signing
                 </Button>
                 {/* 0.37: the whole move to the signed agent, step by step. */}
                 <Button variant="outline" onClick={() => router.push('/endpoints/full-agent')} data-testid="settings-full-agent">
-                  Full agent: set up and move computers
+                  Full agent: set up and move devices
                 </Button>
               </div>
             </CardContent>
           </Card>
           <Card>
-            <CardHeader><CardTitle className="text-sm">Security Policy</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-sm">Security policy</CardTitle></CardHeader>
             <CardContent>
               <form
                 onSubmit={(e: FormEvent) => { e.preventDefault(); updateSettingsMutation.mutate({}); }}
@@ -457,7 +457,7 @@ export default function SettingsPage() {
                   <Label htmlFor="require-mfa">Require MFA for all users</Label>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="session-timeout">Session Timeout (minutes)</Label>
+                  <Label htmlFor="session-timeout">Session timeout (minutes)</Label>
                   <Input
                     id="session-timeout"
                     type="number"
@@ -468,7 +468,7 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="password-min">Minimum Password Length</Label>
+                  <Label htmlFor="password-min">Minimum password length</Label>
                   <Input
                     id="password-min"
                     type="number"
@@ -479,7 +479,7 @@ export default function SettingsPage() {
                   />
                 </div>
                 <Button type="submit" disabled={updateSettingsMutation.isPending}>
-                  {updateSettingsMutation.isPending ? 'Saving…' : 'Save Security Settings'}
+                  {updateSettingsMutation.isPending ? 'Saving…' : 'Save security settings'}
                 </Button>
               </form>
             </CardContent>
@@ -495,7 +495,7 @@ export default function SettingsPage() {
                 className="space-y-4"
               >
                 <div className="space-y-2">
-                  <Label htmlFor="relay-host">Relay Host</Label>
+                  <Label htmlFor="relay-host">Relay host</Label>
                   <Input
                     id="relay-host"
                     placeholder="relay.example.com or IP address"
@@ -507,7 +507,7 @@ export default function SettingsPage() {
                   </p>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="public-key">Public Key</Label>
+                  <Label htmlFor="public-key">Public key</Label>
                   <Input
                     id="public-key"
                     placeholder="Base64-encoded public key from /var/lib/rustdesk-server/id_ed25519.pub"
@@ -516,7 +516,7 @@ export default function SettingsPage() {
                   />
                 </div>
                 <Button type="submit" disabled={updateSettingsMutation.isPending}>
-                  {updateSettingsMutation.isPending ? 'Saving…' : 'Save RustDesk Settings'}
+                  {updateSettingsMutation.isPending ? 'Saving…' : 'Save RustDesk settings'}
                 </Button>
               </form>
             </CardContent>
@@ -526,14 +526,14 @@ export default function SettingsPage() {
         <TabsContent value="branding" className="mt-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <Card>
-              <CardHeader><CardTitle className="text-sm">Brand Settings</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-sm">Brand settings</CardTitle></CardHeader>
               <CardContent>
                 <form
                   onSubmit={(e: FormEvent) => { e.preventDefault(); updateBrandingMutation.mutate(); }}
                   className="space-y-4"
                 >
                   <div className="space-y-2">
-                    <Label htmlFor="portal-title">Portal Title</Label>
+                    <Label htmlFor="portal-title">Portal title</Label>
                     <Input
                       id="portal-title"
                       value={branding.portalTitle}
@@ -583,7 +583,7 @@ export default function SettingsPage() {
                     <p className="text-xs text-muted-foreground">JPEG, PNG, GIF, WebP or SVG — max 2 MB. Will be resized as needed.</p>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="accent-color">Accent Color</Label>
+                    <Label htmlFor="accent-color">Accent color</Label>
                     <div className="flex gap-2">
                       <input
                         type="color"
@@ -600,7 +600,7 @@ export default function SettingsPage() {
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="support-email">Support Email</Label>
+                    <Label htmlFor="support-email">Support email</Label>
                     <Input
                       id="support-email"
                       type="email"
@@ -610,7 +610,7 @@ export default function SettingsPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="support-phone">Support Phone</Label>
+                    <Label htmlFor="support-phone">Support phone</Label>
                     <Input
                       id="support-phone"
                       value={branding.supportPhone}
@@ -619,7 +619,7 @@ export default function SettingsPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="footer-text">Footer Text</Label>
+                    <Label htmlFor="footer-text">Footer text</Label>
                     <Input
                       id="footer-text"
                       value={branding.footerText}
@@ -628,7 +628,7 @@ export default function SettingsPage() {
                     />
                   </div>
                   <Button type="submit" disabled={updateBrandingMutation.isPending}>
-                    {updateBrandingMutation.isPending ? 'Saving…' : 'Save Branding'}
+                    {updateBrandingMutation.isPending ? 'Saving…' : 'Save branding'}
                   </Button>
                 </form>
               </CardContent>
@@ -651,7 +651,7 @@ export default function SettingsPage() {
                       />
                     )}
                     <span className="text-white font-semibold text-sm">
-                      {branding.portalTitle || 'Support Portal'}
+                      {branding.portalTitle || 'Support portal'}
                     </span>
                   </div>
                   <div className="p-4 bg-background">
@@ -676,7 +676,7 @@ export default function SettingsPage() {
         <TabsContent value="network" className="mt-4 space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm">Required Open Ports</CardTitle>
+              <CardTitle className="text-sm">Required open ports</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-sm text-muted-foreground">

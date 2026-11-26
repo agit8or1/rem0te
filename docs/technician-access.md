@@ -4,7 +4,7 @@
 
 Technician assignments ([technicians.md](technicians.md)) say **where** someone may work. Presets say **what** they may do there, as three shipped tiers an MSP can clone and tighten. Around them sit the safeguards that apply to everyone, Platform Admins included: protected device classes, fleet-abuse limits, and independent review of anything that widens trust.
 
-Everything here lives at **Settings → Security → Technician Access**. The Security Features catalog (**Admin → Security → Security features**) lists every safeguard with its scope, whether this build actually enforces it, and the test that proves it.
+Everything here lives at **Security → Technician access**. The Security Features catalog (**Security → Server security → Security features**) lists every safeguard with its scope, whether this build actually enforces it, and the test that proves it.
 
 ## The three presets
 
@@ -15,7 +15,7 @@ Everything here lives at **Settings → Security → Technician Access**. The Se
 | Event logs (bounded) | — | ✓ | ✓ |
 | Diagnostics | — | basic | advanced |
 | Standard workstations only | yes | yes | no |
-| Attended view-only | off (an admin may enable it) | allowed where the endpoint enforces it | allowed where the endpoint enforces it |
+| Attended view-only | off (an admin may enable it) | allowed where the device enforces it | allowed where the device enforces it |
 | Interactive control | — | temporary grant only | temporary grant only |
 | Elevation | — | — | may request (*Unavailable*: no privileged helper) |
 | Staged patches | — | — | may request (*Unavailable*: not implemented) |
@@ -24,13 +24,13 @@ Everything here lives at **Settings → Security → Technician Access**. The Se
 
 **Off for every tier, and not configurable:** unattended access, clipboard, file transfer, credential reveal, enrollment, scripts, fleet execution, fix approval. Every control in the Settings screen shows one of four states: **Off**, **Allowed in scope**, **Request time-limited**, or **Locked** (mandatory) / **Unavailable** (this build cannot enforce it, with the reason).
 
-A tier grants **no** approval, execution, enrollment, administration or cross-business access. An L3 can be separately designated an **independent reviewer** (the `approvals:review` platform permission), which is a different thing from the tier and is itself an independently reviewed change.
+A tier grants **no** approval, execution, enrollment, administration or cross-customer access. An L3 can be separately designated an **independent reviewer** (the `approvals:review` platform permission), which is a different thing from the tier and is itself an independently reviewed change.
 
 ### How a preset becomes capabilities
 
 A preset-backed assignment's capabilities are **derived live** from the preset on every request: `computers:view`, `support:requests`, and `computers:event_logs` for L2 and L3. That is all. No preset can produce `computers:connect`, `computers:edit`, `computers:add`, `computers:remove`, `quick_connect` or `users:manage`. `scripts/check-security-invariants.mjs` § 11 fails CI if that changes. Nothing is ever inferred from `computers:connect` or `computers:edit`.
 
-**Capability and computer scope come from the same grant.** A technician in a group with L2 on one computer and a direct L1 on the whole business gets event logs on that one computer only. Before 0.23 the two grants were unioned: capabilities from one, scope from the other.
+**Capability and device scope come from the same grant.** A technician in a group with L2 on one device and a direct L1 on the whole customer gets event logs on that one device only. Before 0.23 the two grants were unioned: capabilities from one, scope from the other.
 
 ### Defaults, migration and upgrade
 
@@ -46,35 +46,35 @@ Every way of starting a session goes through one decision (`AccessPolicyService.
 1. **Paused identity** gets nothing.
 2. **Protected device class** (below): denied for everyone.
 3. **Unattended** mode: refused while the policy says off.
-4. Business members and Platform Admins: the pre-0.23 decision, unchanged. **The requested mode is not applied to them**: a view-only or elevated request is approved with the permanent password and RustDesk opens with full control. Since 0.25.0 the View only button is offered only in a technician context, so it no longer implies otherwise.
-5. Custom technician assignments with `computers:connect` on this computer: unchanged.
+4. Customer members and Platform Admins: the pre-0.23 decision, unchanged. **The requested mode is not applied to them**: a view-only or elevated request is approved with the permanent password and RustDesk opens with full control. Since 0.25.0 the View only button is offered only in a technician context, so it no longer implies otherwise.
+5. Custom technician assignments with `computers:connect` on this device: unchanged.
 6. **Preset-backed** technicians:
-   - **view-only** needs a preset that allows it on this device class, *and* an endpoint that reports it can enforce view-only and (when consent is required) attended consent;
-   - **control** needs an *activated* temporary grant for this computer, and consent enforcement;
+   - **view-only** needs a preset that allows it on this device class, *and* a device that reports it can enforce view-only and (when consent is required) attended consent;
+   - **control** needs an *activated* temporary grant for this device, and consent enforcement;
    - **elevation** is unavailable.
 
-**If the endpoint cannot enforce it, the launch is blocked with the reason.** It is never silently opened with more. And **a preset-backed launch never receives the permanent password**: it would outlive the grant and allow a direct reconnect the portal never sees.
+**If the device cannot enforce it, the launch is blocked with the reason.** It is never silently opened with more. And **a preset-backed launch never receives the permanent password**: it would outlive the grant and allow a direct reconnect the portal never sees.
 
 The launch mode is recorded on the grant and the launcher token, and redemption re-evaluates **that mode**, never a wider one. A demotion, revocation, pause or expiry between minting and redemption ends it.
 
-### What the endpoint can enforce today
+### What the device can enforce today
 
-RustDesk's view-only, clipboard and file-transfer switches are toggles on the **technician's** client. The endpoint options that exist apply machine-wide, and the shipped installer sets `verification-method=use-permanent-password`, so the endpoint never asks its user to accept. **No shipped agent reports `Endpoint.sessionEnforcement`.** So in practice:
+RustDesk's view-only, clipboard and file-transfer switches are toggles on the **technician's** client. The device options that exist apply machine-wide, and the shipped installer sets `verification-method=use-permanent-password`, so the device never asks its user to accept. **No shipped agent reports `Endpoint.sessionEnforcement`.** So in practice:
 
 - every view-only and every consent-gated launch is **blocked** with `ENDPOINT_CANNOT_ENFORCE_VIEW_ONLY` / `ENDPOINT_CANNOT_ENFORCE_CONSENT`;
 - clipboard and file transfer are **Unavailable**;
 - the session length is shown at launch but **nothing ends the session**;
-- the endpoint agent can observe that an incoming RustDesk connection ended (its process count reaches zero), but nothing on the endpoint can **terminate** a session.
+- the device agent can observe that an incoming RustDesk connection ended (its process count reaches zero), but nothing on the device can **terminate** a session.
 
-For everyone who is not a preset technician, the same configuration means the computer accepts its permanent password with nobody asked, so an ordinary Connect is unattended in effect. See [security-model.md](security-model.md#what-each-session-mode-really-does).
+For everyone who is not a preset technician, the same configuration means the device accepts its permanent password with nobody asked, so an ordinary Connect is unattended in effect. See [security-model.md](security-model.md#what-each-session-mode-really-does).
 
-The test suite simulates an enforcing endpoint by writing `sessionEnforcement` directly. **None of these restrictions has been live-verified against RustDesk.**
+The test suite simulates an enforcing device by writing `sessionEnforcement` directly. **None of these restrictions has been live-verified against RustDesk.**
 
 ## Temporary access
 
 Three steps, held by different people:
 
-1. **Request**: the technician, for one computer and one mode (`CONTROL`, `ELEVATION`, `PROTECTED_EXCEPTION`), with a reason and a duration capped at the policy's maximum session.
+1. **Request**: the technician, for one device and one mode (`CONTROL`, `ELEVATION`, `PROTECTED_EXCEPTION`), with a reason and a duration capped at the policy's maximum session.
 2. **Decide**: an independent reviewer, never the requester, with fresh authentication.
 3. **Activate**: the requester, with fresh authentication. For a protected-device exception that must be a **passkey**; password and authenticator codes are refused. Activation starts the clock and re-checks eligibility, so a demotion after approval ends it here.
 
@@ -82,17 +82,17 @@ An approved grant that is never activated does nothing. The requester, a reviewe
 
 ## Protected device classes
 
-Domain controllers, hypervisors, backup servers and the RMM host are **always** protected; an admin can add `SERVER`. Interactive access to a protected computer is denied to everyone, **Platform Admin included**, unless all of these hold:
+Domain controllers, hypervisors, backup servers and the RMM host are **always** protected; an admin can add `SERVER`. Interactive access to a protected device is denied to everyone, **Platform Admin included**, unless all of these hold:
 
 - an activated `PROTECTED_EXCEPTION` from someone else's approval;
 - the launch comes through the launcher;
 - it comes from a **managed admin workstation**.
 
-Customer and explicit denies win, and neither ClientSt0r nor a portal shortcut can authorize anything on an endpoint.
+Customer and explicit denies win, and neither ClientSt0r nor a portal shortcut can authorize anything on a device.
 
-> **Gap:** nothing in this build attests a managed admin workstation. The launcher carries no device key, so no launch can prove where it came from. The requirement therefore cannot be met, and **protected computers are unreachable interactively for everyone.** That is deliberate fail-closed behaviour until device attestation exists. Exceptions can still be requested, approved and activated, and all of it is audited.
+> **Gap:** nothing in this build attests a managed admin workstation. The launcher carries no device key, so no launch can prove where it came from. The requirement therefore cannot be met, and **protected devices are unreachable interactively for everyone.** That is deliberate fail-closed behaviour until device attestation exists. Exceptions can still be requested, approved and activated, and all of it is audited.
 
-Re-classing a protected computer as something unprotected is a reviewed trust change. Marking one protected applies at once.
+Re-classing a protected device as something unprotected is a reviewed trust change. Marking one protected applies at once.
 
 ## Fleet-abuse limits
 
@@ -104,17 +104,17 @@ Every unit of privileged work is admitted by `AbuseGuardService`, whatever the e
 | `WRITE` | credential set / rotate / reveal, agent reinstall, accepting a device secret |
 | `EVIDENCE` | inventory refresh, event-log reads, integration jobs (counted for the delegated technician **and** for the peer) |
 
-Admission takes a per-identity Postgres advisory lock and counts **distinct computers**, **distinct businesses**, launches and writes inside the window (60 min by default). Forty concurrent single-device jobs split across five entry points serialise on that lock, so exactly the cap gets in. That is tested with a 5-device cap.
+Admission takes a per-identity Postgres advisory lock and counts **distinct devices**, **distinct customers**, launches and writes inside the window (60 min by default). Forty concurrent single-device jobs split across five entry points serialise on that lock, so exactly the cap gets in. That is tested with a 5-device cap.
 
 Default limits per window:
 
-| Row | Devices | Businesses | Launches | Writes |
+| Row | Devices | Customers | Launches | Writes |
 |---|---|---|---|---|
 | L1 | 10 | 3 | 5 | 0 |
 | L2 | 15 | 3 | 10 | 20 |
 | L3 | 25 | 5 | 20 | 40 |
 | custom (pre-0.23 assignment) | 25 | 5 | 25 | 50 |
-| member (own business) | 40 | 1 | 40 | 80 |
+| member (own customer) | 40 | 1 | 40 | 80 |
 | Platform Admin | 60 | 20 | 60 | 120 |
 | integration peer | 100 | 50 | 0 | 0 |
 
@@ -123,8 +123,8 @@ L1's five launches are headroom for an admin who enables attended view-only, not
 **On a trip** the identity is **paused**: all new privileged work is refused with `IDENTITY_PAUSED` until **someone else** clears it. An alert is recorded and sent to every configured destination.
 
 - **Pause and alert suppression are separate.** Suppressing an alert (24 h max, never about yourself) silences delivery only; it never lifts a pause.
-- **Maintenance exceptions** let named computers past the cap for named kinds of work, until an expiry (7 days max). They need approval from someone who is neither the requester nor the beneficiary.
-- Commands are **re-checked at dispatch**. A command queued by someone who has since been demoted, revoked or paused is not handed to the endpoint; it is marked `FAILED` with the reason.
+- **Maintenance exceptions** let named devices past the cap for named kinds of work, until an expiry (7 days max). They need approval from someone who is neither the requester nor the beneficiary.
+- Commands are **re-checked at dispatch**. A command queued by someone who has since been demoted, revoked or paused is not handed to the device; it is marked `FAILED` with the reason.
 
 ## Independent review of trust
 
@@ -134,13 +134,13 @@ These changes are **not applied by the person who asks**. They become a pending 
 - designating an **independent reviewer**;
 - raising a threshold, shortening the window, allowing unattended / clipboard / file transfer, loosening consent or trusted workstations;
 - removing `SERVER` from the protected classes (the four mandatory ones cannot be removed at all);
-- re-classing a protected computer as unprotected;
+- re-classing a protected device as unprotected;
 - marking a workstation as a managed admin workstation;
 - widening a preset.
 
 The **previous** contacts are told when a change is requested and when it is decided. If the change replaces them, they are exactly who must hear about it. Before/after values are recorded. Webhook URLs are treated as secrets: shown and recorded as label, origin and a ref only, and an edited policy refers to an existing destination by its ref.
 
-Tightening always applies at once. A **Business Owner** can tighten their own business (consent, unattended, clipboard, file transfer, extra protected classes, shorter sessions), never loosen it: the effective value is always the stricter of the platform and the business.
+Tightening always applies at once. A **Business Owner** can tighten their own customer (consent, unattended, clipboard, file transfer, extra protected classes, shorter sessions), never loosen it: the effective value is always the stricter of the platform and the customer.
 
 With a single Platform Admin and no reviewer, nothing that widens trust can be approved. That is intended: appoint a second person first.
 
@@ -150,7 +150,7 @@ Every mutation under `/security-controls` needs a fresh re-authentication (its c
 
 ## Effective access inspector
 
-**Settings → Security → Technician Access → Inspect** answers *technician + business + computer + action* with the decision, the reasons, and the grants it came from. It rebuilds the person's live actor exactly as a request would and asks the same questions the enforcement points ask. It changes nothing.
+**Security → Technician access → Inspect** answers *technician + customer + device + action* with the decision, the reasons, and the grants it came from. It rebuilds the person's live actor exactly as a request would and asks the same questions the enforcement points ask. It changes nothing.
 
 ## Not built (shown as Unavailable)
 
@@ -165,7 +165,7 @@ Every mutation under `/security-controls` needs a fresh re-authentication (its c
 |---|---|
 | Preset grants and denials, launch-policy branches, widening, tighten-only, redaction, pairwise grants | `apps/api/scripts/unit-presets.mjs` (CI) |
 | Static invariants (no connect from a preset, pairwise reach, launch policy wired in, advisory lock, no self-review, suppression never clears a pause) | `scripts/check-security-invariants.mjs` § 11 (CI) |
-| Behaviour against a running API: every tier, same hostname in two businesses, conflicting groups, alternate membership, API keys, demotion mid-job, trust review, 40 concurrent jobs, stolen-session drill | `apps/api/scripts/e2e-presets.mjs` (scratch database only) |
+| Behaviour against a running API: every tier, same hostname in two customers, conflicting groups, alternate membership, API keys, demotion mid-job, trust review, 40 concurrent jobs, stolen-session drill | `apps/api/scripts/e2e-presets.mjs` (scratch database only) |
 
 ## API
 

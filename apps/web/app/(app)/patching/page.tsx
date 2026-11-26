@@ -74,16 +74,16 @@ export default function PatchingPage() {
   return (
     <div className="p-4 md:p-6">
       <PageHeader title="Patching" description={direct
-        ? `Windows updates for the computers you choose, all installing together in the window — or one test computer first, if you tick that. Direct mode is on: what you create runs ${askDirect ? 'once you confirm it is you' : 'as soon as you create it'}, with no approval step.`
-        : `Windows updates for the computers you choose, all installing together in the window — or one test computer first, if you tick that. Each plan is approved on the approval signer: by two people on its roster, or at once ${askDirect ? 'after you confirm it is you' : 'when it is requested'} in direct mode.`}>
+        ? `Windows updates for the devices you choose, all installing together in the window — or one test device first, if you tick that. Direct mode is on: what you create runs ${askDirect ? 'once you confirm it is you' : 'as soon as you create it'}, with no approval step.`
+        : `Windows updates for the devices you choose, all installing together in the window — or one test device first, if you tick that. Each plan is approved on the approval signer: by two people on its roster, or at once ${askDirect ? 'after you confirm it is you' : 'when it is requested'} in direct mode.`}>
         {businessId && !creating && <Button size="sm" onClick={() => setCreating(true)}><Plus className="h-4 w-4 mr-1" />New deployment</Button>}
       </PageHeader>
 
       {isPlatformAdmin && (
         <div className="mb-4 max-w-sm">
-          <Label className="text-xs">Business</Label>
+          <Label className="text-xs">Customer</Label>
           <select className={selectClass} value={businessId} onChange={(e) => { setPicked(e.target.value); setCreating(false); }}>
-            <option value="">Choose a business…</option>
+            <option value="">Choose a customer…</option>
             {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </div>
@@ -100,7 +100,7 @@ export default function PatchingPage() {
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-sm">Deployments</CardTitle></CardHeader>
         <CardContent className="space-y-2 text-sm">
-          {!businessId ? <p className="text-muted-foreground">Choose a business.</p>
+          {!businessId ? <p className="text-muted-foreground">Choose a customer.</p>
             : isLoading ? <p className="text-muted-foreground">Loading…</p>
             : rows.length === 0 ? <p className="text-muted-foreground">No deployments yet.</p>
             : rows.map((d) => (
@@ -108,8 +108,8 @@ export default function PatchingPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <strong>{d.name}</strong>
                   <Badge variant={DEPLOYMENT_STATUS[d.status] ?? 'outline'}>{d.status.toLowerCase()}</Badge>
-                  {d.origin !== 'DEPLOYMENT' && <Badge variant="outline">{d.origin === 'POLICY' ? 'from a policy' : 'one computer'}</Badge>}
-                  <span className="text-xs text-muted-foreground">{d.updates} update{d.updates === 1 ? '' : 's'} · {d.staging === 'none' ? `${d.rings.reduce((a, b) => a + b, 0)} computer(s), all at once` : `rings of ${d.rings.join(', ')}`} · {formatDate(d.createdAt)}</span>
+                  {d.origin !== 'DEPLOYMENT' && <Badge variant="outline">{d.origin === 'POLICY' ? 'from a policy' : 'one device'}</Badge>}
+                  <span className="text-xs text-muted-foreground">{d.updates} update{d.updates === 1 ? '' : 's'} · {d.staging === 'none' ? `${d.rings.reduce((a, b) => a + b, 0)} device(s), all at once` : `rings of ${d.rings.join(', ')}`} · {formatDate(d.createdAt)}</span>
                 </div>
                 {d.lastRing !== null && <p className="text-xs text-muted-foreground mt-1">{d.lastRing === 0 && d.staging !== 'none' ? 'Canary' : `Ring ${d.lastRing}`}: {d.lastRingStatus?.toLowerCase().replace(/_/g, ' ')}</p>}
                 {d.pausedReason && d.status === 'PAUSED' && <p className="text-xs mt-1">Paused: {d.pausedReason}</p>}
@@ -161,13 +161,13 @@ function CreateDeployment({ businessId, onDone }: { businessId: string; onDone: 
       updates: (c?.updates ?? []).filter((u) => updates.has(key(u))).map((u) => ({ updateId: u.updateId, revision: u.revision })),
     }),
     onSuccess: (r) => {
-      toast({ title: 'Deployment created', description: testFirst ? `${direct ? 'Install on' : 'Request'} the test computer when you are ready.` : `${direct ? 'Press Install' : 'Request it'} when you are ready: every computer installs together.` });
+      toast({ title: 'Deployment created', description: testFirst ? `${direct ? 'Install on' : 'Request'} the test device when you are ready.` : `${direct ? 'Press Install' : 'Request it'} when you are ready: every device installs together.` });
       onDone(); router.push(`/patching/${r.data.data.id}`);
     },
     onError: (e) => toast({ title: 'Not created', description: apiMessage(e, 'The deployment was refused.'), variant: 'destructive' }),
   });
 
-  if (isLoading || !c) return <Card className="mb-4"><CardContent className="pt-6 text-sm text-muted-foreground">Loading what the computers report…</CardContent></Card>;
+  if (isLoading || !c) return <Card className="mb-4"><CardContent className="pt-6 text-sm text-muted-foreground">Loading what the devices report…</CardContent></Card>;
   const ready = c.computers.filter((x) => !x.notReady && x.managers.length === 0 && x.scannedAt);
   const notReady = c.computers.filter((x) => !ready.includes(x));
 
@@ -181,15 +181,15 @@ function CreateDeployment({ businessId, onDone }: { businessId: string; onDone: 
         </div>
 
         <div className="space-y-1">
-          <p className="text-xs font-medium">Updates — as Windows Update offers them to these computers</p>
-          {c.updates.length === 0 && <p className="text-xs text-muted-foreground">No computer has reported any offered update yet. Ask them to scan from each computer&apos;s Patches tab.</p>}
+          <p className="text-xs font-medium">Updates — as Windows Update offers them to these devices</p>
+          {c.updates.length === 0 && <p className="text-xs text-muted-foreground">No device has reported any offered update yet. Ask them to scan from each device&apos;s Patches tab.</p>}
           {c.updates.map((u) => (
             <label key={key(u)} className={`flex items-start gap-2 rounded-md border p-2 text-xs ${u.installable ? '' : 'opacity-60'}`}>
               <input type="checkbox" className="mt-0.5" disabled={!u.installable} checked={updates.has(key(u))}
                 onChange={(e) => setUpdates((s) => { const n = new Set(s); if (e.target.checked) n.add(key(u)); else n.delete(key(u)); return n; })} />
               <span>
                 {u.kb && <strong>{u.kb} </strong>}{u.title}
-                <span className="block text-muted-foreground">{u.className ?? 'Unclassified'}{u.severity ? ` · ${u.severity}` : ''} · offered on {u.offeredOn} computer{u.offeredOn === 1 ? '' : 's'}{u.installable ? '' : ` · not installable: ${u.notInstallableBecause}`}</span>
+                <span className="block text-muted-foreground">{u.className ?? 'Unclassified'}{u.severity ? ` · ${u.severity}` : ''} · offered on {u.offeredOn} device{u.offeredOn === 1 ? '' : 's'}{u.installable ? '' : ` · not installable: ${u.notInstallableBecause}`}</span>
               </span>
             </label>
           ))}
@@ -197,7 +197,7 @@ function CreateDeployment({ businessId, onDone }: { businessId: string; onDone: 
 
         <div className="space-y-2">
           <StagingChoice id="dep" value={testFirst} onChange={setTestFirst} what="deployment" />
-          <p className="text-xs font-medium">{testFirst ? `Computers — ring 0 is the one test computer; each later ring up to ${MAX_PER_PLAN}` : 'Computers — tick the ones to install on'}</p>
+          <p className="text-xs font-medium">{testFirst ? `Devices — ring 0 is the one test device; each later ring up to ${MAX_PER_PLAN}` : 'Devices — tick the ones to install on'}</p>
           {!testFirst && ready.length > 1 && (
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               <input type="checkbox" data-testid="dep-pick-all" checked={picked.size === ready.length} onChange={(e) => setPicked(e.target.checked ? new Set(ready.map((x) => x.id)) : new Set())} />Select all
@@ -208,7 +208,7 @@ function CreateDeployment({ businessId, onDone }: { businessId: string; onDone: 
               {testFirst ? (
                 <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={ringOf[x.id] ?? ''} onChange={(e) => setRingOf((m) => ({ ...m, [x.id]: e.target.value === '' ? '' : Number(e.target.value) }))}>
                   <option value="">not in this deployment</option>
-                  {[0, 1, 2, 3, 4].map((r) => <option key={r} value={r}>{r === 0 ? 'ring 0 (test computer)' : `ring ${r}`}</option>)}
+                  {[0, 1, 2, 3, 4].map((r) => <option key={r} value={r}>{r === 0 ? 'ring 0 (test device)' : `ring ${r}`}</option>)}
                 </select>
               ) : (
                 <input type="checkbox" aria-label={`Install on ${x.hostname}`} data-testid={`dep-pick-${x.id}`} checked={picked.has(x.id)} onChange={(e) => setPicked((s0) => { const n = new Set(s0); if (e.target.checked) n.add(x.id); else n.delete(x.id); return n; })} />
@@ -219,20 +219,20 @@ function CreateDeployment({ businessId, onDone }: { businessId: string; onDone: 
           ))}
           {notReady.length > 0 && (
             <details className="text-xs text-muted-foreground">
-              <summary>{notReady.length} computer{notReady.length === 1 ? '' : 's'} cannot be included</summary>
+              <summary>{notReady.length} device{notReady.length === 1 ? '' : 's'} cannot be included</summary>
               <ul className="list-disc pl-5 mt-1">
                 {notReady.map((x) => <li key={x.id}>{x.hostname}: {x.managers.length ? `updates managed by ${x.managers.join(', ')}` : x.notReady ?? 'no Windows Update scan reported yet'}</li>)}
               </ul>
             </details>
           )}
-          {testFirst && !ringsOk && Object.keys(ringOf).length > 0 && <p className="text-xs text-destructive">Ring 0 must be exactly one computer, and no ring may be empty or larger than {MAX_PER_PLAN}.</p>}
-          {!testFirst && picked.size > MAX_ALL_AT_ONCE && <p className="text-xs text-destructive">At most {MAX_ALL_AT_ONCE} computers in one deployment.</p>}
-          {!testFirst && picked.size > MAX_PER_PLAN && picked.size <= MAX_ALL_AT_ONCE && <p className="text-xs text-muted-foreground">{picked.size} computers go out as {allRings.length} plans of up to {MAX_PER_PLAN}, all at the same time.</p>}
+          {testFirst && !ringsOk && Object.keys(ringOf).length > 0 && <p className="text-xs text-destructive">Ring 0 must be exactly one device, and no ring may be empty or larger than {MAX_PER_PLAN}.</p>}
+          {!testFirst && picked.size > MAX_ALL_AT_ONCE && <p className="text-xs text-destructive">At most {MAX_ALL_AT_ONCE} devices in one deployment.</p>}
+          {!testFirst && picked.size > MAX_PER_PLAN && picked.size <= MAX_ALL_AT_ONCE && <p className="text-xs text-muted-foreground">{picked.size} devices go out as {allRings.length} plans of up to {MAX_PER_PLAN}, all at the same time.</p>}
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl">
           {testFirst && <div className="space-y-1"><Label className="text-xs">Soak between rings (hours)</Label><Input type="number" min={0} max={168} value={soakHours} onChange={(e) => setSoakHours(Number(e.target.value))} /></div>}
-          {testFirst && <div className="space-y-1"><Label className="text-xs">Failed computers allowed per ring</Label><Input type="number" min={0} max={25} value={failureThreshold} onChange={(e) => setFailureThreshold(Number(e.target.value))} /></div>}
+          {testFirst && <div className="space-y-1"><Label className="text-xs">Failed devices allowed per ring</Label><Input type="number" min={0} max={25} value={failureThreshold} onChange={(e) => setFailureThreshold(Number(e.target.value))} /></div>}
           <div className="space-y-1"><Label className="text-xs">{testFirst ? 'Window each ring may run in (hours)' : 'Window it may run in (hours)'}</Label><Input type="number" min={1} max={24} value={windowHours} onChange={(e) => setWindowHours(Number(e.target.value))} /></div>
         </div>
 
@@ -241,7 +241,7 @@ function CreateDeployment({ businessId, onDone }: { businessId: string; onDone: 
         </div>
 
         <p className="text-xs text-muted-foreground flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />
-          Every plan carries the restart rule above{direct ? '' : ', and the approvers see it'}. Feature upgrades, optional updates and anything needing a licence are refused, by the portal and again by each computer; so is anything needing someone at the keyboard, except drivers. Drivers and definition updates need a 0.42 agent.
+          Every plan carries the restart rule above{direct ? '' : ', and the approvers see it'}. Feature upgrades, optional updates and anything needing a licence are refused, by the portal and again by each device; so is anything needing someone at the keyboard, except drivers. Drivers and definition updates need a 0.42 agent.
         </p>
         <div className="flex gap-2">
           <Button size="sm" data-testid="dep-create" disabled={name.trim().length < 3 || updates.size === 0 || !ringsOk || create.isPending} onClick={() => create.mutate()}>

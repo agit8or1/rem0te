@@ -65,11 +65,11 @@ export class MsaCutoverRunService {
       return (await this.prisma.endpoint.findMany({ where: base, select: { id: true }, orderBy: { id: 'asc' }, take: RUN_MEMBERS_MAX + 1 })).map((r) => r.id);
     }
     const g = await this.prisma.endpointGroup.findFirst({ where: { id: groupId, customerId: businessId }, select: { id: true, name: true, kind: true, rule: true, customerId: true } });
-    if (!g) throw new NotFoundException('Device group not found in this business');
+    if (!g) throw new NotFoundException('Device group not found in this customer');
     if (g.kind === 'RULE') {
       const m = await this.deviceList.evaluateRuleGroups(actor, [{ id: g.id, name: g.name, customerId: businessId, rule: ruleFilters(g.rule) }], { status: 'current' });
       const ids = m.get(g.id);
-      if (!ids) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'This rule group selects computers by their alerts, which needs the monitoring:alerts permission.' });
+      if (!ids) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'This rule group selects devices by their alerts, which needs the monitoring:alerts permission.' });
       return [...ids].sort();
     }
     return (await this.prisma.endpointGroupMember.findMany({
@@ -89,21 +89,21 @@ export class MsaCutoverRunService {
     const batchSize = b.batchSize === undefined ? RUN_BATCH_DEFAULT : Number(b.batchSize);
     if ((scope !== 'group' && scope !== 'business') || !businessId || (scope === 'group') !== !!groupId
       || !Number.isInteger(batchSize) || batchSize < 1 || batchSize > RUN_BATCH_MAX) {
-      throw new BadRequestException({ code: 'MSA_RUN_INVALID', message: `Name a business (and, for a group run, its device group), and a batch size from 1 to ${RUN_BATCH_MAX}.` });
+      throw new BadRequestException({ code: 'MSA_RUN_INVALID', message: `Name a customer (and, for a group run, its device group), and a batch size from 1 to ${RUN_BATCH_MAX}.` });
     }
     const business = await this.prisma.customer.findFirst({ where: { id: businessId, isArchived: false }, select: { id: true, tenantId: true } });
     if (!business) throw new NotFoundException('Business not found');
     if (await this.prisma.msaCutoverRun.findFirst({ where: { businessId, state: { in: OPEN } }, select: { id: true } })) {
-      throw new ConflictException({ code: 'MSA_RUN_OPEN', message: 'This business already has a cutover run in progress. Finish, halt or roll it back first.' });
+      throw new ConflictException({ code: 'MSA_RUN_OPEN', message: 'This customer already has a cutover run in progress. Finish, halt or roll it back first.' });
     }
     const ids = await this.resolveMembers(actor, businessId, groupId);
-    if (!ids.length) throw new BadRequestException({ code: 'MSA_RUN_EMPTY', message: 'No computer you can see is in this scope.' });
-    if (ids.length > RUN_MEMBERS_MAX) throw new BadRequestException({ code: 'MSA_RUN_TOO_LARGE', message: `A run covers at most ${RUN_MEMBERS_MAX} computers. Use a device group.` });
+    if (!ids.length) throw new BadRequestException({ code: 'MSA_RUN_EMPTY', message: 'No device you can see is in this scope.' });
+    if (ids.length > RUN_MEMBERS_MAX) throw new BadRequestException({ code: 'MSA_RUN_TOO_LARGE', message: `A run covers at most ${RUN_MEMBERS_MAX} devices. Use a device group.` });
 
     const rows = await this.prisma.msaManagedComputer.findMany({ where: { endpointId: { in: ids } }, select: { endpointId: true, state: true } });
     const managed = new Map(rows.map((r) => [r.endpointId, r.state]));
     let canary = canaryIn;
-    if (canary && !ids.includes(canary)) throw new BadRequestException({ code: 'MSA_RUN_CANARY_OUTSIDE', message: 'The canary must be one of the run\'s computers.' });
+    if (canary && !ids.includes(canary)) throw new BadRequestException({ code: 'MSA_RUN_CANARY_OUTSIDE', message: 'The canary must be one of the run\'s devices.' });
     if (!canary) canary = ids.find((id) => managed.get(id) === 'verified') ?? null;
     if (!canary) {
       for (const id of ids) {
@@ -112,7 +112,7 @@ export class MsaCutoverRunService {
         if (v.cutover.allowed) { canary = id; break; }
       }
     }
-    if (!canary) throw new ConflictException({ code: 'MSA_RUN_NO_CANARY', message: 'No computer in this scope can be cut over now (each one\'s blockers are on its page). Nothing was started.' });
+    if (!canary) throw new ConflictException({ code: 'MSA_RUN_NO_CANARY', message: 'No device in this scope can be cut over now (each one\'s blockers are on its page). Nothing was started.' });
     const canaryState = managed.get(canary) ?? null;
     if (canaryState && canaryState !== 'verified' && canaryState !== 'pending') {
       throw new ConflictException({ code: 'MSA_RUN_CANARY_UNFIT', message: `The canary is Managed (${canaryState.replace('_', ' ')}); choose another.` });
@@ -199,9 +199,9 @@ export class MsaCutoverRunService {
         const r = rows.find((x) => x.endpointId === m.endpointId);
         return r && (!r.readbackOkAt || r.readbackOkAt < r.requestedAt);
       });
-      if (waiting.length) return { allowed: false, reason: `${waiting.length} computer(s) of the last batch have not read their settings back yet (the next batch waits up to an hour).` };
+      if (waiting.length) return { allowed: false, reason: `${waiting.length} device(s) of the last batch have not read their settings back yet (the next batch waits up to an hour).` };
     }
-    if (!run.members.some((m) => m.state === 'queued')) return { allowed: false, reason: 'Every computer in the run has been moved or skipped.' };
+    if (!run.members.some((m) => m.state === 'queued')) return { allowed: false, reason: 'Every device in the run has been moved or skipped.' };
     return { allowed: true, reason: null };
   }
 

@@ -702,7 +702,7 @@ export class UpdateService {
     return {
       updated: true,
       version: latest,
-      message: `rustdesk-server updated to ${latest}. Endpoints re-register within about 30 seconds.`,
+      message: `rustdesk-server updated to ${latest}. Devices re-register within about 30 seconds.`,
     };
   }
 
@@ -797,7 +797,7 @@ export class UpdateService {
       },
       select: { id: true, endpointId: true, version: true, tenantId: true, endpoint: { select: { platform: true } } },
     });
-    if (!nodes.length) throw new NotFoundException('No matching endpoints');
+    if (!nodes.length) throw new NotFoundException('No matching devices');
 
     // Not Linux (0.32) or macOS (0.33): their agents report the RustDesk
     // version but have no update path — they act on nothing the server sends —

@@ -68,7 +68,7 @@ const RESTART_DEFERRED: Record<string, string> = {
 };
 
 const STATE: Record<string, { label: string; variant: 'success' | 'destructive' | 'warning' | 'outline' | 'secondary' }> = {
-  not_planned: { label: 'not in plan', variant: 'outline' }, awaiting_approval: { label: 'awaiting approval', variant: 'outline' },
+  not_planned: { label: 'not in plan', variant: 'outline' }, awaiting_approval: { label: 'pending approval', variant: 'outline' },
   scheduled: { label: 'scheduled', variant: 'secondary' }, delivered: { label: 'delivered', variant: 'secondary' },
   installed: { label: 'installed', variant: 'secondary' }, restart_required: { label: 'restart required', variant: 'warning' },
   effective: { label: 'effective', variant: 'success' }, superseded: { label: 'superseded', variant: 'outline' },
@@ -140,7 +140,7 @@ export default function DeploymentPage() {
   const ringsNow = toRequest().map((i) => d.rings[i]).filter(Boolean);
   const computersNow = ringsNow.reduce((n, r) => n + r.computers.length, 0);
   const label = allAtOnce
-    ? (ringsNow.length === d.rings.length ? 'on every computer' : `on the rest (${computersNow} computer${computersNow === 1 ? '' : 's'})`)
+    ? (ringsNow.length === d.rings.length ? 'on every device' : `on the rest (${computersNow} device${computersNow === 1 ? '' : 's'})`)
     : nextRing?.canary ? 'canary' : `ring ${nextRing?.ring}`;
 
   return (
@@ -148,7 +148,7 @@ export default function DeploymentPage() {
       <Link href="/patching" className="text-xs text-muted-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3 w-3" />Patching</Link>
       <PageHeader title={d.name} description={allAtOnce
         ? `Created ${formatDate(d.createdAt)} · all at once · ${d.windowHours} h window · ${rebootSummary(d.reboot).toLowerCase()}`
-        : `Created ${formatDate(d.createdAt)} · one computer first · soak ${d.soakHours} h · ${d.failureThreshold} failure${d.failureThreshold === 1 ? '' : 's'} allowed per ring · ${d.windowHours} h window · ${rebootSummary(d.reboot).toLowerCase()}`}>
+        : `Created ${formatDate(d.createdAt)} · one device first · soak ${d.soakHours} h · ${d.failureThreshold} failure${d.failureThreshold === 1 ? '' : 's'} allowed per ring · ${d.windowHours} h window · ${rebootSummary(d.reboot).toLowerCase()}`}>
         <div className="flex gap-2 items-center">
           <Badge variant={DEPLOYMENT_STATUS[d.status] ?? 'outline'}>{d.status.toLowerCase()}</Badge>
           {d.status === 'ACTIVE' && <Button size="sm" variant="outline" onClick={() => ask('pause')}>Pause</Button>}
@@ -167,13 +167,13 @@ export default function DeploymentPage() {
               This deployment belongs to <Link className="underline" href={`/patching/policies/${d.policyId}`}>a patch policy</Link>: its rings are requested by the policy inside its maintenance window and signed by the approval signer only if they fall inside it. Pause or cancel it here, or revoke the policy.
             </p>
           )}
-          {d.origin === 'MANUAL' && <p className="text-xs text-muted-foreground">Requested from one computer&apos;s Patches tab: a single ring{direct ? ', signed at once in direct mode' : ', approved like any other'}.</p>}
+          {d.origin === 'MANUAL' && <p className="text-xs text-muted-foreground">Requested from one device&apos;s Patches tab: a single ring{direct ? ', signed at once in direct mode' : ', approved like any other'}.</p>}
           {d.next.canRequest && ringsNow.length > 0 && d.origin !== 'POLICY' && (
             <>
               <p className="text-xs text-muted-foreground" data-testid="ring-request-note">
                 {allAtOnce
-                  ? `Installs on ${computersNow} computer${computersNow === 1 ? '' : 's'} together${ringsNow.length > 1 ? `, as ${ringsNow.length} plans of up to 25` : ''}; none waits for another. `
-                  : `Requests ${nextRing!.canary ? 'the canary' : `ring ${nextRing!.ring}`} (${nextRing!.computers.length} computer${nextRing!.computers.length === 1 ? '' : 's'}) as one signed plan. `}
+                  ? `Installs on ${computersNow} device${computersNow === 1 ? '' : 's'} together${ringsNow.length > 1 ? `, as ${ringsNow.length} plans of up to 25` : ''}; none waits for another. `
+                  : `Requests ${nextRing!.canary ? 'the canary' : `ring ${nextRing!.ring}`} (${nextRing!.computers.length} device${nextRing!.computers.length === 1 ? '' : 's'}) as one signed plan. `}
                 {direct ? `Direct mode is on: it is signed as soon as you ${askDirect ? 'confirm it is you' : 'press Install'}.` : `Two people on the approval roster must approve ${ringsNow.length > 1 ? 'each plan' : 'it'} with a passkey; you cannot approve your own request.`} Restart rule: {rebootSummary(d.reboot).toLowerCase()}.
               </p>
               {!(nextRing?.canary && !allAtOnce) && (
@@ -225,7 +225,7 @@ function RingCard({ r, d, onChanged }: { r: Ring; d: Deployment; onChanged: () =
           {r.job?.status === 'AWAITING_APPROVAL' && !r.job.direct && (
             <Button size="sm" variant="outline" asChild><a href={r.job.approvalUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5 mr-1" />Approval page</a></Button>
           )}
-          {r.job?.direct && <Badge variant="outline" title="Signed at the request: the business is in direct mode on the approval signer">direct mode</Badge>}
+          {r.job?.direct && <Badge variant="outline" title="Signed at the request: the customer is in direct mode on the approval signer">direct mode</Badge>}
           {scheduled && <Badge variant="secondary" data-testid="ring-scheduled">Scheduled for {formatDate(r.job!.window.notBefore)}</Badge>}
           {cancelable && <CancelTask jobId={r.job!.id} onDone={onChanged} />}
         </div>
@@ -237,7 +237,7 @@ function RingCard({ r, d, onChanged }: { r: Ring; d: Deployment; onChanged: () =
           <table className="w-full text-xs">
             <thead>
               <tr className="text-left text-muted-foreground">
-                <th className="py-1 pr-2 font-medium">Computer</th>
+                <th className="py-1 pr-2 font-medium">Device</th>
                 {d.updates.map((u) => <th key={key(u)} className="py-1 pr-2 font-medium" title={u.title}>{u.kb ?? u.title.slice(0, 24)}</th>)}
               </tr>
             </thead>
@@ -280,7 +280,7 @@ function Reconcile({ jobId, endpointId, onDone }: { jobId: string; endpointId: s
   if (!open) return <Button size="sm" variant="outline" className="h-6 mt-1 text-[11px]" onClick={() => setOpen(true)}>Reconcile</Button>;
   return (
     <div className="mt-1 space-y-1 rounded-md border border-destructive/40 p-2 max-w-xs">
-      <p>Uncertain: the installer did not finish reporting. It will not run again. Check Update history on the computer, then record what you found.</p>
+      <p>Uncertain: the installer did not finish reporting. It will not run again. Check Update history on the device, then record what you found.</p>
       <div className="flex flex-wrap gap-2">
         {(['installed', 'not_installed', 'other'] as const).map((f) => (
           <label key={f} className="flex items-center gap-1"><input type="radio" checked={found === f} onChange={() => setFound(f)} />{f.replace(/_/g, ' ')}</label>

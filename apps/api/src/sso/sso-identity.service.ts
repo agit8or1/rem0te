@@ -80,7 +80,7 @@ export class SsoIdentityService implements OnModuleInit {
     const sent = await this.mailConfirmed(admins.map((a) => a.email), ['global'],
       'Rem0te: a break-glass account signed in',
       `The break-glass account ${u?.email ?? userId} signed in (${method}) from ${ip} at ${new Date().toISOString()}.\n\n`
-      + 'Break-glass accounts are for when single sign-on is unavailable. If this was not expected, review it under Settings → Audit log and end the session from the Users page.\n');
+      + 'Break-glass accounts are for when single sign-on is unavailable. If this was not expected, review it under Security → Audit log and end the session from the Users page.\n');
     this.logger.warn(`break-glass sign-in by ${userId} (${method}); ${sent} admin email(s) sent`);
   }
 

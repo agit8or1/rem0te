@@ -83,8 +83,8 @@ export function RustdeskUpdates({
       const d = r.data?.data as { requested: number; skipped: number; targetVersion: string };
       setMsg(
         d.requested === 0
-          ? `Nothing to do - every selected endpoint is already on v${d.targetVersion}.`
-          : `Queued ${d.requested} endpoint${d.requested === 1 ? '' : 's'} for v${d.targetVersion}` +
+          ? `Nothing to do - every selected device is already on v${d.targetVersion}.`
+          : `Queued ${d.requested} device${d.requested === 1 ? '' : 's'} for v${d.targetVersion}` +
             (d.skipped ? ` (${d.skipped} already current)` : '') +
             '. Each applies on its next heartbeat, within about 3 minutes.',
       );
@@ -160,18 +160,18 @@ export function RustdeskUpdates({
         {data && data.latestVersion === null && (
           <div className="rounded-md border p-3 text-xs text-muted-foreground">
             Could not reach GitHub to determine the latest RustDesk release, so nothing can be
-            staged right now. Endpoint versions below are still accurate.
+            staged right now. Device versions below are still accurate.
           </div>
         )}
 
         {rows.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No enrolled endpoints.</p>
+          <p className="text-xs text-muted-foreground">No enrolled devices.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="text-muted-foreground border-b">
                 <tr>
-                  <th className="text-left font-medium py-2 pr-3">Computer</th>
+                  <th className="text-left font-medium py-2 pr-3">Device</th>
                   <th className="text-left font-medium py-2 pr-3">{compact ? 'Version' : 'RustDesk'}</th>
                   <th className="text-left font-medium py-2 pr-3">Status</th>
                   <th className="text-right font-medium py-2">Action</th>
@@ -206,7 +206,7 @@ export function RustdeskUpdates({
                           Queued to v{r.updateTargetVersion}
                           {staleTarget(r) && <span className="text-amber-600 dark:text-amber-500">(v{latest} out)</span>}
                           {r.updateSource === 'policy' ? (
-                            <span className="text-muted-foreground" title="Queued by the business's update policy: handed out only inside its update window. Click Update to send it now.">
+                            <span className="text-muted-foreground" title="Queued by the customer's update policy: handed out only inside its update window. Click Update to send it now.">
                               · auto{r.updateHoldReason ? `, waiting: ${HOLD_LABEL[r.updateHoldReason] ?? r.updateHoldReason}` : ''}
                             </span>
                           ) : (
@@ -226,7 +226,7 @@ export function RustdeskUpdates({
                       ) : (
                         <span
                           className="flex items-center gap-1 text-muted-foreground"
-                          title="This endpoint has not reported a RustDesk version yet"
+                          title="This device has not reported a RustDesk version yet"
                         >
                           <HelpCircle className="h-3 w-3" /> Unknown
                         </span>
@@ -273,12 +273,12 @@ export function RustdeskUpdates({
         )}
 
         {!compact && <p className="text-[11px] text-muted-foreground">
-          Updates queued here are picked up on the endpoint&apos;s next heartbeat (about 3 minutes) and
-          applied by re-running the installer. An offline endpoint applies it when it next checks
-          in. A queued update clears itself once the endpoint reports the target version, so a
+          Updates queued here are picked up on the device&apos;s next heartbeat (about 3 minutes) and
+          applied by re-running the installer. An offline device applies it when it next checks
+          in. A queued update clears itself once the device reports the target version, so a
           failed install retries rather than being silently dropped. Updates marked <em>auto</em> were
-          queued by a business&apos;s update policy and wait for its window —
-          see <Link href="/settings/client-updates" className="underline">Settings → Client updates</Link>.
+          queued by a customer&apos;s update policy and wait for its window —
+          see <Link href="/settings/client-updates" className="underline">Patching → Client updates</Link>.
         </p>}
       </CardContent>
     </Card>

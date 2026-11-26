@@ -36,7 +36,7 @@ export function BusinessSwitcher() {
       <DropdownMenuTrigger asChild>
         <button
           className="mx-2 mt-2 flex w-[calc(100%-1rem)] items-center gap-2 rounded-md border bg-card px-2.5 py-1.5 text-left text-sm hover:bg-accent"
-          aria-label="Switch business"
+          aria-label="Switch customer"
         >
           <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1">
@@ -49,7 +49,7 @@ export function BusinessSwitcher() {
       <DropdownMenuContent align="start" className="w-56">
         <DropdownMenuItem onClick={() => choose(user.ownBusinessId ?? null)} className="flex items-center gap-2">
           {!technician ? <Check className="h-4 w-4" /> : <span className="w-4" />}
-          {user.ownBusinessId ? (user.business?.name && !technician ? user.business.name : 'My own business') : 'My account'}
+          {user.ownBusinessId ? (user.business?.name && !technician ? user.business.name : 'My own customer') : 'My account'}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         {assignedBusinesses.map((b) => (
@@ -60,7 +60,7 @@ export function BusinessSwitcher() {
         ))}
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => router.push('/technician')} className="flex items-center gap-2">
-          <LayoutGrid className="h-4 w-4" />All assigned businesses
+          <LayoutGrid className="h-4 w-4" />All assigned customers
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

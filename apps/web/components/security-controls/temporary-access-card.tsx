@@ -92,7 +92,7 @@ export function TemporaryAccessCard({
           <div>
             <CardTitle className="flex items-center gap-2 text-sm"><Clock className="h-4 w-4" />Temporary control</CardTitle>
             <CardDescription>
-              {refusal ?? 'Interactive control on this computer through a time-limited, independently approved grant.'}
+              {refusal ?? 'Interactive control on this device through a time-limited, independently approved grant.'}
             </CardDescription>
           </div>
           {refusal && open.length === 0 && (
@@ -104,7 +104,7 @@ export function TemporaryAccessCard({
         {open.map((r) => (
           <div key={r.id} className="flex flex-wrap items-center gap-3 rounded-md border p-3 text-sm">
             <Chip className={isLive(r) ? CHIP.on : STATUS_STYLE[r.status] ?? CHIP.off}>
-              {isLive(r) ? 'Active' : r.status === 'APPROVED' ? 'Approved — not active yet' : 'Waiting for approval'}
+              {isLive(r) ? 'Active' : r.status === 'APPROVED' ? 'Approved — not active yet' : 'Pending approval'}
             </Chip>
             <span className="text-muted-foreground">{r.durationMinutes} min · asked {formatDate(r.createdAt)}</span>
             {isLive(r) && <span className="text-muted-foreground">until {formatDate(r.expiresAt)}</span>}
@@ -148,7 +148,7 @@ export function TemporaryAccessCard({
             </div>
             <p className="text-xs text-muted-foreground">
               Someone other than you must approve it. It does nothing until you activate it here, which needs a fresh
-              confirmation that it is you; the duration starts then and is capped by the business&apos;s maximum session length.
+              confirmation that it is you; the duration starts then and is capped by the customer&apos;s maximum session length.
             </p>
           </form>
         )}

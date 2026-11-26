@@ -203,7 +203,7 @@ const is = (name, f, state, re) => {
     const rest = body.replace(branch, '').replace("verified: state === 'managed_verified'", '');
     return branch.length > 0 && !/'managed'|'managed_verified'|'enforcement_failure'/.test(rest);
   })());
-  check('the readiness note still says nothing changed', /nothing has changed on this computer/.test(r.READINESS_NOTE));
+  check('the readiness note still says nothing changed', /nothing has changed on this device/.test(r.READINESS_NOTE));
   check('the managed note says where it has run', /only in the Windows lab/.test(r.MANAGED_NOTE) && /never on a Windows 10 or 11 desktop or on the fleet/.test(r.MANAGED_NOTE));
 }
 

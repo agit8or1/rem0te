@@ -1,7 +1,7 @@
 # Script library
 
 rem0te has a **script library**: PowerShell scripts that are written, versioned and reviewed in the portal. From
-0.34, an **approved version can be run** on Windows computers, but only as a signed approved action
+0.34, an **approved version can be run** on Windows devices, but only as a signed approved action
 (`windows.script.run@1`) after three separate approvals: the library review, two approvers adding the version's
 exact hash to the approval signer's own allowlist, and two approvers approving each run.
 
@@ -14,12 +14,12 @@ exact hash to the approval signer's own allowlist, and two approvers approving e
 
 | | |
 |---|---|
-| **Scripts** | Name, scope (**global**, set by a Platform Admin, or **one business**), and a list of versions |
+| **Scripts** | Name, scope (**global**, set by a Platform Admin, or **one customer**), and a list of versions |
 | **Versions** | Immutable. Each holds the content, its SHA-256, description, language (PowerShell), target OS (Windows), risk level and declared parameters. Editing makes a new version; nothing changes a version once it is written, and the database refuses to change it too |
 | **Review** | Draft → In review → Approved or Rejected. Approved and Rejected are final. The approver must be someone other than everyone who wrote the content, and must hold the review permission. Approving needs a fresh sign-in. The approval records the hash the reviewer saw |
 | **Static checks** | Shown to the reviewer as warnings: `Invoke-Expression`, download-and-run, `-EncodedCommand`, credential material, disabling Defender, `Set-ExecutionPolicy`, restarts, hidden Unicode and more. They **flag**; they never block and never mean a script is safe |
 | **Diff** | Any two versions of a script, line by line |
-| **Running (0.34)** | An approved version's page has a **Run this version** panel: propose it to the approval signer's allowlist, then request runs on up to 25 Windows computers with typed arguments and a timeout. Results, with the exit code and redacted output, appear on each computer's **Actions** tab |
+| **Running (0.34)** | An approved version's page has a **Run this version** panel: propose it to the approval signer's allowlist, then request runs on up to 25 Windows devices with typed arguments and a timeout. Results, with the exit code and redacted output, appear on each device's **Actions** tab |
 | **Scheduling (0.58)** | **Once:** the Run panel takes a date and time in a named zone, up to 14 days ahead, as the signed plan's `notBefore`. **Recurring:** *Run it on a schedule* makes an [automation schedule](automation.md) — every few hours, daily, weekly or monthly — that two signer approvers (not the author, not anyone who wrote the script) approve once, and under which the signer signs each run |
 | **Audit** | Every create, submit, withdraw, approval, rejection and refused review attempt, every allowlist proposal and revocation, and every run (requested, approved, dispatched, result), with the hashes |
 
@@ -30,7 +30,7 @@ stream.
 
 1. **How a script runs** — only an approved version runs, as a signed action approved twice on the signer; what is
    proven, and that it has not yet run on a real Windows computer.
-2. **Scope** — global scripts, or one business's.
+2. **Scope** — global scripts, or one customer's.
 3. **A script** — its latest version and review state.
 4. **New script** — writes version 1 as a draft.
 
@@ -65,14 +65,14 @@ second path. The portal holds no key the agent accepts.
    **Direct mode (0.40).** If the signer's operator set the signer's **default** policy to direct mode
    (`policy set --business default --approval direct`), proposing a version adds it to the allowlist at once, after a
    fresh sign-in, with no approvals; the library then also lets the author review their own version, recorded as
-   *self-reviewed*. The allowlist follows `default` because it is the signer's own, for every business. A run follows
-   its business's setting, like any plan. See
+   *self-reviewed*. The allowlist follows `default` because it is the signer's own, for every customer. A run follows
+   its customer's setting, like any plan. See
    [Approved actions → Direct mode](approved-actions.md#direct-mode-the-default-for-a-single-operator).
-4. **Run request.** A technician with `actions:request` on every computer named, who can also see the script in the
-   library, picks up to 25 computers of one business, fills in the arguments, picks a timeout (1, 5, 10, 15 or 30
+4. **Run request.** A technician with `actions:request` on every device named, who can also see the script in the
+   library, picks up to 25 devices of one customer, fills in the arguments, picks a timeout (1, 5, 10, 15 or 30
    minutes), gives a reason and confirms. The portal checks the version is approved, the entry is ACTIVE, the
-   arguments match the declared parameters, a business's script names only that business's computers, and
-   everything it checks for any action: scope, access level, containment, readiness, one open run per computer.
+   arguments match the declared parameters, a customer's script names only that customer's devices, and
+   everything it checks for any action: scope, access level, containment, readiness, one open run per device.
 5. **Plan.** `windows.script.run@1` with closed parameters `{scriptVersionId, sha256, parameters, timeoutMinutes}`,
    and a `script` block the signer checks is **exactly** its allowlist entry (ids, hashes, declared parameters,
    contributors, reviewer). The content isn't in the plan; its SHA-256 is.
@@ -90,7 +90,7 @@ both failed when used.
 7. **Delivery.** On its heartbeat the agent receives the envelope and, beside it, the content (base64). The portal is
    only a courier: the bytes come from the immutable version row, and the agent decides whether they are the right
    ones.
-8. **Verification on the computer.** The agent checks the envelope as it checks every plan (key, signature, strict
+8. **Verification on the device.** The agent checks the envelope as it checks every plan (key, signature, strict
    parse, target, window, build, approvals, journal, the signed pause), then:
    - the parameters are the closed four, the timeout is on the list, the plan's block names the same hash and
      version;
@@ -110,7 +110,7 @@ both failed when used.
    - at the timeout the agent terminates the job, the whole process tree, and reports **timed out**;
    - stdout and stderr: the first **64 KB** of each are kept and the rest counted, invalid UTF-8 is replaced, and both
      are **redacted** (user-profile paths, long tokens, `key=value` credentials, as for collected logs) before they
-     leave the computer;
+     leave the device;
    - the exit code is recorded, the temporary folder is removed (and whether that worked is reported), and the result
      is journaled and reported once, like every action.
 10. **Receipt.** The portal decodes the output, **redacts it again** with its own copy of the rules, caps it again,
@@ -133,7 +133,7 @@ that names it: the portal stops asking (*task revoked* in the schedule's history
 (`script_revoked`).
 
 This amends what this page said up to 0.57, that each run is approved by two people. A scheduled run is approved by
-the two people who approved the schedule, once, for that version, those arguments, those computers and that
+the two people who approved the schedule, once, for that version, those arguments, those devices and that
 schedule. The signer and the agent check each run against it.
 
 ## Revocation
@@ -143,7 +143,7 @@ SHA-256, write-once**: those exact bytes can never be allowlisted again, under a
 it revoked them. From then on the signer refuses every new run and every run not yet signed. To run a fix, edit it
 into a new version and have that reviewed and allowlisted.
 
-**A run already signed is refused too (0.36)**, once the computer runs a signed agent from 0.36 on. The signer
+**A run already signed is refused too (0.36)**, once the device runs a signed agent from 0.36 on. The signer
 publishes a **signed revocation statement**: every revoked script content hash and every archived
 [software catalog entry](software-deployment.md#archiving-an-entry-revokes-it), signed with its job-approval key under
 its own prefix (`rem0te-revocations-v1`). The portal relays it, unauthenticated, at
@@ -161,24 +161,24 @@ The agent's rule, after the signature, the target, the window, the build, the ap
 **before the job is journaled "executing"**:
 
 1. **Freshness — fail closed.** A plan runs only with a statement whose `asOf` is no older than the plan's
-   `signedAt`. Such a statement lists every revocation made before the plan was signed. Without one the computer
+   `signedAt`. Such a statement lists every revocation made before the plan was signed. Without one the device
    refuses with `revocations_stale` and **nothing is consumed**: like a window that hasn't opened, the job stays
    queued and the next delivery tries again. The Actions tab shows it waiting, not failed.
 2. **Revocation — final.** A script run whose content hash is in the statement is refused `revoked`, journaled done
-   and reported. It can never run later on that computer.
+   and reported. It can never run later on that device.
 
-The portal also refuses a run it hasn't delivered yet once its entry is revoked: those computers show **Canceled**
+The portal also refuses a run it hasn't delivered yet once its entry is revoked: those devices show **Canceled**
 with the reason *revoked* on the Actions tab, without the agent being asked. A run delivered before the revocation is
-**Refused by the computer** with the reason *revoked*, and the computer's detail names the statement's `seq`.
+**Refused by the device** with the reason *revoked*, and the device's detail names the statement's `seq`.
 
-**Why fail closed.** Failing open (run if the computer has no fresh statement) would let a portal that withholds the
+**Why fail closed.** Failing open (run if the device has no fresh statement) would let a portal that withholds the
 statement run anything that was ever signed, which is the attack this exists for. Failing closed costs availability
-only when the signer or the relay is down — and then no new plan can be signed either. A computer that can't reach
+only when the signer or the relay is down — and then no new plan can be signed either. A device that can't reach
 the relay decides from the newest statement it already holds (kept at `actions\revocations.json` in the agent's state
 directory), so a plan signed before that statement still runs.
 
-**What it doesn't stop.** A portal that withholds the newest statement can still have a computer run a plan that was
-signed before the revocation and that the computer has never refused, until that plan's window closes (at most 24
+**What it doesn't stop.** A portal that withholds the newest statement can still have a device run a plan that was
+signed before the revocation and that the device has never refused, until that plan's window closes (at most 24
 hours). Cancel such a run from the Actions tab as well. Agents older than 0.36 ignore the statement entirely.
 
 The statement lists at most 5,000 revocations; past that the signer refuses to sign it and every new plan waits. The
@@ -199,9 +199,9 @@ approvals on the signer's page.
 
 ## Output and retention
 
-Each computer's **Actions** tab shows the run: the script's name and version, the exit code (or that it was stopped
+Each device's **Actions** tab shows the run: the script's name and version, the exit code (or that it was stopped
 at its timeout), how long it ran, and its output and errors, each the first 64 KB, redacted twice. Whoever can see
-the job on that computer sees the output.
+the job on that device sees the output.
 
 Output is kept **90 days**, then deleted by the script-output sweep (every six hours; `SCRIPT_OUTPUT_SWEEP=off`
 stops it). The run itself, its status and its exit code stay; the page then says the output was pruned.
@@ -235,21 +235,21 @@ for 90 days. Write scripts that print what the technician needs, not everything 
 | **Self-approval** | Approval compares user ids. Contributors (the author of the version and of any unapproved version it was edited from) can't review it in the library, can't approve its allowlist entry, and can't approve a run of it. The agent checks the last again from the signed plan (`contributor_approved`) | Two separate accounts held by one human |
 | **A runaway script** | The timeout kills the whole job object; the job's memory limit is 1 GiB; output is capped at 64 KB per stream; it runs in a fresh temporary folder that is removed afterwards | Anything a script does before the timeout. Full PowerShell as SYSTEM can do anything an administrator can |
 | **Retracting a bad script** | Revocation is one-way and keyed by content hash on the signer | A run already signed and delivered before the revocation |
-| **Cross-business access** | Every route resolves the business from the actor. Another business's script, run or computer is a 404. A business's script runs only on that business's computers | — |
+| **Cross-customer access** | Every route resolves the customer from the actor. Another customer's script, run or device is a 404. A customer's script runs only on that customer's devices | — |
 
 ## Who can do what
 
-| | Business script | Global script |
+| | Customer script | Global script |
 |---|---|---|
-| **See** | `scripts:author` or `scripts:review` in that business, a Business Owner, a Platform Admin | Platform Admins and independent reviewers (`approvals:review`) see every version; a business's authors and reviewers see approved versions only |
+| **See** | `scripts:author` or `scripts:review` in that customer, a Business Owner, a Platform Admin | Platform Admins and independent reviewers (`approvals:review`) see every version; a customer's authors and reviewers see approved versions only |
 | **Write, edit, submit, withdraw** | `scripts:author` (a Business Owner holds it) | A Platform Admin |
 | **Approve, reject** | `scripts:review`, and not a contributor (0.40: may be, when the signer's default policy is direct) | A Platform Admin or an independent reviewer, not a contributor (likewise) |
 | **Propose to the signer, revoke** | `scripts:review` | A Platform Admin or an independent reviewer |
-| **Request a run** | Library visibility **and** `actions:request` (higher risk) on every computer named, of that business | Library visibility and `actions:request` on every computer named, of one business |
-| **Add to the allowlist, approve a run** | Two people on the approval signer's roster for that business, not the proposer or requester, not a contributor. 0.40 direct mode: nobody — the proposal (signer's `default` direct) or the request (the business direct) is the decision, after a fresh sign-in | Two roster approvers for every business (`*`); likewise |
+| **Request a run** | Library visibility **and** `actions:request` (higher risk) on every device named, of that customer | Library visibility and `actions:request` on every device named, of one customer |
+| **Add to the allowlist, approve a run** | Two people on the approval signer's roster for that customer, not the proposer or requester, not a contributor. 0.40 direct mode: nobody — the proposal (signer's `default` direct) or the request (the customer direct) is the decision, after a fresh sign-in | Two roster approvers for every customer (`*`); likewise |
 
-A technician working in a business through an assignment needs the capability on a grant that covers the **whole
-business**. A grant for named computers doesn't confer library rights, because a script isn't scoped to a computer.
+A technician working in a customer through an assignment needs the capability on a grant that covers the **whole
+customer**. A grant for named devices doesn't confer library rights, because a script isn't scoped to a device.
 A preset-backed grant takes its capabilities from the preset, and no preset grants library rights.
 
 ## Parameters
@@ -308,9 +308,9 @@ The signer doesn't run its own static checks; its approvers read the content on 
 | Portal | `SCRIPT_NOT_ALLOWLISTED` | The version has no ACTIVE entry on the signer's allowlist |
 | Portal | `SCRIPT_REVOKED` | The version's content was revoked; propose a new version |
 | Portal | `PARAMS_NOT_ALLOWED` | The arguments don't fit the declared parameters, or the timeout isn't on the list |
-| Portal | `SCRIPT_WRONG_BUSINESS` | A business's script named another business's computer |
+| Portal | `SCRIPT_WRONG_BUSINESS` | A customer's script named another customer's device |
 | Portal | `ACTION_NOT_DIRECT` | A script run was requested from the Actions tab route |
-| Portal | `ENDPOINT_NOT_READY` | The computer's agent doesn't report `windows.script.run@1` (a signed agent from 0.34 on) |
+| Portal | `ENDPOINT_NOT_READY` | The device's agent doesn't report `windows.script.run@1` (a signed agent from 0.34 on) |
 | Signer | `hash_mismatch`, `script_id_reused`, `script_revoked` | On a proposal |
 | Signer | `contributor_cannot_approve`, `requester_cannot_approve`, `already_decided`, `not_authorized` | On an allowlist or run decision |
 | Signer | `script_not_allowlisted`, `script_revoked`, `script_mismatch`, `arguments_not_allowed` | On a run plan (admission and signing) |
@@ -318,11 +318,11 @@ The signer doesn't run its own static checks; its approvers read the content on 
 | Agent | `no_script_host` | An agent built without the script runner |
 | Agent | `revoked` | The script's content hash was revoked after the run was signed (0.36). Final |
 | Agent | `revocations_stale` | No revocation statement as new as the run's signature yet (0.36). Not final: retried on the next delivery |
-| Portal | `revoked` (target canceled) | The entry was revoked before the run was delivered to that computer (0.36) |
+| Portal | `revoked` (target canceled) | The entry was revoked before the run was delivered to that device (0.36) |
 | Agent result | `succeeded` (exit 0), `failed` / `exit_code`, `timed_out`, `failed` / `start_failed`, `failed` / `workdir_failed` | After it ran |
 
 An agent that stops while a script is running reports the run **uncertain** on its next start and never runs it
-again. Reconcile it on the computer's Actions tab before requesting another run there.
+again. Reconcile it on the device's Actions tab before requesting another run there.
 
 ## Upgrading to 0.34
 
@@ -330,7 +330,7 @@ again. Reconcile it on the computer's Actions tab before requesting another run 
 - **Signer:** rebuild and redeploy the approval signer (`apps/api/scripts/build-approval-signer.mjs`); it creates
   `scripts/` and `script-revocations/` in its directory. Its roster is unchanged; allowlist approvers are the roster's
   approvers.
-- **Agents:** a computer is offered script runs only once it runs a 0.34 signed agent build that reports
+- **Agents:** a device is offered script runs only once it runs a 0.34 signed agent build that reports
   `windows.script.run@1`.
 - Nothing runs until a reviewer proposes a version and two approvers add it on the signer.
 
@@ -339,8 +339,8 @@ again. Reconcile it on the computer's Actions tab before requesting another run 
 - **Signer first:** rebuild and redeploy the approval signer. It adds `software-revocations/` and `revocations.json`
   to its directory and `GET /internal/v1/revocations`; nothing else about it changes.
 - **Then the portal.** It relays the statement; it fails with 503 until the signer answers.
-- **Agents:** the protection takes effect only on computers running a **0.36 signed agent build, published with the
-  owner's release keys**. Until that is published nothing changes on any computer. Once a computer runs it, it runs
+- **Agents:** the protection takes effect only on devices running a **0.36 signed agent build, published with the
+  owner's release keys**. Until that is published nothing changes on any device. Once a device runs it, it runs
   nothing new without a fresh statement, so deploy the signer and portal before publishing the agent.
 
 ## What has been proven, and what hasn't
@@ -348,6 +348,6 @@ again. Reconcile it on the computer's Actions tab before requesting another run 
 | Level | State |
 |---|---|
 | **Fixture-tested** | Go tests in `internal/action` cover every refusal (hash mismatch, wrong length, injection, undeclared or mistyped arguments, author as approver, missing content, no host, the signed pause), at-most-once, interruption, exit codes, the timeout and the output cap. `unit-script-run.mjs` covers the argument rule against the same table as the Go tests, the shared plan rule and the portal's second redaction. `unit-approval-signer.mjs` covers the allowlist: the signer's own hash, two distinct approvals, proposer and contributors refused, global scripts, revocation by content hash, runs refused unless ACTIVE and exact |
-| **Real PowerShell, not Windows** | The Go tests and `e2e-script-run.mjs` run scripts under **PowerShell 7 on Linux** through the agent's real decision code: arguments arrive as data (a hostile `$(...)` is never evaluated), the timeout kills the whole process group, output is capped and redacted. The e2e runs the full path: library review, proposal, two passkey approvals on the signer, a run on two computers, delivery, verification, execution, double redaction, the device history, revocation, business isolation and the 90-day prune |
-| **Real Windows** | **Not done.** Windows PowerShell 5.1, the SYSTEM context, the job object (suspended start, memory limit, kill on timeout) and `%SystemRoot%` paths are compiled and vetted for Windows but have not run on a Windows computer |
+| **Real PowerShell, not Windows** | The Go tests and `e2e-script-run.mjs` run scripts under **PowerShell 7 on Linux** through the agent's real decision code: arguments arrive as data (a hostile `$(...)` is never evaluated), the timeout kills the whole process group, output is capped and redacted. The e2e runs the full path: library review, proposal, two passkey approvals on the signer, a run on two devices, delivery, verification, execution, double redaction, the device history, revocation, customer isolation and the 90-day prune |
+| **Real Windows** | **Not done.** Windows PowerShell 5.1, the SYSTEM context, the job object (suspended start, memory limit, kill on timeout) and `%SystemRoot%` paths are compiled and vetted for Windows but have not run on a Windows device |
 | **Production-ready** | **No.** It needs a paired lab run on real Windows first |

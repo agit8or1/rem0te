@@ -136,7 +136,7 @@ export function legacyRefused(row: { verifiedAt: Date | null } | null): boolean 
 }
 
 export const LEGACY_REFUSED_MESSAGE =
-  'This computer is in Managed Secure Access: its RustDesk password is one nobody is told, so there is no password to launch with. Press Connect on the computer\'s own page, which connects through a session grant while the server has Managed Secure Access on — or roll it back to Legacy to connect the ordinary way.';
+  'This device is in Managed Secure Access: its RustDesk password is one nobody is told, so there is no password to launch with. Press Connect on the device\'s own page, which connects through a session grant while the server has Managed Secure Access on — or roll it back to Legacy to connect the ordinary way.';
 
 // ── 0.73 (build step 5): sessions, revocation, cutover runs ─────────────────
 

@@ -105,14 +105,14 @@ export class AccessPolicyService {
     const controls = await this.controls.effective(ep.customerId);
     if (await this.abuse.isPaused(`user:${actor.userId}`)) return { ok: false, reason: 'identity_paused', message: 'Your privileged access is paused after an activity limit was reached.' };
     if ((controls.protectedClasses as string[]).includes(ep.deviceClass)) {
-      return { ok: false, reason: 'protected_device_class', message: `This computer is a protected ${ep.deviceClass.replace(/_/g, ' ').toLowerCase()}; no catalog action can target it in this release.` };
+      return { ok: false, reason: 'protected_device_class', message: `This device is a protected ${ep.deviceClass.replace(/_/g, ' ').toLowerCase()}; no catalog action can target it in this release.` };
     }
     const tier = this.tierFor(actor, ep.id);
     if (!actor.technician) {
       if (actor.isPlatformAdmin) return { ok: true, tier };
       if (actor.businessId !== ep.customerId) return { ok: false, reason: 'wrong_business', message: 'Computer not found' };
       if (!(actor.capabilities as string[]).includes(CAP.ACTIONS_REQUEST) && !isOwnerRole(actor.roleType)) {
-        return { ok: false, reason: 'action_not_granted', message: 'Your role in this business does not include requesting actions.' };
+        return { ok: false, reason: 'action_not_granted', message: 'Your role in this customer does not include requesting actions.' };
       }
       return { ok: true, tier };
     }
@@ -155,10 +155,10 @@ export class AccessPolicyService {
     if ((controls.protectedClasses as string[]).includes(ep.deviceClass)) {
       const exception = await this.activeTemporary(actor.userId, ep.id, 'PROTECTED_EXCEPTION');
       if (!exception) {
-        return { ok: false, status: 'requires_request', reason: 'protected_device_class', message: `This computer is a protected ${ep.deviceClass.replace(/_/g, ' ').toLowerCase()}. Interactive access needs an independently approved exception, activated with fresh authentication, from a managed admin workstation.` };
+        return { ok: false, status: 'requires_request', reason: 'protected_device_class', message: `This device is a protected ${ep.deviceClass.replace(/_/g, ' ').toLowerCase()}. Interactive access needs an independently approved exception, activated with fresh authentication, from a managed admin workstation.` };
       }
       if (!managedWorkstation) {
-        return { ok: false, status: 'denied', reason: 'protected_requires_managed_workstation', message: 'Your exception is active, but protected computers can only be reached from a managed admin workstation through the launcher.' };
+        return { ok: false, status: 'denied', reason: 'protected_requires_managed_workstation', message: 'Your exception is active, but protected devices can only be reached from a managed admin workstation through the launcher.' };
       }
     }
 
@@ -178,7 +178,7 @@ export class AccessPolicyService {
     }
 
     const presets = this.covering(actor.technician.sources, ep.id).filter((s) => s.presetPolicy);
-    if (presets.length === 0) return { ok: false, status: 'denied', reason: 'outside_technician_assignment', message: 'No active assignment covers this computer.' };
+    if (presets.length === 0) return { ok: false, status: 'denied', reason: 'outside_technician_assignment', message: 'No active assignment covers this device.' };
     const enforce: SessionEnforcement = ctx.managed === true
       ? { viewOnly: true, attendedConsent: true }
       : (ep.sessionEnforcement ?? {}) as SessionEnforcement;
@@ -186,18 +186,18 @@ export class AccessPolicyService {
 
     if (mode === 'view_only') {
       const eligible = presets.filter((s) => s.presetPolicy!.remoteViewOnly === 'allowed' && (!s.presetPolicy!.standardWorkstationsOnly || ep.deviceClass === 'WORKSTATION'));
-      if (!eligible.length) return { ok: false, status: 'denied', reason: 'view_only_not_granted', message: 'Your access level does not include view-only sessions on this computer.' };
+      if (!eligible.length) return { ok: false, status: 'denied', reason: 'view_only_not_granted', message: 'Your access level does not include view-only sessions on this device.' };
       if (enforce.viewOnly !== true) {
-        return { ok: false, status: 'unavailable', reason: 'endpoint_cannot_enforce_view_only', message: 'This computer cannot enforce a view-only session (its agent does not report an enforceable view-only mode). The launch was blocked rather than opened with control.' };
+        return { ok: false, status: 'unavailable', reason: 'endpoint_cannot_enforce_view_only', message: 'This device cannot enforce a view-only session (its agent does not report an enforceable view-only mode). The launch was blocked rather than opened with control.' };
       }
       if (controls.attendedConsent === 'required' && enforce.attendedConsent !== true) {
-        return { ok: false, status: 'unavailable', reason: 'endpoint_cannot_enforce_consent', message: 'Customer consent is required, and this computer cannot enforce it (it accepts a permanent password). The launch was blocked.' };
+        return { ok: false, status: 'unavailable', reason: 'endpoint_cannot_enforce_consent', message: 'Customer consent is required, and this device cannot enforce it (it accepts a permanent password). The launch was blocked.' };
       }
       return { ok: true, path: 'preset', revealCredential: false, maxSessionMinutes: maxMin, tier };
     }
 
     if (mode === 'elevated') {
-      return { ok: false, status: 'unavailable', reason: 'elevation_unavailable', message: 'Elevated sessions are unavailable: there is no privileged helper on the endpoint to enforce them.' };
+      return { ok: false, status: 'unavailable', reason: 'elevation_unavailable', message: 'Elevated sessions are unavailable: there is no privileged helper on the device to enforce them.' };
     }
 
     // Interactive control.
@@ -209,7 +209,7 @@ export class AccessPolicyService {
       if (!grant) return { ok: false, status: 'requires_request', reason: 'temporary_grant_required', message: 'Interactive control needs a temporary grant: request it, have it independently approved, then activate it with fresh authentication.' };
     }
     if (controls.attendedConsent === 'required' && enforce.attendedConsent !== true) {
-      return { ok: false, status: 'unavailable', reason: 'endpoint_cannot_enforce_consent', message: 'Customer consent is required, and this computer cannot enforce it (it accepts a permanent password). The launch was blocked.' };
+      return { ok: false, status: 'unavailable', reason: 'endpoint_cannot_enforce_consent', message: 'Customer consent is required, and this device cannot enforce it (it accepts a permanent password). The launch was blocked.' };
     }
     // Never hand a preset-backed technician the permanent password: it would
     // outlive the grant and allow a direct reconnect the portal never sees.

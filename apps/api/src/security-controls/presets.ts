@@ -80,11 +80,11 @@ const L3: PresetPolicy = {
 
 export const BUILT_IN_PRESETS: { key: string; tier: Tier; name: string; description: string; policy: PresetPolicy }[] = [
   { key: 'l1-help-desk', tier: 'L1', name: 'L1 — Help Desk', policy: L1,
-    description: 'Inventory and liveness for assigned computers; works assigned support requests. No remote launch, event logs, credentials, control, elevation, enrollment, scripts, patches or fix approval.' },
+    description: 'Inventory and liveness for assigned devices; works assigned support requests. No remote launch, event logs, credentials, control, elevation, enrollment, scripts, patches or fix approval.' },
   { key: 'l2-technician', tier: 'L2', name: 'L2 — Technician', policy: L2,
     description: 'L1 plus bounded read-only diagnostics on assigned standard workstations, attended view-only, and requests for low-risk fixes. Interactive control only through a temporary, independently approved grant with fresh authentication.' },
   { key: 'l3-senior', tier: 'L3', name: 'L3 — Senior Technician', policy: L3,
-    description: 'L2 plus advanced diagnostics and eligibility to request time-limited control, elevation, higher-risk fixes and staged patch work. The tier grants no approval, execution, enrollment, administration or cross-business access.' },
+    description: 'L2 plus advanced diagnostics and eligibility to request time-limited control, elevation, higher-risk fixes and staged patch work. The tier grants no approval, execution, enrollment, administration or cross-customer access.' },
 ];
 
 /** What a preset grants as business capabilities. Read-side only, by construction. */

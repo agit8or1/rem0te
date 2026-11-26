@@ -23,7 +23,7 @@ import { Label } from '@/components/ui/label';
 import { LastChecked, TaskRow } from '@/components/tasks/task-ui';
 
 const STATES: { v: string; label: string }[] = [
-  { v: 'in_flight', label: 'In progress' }, { v: 'scheduled', label: 'Scheduled' }, { v: 'approval', label: 'Waiting for approval' }, { v: 'problem', label: 'Failed or overdue' },
+  { v: 'in_flight', label: 'In progress' }, { v: 'scheduled', label: 'Scheduled' }, { v: 'approval', label: 'Pending approval' }, { v: 'problem', label: 'Failed or overdue' },
   { v: 'done', label: 'Finished' }, { v: 'all', label: 'All (last 14 days)' },
 ];
 const select = 'flex h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm';
@@ -45,10 +45,10 @@ export default function TasksPage() {
     queryFn: () => tasksApi.list({ state, ...(type ? { type } : {}) }).then((r) => r.data.data as TaskList),
     refetchInterval: (q) => (q.state.data as TaskList | undefined)?.pollMs ?? 60_000,
   });
-  if (!can(CAP.COMPUTERS_VIEW)) return <div className="p-6 text-sm text-muted-foreground">You need View computers to see tasks.</div>;
+  if (!can(CAP.COMPUTERS_VIEW)) return <div className="p-6 text-sm text-muted-foreground">You need View devices to see tasks.</div>;
   return (
     <div className="space-y-4 p-4 sm:p-6">
-      <PageHeader title="Tasks" description="Everything sent or queued to your computers, and where each one is: scheduled, waiting for approval, queued for the next check-in, handed out, running or done." />
+      <PageHeader title="Tasks" description="Everything sent or queued to your devices, and where each one is: scheduled, pending approval, queued for the next check-in, handed out, running or done." />
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1">
           <Label htmlFor="tasks-state" className="text-xs">Show</Label>
@@ -84,7 +84,7 @@ export default function TasksPage() {
         </CardContent>
       </Card>
       <p className="text-xs text-muted-foreground">
-        Computers check in about every 3 minutes; a task is handed out at the first check-in after it is approved and its start time. Tasks that
+        Devices check in about every 3 minutes; a task is handed out at the first check-in after it is approved and its start time. Tasks that
         are meant to run unattended — automatic snapshots, the 12-hourly scan — are not listed.
       </p>
     </div>

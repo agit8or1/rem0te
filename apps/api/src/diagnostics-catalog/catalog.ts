@@ -122,11 +122,11 @@ export const CATALOG: readonly CatalogEntry[] = [
   {
     key: 'disk_space', label: 'Disk space', ...RO, group: 'general', capability: VIEW, duration: 'seconds',
     description: 'Size and free space of every fixed volume, with the percentage free.',
-    capabilityReason: 'Already part of the inventory anyone who can see the computer can read.',
+    capabilityReason: 'Already part of the inventory anyone who can see the device can read.',
   },
   {
     key: 'service_health', label: 'Service health', ...RO, group: 'general', capability: VIEW, duration: 'seconds',
-    description: 'Services set to start automatically that are not running, and the state of every service a monitor watches on this computer.',
+    description: 'Services set to start automatically that are not running, and the state of every service a monitor watches on this device.',
     capabilityReason: 'Service names and states only — the same as the service monitors report. No paths or accounts.',
   },
   {
@@ -141,7 +141,7 @@ export const CATALOG: readonly CatalogEntry[] = [
   },
   {
     key: 'network_connectivity', label: 'Network connectivity', ...RO, group: 'networking', capability: VIEW, duration: 'seconds',
-    description: 'Whether this computer can open a TCP connection to the rem0te server it already reports to, and which network adapters are up or down with their addresses.',
+    description: 'Whether this device can open a TCP connection to the rem0te server it already reports to, and which network adapters are up or down with their addresses.',
     capabilityReason: 'Adapters and addresses are already in the inventory; the reach test is to this server only.',
   },
   {
@@ -203,17 +203,17 @@ export const CATALOG: readonly CatalogEntry[] = [
   },
   {
     key: 'dns_lookup', label: 'DNS lookup', ...RO, ...PAL, group: 'networking', capability: 'computers:connect', duration: 'seconds', params: 'dns_lookup',
-    description: 'Resolve a host name you give through this computer’s own resolver (hosts file, cache, then DNS), with the addresses, how long it took and the DNS servers in use. Waits at most ten seconds.',
-    capabilityReason: 'You choose the name, and the computer asks its own network about it — what a remote session already lets you do. A name is checked against one strict rule on the portal, in the database and on the computer.',
+    description: 'Resolve a host name you give through this device’s own resolver (hosts file, cache, then DNS), with the addresses, how long it took and the DNS servers in use. Waits at most ten seconds.',
+    capabilityReason: 'You choose the name, and the device asks its own network about it — what a remote session already lets you do. A name is checked against one strict rule on the portal, in the database and on the device.',
   },
   {
     key: 'tcp_port', label: 'TCP port test', ...RO, ...PAL, group: 'networking', capability: 'computers:connect', duration: 'seconds', params: 'tcp_port',
-    description: 'Whether this computer can open a TCP connection to a host and port you give, within a timeout you pick (1–10 seconds): open, refused, no answer, or the name did not resolve. It connects and closes; no data is sent.',
-    capabilityReason: 'You choose where the computer connects, on its own network — what a remote session already lets you do. The host, port and timeout are checked against closed rules on the portal, in the database and on the computer.',
+    description: 'Whether this device can open a TCP connection to a host and port you give, within a timeout you pick (1–10 seconds): open, refused, no answer, or the name did not resolve. It connects and closes; no data is sent.',
+    capabilityReason: 'You choose where the device connects, on its own network — what a remote session already lets you do. The host, port and timeout are checked against closed rules on the portal, in the database and on the device.',
   },
   {
     key: 'route_table', label: 'Routes', ...RO, ...PAL, group: 'networking', capability: VIEW, duration: 'seconds',
-    description: 'The IPv4 and IPv6 routing table: destination, next hop, interface and metric, leaving out the multicast and broadcast routes every computer has. Up to 200 routes.',
+    description: 'The IPv4 and IPv6 routing table: destination, next hop, interface and metric, leaving out the multicast and broadcast routes every device has. Up to 200 routes.',
     capabilityReason: 'Addresses and gateways the Network tab already shows, in routing-table form.',
   },
   {
@@ -229,7 +229,7 @@ export const CATALOG: readonly CatalogEntry[] = [
   {
     key: 'unexpected_shutdowns', label: 'Unexpected shutdowns', ...RO, ...PAL, group: 'maintenance', capability: VIEW, duration: 'seconds',
     description: 'Restarts without a clean shutdown (Kernel-Power 41, EventLog 6008) and blue screens (BugCheck 1001) in the last 30 days, with the time and the bugcheck code. No message text.',
-    capabilityReason: 'Event times, ids and the bugcheck code only — not event-log text, so View computers is enough.',
+    capabilityReason: 'Event times, ids and the bugcheck code only — not event-log text, so View devices is enough.',
   },
   {
     key: 'scheduled_tasks', label: 'Scheduled tasks', ...RO, ...PAL, group: 'maintenance', capability: VIEW, duration: 'minute',

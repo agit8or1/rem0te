@@ -52,7 +52,7 @@ export function UpgradePanel() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-muted-foreground">
-                  <th className="px-4 py-2 font-medium">Business</th>
+                  <th className="px-4 py-2 font-medium">Customer</th>
                   <th className="px-4 py-2 font-medium">Who</th>
                   <th className="px-4 py-2 font-medium">Now</th>
                   <th className="px-4 py-2 font-medium">Permissions today</th>

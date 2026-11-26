@@ -5,7 +5,7 @@ import { AccessControlService, type ActorContext } from '../rbac/access-control.
 import { RetentionService } from './retention.service';
 
 /**
- * Data retention status (0.34), for Settings → System status. Platform Admin
+ * Data retention status (0.34), for Administration → System status. Platform Admin
  * only: the counts are platform-wide (every business's rows), so there is no
  * business scope to narrow them to. Read-only: there is no route that runs,
  * changes or turns off the sweep — that is the server's environment.

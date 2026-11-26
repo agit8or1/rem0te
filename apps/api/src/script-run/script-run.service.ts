@@ -273,7 +273,7 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
       for (const id of d.endpointIds) {
         await this.acl.assertEndpointInScope(actor, id);
         const ep = await this.prisma.endpoint.findUnique({ where: { id }, select: { customerId: true } });
-        if (ep?.customerId !== s.customerId) throw new BadRequestException({ code: 'SCRIPT_WRONG_BUSINESS', message: 'This script belongs to another business; it runs on that business\'s computers only.' });
+        if (ep?.customerId !== s.customerId) throw new BadRequestException({ code: 'SCRIPT_WRONG_BUSINESS', message: 'This script belongs to another customer; it runs on that customer\'s devices only.' });
       }
     }
     const block: ScriptBlock = {
@@ -305,7 +305,7 @@ export class ScriptRunService implements OnModuleInit, OnModuleDestroy {
     if (v.status !== 'APPROVED' || !v.decidedById) throw new ConflictException({ code: 'NOT_APPROVED', message: 'Only a version approved in the library can be scheduled.' });
     const entry = (await this.entries(v.id)).find((e) => e.status === 'ACTIVE');
     if (!entry) throw new ConflictException({ code: 'SCRIPT_NOT_ALLOWLISTED', message: 'This version is not on the approval signer\'s allowlist yet. Propose it from the library first.' });
-    if (s.customerId && s.customerId !== businessId) throw new BadRequestException({ code: 'SCRIPT_WRONG_BUSINESS', message: 'This script belongs to another business; it runs on that business\'s computers only.' });
+    if (s.customerId && s.customerId !== businessId) throw new BadRequestException({ code: 'SCRIPT_WRONG_BUSINESS', message: 'This script belongs to another customer; it runs on that customer\'s devices only.' });
     const params = { scriptVersionId: v.id, sha256: v.contentSha256, parameters, timeoutMinutes };
     const decls = v.parameters as unknown as ParameterDecl[];
     const why = argumentsProblem(decls, parameters);

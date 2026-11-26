@@ -48,13 +48,13 @@ export default function UnassignedDevicesPage() {
   return (
     <div className="p-4 sm:p-6 space-y-6">
       <PageHeader
-        title="Unassigned computers"
-        description="Computers that enrolled but belong to no business yet. Nothing can connect to or act on them until you assign them. Platform Admins only."
+        title="Unassigned devices"
+        description="Devices that enrolled but belong to no customer yet. Nothing can connect to or act on them until you assign them. Platform Admins only."
         actions={<Button asChild variant="outline" size="sm"><Link href="/admin/deploy">Deploy agents</Link></Button>}
       />
       <Tabs defaultValue="computers">
         <TabsList>
-          <TabsTrigger value="computers">Computers</TabsTrigger>
+          <TabsTrigger value="computers">Devices</TabsTrigger>
           <TabsTrigger value="rules">Assignment rules</TabsTrigger>
         </TabsList>
         <TabsContent value="computers" className="mt-4"><Pool enabled={isPlatformAdmin} /></TabsContent>
@@ -77,7 +77,7 @@ function Pool({ enabled }: { enabled: boolean }) {
   const [place, setPlace] = useState<Place>(EMPTY_PLACE);
 
   const computers = useMemo(() => data?.computers ?? [], [data]);
-  const bn = (id: string | null | undefined) => (id ? data?.businesses[id] ?? 'a business' : '');
+  const bn = (id: string | null | undefined) => (id ? data?.businesses[id] ?? 'a customer' : '');
   const sn = (id: string | null | undefined) => (id ? data?.sites[id] ?? 'a site' : '');
   const platforms = useMemo(() => [...new Set(computers.map((c) => c.platform).filter((p): p is string => !!p))].sort(), [computers]);
   const rows = computers.filter((c) => {
@@ -98,7 +98,7 @@ function Pool({ enabled }: { enabled: boolean }) {
     qc.invalidateQueries({ queryKey: ['adoption'] });
     qc.invalidateQueries({ queryKey: ['endpoints'] });
     setSelected(new Set());
-    toast({ title: `${n} computer${n === 1 ? '' : 's'} ${verb}`, description: skipped ? `${skipped} had already left the unassigned list and were not changed.` : undefined });
+    toast({ title: `${n} device${n === 1 ? '' : 's'} ${verb}`, description: skipped ? `${skipped} had already left the unassigned list and were not changed.` : undefined });
   };
   const assign = useMutation({
     mutationFn: (v: { endpointIds: string[]; businessId: string; siteId: string | null; groupIds: string[]; mappingId: string | null }) => adoptionApi.assign(v),
@@ -120,7 +120,7 @@ function Pool({ enabled }: { enabled: boolean }) {
   return (
     <div className="space-y-4">
       <div className="grid gap-2 sm:grid-cols-4">
-        <Input placeholder="Search name, Remote ID, address, domain, serial, key…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search unassigned computers" />
+        <Input placeholder="Search name, Remote ID, address, domain, serial, key…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search unassigned devices" />
         <select className={selectClass} value={arrived} onChange={(e) => setArrived(e.target.value)} aria-label="How it arrived">
           <option value="">Any arrival</option>
           {Object.entries(ARRIVED).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
@@ -139,11 +139,11 @@ function Pool({ enabled }: { enabled: boolean }) {
 
       {chosen.length > 0 && (
         <Card data-testid="adoption-bulk">
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Assign {chosen.length} selected computer{chosen.length === 1 ? '' : 's'}</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm">Assign {chosen.length} selected device{chosen.length === 1 ? '' : 's'}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <PlacePicker value={place} onChange={setPlace} idPrefix="adopt" />
             <p className="text-xs text-muted-foreground">
-              Everyone in that business with access will be able to see and act on them. You will be asked to confirm it is you. Each one is recorded in the audit log with your name.
+              Everyone at that customer with access will be able to see and act on them. You will be asked to confirm it is you. Each one is recorded in the audit log with your name.
             </p>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" disabled={!place.businessId || assign.isPending}
@@ -151,7 +151,7 @@ function Pool({ enabled }: { enabled: boolean }) {
                 Assign
               </Button>
               <Button size="sm" variant="outline" disabled={forget.isPending}
-                onClick={() => { if (window.confirm(`Forget ${chosen.length} computer(s)? A computer whose agent keeps running checks in again as a new unassigned entry.`)) forget.mutate(chosen); }}>
+                onClick={() => { if (window.confirm(`Forget ${chosen.length} device(s)? A device whose agent keeps running checks in again as a new unassigned entry.`)) forget.mutate(chosen); }}>
                 <Trash2 className="h-4 w-4 mr-1" /> Forget
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Clear selection</Button>
@@ -172,7 +172,7 @@ function Pool({ enabled }: { enabled: boolean }) {
                     checked={visibleIds.length > 0 && visibleIds.every((id) => selected.has(id))}
                     onChange={(e) => setSelected(e.target.checked ? new Set(visibleIds) : new Set())} />
                 </th>
-                <th className="px-3 py-3 font-medium">Computer</th>
+                <th className="px-3 py-3 font-medium">Device</th>
                 <th className="px-3 py-3 font-medium">Arrived</th>
                 <th className="px-3 py-3 font-medium">Source address</th>
                 <th className="px-3 py-3 font-medium">Seen</th>
@@ -181,7 +181,7 @@ function Pool({ enabled }: { enabled: boolean }) {
             </thead>
             <tbody className="divide-y">
               {rows.length === 0 ? (
-                <tr><td colSpan={6} className="text-center py-8 text-muted-foreground">{computers.length ? 'No computer matches these filters.' : 'No unassigned computers.'}</td></tr>
+                <tr><td colSpan={6} className="text-center py-8 text-muted-foreground">{computers.length ? 'No device matches these filters.' : 'No unassigned devices.'}</td></tr>
               ) : rows.map((c) => (
                 <Fragment key={c.id}>
                   <tr className="hover:bg-muted/30 align-top">
@@ -262,7 +262,7 @@ function Details({ c }: { c: PooledComputer }) {
       {c.matches.length > 1 && (
         <p className="text-xs text-muted-foreground">Every rule that matched, best first: {c.matches.map((m) => `${SOURCE[m.source]} (${m.value})`).join(', ')}.</p>
       )}
-      <p className="text-xs text-muted-foreground">Who is signed in is not shown here and is never used to suggest a business.</p>
+      <p className="text-xs text-muted-foreground">Who is signed in is not shown here and is never used to suggest a customer.</p>
     </div>
   );
 }
@@ -295,8 +295,8 @@ function Rules({ enabled }: { enabled: boolean }) {
         <CardHeader className="pb-2"><CardTitle className="text-sm">Add a rule</CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <p className="text-xs text-muted-foreground">
-            A rule <strong>suggests</strong> a business and site for an unassigned computer that matches it. Nothing is assigned until you accept it.
-            Rules can only use the deployment key, the AD / DNS domain the computer reports, the address the server saw it connect from, and the start of its hostname —
+            A rule <strong>suggests</strong> a customer and site for an unassigned device that matches it. Nothing is assigned until you accept it.
+            Rules can only use the deployment key, the AD / DNS domain the device reports, the address the server saw it connect from, and the start of its hostname —
             never who is signed in, a user name or an e-mail address.
           </p>
           <PlacePicker value={place} onChange={setPlace} groups="none" idPrefix="rule" />
@@ -309,7 +309,7 @@ function Rules({ enabled }: { enabled: boolean }) {
             <label className="space-y-1 text-xs font-medium"><span>Value</span>
               {kind === 'deployment_key' ? (
                 <select className={selectClass} value={value} onChange={(e) => setValue(e.target.value)} disabled={!place.businessId}>
-                  <option value="">{place.businessId ? (keyChoices.length ? 'Choose a key…' : 'No usable key for this business') : 'Choose a business first'}</option>
+                  <option value="">{place.businessId ? (keyChoices.length ? 'Choose a key…' : 'No usable key for this customer') : 'Choose a customer first'}</option>
                   {keyChoices.map((k) => <option key={k.id} value={k.id}>{k.name} (…{k.keyHint})</option>)}
                 </select>
               ) : (
@@ -348,8 +348,8 @@ function Rules({ enabled }: { enabled: boolean }) {
         </table>
       </div>
       <p className="text-xs text-muted-foreground">
-        Order: a rule on the deployment key, then the key&apos;s own business, then domain, hostname prefix and address. Within a kind, lower priority wins, then the narrower range or longer prefix.
-        When rules name different businesses the computer is marked “Rules disagree” and must be assigned by hand.
+        Order: a rule on the deployment key, then the key&apos;s own customer, then domain, hostname prefix and address. Within a kind, lower priority wins, then the narrower range or longer prefix.
+        When rules name different customers the device is marked “Rules disagree” and must be assigned by hand.
       </p>
     </div>
   );

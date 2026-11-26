@@ -37,7 +37,7 @@ export const BACKUP_AGENT_TEMPLATES: MonitorTemplate[] = [
     id: 'urbackup-client',
     vendor: 'UrBackup',
     label: 'UrBackup client (Windows)',
-    description: 'Alerts when the UrBackup client service is installed but not running. Computers without the UrBackup client raise nothing.',
+    description: 'Alerts when the UrBackup client service is installed but not running. Devices without the UrBackup client raise nothing.',
     // The Windows client installer creates the service: SERVICE create "UrBackupClientBackend" … autostart=1;
     // display=UrBackup Client Service for Backups.
     source: 'https://github.com/uroni/urbackup_frontend_wx/blob/dev/urbackup.nsi',
@@ -49,7 +49,7 @@ export const BACKUP_AGENT_TEMPLATES: MonitorTemplate[] = [
     id: 'comet-backup',
     vendor: 'Comet Backup',
     label: 'Comet Backup agent (Windows)',
-    description: 'Alerts when Comet\'s delegate service, which runs scheduled backup jobs, is installed but not running. Computers without Comet raise nothing.',
+    description: 'Alerts when Comet\'s delegate service, which runs scheduled backup jobs, is installed but not running. Devices without Comet raise nothing.',
     // "NT SERVICE\backup.delegate" (installation); "The commands are started by the backup.delegate service" (troubleshooting).
     source: 'https://docs.cometbackup.com/latest/installation/comet-backup-installation',
     rules: [

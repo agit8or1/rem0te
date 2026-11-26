@@ -145,7 +145,7 @@ export class DeviceControlService {
     const snap = await this.latest(endpointId, 'service_list');
     const rows = ((snap?.result as { services?: unknown } | null)?.services ?? []) as { name?: unknown; displayName?: unknown }[];
     const row = Array.isArray(rows) ? rows.find((r) => r?.name === d.service && r?.displayName === d.displayName) : undefined;
-    if (!row) throw new NotFoundException({ code: 'SERVICE_NOT_IN_SNAPSHOT', message: 'This computer\'s latest service list does not show that service with that display name. Refresh the Services tab and try again.' });
+    if (!row) throw new NotFoundException({ code: 'SERVICE_NOT_IN_SNAPSHOT', message: 'This device\'s latest service list does not show that service with that display name. Refresh the Services tab and try again.' });
     const params = d.op === 'set_start_type' ? { service: d.service, displayName: d.displayName, op: d.op, startType: d.startType! } : { service: d.service, displayName: d.displayName, op: d.op };
     const what = d.op === 'set_start_type' ? `Set ${d.displayName} (${d.service}) to start ${START_LABEL[d.startType!]}` : `${OP_LABEL[d.op]} ${d.displayName} (${d.service})`;
     const job = await this.actions.createPlan(actor, {
@@ -168,7 +168,7 @@ export class DeviceControlService {
     const snap = await this.latest(endpointId, 'process_list');
     const rows = ((snap?.result as { processes?: unknown } | null)?.processes ?? []) as { name?: unknown; pid?: unknown; startedAt?: unknown }[];
     const row = Array.isArray(rows) ? rows.find((r) => r?.pid === d.pid && r?.name === d.name && r?.startedAt === d.startedAt) : undefined;
-    if (!row) throw new NotFoundException({ code: 'PROCESS_NOT_IN_SNAPSHOT', message: 'This computer\'s latest process list does not show that process (that id, name and start time). Refresh the Processes tab and try again.' });
+    if (!row) throw new NotFoundException({ code: 'PROCESS_NOT_IN_SNAPSHOT', message: 'This device\'s latest process list does not show that process (that id, name and start time). Refresh the Processes tab and try again.' });
     const params = { pid: d.pid, name: d.name, startedAt: d.startedAt, ...(d.tree ? { tree: true } : {}) };
     const job = await this.actions.createPlan(actor, {
       action: PROCESS_STOP, endpointIds: [endpointId], params,

@@ -16,7 +16,7 @@ import { apiError } from '@/components/security-controls/shared';
 import { reauthSuffix, useAsks } from '@/lib/confirm-policy';
 
 /**
- * Settings → AI (0.48): the one provider "Ask AI" uses on event-log entries
+ * Administration → AI (0.48): the one provider "Ask AI" uses on event-log entries
  * and alerts. Platform Admin only; saving asks for fresh authentication (never
  * skipped as an everyday change). The key is write-only: the page shows only
  * that one is set and its last four characters.
@@ -59,7 +59,7 @@ export default function AiSettingsPage() {
     }).then((r) => r.data.data as AiSettingsView),
     onSuccess: (r) => {
       setNotice({ ok: true, text: r.keyChange === 'cleared_destination_changed' ? 'Saved. The provider or address changed, so the saved key was removed — enter it again.' : 'AI settings saved.' });
-      // Put what was saved in the cache before the form is rebuilt from it (as Settings → Email does).
+      // Put what was saved in the cache before the form is rebuilt from it (as Administration → Email does).
       qc.setQueryData(['ai-settings'], r);
       setF(null); qc.invalidateQueries({ queryKey: ['ai-settings'] }); qc.invalidateQueries({ queryKey: ['ai-status'] });
     },
@@ -85,9 +85,9 @@ export default function AiSettingsPage() {
           <CardHeader><CardTitle className="flex items-center gap-2 text-sm">Provider {data.configured ? (data.enabled ? <Badge>on</Badge> : <Badge variant="outline">off</Badge>) : <Badge variant="outline">not configured</Badge>}</CardTitle></CardHeader>
           <CardContent className="space-y-3 text-sm">
             <p className="text-muted-foreground">
-              Before anything is sent, the entry is redacted on this server: the computer&apos;s and business&apos;s names, host names, IP and MAC
+              Before anything is sent, the entry is redacted on this server: the device&apos;s and customer&apos;s names, host names, IP and MAC
               addresses, e-mail addresses, accounts and SIDs, user-profile paths, serial numbers, credentials and tokens are replaced.
-              The provider sees the event&apos;s id, source, level, log, time, the redacted message and the Windows version — never which computer or business it came from.
+              The provider sees the event&apos;s id, source, level, log, time, the redacted message and the Windows version — never which device or customer it came from.
             </p>
             <label className="flex items-center gap-2"><input type="checkbox" checked={f.enabled} onChange={(e) => set({ enabled: e.target.checked })} />Enable Ask AI</label>
             <div className="space-y-1">

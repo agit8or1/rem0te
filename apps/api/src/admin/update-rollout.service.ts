@@ -128,7 +128,7 @@ export class UpdateRolloutService implements OnModuleInit, OnModuleDestroy {
   async savePilotGroup(input: { id?: string; name: string; description?: string; endpointIds: string[] }) {
     const ids = [...new Set(input.endpointIds)];
     const found = await this.prisma.endpoint.count({ where: { id: { in: ids } } });
-    if (found !== ids.length) throw new BadRequestException('Unknown computer in pilot group');
+    if (found !== ids.length) throw new BadRequestException('Unknown device in pilot group');
     return this.prisma.$transaction(async (tx) => {
       const g = input.id
         ? await tx.updatePilotGroup.update({ where: { id: input.id }, data: { name: input.name, description: input.description ?? null } })
@@ -184,7 +184,7 @@ export class UpdateRolloutService implements OnModuleInit, OnModuleDestroy {
       // A stable order, so the same request plans the same batches.
       orderBy: [{ name: 'asc' }, { id: 'asc' }],
     });
-    if (endpoints.length === 0) throw new NotFoundException('No matching computers');
+    if (endpoints.length === 0) throw new NotFoundException('No matching devices');
 
     // One active rollout per computer and component, or two would fight.
     const busy = await this.prisma.updateJob.findMany({

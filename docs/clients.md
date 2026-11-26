@@ -13,10 +13,10 @@ delivering those two values.
 
 | You are… | Use | Where |
 |---|---|---|
-| Connecting to a computer, from anything | **Just click Connect** | Rem0te → Computers |
+| Connecting to a device, from anything | **Just click Connect** | Rem0te → Devices |
 | Setting a machine up ahead of time | **Set up this computer for Connect** | Rem0te → Downloads |
 | A technician on a machine with no RustDesk | **Preconfigured client** | Rem0te → Downloads |
-| Deploying to a computer to be supported | **Managed installer** | Rem0te → Devices → Add device |
+| Deploying to a device to be supported | **Managed installer** | Rem0te → Devices → Add device |
 | Helping someone with no account and no install | **Quick Connect** | Send them `/quick` |
 | Wanting stock RustDesk, unmodified | **Unconfigured client** | Rem0te → Downloads |
 
@@ -24,10 +24,10 @@ delivering those two values.
 
 ## Connect — the zero-setup path
 
-**Connect** on a computer's page hands you a single file, named for the machine
+**Connect** on a device's page hands you a single file, named for the machine
 you are connecting to. Run it and it:
 
-1. Uses the RustDesk already on the computer — or, if there is none,
+1. Uses the RustDesk already on the device — or, if there is none,
    fetches a portable copy once into `%LOCALAPPDATA%\Rem0te` and reuses it
    every time after
 2. Points it at this server
@@ -53,7 +53,7 @@ Connect button's `rustdesk://` link would work directly too.
 
 ![The Downloads page](screenshots/guide/downloads.png)
 
-1. **Remote Support → Technician client**. Separate from *Devices → Add device*, which prepares
+1. **Remote support → Technician client**. Separate from *Devices → Add device*, which prepares
    the machine being supported rather than the one supporting it.
 2. **Set up this computer for Connect** — the one to reach for. Points this
    machine's RustDesk at the server, fetching a portable copy first if there is
@@ -63,7 +63,7 @@ Connect button's `rustdesk://` link would work directly too.
 4. **Unconfigured client** — stock RustDesk, pointed at nothing.
 
 
-These are for the computer you connect **from**. They are authenticated; only
+These are for the device you connect **from**. They are authenticated; only
 signed-in users can fetch them.
 
 ### Set up this computer for Connect *(start here)*
@@ -116,25 +116,25 @@ a known-clean binary — comparing behaviour, or configuring by hand afterwards.
 
 ## Managed installer — Rem0te → Devices → Add device
 
-For a computer that will be supported on an ongoing basis. This is the only
+For a device that will be supported on an ongoing basis. This is the only
 client that does more than configure RustDesk:
 
 - Installs RustDesk as a service and applies this server's config
 - Sets a permanent password and reports it to Rem0te, encrypted
 - Installs a scheduled task that heartbeats every ~3 minutes, which is what
   drives the online dot, the credential-rotation channel, the RustDesk client
-  update channel, and the inventory the computer's Overview tab shows
-- Claims the machine into a business if given an enrolment token — and, from
-  0.32, into the site the token names. Business and site are fixed when the
+  update channel, and the inventory the device's Overview tab shows
+- Claims the machine into a customer if given an enrolment token — and, from
+  0.32, into the site the token names. Customer and site are fixed when the
   token is made on Add device, never chosen by the machine
 
-**Many computers at once** (0.57): a Platform Admin makes a multi-use
+**Many devices at once** (0.57): a Platform Admin makes a multi-use
 *deployment key* on **Devices → Deploy agents** and the same installers take it
 in place of the single-use code — from a Group Policy startup script, Intune,
-another RMM, or a Linux or macOS script. By default a computer that enrols with
+another RMM, or a Linux or macOS script. By default a device that enrols with
 a key waits under **Devices → Unassigned** until a Platform Admin assigns it,
-and nothing can connect to or act on it before then. The business still comes
-only from the code or the key, never from the computer. See
+and nothing can connect to or act on it before then. The customer still comes
+only from the code or the key, never from the device. See
 [deployment.md](deployment.md).
 
 Add device offers the installer two ways (0.64): **Download installer** (a
@@ -144,7 +144,7 @@ and **Command** (the one-line command). From 0.65 Windows also has
 own install silently (`msiexec /i rem0te.msi TOKEN=… /qn`); it has never been
 run on real Windows, and uninstalling it leaves the agent in place. There is no
 `.pkg`; see [setup.md](setup.md#enrolling-a-device) and
-[deployment.md](deployment.md#windows-installer-package-msi-065). It then shows the computer arriving and
+[deployment.md](deployment.md#windows-installer-package-msi-065). It then shows the device arriving and
 its first health (online, agent, inventory) as the server receives it; see
 [technician-guide.md](technician-guide.md) §5.
 
@@ -159,17 +159,17 @@ scheduled task: a `sh` script under a systemd timer, every 3 minutes, with the
 device secret in `/etc/rem0te-agent.secret` (0600). It reports heartbeat,
 inventory and pending package updates and acts on nothing the server sends, so
 password rotation, reinstall and client updates are done by re-running the
-installer on the computer. Run the installer as root; `--uninstall` removes the
-agent. See [inventory.md](inventory.md#linux-computers-032).
+installer on the device. Run the installer as root; `--uninstall` removes the
+agent. See [inventory.md](inventory.md#linux-devices-032).
 
 On **macOS** (0.33+), run with `sudo`, the installer adds the same read-only
 agent: a `sh` script in `/Library/Rem0te`, run by the `com.rem0te.agent`
 LaunchDaemon every 3 minutes, with the device secret in
 `/Library/Rem0te/agent.secret` (`root:wheel`, 0600). Pending updates are the
 ones macOS itself last found; the agent never runs `softwareupdate`. Without
-`sudo` the installer registers the computer once, as before. `--uninstall`
+`sudo` the installer registers the device once, as before. `--uninstall`
 removes the agent and leaves RustDesk. See
-[inventory.md](inventory.md#macos-computers-033).
+[inventory.md](inventory.md#macos-devices-033).
 
 > **Installs from before v0.8.2 need to be re-run.** They wrote the RustDesk
 > service config to a path the service never reads, so the service ran on
@@ -191,8 +191,8 @@ They download and run a client whose configuration travels in its filename,
 then read you the 9-digit ID it shows. You connect from **Rem0te → Quick
 Connect**.
 
-Nothing on that page exposes the console, business names, user identities, or
-any enrolled computer. It answers two questions: is Quick Connect on, and give
+Nothing on that page exposes the console, customer names, user identities, or
+any enrolled device. It answers two questions: is Quick Connect on, and give
 me the client.
 
 Platform Admins turn it on per-platform and per-OS under **Settings**. Windows
@@ -243,7 +243,7 @@ The client version served by every download is the latest RustDesk release,
 resolved from GitHub once an hour and cached on disk so a support call does not
 depend on GitHub being reachable at that moment.
 
-Endpoints report their installed version on each heartbeat, and
+Devices report their installed version on each heartbeat, and
 **Updates → RustDesk Clients** shows current versus latest per machine and
 stages upgrades. Only installers from v0.8.2 onward report a version; older
 ones show as *Unknown* rather than *Outdated*, and will not apply a staged

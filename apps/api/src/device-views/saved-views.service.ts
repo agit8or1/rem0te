@@ -89,13 +89,13 @@ export class SavedViewsService {
   /** A shared view's filters stay inside its business. */
   private async assertFiltersInBusiness(f: StoredFilters, customerId: string) {
     if (f.businessId && f.businessId !== customerId) {
-      throw new BadRequestException({ code: 'VIEW_SCOPE', message: 'A shared view belongs to one business, so its filters cannot name another business.' });
+      throw new BadRequestException({ code: 'VIEW_SCOPE', message: 'A shared view belongs to one customer, so its filters cannot name another customer.' });
     }
     if (f.siteId && !(await this.prisma.site.findFirst({ where: { id: String(f.siteId), customerId }, select: { id: true } }))) {
-      throw new BadRequestException({ code: 'VIEW_SCOPE', message: 'Unknown site for this business.' });
+      throw new BadRequestException({ code: 'VIEW_SCOPE', message: 'Unknown site for this customer.' });
     }
     if (f.groupId && !(await this.prisma.endpointGroup.findFirst({ where: { id: String(f.groupId), customerId }, select: { id: true } }))) {
-      throw new BadRequestException({ code: 'VIEW_SCOPE', message: 'Unknown device group for this business.' });
+      throw new BadRequestException({ code: 'VIEW_SCOPE', message: 'Unknown device group for this customer.' });
     }
   }
 
@@ -131,10 +131,10 @@ export class SavedViewsService {
       if (why) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: why });
       await this.assertFiltersInBusiness(filters, customerId);
       if (await this.prisma.savedView.count({ where: { resource: VIEW_RESOURCE, shared: true, customerId } }) >= MAX_SHARED_VIEWS) {
-        throw new BadRequestException({ code: 'TOO_MANY_VIEWS', message: `A business can share at most ${MAX_SHARED_VIEWS} views.` });
+        throw new BadRequestException({ code: 'TOO_MANY_VIEWS', message: `A customer can share at most ${MAX_SHARED_VIEWS} views.` });
       }
     } else {
-      if (d.businessId) throw new BadRequestException({ code: 'INVALID_VIEW', message: 'businessId applies only to a shared view; put a business filter in filters instead.' });
+      if (d.businessId) throw new BadRequestException({ code: 'INVALID_VIEW', message: 'businessId applies only to a shared view; put a customer filter in filters instead.' });
       if (await this.prisma.savedView.count({ where: { resource: VIEW_RESOURCE, shared: false, userId: a.userId } }) >= MAX_PERSONAL_VIEWS) {
         throw new BadRequestException({ code: 'TOO_MANY_VIEWS', message: `You can save at most ${MAX_PERSONAL_VIEWS} personal views.` });
       }

@@ -19,7 +19,7 @@ import { reauthSuffix, useAsks } from '@/lib/confirm-policy';
 import { deviceGroupsApi } from '@/components/endpoints/list/api';
 
 /**
- * Settings → Monitoring (0.29).
+ * Monitoring → Monitoring policies (0.29).
  *
  * Monitors are inherited global → business → site → device group → computer;
  * the most specific monitor with a given key wins, and a disabled one
@@ -56,7 +56,7 @@ const EVENT_LOGS = ['System', 'Application', 'Security', 'Setup'];
 
 /** Form fields per monitor kind. Validation is the server's; this only shapes the input. */
 const KIND: Record<MonitorKindId, { label: string; hint: string; fields: { k: string; label: string; type: 'int' | 'text' | 'bool' | 'list' | 'log' | 'drives' | 'classes'; def: unknown }[] }> = {
-  OFFLINE: { label: 'Computer offline', hint: 'No heartbeat for this long.', fields: [{ k: 'minutes', label: 'Minutes without a heartbeat', type: 'int', def: 15 }] },
+  OFFLINE: { label: 'Device offline', hint: 'No heartbeat for this long.', fields: [{ k: 'minutes', label: 'Minutes without a heartbeat', type: 'int', def: 15 }] },
   DISK_FREE: { label: 'Disk space', hint: 'The system disk below this much free.', fields: [{ k: 'minFreePercent', label: 'Minimum free %', type: 'int', def: 10 }] },
   CPU_HIGH: { label: 'Processor busy', hint: 'Above this for several heartbeats in a row.', fields: [{ k: 'percent', label: 'Percent', type: 'int', def: 95 }, { k: 'samples', label: 'Heartbeats in a row', type: 'int', def: 5 }] },
   MEMORY_HIGH: { label: 'Memory used', hint: 'Above this for several heartbeats in a row.', fields: [{ k: 'percent', label: 'Percent', type: 'int', def: 95 }, { k: 'samples', label: 'Heartbeats in a row', type: 'int', def: 5 }] },
@@ -72,11 +72,11 @@ const KIND: Record<MonitorKindId, { label: string; hint: string; fields: { k: st
       { k: 'threshold', label: 'Events before alerting', type: 'int', def: 1 }, { k: 'clearAfterMinutes', label: 'Clear after minutes quiet', type: 'int', def: 60 },
     ],
   },
-  REBOOT_PENDING: { label: 'Restart pending', hint: 'The computer has reported a pending restart (Windows, or a Linux package manager) for this long.', fields: [{ k: 'hours', label: 'Hours', type: 'int', def: 72 }] },
+  REBOOT_PENDING: { label: 'Restart pending', hint: 'The device has reported a pending restart (Windows, or a Linux package manager) for this long.', fields: [{ k: 'hours', label: 'Hours', type: 'int', def: 72 }] },
   // 0.36. Never on by default; one of the monitors “Add recommended” offers since 0.36.1.
   AGENT_SILENT: {
     label: 'Agent silent (RustDesk still reachable)',
-    hint: 'RustDesk still reaches the computer but its agent has not checked in for this long (30 minutes to 7 days), so its monitoring, patching and inventory values are going stale. It clears when the agent checks in again. Off until someone adds it — here or with “Add recommended”.',
+    hint: 'RustDesk still reaches the device but its agent has not checked in for this long (30 minutes to 7 days), so its monitoring, patching and inventory values are going stale. It clears when the agent checks in again. Off until someone adds it — here or with “Add recommended”.',
     fields: [{ k: 'minutes', label: 'Minutes without an agent check-in', type: 'int', def: 60 }],
   },
   // 0.55: read from what the server already stores; no agent change.
@@ -90,7 +90,7 @@ const KIND: Record<MonitorKindId, { label: string; hint: string; fields: { k: st
   },
   UPTIME_LONG: {
     label: 'Not restarted for a long time',
-    hint: 'The computer has been up this many days, from the boot time its heartbeat reports. An offline computer is not judged: it may have restarted since.',
+    hint: 'The device has been up this many days, from the boot time its heartbeat reports. An offline device is not judged: it may have restarted since.',
     fields: [{ k: 'days', label: 'Days without a restart', type: 'int', def: 30 }],
   },
   UPDATES_MISSING: {
@@ -106,13 +106,13 @@ const KIND: Record<MonitorKindId, { label: string; hint: string; fields: { k: st
   // 0.56. Never on by default and not in “Add recommended”: add it here.
   WARRANTY_EXPIRING: {
     label: 'Hardware warranty ending',
-    hint: 'The computer’s stored warranty end date (entered on its device page, or read from Dell, Lenovo, HP or Apple when that lookup is on) is within this many days, or has passed. One alert per computer; it clears when the date moves out of the window and is raised again, naming the new date, when the date changes. A computer with no date stored never alerts.',
+    hint: 'The device’s stored warranty end date (entered on its device page, or read from Dell, Lenovo, HP or Apple when that lookup is on) is within this many days, or has passed. One alert per device; it clears when the date moves out of the window and is raised again, naming the new date, when the date changes. A device with no date stored never alerts.',
     fields: [{ k: 'daysBefore', label: 'Days before the end date', type: 'int', def: 30 }],
   },
   // 0.81. Backup provider facts (Backups page), never in “Add recommended”. One alert per backup asset linked to a computer; an unlinked asset never alerts.
   BACKUP_STALE: {
     label: 'Backup stale',
-    hint: 'No successful backup job for this long — or, when the asset or business has an RPO target, for that target. A successful job is not a verified restore. A new asset is given the window before it alerts. Needs a connected backup provider (Backups page).',
+    hint: 'No successful backup job for this long — or, when the asset or customer has an RPO target, for that target. A successful job is not a verified restore. A new asset is given the window before it alerts. Needs a connected backup provider (Backups page).',
     fields: [{ k: 'hours', label: 'Hours without a successful backup', type: 'int', def: 26 }],
   },
   BACKUP_FAILED: {
@@ -127,14 +127,14 @@ const KIND: Record<MonitorKindId, { label: string; hint: string; fields: { k: st
   },
   RPO_EXCEEDED: {
     label: 'RPO exceeded',
-    hint: 'The newest recovery point is older than the asset’s RPO target, else the business’s (set on the Backups page). Assets with no target are skipped unless you give a fallback here.',
+    hint: 'The newest recovery point is older than the asset’s RPO target, else the customer’s (set on the Backups page). Assets with no target are skipped unless you give a fallback here.',
     fields: [{ k: 'fallbackHours', label: 'Fallback hours where no target is set (optional)', type: 'int', def: '' }],
   },
 };
 
 const fmt = (d: string | null | undefined) => (d ? new Date(d).toLocaleString() : '—');
 const scopeLabel = (r: { scope: string; group?: { name: string | null } | null; priority?: number | null }) =>
-  r.scope === 'group' ? `Group ${r.group?.name ?? ''} · priority ${r.priority ?? '—'}` : ({ global: 'Global', business: 'Business', site: 'Site', endpoint: 'Computer' } as Record<string, string>)[r.scope] ?? r.scope;
+  r.scope === 'group' ? `Group ${r.group?.name ?? ''} · priority ${r.priority ?? '—'}` : ({ global: 'Global', business: 'Customer', site: 'Site', endpoint: 'Device' } as Record<string, string>)[r.scope] ?? r.scope;
 const paramsText = (p: Record<string, unknown>) => Object.entries(p).filter(([, v]) => v !== '' && !(Array.isArray(v) && v.length === 0)).map(([k, v]) => `${k}=${Array.isArray(v) ? v.join(',') : String(v)}`).join(' · ');
 
 function Notice({ n }: { n: { ok: boolean; text: string } | null }) {
@@ -172,14 +172,14 @@ export default function MonitoringSettingsPage() {
       </Link>
       <PageHeader
         title="Monitoring"
-        description="What is watched, when alerts stay quiet, and who is told. Nothing here changes a computer — monitors only read what the agent already reports."
+        description="What is watched, when alerts stay quiet, and who is told. Nothing here changes a device — monitors only read what the agent already reports."
         actions={<Button variant="outline" asChild><Link href="/alerts">Open alerts</Link></Button>}
       />
       {msp && !ownBusiness && (
         <div className="space-y-1">
-          <Label htmlFor="mon-business">Business</Label>
+          <Label htmlFor="mon-business">Customer</Label>
           <select id="mon-business" className="w-full rounded-md border bg-background p-2 text-sm md:w-96" value={picked} onChange={(e) => { setPicked(e.target.value); setNotice(null); }}>
-            <option value="">Global (every business)</option>
+            <option value="">Global (every customer)</option>
             {(businesses ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </div>
@@ -286,7 +286,7 @@ function Monitors({ businessId, ok, fail }: Props) {
   const remove = useMutation({ mutationFn: (id: string) => monitoringApi.deleteRule(id), onSuccess: () => { ok('Removed.'); refresh(); }, onError: fail });
   const override = useMutation({
     mutationFn: (r: Rule) => monitoringApi.createRule({ scope: 'business', businessId: businessId!, key: r.key, kind: r.kind, name: r.name, severity: r.severity, enabled: false, params: r.params }),
-    onSuccess: () => { ok('Switched off for this business (an override with the same key).'); refresh(); }, onError: fail,
+    onSuccess: () => { ok('Switched off for this customer (an override with the same key).'); refresh(); }, onError: fail,
   });
 
   if (error) return <p className="p-4 text-sm text-muted-foreground">{apiError(error).message}</p>;
@@ -297,7 +297,7 @@ function Monitors({ businessId, ok, fail }: Props) {
   return (
     <Card data-testid="mon-rules">
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
-        <CardTitle className="text-sm">Monitors {businessId ? 'for this business (and inherited)' : '— global, inherited by every business'}</CardTitle>
+        <CardTitle className="text-sm">Monitors {businessId ? 'for this customer (and inherited)' : '— global, inherited by every customer'}</CardTitle>
         {mayHere && (
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" disabled={recommended.isPending} onClick={() => recommended.mutate()}><Sparkles className="mr-1 h-4 w-4" />Add recommended</Button>
@@ -306,7 +306,7 @@ function Monitors({ businessId, ok, fail }: Props) {
         )}
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
-        {!mayHere && <p className="text-muted-foreground">You can see these but not change them{atScope === 'global' ? ' — global monitors are set by the MSP' : ' — that needs monitoring:configure for the whole business'}.</p>}
+        {!mayHere && <p className="text-muted-foreground">You can see these but not change them{atScope === 'global' ? ' — global monitors are set by the MSP' : ' — that needs monitoring:configure for the whole customer'}.</p>}
         {adding && (
           <div className="space-y-3 rounded-md border p-3" data-testid="mon-new">
             <div className="grid gap-2 md:grid-cols-4">
@@ -330,14 +330,14 @@ function Monitors({ businessId, ok, fail }: Props) {
               <div className="grid gap-2 md:grid-cols-4">
                 <div className="space-y-1"><Label>For</Label>
                   <select className="w-full rounded-md border bg-background p-2" value={groupId} onChange={(e) => setGroupId(e.target.value)} data-testid="mon-new-group">
-                    <option value="">The whole business</option>
+                    <option value="">The whole customer</option>
                     {(groups.data?.groups ?? []).filter((g) => !g.legacy).map((g) => <option key={g.id} value={g.id}>Group: {g.name}</option>)}
                   </select>
                 </div>
                 {groupId && <div className="space-y-1"><Label>Priority (1 first)</Label><Input type="number" min={1} max={999} value={priority} placeholder="e.g. 10" onChange={(e) => setPriority(e.target.value)} /></div>}
               </div>
             )}
-            <p className="text-xs text-muted-foreground">{KIND[kind].hint} The key is how inheritance works: a monitor here with the key of an inherited one replaces it.{groupId ? ' A group monitor beats the business and site ones for the group’s computers; a computer in two groups with this key follows the lower priority number.' : ''}</p>
+            <p className="text-xs text-muted-foreground">{KIND[kind].hint} The key is how inheritance works: a monitor here with the key of an inherited one replaces it.{groupId ? ' A group monitor beats the customer and site ones for the group’s devices; a device in two groups with this key follows the lower priority number.' : ''}</p>
             <ParamFields kind={kind} value={params} onChange={setParams} />
             <Button size="sm" disabled={!key || !name || create.isPending} onClick={() => create.mutate()}>Add monitor</Button>
           </div>
@@ -345,7 +345,7 @@ function Monitors({ businessId, ok, fail }: Props) {
         {mayHere && (data.templates?.length ?? 0) > 0 && (
           <details className="rounded-md border p-3" data-testid="mon-templates">
             <summary className="cursor-pointer font-medium">Backup agent templates</summary>
-            <p className="mt-2 text-xs text-muted-foreground">Service monitors for backup agents on Windows, added only when you press one. A computer without that agent raises nothing. Each service name is taken from the vendor’s own material (linked); event-log templates are not offered because neither vendor documents a Windows event for a failed backup.</p>
+            <p className="mt-2 text-xs text-muted-foreground">Service monitors for backup agents on Windows, added only when you press one. A device without that agent raises nothing. Each service name is taken from the vendor’s own material (linked); event-log templates are not offered because neither vendor documents a Windows event for a failed backup.</p>
             <div className="mt-2 space-y-2">
               {data.templates!.map((t) => (
                 <div key={t.id} className="flex flex-wrap items-center gap-2" data-template={t.id}>
@@ -380,7 +380,7 @@ function Monitors({ businessId, ok, fail }: Props) {
                     </>
                   )}
                   {businessId && r.scope === 'global' && !overridden.has(r.key) && data.may.business && (
-                    <Button size="sm" variant="ghost" onClick={() => override.mutate(r)}>Switch off for this business</Button>
+                    <Button size="sm" variant="ghost" onClick={() => override.mutate(r)}>Switch off for this customer</Button>
                   )}
                 </div>
               </div>
@@ -425,11 +425,11 @@ function Windows({ businessId, ok, fail }: Props) {
   return (
     <div className="space-y-4">
       <Card data-testid="mon-window-new">
-        <CardHeader><CardTitle className="text-sm">New maintenance window {businessId ? 'for this business' : 'for every business'}</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-sm">New maintenance window {businessId ? 'for this customer' : 'for every customer'}</CardTitle></CardHeader>
         <CardContent className="space-y-3 text-sm">
           <p className="text-muted-foreground">
             Holds notifications only. Alerts are still raised and shown here with a <BellOff className="inline h-3 w-3" /> marker, and anything still open when the window ends is notified then.
-            This is not containment — to stop changes reaching computers, use Settings → Security → Containment.
+            This is not containment — to stop changes reaching devices, use Security → Containment.
           </p>
           <div className="grid gap-2 md:grid-cols-4">
             <div className="space-y-1 md:col-span-2"><Label>Reason</Label><Input value={reason} maxLength={300} placeholder="Server room power work" onChange={(e) => setReason(e.target.value)} /></div>
@@ -447,7 +447,7 @@ function Windows({ businessId, ok, fail }: Props) {
           {data?.map((w) => (
             <div key={w.id} className="flex flex-wrap items-center gap-2 rounded-md border p-2">
               {w.active ? <Badge>active</Badge> : w.revokedAt ? <Badge variant="outline">ended early</Badge> : new Date(w.startsAt) > new Date() ? <Badge variant="secondary">upcoming</Badge> : <Badge variant="outline">over</Badge>}
-              <Badge variant="outline">{w.scopeKey === 'global' ? 'Global' : 'Business'}</Badge>
+              <Badge variant="outline">{w.scopeKey === 'global' ? 'Global' : 'Customer'}</Badge>
               <span>{w.reason}</span>
               <span className="text-xs text-muted-foreground">{fmt(w.startsAt)} → {fmt(w.endsAt)}{w.ruleKeys.length ? ` · ${w.ruleKeys.join(', ')}` : ' · all monitors'}</span>
               {!w.revokedAt && new Date(w.endsAt) > new Date() && <Button size="sm" variant="ghost" className="ml-auto" onClick={() => revoke.mutate(w.id)}>End now</Button>}
@@ -485,17 +485,17 @@ function Notify({ businessId, ok, fail }: Props) {
   if (!data) return <p className="p-4 text-sm text-muted-foreground">Loading…</p>;
   return (
     <Card data-testid="mon-policy">
-      <CardHeader><CardTitle className="text-sm">Who is notified {businessId ? 'for this business' : '— global default'}</CardTitle></CardHeader>
+      <CardHeader><CardTitle className="text-sm">Who is notified {businessId ? 'for this customer' : '— global default'}</CardTitle></CardHeader>
       <CardContent className="space-y-3 text-sm">
         <p className="text-muted-foreground">
-          In effect{businessId ? ' here' : ''}: <strong>{data.effective === 'business' ? "this business's own policy" : data.effective === 'global' ? 'the global policy' : 'nothing — alerts are recorded but nobody is notified'}</strong>.
+          In effect{businessId ? ' here' : ''}: <strong>{data.effective === 'business' ? "this customer's own policy" : data.effective === 'global' ? 'the global policy' : 'nothing — alerts are recorded but nobody is notified'}</strong>.
           Each level fires once an alert has been open that many minutes and is not acknowledged. Destinations receive a JSON POST
-          (Slack/Teams-style incoming webhooks and ticketing relays work). {businessId ? 'A business destination must be https on a public host name.' : ''}
-          {' '}An email destination is one of the confirmed addresses below; the email says only the alert, the computer, the business and a link.
+          (Slack/Teams-style incoming webhooks and ticketing relays work). {businessId ? 'A customer destination must be https on a public host name.' : ''}
+          {' '}An email destination is one of the confirmed addresses below; the email says only the alert, the device, the customer and a link.
           {askNotify ? ' Saving asks you to confirm it is you: a destination receives alert text, including computer names.' : ' A destination receives alert text, including computer names.'}
         </p>
         <EmailOffNotice enabled={mail?.enabled} />
-        {!may && <p className="text-muted-foreground">Only {businessId ? 'a Business Owner of this business or the MSP' : 'the MSP'} can change this; addresses are shown shortened.</p>}
+        {!may && <p className="text-muted-foreground">Only {businessId ? 'a Business Owner of this customer or the MSP' : 'the MSP'} can change this; addresses are shown shortened.</p>}
         {edit.levels.map((l, i) => (
           <div key={i} className="space-y-2 rounded-md border p-3">
             <strong className="block">Level {i + 1}</strong>
@@ -563,7 +563,7 @@ type TicketPolicy = {
 /**
  * 0.55: automatic PSA tickets. "Create a ticket in the PSA when an alert of
  * at least this severity (optionally only these kinds) opens." Sent through
- * the PSA connector under Settings → PSA / ticketing, after the alert's
+ * the PSA connector under Administration → PSA / ticketing, after the alert's
  * notify hold, never in a maintenance window or under a notifications pause.
  */
 function AutoTickets({ businessId, ok, fail }: Props) {
@@ -582,23 +582,23 @@ function AutoTickets({ businessId, ok, fail }: Props) {
   });
   const remove = useMutation({
     mutationFn: () => monitoringApi.removeTicketPolicy(scope, businessId),
-    onSuccess: () => { ok(businessId ? 'Removed. The platform rule applies to this business again.' : 'Removed.'); refresh(); }, onError: fail,
+    onSuccess: () => { ok(businessId ? 'Removed. The platform rule applies to this customer again.' : 'Removed.'); refresh(); }, onError: fail,
   });
   if (error) return <p className="p-4 text-sm text-muted-foreground">{apiError(error).message}</p>;
   if (!data) return null;
   const inEffect = data.effective === 'business' ? data.business : data.effective === 'global' ? data.global : null;
-  const whose = data.effective === 'business' ? "this business's rule" : 'the platform rule';
+  const whose = data.effective === 'business' ? "this customer's rule" : 'the platform rule';
   const toggleKind = (k: MonitorKindId, on: boolean) => setDraft({ ...edit, kinds: on ? [...edit.kinds, k] : edit.kinds.filter((x) => x !== k) });
   return (
     <Card data-testid="mon-ticket-policy">
-      <CardHeader><CardTitle className="text-sm">Automatic tickets {businessId ? 'for this business' : '— platform default'}</CardTitle></CardHeader>
+      <CardHeader><CardTitle className="text-sm">Automatic tickets {businessId ? 'for this customer' : '— platform default'}</CardTitle></CardHeader>
       <CardContent className="space-y-3 text-sm">
         <p className="text-muted-foreground">
           Opens one ticket in your PSA (Settings → <Link className="underline" href="/settings/psa">PSA / ticketing</Link>) when an alert of at least the chosen severity opens.
           It waits for the alert’s notification hold, never tickets an alert in a maintenance window or while notifications are paused, and only tickets alerts that open after it is switched on.
-          The ticket carries what “Create ticket” on that alert would: the alert, the computer and the business, and a link back. At most {data.limits.perBusinessPerHour} sends per business an hour;
+          The ticket carries what “Create ticket” on that alert would: the alert, the device and the customer, and a link back. At most {data.limits.perBusinessPerHour} sends per customer an hour;
           a failed send is tried again {data.limits.maxAttempts - 1} times (after {data.limits.backoffMinutes.join(', ')} minutes).
-          {businessId ? ' A rule here replaces the platform rule for this business.' : ' A business can set its own rule, which replaces this one there.'}
+          {businessId ? ' A rule here replaces the platform rule for this customer.' : ' A customer can set its own rule, which replaces this one there.'}
         </p>
         <p>
           In effect{businessId ? ' here' : ''}:{' '}
@@ -610,7 +610,7 @@ function AutoTickets({ businessId, ok, fail }: Props) {
               : 'nothing — no alert opens a ticket'}
           </strong>.
         </p>
-        {!may && <p className="text-muted-foreground">Only {businessId ? 'a Business Owner of this business or the MSP' : 'the MSP'} can change this.</p>}
+        {!may && <p className="text-muted-foreground">Only {businessId ? 'a Business Owner of this customer or the MSP' : 'the MSP'} can change this.</p>}
         <div className="flex flex-wrap items-center gap-3 rounded-md border p-3">
           <label className="flex items-center gap-2"><input type="checkbox" disabled={!may} checked={edit.enabled} data-testid="mon-ticket-enabled" onChange={(e) => setDraft({ ...edit, enabled: e.target.checked })} />Open a ticket when an alert of at least</label>
           <select aria-label="Minimum severity" className="rounded-md border bg-background p-1" disabled={!may} value={edit.minSeverity} onChange={(e) => setDraft({ ...edit, minSeverity: e.target.value as Severity })}>{SEVERITIES.map((s) => <option key={s}>{s}</option>)}</select>
@@ -629,7 +629,7 @@ function AutoTickets({ businessId, ok, fail }: Props) {
             <Button disabled={!draft || save.isPending} onClick={() => save.mutate()}>{`Save${reauthSuffix(ask)}`}</Button>
             {draft && <Button variant="ghost" onClick={() => setDraft(null)}>Discard changes</Button>}
             {current && (
-              <Button variant="ghost" disabled={remove.isPending} onClick={() => { if (window.confirm(businessId ? 'Remove this business’s rule? The platform rule applies here again.' : 'Remove the platform rule?')) remove.mutate(); }}>
+              <Button variant="ghost" disabled={remove.isPending} onClick={() => { if (window.confirm(businessId ? 'Remove this customer’s rule? The platform rule applies here again.' : 'Remove the platform rule?')) remove.mutate(); }}>
                 {`Remove${reauthSuffix(ask)}`}
               </Button>
             )}

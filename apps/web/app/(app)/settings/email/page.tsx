@@ -17,7 +17,7 @@ import { reauthSuffix, useAsks } from '@/lib/confirm-policy';
 import { RecipientsCard } from '@/components/email/recipients-card';
 
 /**
- * Settings → Email (0.34): the SMTP relay every alert email and scheduled
+ * Administration → Email (0.34): the SMTP relay every alert email and scheduled
  * report goes through, and the MSP's global recipients. Platform Admin only;
  * saving asks for fresh authentication. The password is write-only.
  */

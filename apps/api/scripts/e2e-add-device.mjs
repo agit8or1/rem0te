@@ -229,7 +229,7 @@ async function all() {
   check(r.status === 403, 'owner A naming B and B\'s site is refused (403)', msg(r));
   const foreignSite = await mint(S.ownerA, { businessId: A.id, siteId: siteB.id, accessMode: 'COMPANY_WIDE' });
   const missingSite = await mint(S.ownerA, { businessId: A.id, siteId: 'c' + randomBytes(12).toString('hex'), accessMode: 'COMPANY_WIDE' });
-  check(foreignSite.status === 400 && /Unknown site for this business/.test(foreignSite.body?.message), 'owner A binding B\'s site to an A token is refused (400)', msg(foreignSite));
+  check(foreignSite.status === 400 && /Unknown site for this customer/.test(foreignSite.body?.message), 'owner A binding B\'s site to an A token is refused (400)', msg(foreignSite));
   check(missingSite.status === 400 && missingSite.body?.message === foreignSite.body?.message, 'a foreign site and a non-existent site get the same answer (no probing)', `${foreignSite.body?.message} / ${missingSite.body?.message}`);
   r = await mint(S.ownerA, { siteId: siteB.id, accessMode: 'COMPANY_WIDE' });
   check(r.status === 400, 'owner A with no business named and B\'s site: the token is A\'s, and B\'s site is refused', msg(r));

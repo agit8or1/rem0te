@@ -187,7 +187,7 @@ const CALLOUT_PAGES = [
       { find: 'a[href="/alerts"]' },
       { find: '[data-testid="alerts-summary"]' },
       { find: '[data-testid="alerts-filters"]' },
-      { find: { text: 'Computers in this outage' } },
+      { find: { text: 'Devices in this outage' } },
       { find: { text: 'Acknowledge', tag: 'button' } },
     ],
   },
@@ -562,7 +562,7 @@ const CALLOUT_PAGES = [
     callouts: [
       { find: '#cu-business' },
       { find: { text: 'CLIENT_UPDATE_SWEEP=off', tag: 'div' } },
-      { find: { text: '— business policy', tag: 'div' }, card: true },
+      { find: { text: '— customer policy', tag: 'div' }, card: true },
       { find: { text: 'Override' }, card: true },
       // 0.35: a device-group policy (the docs demo's Remote depots group).
       { find: { text: 'Remote depots', tag: 'div' }, card: true },
@@ -649,7 +649,7 @@ const CALLOUT_PAGES = [
       await page.waitForTimeout(600);
     },
     callouts: [
-      { find: { text: 'The computer ends it only if', tag: 'p' } },
+      { find: { text: 'The device ends it only if', tag: 'p' } },
       { find: { text: 'And the processes it started', tag: 'label' } },
       { find: '#dc-reason' },
       { find: { text: 'I understand that the process', tag: 'label' } },

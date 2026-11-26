@@ -43,7 +43,7 @@ const DismissInput = z.object({ note: z.string().trim().min(3).max(300) }).stric
  * not a real problem": it is recorded, it may resolve that one alert, and it
  * may count towards a recommendation. It never changes a monitor or a rule,
  * however many people make it — a rule is proposed, tested and approved in
- * QualityRulesService, and a monitor is changed in Settings → Monitoring.
+ * QualityRulesService, and a monitor is changed in Monitoring → Monitoring policies.
  */
 @Injectable()
 export class FalsePositiveService {

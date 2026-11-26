@@ -233,7 +233,7 @@ async function all() {
   check(r.status === 200 && r.data?.restart?.devices === 3, 'three restart-pending computers in R', `${msg(r).slice(0, 300)}`);
   check(/Linux is waiting for a restart/.test(reason(rLin)) && !/Windows/.test(reason(rLin)), `Linux: "${reason(rLin)}"`);
   check(/Windows is waiting for a restart/.test(reason(rWin)), `Windows: "${reason(rWin)}"`);
-  check(/the computer is waiting for a restart/.test(reason(rNone)) && !/Windows|Linux/.test(reason(rNone)), `no platform reported: "${reason(rNone)}"`);
+  check(/the device is waiting for a restart/.test(reason(rNone)) && !/Windows|Linux/.test(reason(rNone)), `no platform reported: "${reason(rNone)}"`);
   r = await req('GET', '/dashboard/overview', S.ownerA);
   check(r.status === 200 && !(r.data?.queue?.items ?? []).some((i) => [rWin.id, rLin.id, rNone.id].some((id) => i.key === `restart:${id}`)) && (r.data?.restart?.devices ?? 0) === 0,
     "A's owner sees none of R's restart items", J(r.data?.restart));

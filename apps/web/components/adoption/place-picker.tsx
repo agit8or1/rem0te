@@ -41,10 +41,10 @@ export function PlacePicker({ value, onChange, groups = 'many', idPrefix = 'plac
   return (
     <div className="grid gap-3 sm:grid-cols-3">
       <label className="space-y-1 text-xs font-medium" htmlFor={`${idPrefix}-business`}>
-        <span>Business</span>
+        <span>Customer</span>
         <select id={`${idPrefix}-business`} className={selectClass} value={value.businessId}
           onChange={(e) => onChange({ businessId: e.target.value, siteId: '', groupIds: [] })}>
-          <option value="">Choose a business…</option>
+          <option value="">Choose a customer…</option>
           {businesses.filter((b) => !b.isArchived).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>
       </label>

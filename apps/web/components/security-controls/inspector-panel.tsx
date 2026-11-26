@@ -18,8 +18,8 @@ const ACTIONS: { key: InspectAction; label: string }[] = [
   { key: 'support_requests', label: 'Work support requests' },
   { key: 'event_logs', label: 'Read event logs' },
   { key: 'diagnostics', label: 'Run diagnostics' },
-  { key: 'credential_reveal', label: 'Reveal the computer password' },
-  { key: 'enrollment', label: 'Enroll computers' },
+  { key: 'credential_reveal', label: 'Reveal the device password' },
+  { key: 'enrollment', label: 'Enroll devices' },
   { key: 'launch_view_only', label: 'Launch: view only' },
   { key: 'launch_control', label: 'Launch: interactive control' },
   { key: 'launch_elevated', label: 'Launch: elevated' },
@@ -91,7 +91,7 @@ export function InspectorPanel() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Asks the same questions the enforcement points ask, for one person, business, computer and action, and shows why.
+        Asks the same questions the enforcement points ask, for one person, customer, device and action, and shows why.
         Read-only: nothing is changed, granted or logged as an attempt.
       </p>
       <Card>
@@ -107,24 +107,24 @@ export function InspectorPanel() {
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>Business</Label>
+            <Label>Customer</Label>
             <Select value={businessId} onValueChange={(v) => { setBusinessId(v); setEndpointId(ANY); }}>
-              <SelectTrigger><SelectValue placeholder="Choose a business" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Choose a customer" /></SelectTrigger>
               <SelectContent>
                 {businesses.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>Computer {needsComputer ? '' : '(optional)'}</Label>
+            <Label>Device {needsComputer ? '' : '(optional)'}</Label>
             <Select value={endpointId} onValueChange={setEndpointId} disabled={!businessId}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value={ANY}>Any computer in the business</SelectItem>
+                <SelectItem value={ANY}>Any device in the customer</SelectItem>
                 {computers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
               </SelectContent>
             </Select>
-            {needsComputer && endpointId === ANY && <p className="text-xs text-muted-foreground">A launch is decided per computer: choose one.</p>}
+            {needsComputer && endpointId === ANY && <p className="text-xs text-muted-foreground">A launch is decided per device: choose one.</p>}
           </div>
           <div className="space-y-1.5">
             <Label>Action</Label>
@@ -165,7 +165,7 @@ export function InspectorPanel() {
             </div>
             <div>
               <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Grants that apply</div>
-              {!result.grants?.length ? <p className="text-muted-foreground">None cover this computer.</p> : (
+              {!result.grants?.length ? <p className="text-muted-foreground">None cover this device.</p> : (
                 <div className="space-y-2">
                   {result.grants.map((g, i) => <GrantLine key={i} g={g} />)}
                 </div>
@@ -189,7 +189,7 @@ function GrantLine({ g }: { g: Record<string, unknown> }) {
     );
   }
   if (typeof g.assignmentId !== 'string') return <JsonBlock value={g} />;
-  const computers = Array.isArray(g.computers) ? `${(g.computers as string[]).length} computer(s)` : 'all computers';
+  const computers = Array.isArray(g.computers) ? `${(g.computers as string[]).length} device(s)` : 'all devices';
   return (
     <div className="rounded-md border p-2">
       <div className="flex flex-wrap items-center gap-2">

@@ -193,7 +193,7 @@ function ProviderDialog({
               <span className="font-medium">Allow provisioning</span>
               <span className="block text-xs text-muted-foreground">
                 Create a new account when someone with no linked account signs in with a verified email that no existing
-                account uses. The new account has no access unless a group mapping below grants it a business.
+                account uses. The new account has no access unless a group mapping below grants it a customer.
               </span>
             </span>
           </label>
@@ -276,7 +276,7 @@ function GroupMappings({
       </div>
       <p className="text-xs text-muted-foreground">
         Used only when provisioning creates a new account. If the account&apos;s groups claim contains a mapped value,
-        the account is made a Business User of that one business with exactly the permissions listed (the first
+        the account is made a Business User of that one customer with exactly the permissions listed (the first
         mapping that matches wins). Existing accounts are never changed.
         {!provider.groupsClaim && ' No groups claim is configured for this provider, so these mappings cannot match yet.'}
         {!provider.allowProvisioning && ' Provisioning is off for this provider, so these mappings are not used.'}
@@ -310,9 +310,9 @@ function GroupMappings({
               <Input value={groupValue} maxLength={256} onChange={(e) => setGroupValue(e.target.value)} placeholder="Exact value from the claim" />
             </div>
             <div className="space-y-1">
-              <Label>Business</Label>
+              <Label>Customer</Label>
               <select className={selectClass} value={businessId} onChange={(e) => setBusinessId(e.target.value)}>
-                <option value="">Select a business…</option>
+                <option value="">Select a customer…</option>
                 {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
             </div>
@@ -529,10 +529,10 @@ export default function SsoAdminPage() {
             <li>
               With provisioning on, someone with no linked account gets a new account — only if the provider supplies a
               verified email that no existing account uses. That account has <strong className="text-foreground">no access</strong> unless
-              a group mapping grants it membership in exactly one business.
+              a group mapping grants it membership in exactly one customer.
             </li>
             <li>
-              Password sign-in remains available unless a business (or staff) is set to <strong className="text-foreground">Required</strong> below.
+              Password sign-in remains available unless a customer (or staff) is set to <strong className="text-foreground">Required</strong> below.
               Rem0te&apos;s own two-factor rules still apply to SSO sign-ins unless a provider&apos;s MFA is trusted.
             </li>
             <li>A Platform Admin cannot sign in through a provider unless that provider allows it, and then only with a passkey there.</li>

@@ -146,9 +146,9 @@ export function FilterBar({ facets, filters, set, period, silent, report, params
     <div className="flex flex-wrap items-end gap-3">
       {(isPlatformAdmin || businesses.length > 1) && (
         <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Business
+          Customer
           <select id="rp-business" className={cn(selectClass, 'w-[200px]')} value={filters.businessId} onChange={(e) => set('businessId', e.target.value)}>
-            <option value="">All businesses</option>
+            <option value="">All customers</option>
             {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </label>
@@ -286,7 +286,7 @@ export function Refused({ error }: { error: unknown }) {
 }
 
 export const pct = (n: number | null | undefined) => (n === null || n === undefined ? 'No data' : `${n}%`);
-export const where = (b: Ref | null | undefined, s?: Ref | null) => [b?.name ?? 'No business', s === undefined ? null : s?.name ?? 'No site'].filter(Boolean).join(' · ');
+export const where = (b: Ref | null | undefined, s?: Ref | null) => [b?.name ?? 'No customer', s === undefined ? null : s?.name ?? 'No site'].filter(Boolean).join(' · ');
 
 export function duration(min: number | null | undefined): string {
   if (min === null || min === undefined) return '—';

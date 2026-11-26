@@ -77,7 +77,7 @@ export class QualityRulesService implements OnModuleInit {
   // ── Who ───────────────────────────────────────────────────────────────────
 
   private platformOnly(a: ActorContext) {
-    if (!a.isPlatformAdmin || a.technician) throw new ForbiddenException({ code: 'PLATFORM_ADMIN_ONLY', message: 'A rule for every business (the platform, an OS everywhere, or a global monitor) is a Platform Admin\'s.' });
+    if (!a.isPlatformAdmin || a.technician) throw new ForbiddenException({ code: 'PLATFORM_ADMIN_ONLY', message: 'A rule for every customer (the platform, an OS everywhere, or a global monitor) is a Platform Admin\'s.' });
   }
 
   /** May this person see a rule about this business (null: a platform rule, which everyone with alerts sees)? 404 otherwise. */
@@ -95,7 +95,7 @@ export class QualityRulesService implements OnModuleInit {
     switch (s.kind) {
       case 'endpoint': {
         const ep = await this.acl.assertEndpointInScope(a, need(s.endpointId, 'endpointId'), CAP.MONITORING_CONFIGURE);
-        if (!ep.customerId) throw new BadRequestException({ code: 'ENDPOINT_UNASSIGNED', message: 'This computer is not in a business.' });
+        if (!ep.customerId) throw new BadRequestException({ code: 'ENDPOINT_UNASSIGNED', message: 'This device is not in a customer.' });
         customerId = ep.customerId; endpointId = ep.id;
         break;
       }
@@ -131,7 +131,7 @@ export class QualityRulesService implements OnModuleInit {
       select: { id: true, key: true, name: true, kind: true, severity: true, params: true },
     });
     if (!monitors.length) throw new NotFoundException({ code: 'MONITOR_NOT_FOUND', message: `No monitor "${ruleKey}" applies here.` });
-    if (new Set(monitors.map((m) => m.kind)).size > 1) throw new BadRequestException({ code: 'MONITOR_KIND_MIXED', message: `Monitors named "${ruleKey}" are of different kinds; scope the rule to one business or one monitor.` });
+    if (new Set(monitors.map((m) => m.kind)).size > 1) throw new BadRequestException({ code: 'MONITOR_KIND_MIXED', message: `Monitors named "${ruleKey}" are of different kinds; scope the rule to one customer or one monitor.` });
     const monitor = customerId || monitorRuleId ? monitors[0] : [...monitors].sort((x, y) => SEV_RANK[y.severity as Sev] - SEV_RANK[x.severity as Sev])[0];
     return { kind: s.kind, customerId, tenantId, endpointId, groupId, monitorRuleId, osFamily, monitor: { ...monitor, severity: monitor.severity as Sev, params: monitor.params as Record<string, unknown> } };
   }
@@ -432,7 +432,7 @@ export class QualityRulesService implements OnModuleInit {
     const ep = expiryProblem({ temporary: r.temporary, expiresAt: r.expiresAt, reviewAt: r.reviewAt }, now);
     if (ep) throw new ConflictException(ep);
     if (r.risk === 'high' && r.approvedById === a.userId) {
-      throw new ConflictException({ code: 'SECOND_APPROVER_REQUIRED', message: 'This rule could hide a critical, security or backup failure, or reaches every business: a second, different person must approve it.' });
+      throw new ConflictException({ code: 'SECOND_APPROVER_REQUIRED', message: 'This rule could hide a critical, security or backup failure, or reaches every customer: a second, different person must approve it.' });
     }
     // Confirm it is you (monitoring.qualityrule): after scope and every check, before the first write.
     fresh();

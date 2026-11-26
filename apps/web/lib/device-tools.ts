@@ -49,7 +49,7 @@ export const TOOL_GROUPS: readonly { id: ToolGroup; label: string }[] = [
   { id: 'diagnostics', label: 'Diagnostics' },
   { id: 'remote', label: 'Terminal and files' },
   { id: 'scripts', label: 'PowerShell / Scripts' },
-  { id: 'services', label: 'Services & Processes' },
+  { id: 'services', label: 'Services & processes' },
   { id: 'software', label: 'Software' },
   { id: 'updates', label: 'Windows Updates' },
   { id: 'networking', label: 'Networking' },
@@ -147,19 +147,19 @@ export function toolCatalog(endpointId: string): ToolDef[] {
   const PALETTE = '0.76.0';
   return [
     // ── Diagnostics ──
-    { id: 'test-connection', group: 'diagnostics', label: 'Test connection', description: 'The server checks RustDesk, the relay and this computer’s last check-in. Diagnostics tab.', need: { kind: 'server' }, target: { kind: 'tab', tab: 'diagnostics', check: 'test-connection' } },
+    { id: 'test-connection', group: 'diagnostics', label: 'Test connection', description: 'The server checks RustDesk, the relay and this device’s last check-in. Diagnostics tab.', need: { kind: 'server' }, target: { kind: 'tab', tab: 'diagnostics', check: 'test-connection' } },
     { id: 'refresh-inventory', group: 'diagnostics', label: 'Refresh inventory', description: 'Re-collect hardware, disks, adapters and installed software. Read-only.', need: { kind: 'diagnostic', key: 'refresh_inventory' }, target: diag('refresh_inventory') },
     { id: 'disk-space', group: 'diagnostics', label: 'Disk space', description: 'Size and free space of every fixed volume. Read-only.', need: { kind: 'diagnostic', key: 'disk_space' }, target: diag('disk_space') },
     { id: 'service-health', group: 'diagnostics', label: 'Service health', description: 'Automatic services that are not running. Read-only.', need: { kind: 'diagnostic', key: 'service_health' }, target: diag('service_health') },
     { id: 'top-processes', group: 'diagnostics', label: 'Top processes', description: 'The ten processes using the most processor time and memory. Read-only.', need: { kind: 'diagnostic', key: 'top_processes' }, target: diag('top_processes') },
     { id: 'recent-errors', group: 'diagnostics', label: 'Recent system errors', description: 'Critical and Error events from the last 24 hours, grouped. Read-only.', need: { kind: 'diagnostic', key: 'recent_system_errors', eventLogs: true }, target: diag('recent_system_errors') },
-    { id: 'diagnostics-report', group: 'diagnostics', label: 'Download diagnostics report', description: 'The connection checks and what the computer last reported, as one file.', need: { kind: 'server' }, target: { kind: 'download', href: `/api/v1/endpoints/${e}/diagnostics/report` } },
+    { id: 'diagnostics-report', group: 'diagnostics', label: 'Download diagnostics report', description: 'The connection checks and what the device last reported, as one file.', need: { kind: 'server' }, target: { kind: 'download', href: `/api/v1/endpoints/${e}/diagnostics/report` } },
 
     // ── Terminal (0.77) ──
-    { id: 'terminal', group: 'remote', label: 'Open a terminal (cmd or PowerShell)', description: 'A background shell as SYSTEM — full control of this computer — with no screen sharing. Needs a reason; ends after 15 minutes idle or 60 in all. Terminal tab.', need: { kind: 'terminal', minAgent: '0.77.0' }, target: { kind: 'tab', tab: 'terminal' } },
+    { id: 'terminal', group: 'remote', label: 'Open a terminal (cmd or PowerShell)', description: 'A background shell as SYSTEM — full control of this device — with no screen sharing. Needs a reason; ends after 15 minutes idle or 60 in all. Terminal tab.', need: { kind: 'terminal', minAgent: '0.77.0' }, target: { kind: 'tab', tab: 'terminal' } },
     // ── Files (0.78) ──
-    { id: 'files-upload', group: 'remote', label: 'Send a file to the computer', description: 'Written by the agent as SYSTEM to an absolute local path, checked by SHA-256, never over an existing file unless you say so. Files tab.', need: { kind: 'files', dir: 'upload', minAgent: '0.78.0' }, target: { kind: 'tab', tab: 'files' } },
-    { id: 'files-download', group: 'remote', label: 'Fetch a file from the computer', description: 'Read by the agent as SYSTEM from an absolute local path and checked by SHA-256 in your browser. Files tab.', need: { kind: 'files', dir: 'download', minAgent: '0.78.0' }, target: { kind: 'tab', tab: 'files' } },
+    { id: 'files-upload', group: 'remote', label: 'Send a file to the device', description: 'Written by the agent as SYSTEM to an absolute local path, checked by SHA-256, never over an existing file unless you say so. Files tab.', need: { kind: 'files', dir: 'upload', minAgent: '0.78.0' }, target: { kind: 'tab', tab: 'files' } },
+    { id: 'files-download', group: 'remote', label: 'Fetch a file from the device', description: 'Read by the agent as SYSTEM from an absolute local path and checked by SHA-256 in your browser. Files tab.', need: { kind: 'files', dir: 'download', minAgent: '0.78.0' }, target: { kind: 'tab', tab: 'files' } },
 
     // ── PowerShell / Scripts ──
     { id: 'run-script', group: 'scripts', label: 'Run an approved script', description: 'An approved version from the script library, with its typed arguments. Opens Automation → Scripts.', need: { kind: 'action', action: 'windows.script.run', version: 1 }, target: { kind: 'href', href: '/automation/scripts' } },
@@ -174,22 +174,22 @@ export function toolCatalog(endpointId: string): ToolDef[] {
 
     // ── Software ──
     { id: 'software-list', group: 'software', label: 'Installed software', description: 'What the inventory lists, with versions and changes.', need: { kind: 'view' }, target: { kind: 'tab', tab: 'software' } },
-    { id: 'software-install', group: 'software', label: 'Install software', description: 'A catalog or winget package, as a one-computer deployment. Software tab.', need: { kind: 'action', action: 'windows.software.install', version: 1 }, target: { kind: 'tab', tab: 'software' } },
+    { id: 'software-install', group: 'software', label: 'Install software', description: 'A catalog or winget package, as a one-device deployment. Software tab.', need: { kind: 'action', action: 'windows.software.install', version: 1 }, target: { kind: 'tab', tab: 'software' } },
     { id: 'software-remove', group: 'software', label: 'Remove a program', description: 'A program from the installed list, by its own silent uninstaller. Software tab.', need: { kind: 'action', action: 'windows.software.remove', version: 1 }, target: { kind: 'tab', tab: 'software' } },
 
     // ── Windows Updates ──
     { id: 'patch-scan', group: 'updates', label: 'Check for updates now', description: 'Asks the agent to scan and report pending updates at its next check-in. Patches tab.', need: { kind: 'scan' }, target: { kind: 'tab', tab: 'patches' } },
     { id: 'restart-pending', group: 'updates', label: 'Restart pending?', description: 'What the last update scan said. Patches tab.', need: { kind: 'status' }, target: { kind: 'tab', tab: 'patches' } },
     { id: 'reboot-status', group: 'updates', label: 'Restart signals', description: 'Which Windows signals say a restart is pending, and the last boot time. Read-only.', need: { kind: 'diagnostic', key: 'reboot_status' }, target: diag('reboot_status') },
-    { id: 'install-updates', group: 'updates', label: 'Install updates', description: 'Pick updates and install them on this computer as a one-computer deployment. Patches tab.', need: { kind: 'action', action: 'windows.update.install', version: 1 }, target: { kind: 'tab', tab: 'patches' } },
+    { id: 'install-updates', group: 'updates', label: 'Install updates', description: 'Pick updates and install them on this device as a one-device deployment. Patches tab.', need: { kind: 'action', action: 'windows.update.install', version: 1 }, target: { kind: 'tab', tab: 'patches' } },
 
     // ── Networking ──
     { id: 'network', group: 'networking', label: 'Network adapters', description: 'Addresses, gateways, DNS servers and DHCP for every adapter.', need: { kind: 'view', minAgent: '0.33.0' }, target: { kind: 'tab', tab: 'network' } },
-    { id: 'network-connectivity', group: 'networking', label: 'Network connectivity', description: 'Whether the computer can reach this server, and which adapters are up. Read-only.', need: { kind: 'diagnostic', key: 'network_connectivity' }, target: diag('network_connectivity') },
+    { id: 'network-connectivity', group: 'networking', label: 'Network connectivity', description: 'Whether the device can reach this server, and which adapters are up. Read-only.', need: { kind: 'diagnostic', key: 'network_connectivity' }, target: diag('network_connectivity') },
     { id: 'dns-resolution', group: 'networking', label: 'DNS resolution', description: 'Resolve this server’s name and one fixed public name, with timings. Read-only.', need: { kind: 'diagnostic', key: 'dns_resolution' }, target: diag('dns_resolution') },
     // 0.76: the read-only palette's networking checks.
-    { id: 'dns-lookup', group: 'networking', label: 'DNS lookup', description: 'Resolve a host name you give through this computer’s resolver. Read-only.', need: { kind: 'diagnostic', key: 'dns_lookup', connect: true, minAgent: PALETTE }, target: diag('dns_lookup') },
-    { id: 'tcp-port', group: 'networking', label: 'TCP port test', description: 'Whether this computer can connect to a host and port you give. Connects and closes; sends nothing.', need: { kind: 'diagnostic', key: 'tcp_port', connect: true, minAgent: PALETTE }, target: diag('tcp_port') },
+    { id: 'dns-lookup', group: 'networking', label: 'DNS lookup', description: 'Resolve a host name you give through this device’s resolver. Read-only.', need: { kind: 'diagnostic', key: 'dns_lookup', connect: true, minAgent: PALETTE }, target: diag('dns_lookup') },
+    { id: 'tcp-port', group: 'networking', label: 'TCP port test', description: 'Whether this device can connect to a host and port you give. Connects and closes; sends nothing.', need: { kind: 'diagnostic', key: 'tcp_port', connect: true, minAgent: PALETTE }, target: diag('tcp_port') },
     { id: 'route-table', group: 'networking', label: 'Routes', description: 'The routing table: destinations, next hops and metrics. Read-only.', need: { kind: 'diagnostic', key: 'route_table', minAgent: PALETTE }, target: diag('route_table') },
     { id: 'flush-dns', group: 'networking', label: 'Flush DNS / renew DHCP', description: 'No approved action does this yet.', need: { kind: 'later' }, target: null },
 
@@ -201,7 +201,7 @@ export function toolCatalog(endpointId: string): ToolDef[] {
     { id: 'bitlocker', group: 'security', label: 'BitLocker', description: 'Protection and encryption of every volume. Recovery keys are never read.', need: { kind: 'diagnostic', key: 'bitlocker_status', minAgent: PALETTE }, target: diag('bitlocker_status') },
     { id: 'secure-boot-tpm', group: 'security', label: 'Secure Boot and TPM', description: 'Whether Secure Boot is on and a TPM is present and ready. Read-only.', need: { kind: 'diagnostic', key: 'secure_boot_tpm', minAgent: PALETTE }, target: diag('secure_boot_tpm') },
     { id: 'local-admins', group: 'security', label: 'Local administrators', description: 'Who is in the local Administrators group. Read-only.', need: { kind: 'diagnostic', key: 'local_admins', minAgent: PALETTE }, target: diag('local_admins') },
-    { id: 'os-support', group: 'security', label: 'Windows support', description: 'Whether this Windows build still gets security updates, from the inventory and a table on the server. Nothing is sent to the computer.', need: { kind: 'server' }, target: { kind: 'tab', tab: 'diagnostics', check: 'os_support' } },
+    { id: 'os-support', group: 'security', label: 'Windows support', description: 'Whether this Windows build still gets security updates, from the inventory and a table on the server. Nothing is sent to the device.', need: { kind: 'server' }, target: { kind: 'tab', tab: 'diagnostics', check: 'os_support' } },
 
     // ── Maintenance ──
     { id: 'restart-schedule', group: 'maintenance', label: 'Schedule a restart', description: 'With a 15-minute warning on screen; waits for an open RustDesk session. Actions tab.', need: { kind: 'action', action: 'windows.reboot.schedule', version: 1 }, target: act('windows.reboot.schedule') },
@@ -323,7 +323,7 @@ export function compareVersions(a: string, b: string): number | null {
 
 function unsupported(f: ToolFacts, need: Need): string | null {
   if (need.kind === 'server' || need.kind === 'later') return null;
-  if (f.agentKind === 'rustdesk-only') return 'This computer has RustDesk only: no agent reports or runs anything on it.';
+  if (f.agentKind === 'rustdesk-only') return 'This device has RustDesk only: no agent reports or runs anything on it.';
   if (need.kind === 'scan' || need.kind === 'status') return null; // every agent scans, Linux and macOS included
   if (f.readOnlyOs) return `The ${f.readOnlyOs} agent is read-only: it reports inventory and pending updates and runs nothing the console sends.`;
   return null;
@@ -331,30 +331,30 @@ function unsupported(f: ToolFacts, need: Need): string | null {
 
 function inactive(f: ToolFacts, need: Need): string | null {
   if (need.kind === 'later' || need.kind === 'server') return null;
-  if (f.status === 'ARCHIVED') return 'This computer is archived.';
-  if (f.status === 'PENDING_ENROLLMENT') return 'This computer has not finished enrolment.';
+  if (f.status === 'ARCHIVED') return 'This device is archived.';
+  if (f.status === 'PENDING_ENROLLMENT') return 'This device has not finished enrolment.';
   // Reading what it reported is how a pooled computer is inspected; nothing runs on it (§70).
-  if (f.pooled && (need.kind === 'action' || need.kind === 'diagnostic' || need.kind === 'terminal' || need.kind === 'files')) return 'This computer is in the unassigned pool: adopt it into a business first (Devices → Unassigned).';
-  if ((need.kind === 'diagnostic' || need.kind === 'terminal' || need.kind === 'files') && f.agentBound === false) return 'This computer has never authenticated with a device secret, so it cannot be asked to run anything. Re-run the installer on it once.';
+  if (f.pooled && (need.kind === 'action' || need.kind === 'diagnostic' || need.kind === 'terminal' || need.kind === 'files')) return 'This device is in the unassigned pool: adopt it into a customer first (Devices → Unassigned).';
+  if ((need.kind === 'diagnostic' || need.kind === 'terminal' || need.kind === 'files') && f.agentBound === false) return 'This device has never authenticated with a device secret, so it cannot be asked to run anything. Re-run the installer on it once.';
   return null;
 }
 
 function notPermitted(f: ToolFacts, need: Need): string | null {
   if (need.kind === 'later') return null;
-  if (!f.perms.view) return 'Your role does not include viewing this computer’s details.';
+  if (!f.perms.view) return 'Your role does not include viewing this device’s details.';
   if ('eventLogs' in need && need.eventLogs && !f.perms.eventLogs) return 'Needs the “Read event logs” permission.';
   // 0.76: the diagnostics catalog says whether this person holds the key's capability.
   if (need.kind === 'diagnostic' && f.diagAllowed && f.diagAllowed[need.key] === false) {
-    return need.connect ? 'Needs the “Remote connect” permission: this check makes the computer reach a host you name.' : need.eventLogs ? 'Needs the “Read event logs” permission.' : 'Your role does not allow this check.';
+    return need.connect ? 'Needs the “Remote connect” permission: this check makes the device reach a host you name.' : need.eventLogs ? 'Needs the “Read event logs” permission.' : 'Your role does not allow this check.';
   }
-  if (need.kind === 'terminal' && !f.perms.terminal) return 'Only a Platform Admin can open a terminal: it runs as SYSTEM, with full control of the computer.';
+  if (need.kind === 'terminal' && !f.perms.terminal) return 'Only a Platform Admin can open a terminal: it runs as SYSTEM, with full control of the device.';
   if (need.kind === 'files' && !(need.dir === 'upload' ? f.perms.filesUpload : f.perms.filesDownload)) {
-    return `Only a Platform Admin can ${need.dir === 'upload' ? 'send files to' : 'fetch files from'} a computer: the agent reads and writes as SYSTEM.`;
+    return `Only a Platform Admin can ${need.dir === 'upload' ? 'send files to' : 'fetch files from'} a device: the agent reads and writes as SYSTEM.`;
   }
   if (need.kind === 'action') {
     const risk = f.actionRisk[need.action] ?? 'high';
     if (!(risk === 'low' ? f.perms.requestLow : f.perms.requestHigh)) {
-      return risk === 'high' ? 'Your role does not include requesting higher-risk actions on this computer.' : 'Your role does not include requesting actions on this computer.';
+      return risk === 'high' ? 'Your role does not include requesting higher-risk actions on this device.' : 'Your role does not include requesting actions on this device.';
     }
   }
   return null;
@@ -362,22 +362,22 @@ function notPermitted(f: ToolFacts, need: Need): string | null {
 
 function newerAgent(f: ToolFacts, need: Need): string | null {
   if (need.kind === 'terminal' || need.kind === 'files') {
-    if (f.agentKind !== 'signed') return 'Needs the full (signed) agent; this computer runs the standard agent. Upgrade it from the Agent card.';
+    if (f.agentKind !== 'signed') return 'Needs the full (signed) agent; this device runs the standard agent. Upgrade it from the Agent card.';
     const c = f.agentVersion ? compareVersions(f.agentVersion, need.minAgent) : null;
-    if (c === null || c < 0) return `Needs the signed agent ${need.minAgent} or later${f.agentVersion ? ` (this computer reports ${f.agentVersion})` : ''}. Let it update first.`;
+    if (c === null || c < 0) return `Needs the signed agent ${need.minAgent} or later${f.agentVersion ? ` (this device reports ${f.agentVersion})` : ''}. Let it update first.`;
     return null;
   }
   if (need.kind === 'action') {
-    if (f.agentKind !== 'signed') return 'Needs the full (signed) agent; this computer runs the standard agent. Upgrade it from the Agent card.';
-    if (!f.agentActions.includes(`${need.action}@${need.version}`)) return 'This computer’s agent does not report support for this action yet. Let it update first.';
+    if (f.agentKind !== 'signed') return 'Needs the full (signed) agent; this device runs the standard agent. Upgrade it from the Agent card.';
+    if (!f.agentActions.includes(`${need.action}@${need.version}`)) return 'This device’s agent does not report support for this action yet. Let it update first.';
     return null;
   }
   if (need.kind === 'diagnostic' && f.diagNeedsNewer?.[need.key]) {
-    return `This computer’s agent${f.agentVersion ? ` (${f.agentVersion})` : ''} is older than ${need.minAgent ?? 'the release that added this check'}. Update the agent; a signed agent gets it with the next signed release.`;
+    return `This device’s agent${f.agentVersion ? ` (${f.agentVersion})` : ''} is older than ${need.minAgent ?? 'the release that added this check'}. Update the agent; a signed agent gets it with the next signed release.`;
   }
   if ((need.kind === 'view' || need.kind === 'diagnostic') && 'minAgent' in need && need.minAgent && f.agentVersion) {
     const c = compareVersions(f.agentVersion, need.minAgent);
-    if (c !== null && c < 0) return `This computer’s agent (${f.agentVersion}) is older than ${need.minAgent}, which first collected this. Reinstall or update the agent.`;
+    if (c !== null && c < 0) return `This device’s agent (${f.agentVersion}) is older than ${need.minAgent}, which first collected this. Reinstall or update the agent.`;
   }
   return null;
 }
@@ -403,13 +403,13 @@ export function toolState(def: ToolDef, f: ToolFacts): { state: ToolState; reaso
   const n = newerAgent(f, need);
   if (n) return { state: 'needs_newer_agent', reason: n };
   if (need.kind === 'action' && f.paused.includes('actions')) {
-    return { state: 'contained', reason: 'Approved actions are paused by containment for this business (Settings → Security → Containment).' };
+    return { state: 'contained', reason: 'Approved actions are paused by containment for this customer (Security → Containment).' };
   }
   if (need.kind === 'terminal' && f.paused.includes('remote')) {
-    return { state: 'contained', reason: 'Remote connections and chat are paused by containment for this business, and a terminal is one of them.' };
+    return { state: 'contained', reason: 'Remote connections and chat are paused by containment for this customer, and a terminal is one of them.' };
   }
   if (need.kind === 'files' && f.paused.includes('remote')) {
-    return { state: 'contained', reason: 'Remote connections and chat are paused by containment for this business, and file transfer is one of them.' };
+    return { state: 'contained', reason: 'Remote connections and chat are paused by containment for this customer, and file transfer is one of them.' };
   }
   const reachesAgent = need.kind !== 'server' && need.kind !== 'status';
   if (reachesAgent && f.connectivity !== 'online') {
@@ -420,21 +420,21 @@ export function toolState(def: ToolDef, f: ToolFacts): { state: ToolState; reaso
         : need.kind === 'diagnostic'
           ? `${f.connectivityText}: the request waits fifteen minutes for its next check-in, then expires.`
           : need.kind === 'terminal'
-            ? `${f.connectivityText}: a terminal can only be opened on a computer that is reporting.`
+            ? `${f.connectivityText}: a terminal can only be opened on a device that is reporting.`
             : need.kind === 'files'
-              ? `${f.connectivityText}: a file can only be transferred with a computer that is reporting.`
+              ? `${f.connectivityText}: a file can only be transferred with a device that is reporting.`
             : `${f.connectivityText}: the request waits for its next check-in.`,
     };
   }
   if (need.kind === 'terminal') {
-    return { state: 'available', reason: 'Asks you to confirm it is you (unless that is turned off), then starts at the computer’s next check-in — up to about three minutes.' };
+    return { state: 'available', reason: 'Asks you to confirm it is you (unless that is turned off), then starts at the device’s next check-in — up to about three minutes.' };
   }
   if (need.kind === 'files') {
-    return { state: 'available', reason: 'Starts at the computer’s next check-in — up to about three minutes — with a reason in the audit log.' };
+    return { state: 'available', reason: 'Starts at the device’s next check-in — up to about three minutes — with a reason in the audit log.' };
   }
   if (need.kind === 'action') {
     if (f.signer.approval === 'direct') return { state: 'available', reason: 'Direct mode: signed when you request it, after a fresh sign-in, and run at its next check-in.' };
-    return { state: 'needs_approval', reason: 'Two approvers authorize it on the approval page before the computer runs it.' };
+    return { state: 'needs_approval', reason: 'Two approvers authorize it on the approval page before the device runs it.' };
   }
   if (def.id === 'restart-pending') {
     return {
@@ -444,7 +444,7 @@ export function toolState(def: ToolDef, f: ToolFacts): { state: ToolState; reaso
           : 'Unknown — no scan has answered yet. Check for updates asks for one.',
     };
   }
-  return { state: 'available', reason: need.kind === 'server' ? 'Runs on the server; nothing is sent to the computer.' : need.kind === 'diagnostic' ? 'No approval needed; recorded in the audit log.' : 'Ready.' };
+  return { state: 'available', reason: need.kind === 'server' ? 'Runs on the server; nothing is sent to the device.' : need.kind === 'diagnostic' ? 'No approval needed; recorded in the audit log.' : 'Ready.' };
 }
 
 export function deviceTools(endpointId: string, f: ToolFacts): ToolView[] {

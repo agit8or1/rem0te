@@ -30,7 +30,7 @@ export type VendorKey = (typeof VENDOR_KEYS)[number];
 
 /**
  * The vendors whose warranty API this server can ask (warranty/client.ts),
- * once a Platform Admin switches one on in Settings → Warranty. 0.56 had Dell
+ * once a Platform Admin switches one on in Administration → Warranty. 0.56 had Dell
  * and Lenovo; 0.61 added HP (HP Inc.'s Warranty API, developers.hp.com) and
  * Apple (the Apple Business Manager API's AppleCare coverage). Migration
  * 0082's CHECKs name exactly these.
@@ -41,7 +41,7 @@ export const isLookupVendor = (v: unknown): v is LookupVendor => (LOOKUP_VENDORS
 
 /**
  * The vendors with no lookup, and why — shown on the device page, the report
- * and Settings → Warranty, so "no date" is never a mystery. Their dates are
+ * and Administration → Warranty, so "no date" is never a mystery. Their dates are
  * entered by hand on the computer's Warranty & support card.
  */
 export const NO_LOOKUP_REASON: Record<Exclude<VendorKey, LookupVendor>, string> = {
@@ -290,7 +290,7 @@ export interface GapInput {
 
 /** Why a computer with no stored warranty date has none. Pure: unit-tested. */
 export function warrantyGap(g: GapInput): WarrantyGap {
-  if (!g.hasInventory) return { reason: 'no_inventory', text: 'The agent has not reported this computer\u2019s hardware yet, so its maker and serial are unknown.', settings: false };
+  if (!g.hasInventory) return { reason: 'no_inventory', text: 'The agent has not reported this device\u2019s hardware yet, so its maker and serial are unknown.', settings: false };
   const maker = identifyMaker(g.manufacturer, g.model);
   if (maker.kind === 'virtual') return { reason: 'virtual', text: `Virtual machine (${maker.platform}) \u2014 no hardware warranty.`, settings: false };
   if (maker.kind === 'unknown') return { reason: 'unknown_maker', text: 'The manufacturer is not one with a warranty lookup or support links. Enter the dates by hand.', settings: false };
@@ -299,7 +299,7 @@ export function warrantyGap(g: GapInput): WarrantyGap {
   if (!cleanSerial(g.serial)) return { reason: 'no_serial', text: `No usable serial number was reported, so ${label} cannot be asked. Enter the dates by hand.`, settings: false };
   if (!g.enabled.includes(maker.vendor)) return { reason: 'not_configured', text: `The ${label} warranty lookup is not switched on. A Platform Admin can switch it on in Settings \u2192 Warranty.`, settings: true };
   // 'OK' with no date: an answer was stored and later cleared by hand; it is asked again after the interval.
-  if (!g.lookupAt || !g.lookupResult || g.lookupResult === 'OK') return { reason: 'waiting', text: `${label} has not been asked yet. The lookup sweep asks a limited number of computers an hour; Check now asks at once.`, settings: false };
+  if (!g.lookupAt || !g.lookupResult || g.lookupResult === 'OK') return { reason: 'waiting', text: `${label} has not been asked yet. The lookup sweep asks a limited number of devices an hour; Check now asks at once.`, settings: false };
   if (g.lookupResult === 'NOT_FOUND') return { reason: 'not_found', text: `${label} was asked and has no warranty record for this serial. Enter the dates by hand if you have them.`, settings: false };
   return { reason: 'failed', text: `The last ${label} lookup failed: ${lookupResultText(g.lookupResult)}.`, settings: g.lookupResult === 'VENDOR_AUTH_FAILED' || g.lookupResult === 'VENDOR_NOT_CONFIGURED' };
 }

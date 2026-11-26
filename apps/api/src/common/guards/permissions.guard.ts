@@ -37,7 +37,7 @@ export class PermissionsGuard implements CanActivate {
     if (user.isPlatformAdmin) return true;
 
     if (!user.roleType) {
-      throw new ForbiddenException('No business context on this account');
+      throw new ForbiddenException('No customer context on this account');
     }
 
     const actor = {

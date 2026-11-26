@@ -15,7 +15,7 @@ import { validatePeerUrl } from '../integration/peers';
 import { assertIndependentReviewer } from './review';
 
 /**
- * Mutations behind Settings → Security → Technician Access. Every one that
+ * Mutations behind Security → Technician access. Every one that
  * widens trust is diverted to TrustChangeService; tightening applies at once.
  */
 @Injectable()
@@ -163,7 +163,7 @@ export class PolicyAdminService {
     if (actor.isPlatformAdmin) return;
     if (readOnly && (actor.platformPermissions ?? []).includes('technicians:manage')) return;
     if (!actor.technician && actor.businessId === businessId && isOwnerRole(actor.roleType)) return;
-    throw new ForbiddenException('Only this business\'s Business Owner can change its access policy');
+    throw new ForbiddenException('Only this customer\'s Business Owner can change its access policy');
   }
 
   /**
@@ -241,9 +241,9 @@ export class PolicyAdminService {
     if (isNaN(expiresAt.getTime()) || expiresAt <= new Date()) throw new BadRequestException('expiresAt must be in the future');
     if (expiresAt.getTime() - Date.now() > 7 * 86_400_000) throw new BadRequestException('A maintenance exception lasts at most 7 days');
     const kinds = input.kinds.filter((k) => ['LAUNCH', 'WRITE', 'EVIDENCE'].includes(k));
-    if (!kinds.length || !input.endpointIds.length) throw new BadRequestException('Name the computers and the kinds of work');
+    if (!kinds.length || !input.endpointIds.length) throw new BadRequestException('Name the devices and the kinds of work');
     const n = await this.prisma.endpoint.count({ where: { id: { in: input.endpointIds } } });
-    if (n !== new Set(input.endpointIds).size) throw new BadRequestException('Unknown computer in the list');
+    if (n !== new Set(input.endpointIds).size) throw new BadRequestException('Unknown device in the list');
     const row = await this.prisma.maintenanceException.create({ data: { identity: input.identity, endpointIds: [...new Set(input.endpointIds)], kinds, reason: input.reason.slice(0, 500), requestedById: actor.userId, expiresAt } });
     await this.audit.log({ actorId: actor.userId, actorIp: actor.ip, action: 'MAINTENANCE_EXCEPTION_CHANGED', resource: 'maintenance_exception', resourceId: row.id, meta: { op: 'request', identity: input.identity, count: row.endpointIds.length, kinds, expiresAt } });
     return row;

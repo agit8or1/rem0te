@@ -15,7 +15,7 @@ function fresh(stepUp: StepUpService, req: Request, action: 'email.relay' | 'ema
 }
 
 /**
- * Settings → Email (0.34): the SMTP relay. Platform Admin only (the guard,
+ * Administration → Email (0.34): the SMTP relay. Platform Admin only (the guard,
  * before anything is read). Saving needs fresh authentication — it decides
  * where every alert email and report goes through, and holds a password.
  */

@@ -308,7 +308,7 @@ export class AgentAutoMigrationService implements OnModuleInit, OnModuleDestroy 
     const before = await this.settings();
     const next = { mode: data.mode ?? before.mode, soakMinutes: data.soakMinutes ?? before.soakMinutes };
     if (isWidening(before, next)) {
-      assertFresh(freshMethod, { action: 'agent.automigrate', message: 'Turning on automatic migration, or shortening its soak, decides when the portal moves computers to the signed agent by itself: confirm it is you.' });
+      assertFresh(freshMethod, { action: 'agent.automigrate', message: 'Turning on automatic migration, or shortening its soak, decides when the portal moves devices to the signed agent by itself: confirm it is you.' });
     }
     const update = { agentAutoMigrationMode: next.mode, agentAutoMigrationSoakMinutes: next.soakMinutes };
     await this.prisma.platformSettings.upsert({ where: { id: 'singleton' }, create: { id: 'singleton', ...update }, update });
@@ -336,7 +336,7 @@ export class AgentAutoMigrationService implements OnModuleInit, OnModuleDestroy 
    */
   async resume(actor: ActorContext, freshMethod: string | null) {
     this.acl.assertPlatformAdmin(actor);
-    assertFresh(freshMethod, { action: 'agent.automigrate', message: 'Resuming the automatic migration moves computers to the signed agent: confirm it is you.' });
+    assertFresh(freshMethod, { action: 'agent.automigrate', message: 'Resuming the automatic migration moves devices to the signed agent: confirm it is you.' });
     const r = await this.current();
     if (!r || r.state !== 'halted') throw new ConflictException({ code: 'NOT_HALTED', message: 'There is no halted automatic migration for the published signed agent.' });
     if (!r.canaryEndpointId) throw new ConflictException({ code: 'NO_CANARY', message: 'This rollout has no canary to resume with; restart it with another canary.' });
@@ -369,7 +369,7 @@ export class AgentAutoMigrationService implements OnModuleInit, OnModuleDestroy 
   /** Restart a halted rollout with another canary; the old one is never picked again for this build. */
   async restart(actor: ActorContext, freshMethod: string | null) {
     this.acl.assertPlatformAdmin(actor);
-    assertFresh(freshMethod, { action: 'agent.automigrate', message: 'Restarting the automatic migration picks another computer to move to the signed agent: confirm it is you.' });
+    assertFresh(freshMethod, { action: 'agent.automigrate', message: 'Restarting the automatic migration picks another device to move to the signed agent: confirm it is you.' });
     const r = await this.current();
     if (!r || r.state !== 'halted') throw new ConflictException({ code: 'NOT_HALTED', message: 'There is no halted automatic migration for the published signed agent.' });
     const rejected = r.canaryEndpointId && !r.rejectedCanaryIds.includes(r.canaryEndpointId) ? [...r.rejectedCanaryIds, r.canaryEndpointId] : r.rejectedCanaryIds;

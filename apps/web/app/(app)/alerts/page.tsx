@@ -77,7 +77,7 @@ export default function AlertsPage() {
     <div className="space-y-4 p-4 md:p-6">
       <PageHeader
         title="Alerts"
-        description="Problems the monitors found on your computers. Repeats are counted on one alert; a site outage gathers the offline computers behind it."
+        description="Problems the monitors found on your devices. Repeats are counted on one alert; a site outage gathers the offline devices behind it."
         actions={(
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" asChild><Link href="/alerts/quality"><BadgeCheck className="mr-1 h-4 w-4" />False positives &amp; rules</Link></Button>

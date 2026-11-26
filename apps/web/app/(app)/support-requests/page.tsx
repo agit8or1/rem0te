@@ -140,7 +140,7 @@ export default function SupportRequestsPage() {
   if (!allowed) {
     return (
       <div className="p-6">
-        <PageHeader title="Support Requests" />
+        <PageHeader title="Support requests" />
         <p className="text-sm text-muted-foreground">You do not have permission to handle support requests.</p>
       </div>
     );
@@ -148,7 +148,7 @@ export default function SupportRequestsPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <PageHeader title="Support Requests" description="People waiting for help. Claim one to work on it.">
+      <PageHeader title="Support requests" description="People waiting for help. Claim one to work on it.">
         <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching}>
           <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
           Refresh
@@ -185,9 +185,9 @@ export default function SupportRequestsPage() {
             <thead>
               <tr className="border-b bg-muted/50">
                 <th className="text-left px-4 py-2 font-medium text-xs">Who</th>
-                {isPlatformAdmin && <th className="text-left px-4 py-2 font-medium text-xs">Business</th>}
+                {isPlatformAdmin && <th className="text-left px-4 py-2 font-medium text-xs">Customer</th>}
                 <th className="text-left px-4 py-2 font-medium text-xs">Request</th>
-                <th className="text-left px-4 py-2 font-medium text-xs">Computer</th>
+                <th className="text-left px-4 py-2 font-medium text-xs">Device</th>
                 <th className="text-left px-4 py-2 font-medium text-xs">Status</th>
                 <th className="text-left px-4 py-2 font-medium text-xs">Submitted</th>
               </tr>
@@ -203,7 +203,7 @@ export default function SupportRequestsPage() {
                 >
                   <td className="px-4 py-3 align-top">
                     <p className="font-medium">{r.contactName ?? '—'}</p>
-                    <p className="text-xs text-muted-foreground">{r.origin === 'PUBLIC' ? 'Public form' : r.origin === 'AGENT' ? 'The tray on the computer' : 'Signed-in user'}</p>
+                    <p className="text-xs text-muted-foreground">{r.origin === 'PUBLIC' ? 'Public form' : r.origin === 'AGENT' ? 'The tray on the device' : 'Signed-in user'}</p>
                   </td>
                   {isPlatformAdmin && <td className="px-4 py-3 align-top text-muted-foreground">{r.customer?.name}</td>}
                   <td className="px-4 py-3 align-top max-w-md">
@@ -293,7 +293,7 @@ function RequestDetailDialog({ id, onClose }: { id: string; onClose: () => void 
     onSuccess: async (res, endpointId) => {
       const info = res.data?.data as { rustdeskId?: string; sessionId?: string | null } | undefined;
       if (!info?.rustdeskId) {
-        toast({ title: 'Computer not ready', description: 'This computer has not finished enrollment.', variant: 'destructive' });
+        toast({ title: 'Device not ready', description: 'This device has not finished enrollment.', variant: 'destructive' });
         return;
       }
       const url = endpointsApi.connectScriptUrl(endpointId);
@@ -339,7 +339,7 @@ function RequestDetailDialog({ id, onClose }: { id: string; onClose: () => void 
           <div className="space-y-5 text-sm">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
               <Field label="Name">{r.contactName ?? '—'}</Field>
-              <Field label="From">{r.origin === 'PUBLIC' ? 'Public form' : r.origin === 'AGENT' ? 'The tray on the computer' : 'Signed-in user'}</Field>
+              <Field label="From">{r.origin === 'PUBLIC' ? 'Public form' : r.origin === 'AGENT' ? 'The tray on the device' : 'Signed-in user'}</Field>
               <Field label="Email">{r.contactEmail ? <a className="underline underline-offset-2" href={`mailto:${r.contactEmail}`}>{r.contactEmail}</a> : '—'}</Field>
               <Field label="Phone">{r.contactPhone ? <a className="underline underline-offset-2" href={`tel:${r.contactPhone}`}>{r.contactPhone}</a> : '—'}</Field>
               <Field label="Claimed by">{r.claimedBy ? (claimedByMe ? 'You' : personName(r.claimedBy)) : '—'}</Field>
@@ -352,14 +352,14 @@ function RequestDetailDialog({ id, onClose }: { id: string; onClose: () => void 
             </div>
 
             <div className="space-y-1">
-              <p className="text-xs font-medium text-muted-foreground">Matched computer</p>
+              <p className="text-xs font-medium text-muted-foreground">Matched device</p>
               {r.computer ? (
                 <Link href={`/endpoints/${r.computer.id}`} className="inline-flex items-center gap-1 hover:underline">
                   <Monitor className="h-3.5 w-3.5" />{r.computer.name}
                 </Link>
               ) : (
                 <p className="text-muted-foreground">
-                  None you can reach.{r.reportedRustdeskId ? ' The ID they entered is not an enrolled computer you have access to.' : ''}
+                  None you can reach.{r.reportedRustdeskId ? ' The ID they entered is not an enrolled device you have access to.' : ''}
                 </p>
               )}
             </div>
@@ -377,7 +377,7 @@ function RequestDetailDialog({ id, onClose }: { id: string; onClose: () => void 
                   {r.sessions.map((s) => (
                     <li key={s.id} className="flex flex-wrap items-center gap-2">
                       <SessionStatusBadge status={s.status} />
-                      <span className="text-xs text-muted-foreground">{s.isAdHoc ? 'Quick Connect' : 'Managed computer'} · {formatDate(s.createdAt)}</span>
+                      <span className="text-xs text-muted-foreground">{s.isAdHoc ? 'Quick Connect' : 'Managed device'} · {formatDate(s.createdAt)}</span>
                     </li>
                   ))}
                 </ul>
@@ -407,7 +407,7 @@ function RequestDetailDialog({ id, onClose }: { id: string; onClose: () => void 
             {held && claimedByMe && !showConnectManaged && !showQuickConnect && (
               <p className="text-xs text-muted-foreground rounded-md border bg-muted/40 px-3 py-2">
                 No connection option is available to you for this request.
-                {!r.computer ? ' It has no computer you can reach' : ''}
+                {!r.computer ? ' It has no device you can reach' : ''}
                 {!r.computer && !(can(CAP.QUICK_CONNECT) && qcStatus?.canUse) ? ', and Quick Connect is not available to you.' : '.'}
               </p>
             )}
@@ -484,7 +484,7 @@ function HandoffDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Hand off request</DialogTitle>
-          <DialogDescription>Only people who can handle support requests for this business are listed.</DialogDescription>
+          <DialogDescription>Only people who can handle support requests for this customer are listed.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           {isLoading ? (

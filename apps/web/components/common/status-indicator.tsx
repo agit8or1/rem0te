@@ -31,7 +31,7 @@ const STATUS_MAP: Record<string, StatusConfig> = {
   suspended: { color: 'bg-red-400', label: 'Suspended' },
   completed: { color: 'bg-blue-500', label: 'Completed' },
   failed: { color: 'bg-red-500', label: 'Failed' },
-  in_progress: { color: 'bg-blue-400 animate-pulse', label: 'In Progress' },
+  in_progress: { color: 'bg-blue-400 animate-pulse', label: 'In progress' },
 };
 
 interface StatusIndicatorProps {

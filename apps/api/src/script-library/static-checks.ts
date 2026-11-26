@@ -38,7 +38,7 @@ export const RULES: Rule[] = [
   { id: 'forced_restart', severity: 'danger', title: 'Forces a restart or shutdown',
     why: 'Someone may be working on the computer, and unsaved work is lost without warning.',
     pattern: /(Restart|Stop)-Computer\b[^\n]*-Force|shutdown(\.exe)?\s+[^\n]*\/[rs]\b[^\n]*\/f\b|shutdown(\.exe)?\s+[^\n]*\/f\b[^\n]*\/[rs]\b/i },
-  { id: 'restart', severity: 'caution', title: 'Restarts or shuts down the computer',
+  { id: 'restart', severity: 'caution', title: 'Restarts or shuts down the device',
     why: 'A restart interrupts whoever is using it. Say so in the description, and prefer scheduling.',
     pattern: /(Restart|Stop)-Computer\b|shutdown(\.exe)?\s+[^\n]*\/[rsg]\b/i },
   { id: 'log_tampering', severity: 'danger', title: 'Clears event logs or audit policy',

@@ -582,7 +582,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     if (caps.status !== 200 || caps.body.patchPolicies !== 1) throw new ConflictException({ code: 'SIGNER_TOO_OLD', message: 'The approval signer does not support patch policies. Install the 0.32 signer.' });
     // 0.62: an older signer refuses a document carrying staging (its schema is strict); say why first.
     const canary = dto.staging === 'canary';
-    if (!canary && caps.body.patchStaging !== 1) throw new ConflictException({ code: 'SIGNER_TOO_OLD', message: 'The approval signer cannot sign a policy that installs all at once. Install the 0.62 signer, or tick "Test on one computer first".' });
+    if (!canary && caps.body.patchStaging !== 1) throw new ConflictException({ code: 'SIGNER_TOO_OLD', message: 'The approval signer cannot sign a policy that installs all at once. Install the 0.62 signer, or tick "Test on one device first".' });
     // 0.63: likewise a policy that never expires (its strict schema refuses `expiry`).
     const never = dto.expiresInDays === undefined;
     if (never && caps.body.neverExpires !== 1) throw new ConflictException({ code: 'SIGNER_TOO_OLD', message: 'The approval signer cannot sign a policy that never expires. Install the 0.63 approval signer.' });
@@ -602,7 +602,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
         const name = (ep.hostname ?? ep.name).slice(0, 64);
         const dec = await this.access.evaluateAction(actor, ep, 'high');
         if (!dec.ok) throw new ForbiddenException({ code: dec.reason.toUpperCase(), message: `${name}: ${dec.message}`, endpointId: id });
-        if (!ep.rustdeskNode?.rustdeskId || !ep.rustdeskNode.agentSecretHash) throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: `${name}: this computer has no enrolled device identity.`, endpointId: id });
+        if (!ep.rustdeskNode?.rustdeskId || !ep.rustdeskNode.agentSecretHash) throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: `${name}: this device has no enrolled device identity.`, endpointId: id });
         if (ep.updateChannel !== 'signed') throw new ConflictException({ code: 'ENDPOINT_NOT_READY', message: `${name}: runs the standard agent. Move it to the signed channel first.`, endpointId: id });
         if (canary && i === 0) {
           const nr = this.actions.readiness(ep, `${UPDATE_INSTALL.id}@${UPDATE_INSTALL.version}`);
@@ -844,7 +844,7 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
     const dto = ReasonDto.safeParse(raw ?? {});
     if (!dto.success) this.bad('INVALID_REQUEST', 'A reason of at least 3 characters is required.');
     const r = await this.scoped(actor, id);
-    if (!this.mayManage(actor, r)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever created the policy, a Business Owner of this business or a Platform Admin can revoke it.' });
+    if (!this.mayManage(actor, r)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Only whoever created the policy, a Business Owner of this customer or a Platform Admin can revoke it.' });
     if (r.status === 'REVOKED') throw new ConflictException({ code: 'NOT_ALLOWED_NOW', message: 'The policy is already revoked.' });
     const reason = dto.data!.reason;
     const u = await this.prisma.patchPolicy.update({ where: { id }, data: { status: 'REVOKED', revokedAt: now, revokedById: actor.userId, revokeReason: reason } });
@@ -958,12 +958,12 @@ export class PatchPolicyService implements OnModuleInit, OnModuleDestroy {
       this.prisma.endpoint.count({ where: { status: { not: 'ARCHIVED' }, updateChannel: 'signed', agentActions: { has: key } } }),
       agent ? this.prisma.endpoint.count({ where: { status: { not: 'ARCHIVED' }, updateChannel: 'signed', agentActions: { has: key }, agentSha256: agent.sha256 } }) : Promise.resolve(0),
     ]);
-    add({ id: 'computers_signed', step: 2, ok: current > 0, title: 'Computers are on the signed channel, on the published build',
-      detail: `${signed} of ${windows} computer(s) on the signed channel; ${capable} report the update action; ${current} run the published build.`,
+    add({ id: 'computers_signed', step: 2, ok: current > 0, title: 'Devices are on the signed channel, on the published build',
+      detail: `${signed} of ${windows} device(s) on the signed channel; ${capable} report the update action; ${current} run the published build.`,
       fix: current > 0 ? null : 'Migrate computers to the signed channel (Devices → Full agent: automatic, canary first) and let them update to the published build.' });
     const withPosture = await this.prisma.endpointInventory.count({ where: { patchScannedAt: { not: null }, endpoint: { updateChannel: 'signed', status: { not: 'ARCHIVED' } } } });
-    add({ id: 'computers_scanned', step: 2, ok: withPosture > 0, title: 'Signed computers have reported a Windows Update scan',
-      detail: `${withPosture} signed computer(s) have a signed scan.`,
+    add({ id: 'computers_scanned', step: 2, ok: withPosture > 0, title: 'Signed devices have reported a Windows Update scan',
+      detail: `${withPosture} signed device(s) have a signed scan.`,
       fix: withPosture > 0 ? null : 'Press Scan now on a signed computer\'s Patches tab.' });
     const activePolicies = await this.prisma.patchPolicy.count({ where: { status: 'ACTIVE' } });
     add({ id: 'sweep', step: 6, ok: PatchPolicyService.sweepEnabled(), title: 'The policy sweep is running',

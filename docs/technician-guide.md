@@ -1,14 +1,14 @@
 # Technician Guide
 
-Day-to-day use of Rem0te: finding a computer, connecting to it, helping someone
+Day-to-day use of Rem0te: finding a device, connecting to it, helping someone
 who is not enrolled, and keeping the remote-control client current.
 
-Screenshots are captured from a seeded demo instance. Every business, person and
-computer in them is fictional.
+Screenshots are captured from a seeded demo instance. Every customer, person and
+device in them is fictional.
 
-> **Terminology.** A **Business** is a customer organisation and is the security
-> boundary — a Business User only ever sees computers belonging to their
-> business. A **Computer** (also called an endpoint or enrolled client) is a
+> **Terminology.** A **Customer** is a customer organisation and is the security
+> boundary — a Business User only ever sees devices belonging to their
+> customer. A **Device** (also called a device or enrolled client) is a
 > machine with the Rem0te agent permanently installed. See
 > [access-control.md](access-control.md) for who can do what.
 
@@ -29,7 +29,7 @@ next. Recovery codes work here too, and each one is single-use.
 
 Below 768 px wide (a phone, or a tablet held upright) the menu is not drawn
 beside the page. The **☰ menu button** at the left of the top bar opens it as a
-panel over the page; it holds everything the sidebar holds. The business
+panel over the page; it holds everything the sidebar holds. The customer
 switcher, Help and your profile menu (theme, *Sign out*) stay in the top bar.
 Choosing a page closes it, and so
 do **Esc**, tapping outside it and the **✕** in its corner. While it is open,
@@ -66,10 +66,10 @@ No address changed: an old bookmark still opens its page.
 ### The dashboard: what to work on (0.31)
 
 Signing in lands you on the **Dashboard**. It answers, from stored data, what is
-broken, which businesses it affects, which devices need attention, what is
+broken, which customers it affects, which devices need attention, what is
 already being worked on, and what to do next. It covers only what you can see:
 a Business User sees the devices granted to them, a technician sees their
-assignment's business and computers, a Platform Admin sees every business. A
+assignment's customer and devices, a Platform Admin sees every customer. A
 section you have no permission for is not shown at all — it is never shown as a
 zero.
 
@@ -79,7 +79,7 @@ zero.
 2. **The tiles** — each is a count with what it is counted from underneath; each one links to where you act on it.
    *Devices* splits the fleet three ways: online, agent silent and offline (here 23 · 1 · 10).
 3. **Work on next** — the ranked list, every item with the reason it is there.
-4. **Customers affected** — the businesses with an outage, an alert, an offline device or a failed action.
+4. **Customers affected** — the customers with an outage, an alert, an offline device or a failed action.
 
 | Part | What it is built from |
 |---|---|
@@ -92,12 +92,12 @@ zero.
 | **Patch compliance** | Of the devices with an update scan under 36 hours old, the share that list no pending updates; with no fresh scan at all it says *No data*. The **Patch status** card breaks it down (up to date, updates pending, stale scan, never scanned) with coverage and scan ages |
 | **Active sessions** | Sessions connected now, and ones still launching. A session row that has not moved for 12 hours is not shown as live |
 | **Work on next** | A ranked list, each item with the reason it is there (below) |
-| **Customers affected** | Businesses with an outage, an open alert, an offline device or a failed action |
+| **Customers affected** | Customers with an outage, an open alert, an offline device or a failed action |
 | **Devices needing attention** | Devices with critical or warning alerts, failed actions, offline, agent silent or restart pending, most serious first |
 | **Being worked on** | Live sessions, acknowledged alerts (and who acknowledged them), actions in flight, patch deployments in progress |
-| **Recent alerts** (0.55) | The newest open and acknowledged alerts: severity, computer, business, how long, and the automatic PSA ticket's reference. Each links to the alert. Needs *View alerts*, and lists only computers you can see. With no monitor configured it says so and links to **Settings → Monitoring** (*Add recommended*) |
+| **Recent alerts** (0.55) | The newest open and acknowledged alerts: severity, device, customer, how long, and the automatic PSA ticket's reference. Each links to the alert. Needs *View alerts*, and lists only devices you can see. With no monitor configured it says so and links to **Monitoring → Monitoring policies** (*Add recommended*) |
 | **Your recent devices** | The devices of your own most recent sessions |
-| **Recent activity** | Alert, action, patch, session, device and support-request events from the audit log, last 7 days. Needs *View business audit log* |
+| **Recent activity** | Alert, action, patch, session, device and support-request events from the audit log, last 7 days. Needs *View customer audit log* |
 
 **How "Work on next" is ordered.** A fixed ladder, then oldest first: site
 outages, critical alerts, actions with an unknown outcome, failed actions,
@@ -125,24 +125,24 @@ browser remembers the choice.
 ![The device map on the dashboard, with clustered markers per city](screenshots/guide/dashboard-map.png)
 
 1. **Client locations** — devices placed from the address they last checked in from, clustered by city with a count.
-   Green while an agent there is checking in, amber when the only computers there are reachable through RustDesk
+   Green while an agent there is checking in, amber when the only devices there are reachable through RustDesk
    with their agent silent (the marker south of Portland), grey when they are all offline. The map is drawn from a
    bundled outline; no tile server is asked where your customers are.
 2. **Hide device locations** — folds the map away; this browser remembers the choice.
 
 ---
 
-## 2. Find a computer
+## 2. Find a device
 
-**Devices** lists every machine you can see: in the businesses you can reach,
+**Devices** lists every machine you can see: in the customers you can reach,
 and — for a Business User — only the machines assigned to you or shared
 company-wide; for a technician, only the machines your assignment names.
 
-![Computers list](screenshots/guide/tech-02-computers.png)
+![Devices list](screenshots/guide/tech-02-computers.png)
 
 1. **Devices** — the menu group: *All devices*, *My devices*, *Customers*, *Add device* (for anyone with *Add
-   computers*) and the others.
-2. **Search** — matches name, hostname, IP address, OS, alias, RustDesk ID, business,
+   devices*) and the others.
+2. **Search** — matches name, hostname, IP address, OS, alias, RustDesk ID, customer,
    site and the signed-in user. The server does the matching, so it searches every page,
    not just the one on screen.
 3. **The table** — one row per device. Online devices come first, then by name;
@@ -155,9 +155,9 @@ company-wide; for a technician, only the machines your assignment names.
 | Column | What it shows |
 |---|---|
 | **Device** | Name, hostname, and a dot: green online (the agent is checking in), amber reachable through RustDesk with the agent silent, grey offline. |
-| **Business / Site** | Who the machine belongs to and where. |
+| **Customer / Site** | Who the machine belongs to and where. |
 | **OS** | An icon and the reported Windows edition or platform. |
-| **Health** | The worst *open* monitoring alert, in words (0.68): **Issues** (a critical alert), **Warning** (a warning), **Healthy** (none, or informational ones only, and the agent is reporting) or **Unknown** (no warning or critical alert, but the agent is silent or the computer offline: a silent agent raises nothing). Healthy is not a promise nothing is wrong, only that no monitor says so. Click the label to open that computer's **Monitoring** tab (0.70). **Clear**, beside Warning or Issues, resolves every open alert on that computer after you confirm. It does not change any monitor, so anything still wrong is raised again, as a new alert, at the computer's next check; each cleared alert is recorded in the audit log. |
+| **Health** | The worst *open* monitoring alert, in words (0.68): **Issues** (a critical alert), **Warning** (a warning), **Healthy** (none, or informational ones only, and the agent is reporting) or **Unknown** (no warning or critical alert, but the agent is silent or the device offline: a silent agent raises nothing). Healthy is not a promise nothing is wrong, only that no monitor says so. Click the label to open that device's **Monitoring** tab (0.70). **Clear**, beside Warning or Issues, resolves every open alert on that device after you confirm. It does not change any monitor, so anything still wrong is raised again, as a new alert, at the device's next check; each cleared alert is recorded in the audit log. |
 | **Agent** | *Signed* (the 0.27+ signed agent), *Standard*, or *No agent report*, with when it last checked in. |
 | **Last seen** | *Online*, *Reachable (RustDesk) · agent silent …* in amber, or how long ago it was last heard from. |
 | **Logged-in user** | Who the last heartbeat said was signed in. |
@@ -168,12 +168,12 @@ company-wide; for a technician, only the machines your assignment names.
 **Narrower windows show fewer columns (0.47.1, 0.48.1).** So the list fits the page beside the sidebar without
 scrolling sideways, each of these columns appears only when the window is wide enough for it: **Last seen** from 1440
 pixels, **Agent** from 1536, **OS** from 1700, **Site** from 1860 and **Logged-in user** from 2000. At 1280 to 1439
-pixels that leaves Device, Business, Health, CPU / RAM / disk and Pending patches; a 1920-pixel screen shows
+pixels that leaves Device, Customer, Health, CPU / RAM / disk and Pending patches; a 1920-pixel screen shows
 everything but Logged-in user. The dot beside each name still says online, agent silent or offline. The column
 picker shows each one's width, for example *(1700 px and wider)*. A column you chose is never removed, only hidden
 while the window is narrower than that. **Alerts** is off by default, because **Health** already shows the worst open alert (*Healthy* when
 there is none); turn it on under **Columns**. A browser that saved its own column choice keeps it. Device names
-never wrap; long business and site names are cut short, with the full name on hover; and **Connect** stays pinned
+never wrap; long customer and site names are cut short, with the full name on hover; and **Connect** stays pinned
 on the right.
 
 **Every number says how old it is, and an old one is greyed.** A resource sample
@@ -186,12 +186,12 @@ at the bottom.
 
 ### Filters, columns and saved views
 
-- **Filters** — business (when you can see more than one), site, device group,
+- **Filters** — customer (when you can see more than one), site, device group,
   online (*Online (agent checking in)*, *Reachable, agent silent* or *Offline*), open or critical alerts, *Restart pending*, agent type, and
   archived devices. **More filters** (0.34) adds platform (Windows, Linux,
   macOS, other), OS name contains, tag (exact), update state (pending, none
   pending, scan stale, never scanned), a RustDesk version range (dotted numbers,
-  compared numerically — 1.10 is above 1.9; a computer with no reported version
+  compared numerically — 1.10 is above 1.9; a device with no reported version
   or a non-numeric one such as a nightly never matches a range) and last seen
   (not seen for N days, which includes never; seen within N days).
   They combine, and *Clear* resets them. The address bar carries the current view,
@@ -205,45 +205,45 @@ at the bottom.
   **Compact / Comfortable** sets the row height. Both are remembered in this
   browser.
 - **Views** (0.33) — save the current filters, sort, columns and density under a
-  name. A view is stored on your account, so it follows you to another computer.
+  name. A view is stored on your account, so it follows you to another device.
   It holds only the list's own parameters, never the devices. It is either
-  **personal** (only you see it) or **shared** with everyone in one business who
+  **personal** (only you see it) or **shared** with everyone in one customer who
   can see devices. Sharing — and changing or deleting a shared view — is for a
-  Business Owner, a technician with *computers:edit* over the whole business, or
+  Business Owner, a technician with *computers:edit* over the whole customer, or
   the MSP, and is recorded in the audit log. A shared view's filters cannot name
-  another business, or another business's site or group. **Opening a view shows
+  another customer, or another customer's site or group. **Opening a view shows
   only the devices you can see**: a Business User opening the owner's
   "everything" view gets their own devices, and a view filtering on alerts is
   refused to someone without *monitoring:alerts*. Views saved in a browser by
   0.31 or 0.32 are offered for import once (*Import N views saved in this
   browser*).
 - **Device groups** (0.33, *Views → Device groups…*) — named, static groups of
-  one business's computers, for filtering and for acting on together. From 0.34 a
-  computer can be in **several** groups of its business: adding it to one never
+  one customer's devices, for filtering and for acting on together. From 0.34 a
+  device can be in **several** groups of its customer: adding it to one never
   takes it out of another, removing it from one leaves the rest, and deleting a
   group only removes that membership. The group filter shows every device in that
   group, and each group's count in the menu counts a device once per group it is
   in. An enrolment link can name a group: the new device joins it when it
   installs (re-enrolling an existing device adds that group and keeps its others).
-  A device moved to another business leaves all of the old business's groups.
+  A device moved to another customer leaves all of the old customer's groups.
   Creating, renaming and deleting groups, and adding or removing members, is
   for a Business Owner, a technician with *computers:edit* over the whole
-  business, or the MSP — never a Business User, whatever they hold, because a
-  Business User may see only some of the business's computers. A group cannot
-  hold another business's computer. Groups grant no access to anything. Every
-  change is audited. Groups made before 0.33 that span businesses (or have no
-  members) belong to no business: they still filter, and cannot be edited here.
+  customer, or the MSP — never a Business User, whatever they hold, because a
+  Business User may see only some of the customer's devices. A group cannot
+  hold another customer's device. Groups grant no access to anything. Every
+  change is audited. Groups made before 0.33 that span customers (or have no
+  members) belong to no customer: they still filter, and cannot be edited here.
 - **Rule groups** (0.34, *Views → Save filters as a rule group…*) — a group
-  whose members are whichever of its business's computers match a rule **right
+  whose members are whichever of its customer's devices match a rule **right
   now**. The rule is the list's own filters: set them, then save. It can use
   site, online/offline, alerts, *Restart pending*, agent type and everything
-  under *More filters*; search, business, group and the archived filter are
-  never part of a rule (the group already belongs to one business, and the
+  under *More filters*; search, customer, group and the archived filter are
+  never part of a rule (the group already belongs to one customer, and the
   list's own Archived filter still applies). Nothing is copied or stored as
   members: the server works the membership out every time the group is read, so
-  a computer that goes offline has left an "Online" group the next time anyone
+  a device that goes offline has left an "Online" group the next time anyone
   looks, with no sweep to wait for. Everyone sees only the members they can
-  already see — a Business User sees their own computers in it — and a rule on
+  already see — a Business User sees their own devices in it — and a rule on
   alerts is not offered to, and refused for, someone without
   *monitoring:alerts*. A rule group is in the group filter (marked *rule*), the
   *Groups* column and the CSV like any other group. It cannot be added to or
@@ -251,8 +251,8 @@ at the bottom.
   group (or back). To change it, set the filters and use *Device groups… → Use
   current filters*. Who may create, edit and delete one is the same as for a
   static group, and each change is audited with the rule before and after. A
-  business can have at most 50 rule groups. If a stored rule can no longer be
-  read, it matches nothing (never the whole business) and the groups dialog says
+  customer can have at most 50 rule groups. If a stored rule can no longer be
+  read, it matches nothing (never the whole customer) and the groups dialog says
   so.
 - **Select and act on many** (0.33) — tick rows (the header box ticks the page;
   the selection survives paging and filtering) and a bar offers: **Add / Remove**
@@ -262,16 +262,16 @@ at the bottom.
   device on its own, with the same checks as doing it to that one device, and
   the result lists every device it refused and why — not visible to you, no
   permission, archived, Linux, no device secret, under an *updates* containment
-  pause, in another business than the group, already current. A bulk refresh counts toward
-  your limit on distinct computers per window (the fleet-abuse guard); the list
+  pause, in another customer than the group, already current. A bulk refresh counts toward
+  your limit on distinct devices per window (the fleet-abuse guard); the list
   stops at that limit and says so, rather than tripping it and pausing you.
   There is deliberately no bulk connect, archive, delete or approved action.
-  Each bulk request is recorded in the audit log, once per business it touched,
+  Each bulk request is recorded in the audit log, once per customer it touched,
   alongside each device's own entry.
   **Filtered by a rule group** (0.34), the same bar acts on the group itself:
   the server works out its members when you click — as you see them, at most
   200 (more is refused, never cut short) — and then checks each one exactly as
-  above. *Copy into* puts the computers that match now into a static group;
+  above. *Copy into* puts the devices that match now into a static group;
   later matches are not added. The audit entry records the group and how many
   it resolved to.
 - **Export CSV** — downloads every device in the current filtered view (not just
@@ -282,16 +282,16 @@ at the bottom.
 ![Three devices ticked: the filters, Views, Columns and the bulk-action bar](screenshots/guide/device-list.png)
 
 1. **Search** — the device list's own search, across every page.
-2. **Group** — one of the filters; the others are business, site, online, alerts, agent, *Restart pending* and archived.
+2. **Group** — one of the filters; the others are customer, site, online, alerts, agent, *Restart pending* and archived.
 3. **Views** — saved filters, sort, columns and density, personal or shared (below).
 4. **Columns** — which columns show; *Comfortable / Compact* beside it sets the row height.
 5. **The row's box** — ticks the device; the header box ticks the page.
 6. **The bulk bar** — appears while anything is ticked: group membership, *Refresh inventory*, *Queue client update*, *Update agent*, *Upgrade to full agent…*, *Export selection*.
 
-![The Views menu: personal views, views shared in a business, Save current view and Device groups](screenshots/guide/device-views.png)
+![The Views menu: personal views, views shared in a customer, Save current view and Device groups](screenshots/guide/device-views.png)
 
 1. **Views** — shows the active view's name once one is open.
-2. **A shared view** — with the business it belongs to. Opening it still shows only the devices you can see.
+2. **A shared view** — with the customer it belongs to. Opening it still shows only the devices you can see.
 3. **Save current view…** — the filters, sort, columns and density, under a name; *Save filters as a rule group…* and *Device groups…* below it make and manage groups.
 
 - **Connect** on a row works exactly as it does on the device page. **⋯** opens the
@@ -319,21 +319,21 @@ your recent items and quick actions. Type at least two characters (at most
 pause. **↑ / ↓** move through them, **Enter** opens the highlighted one, **Esc**
 closes the box. Ctrl/⌘-click opens a result in a new tab.
 
-![Ctrl+K with "harb" typed: eight devices, then a business](screenshots/guide/search.png)
+![Ctrl+K with "harb" typed: eight devices, then a customer](screenshots/guide/search.png)
 
 1. **The search box** — at least two characters; the matched part is highlighted in each result.
 2. **Devices** — at most eight, online first among equals, with a link to the device list's own search for the rest.
-3. **Businesses** — then sites, people and open alerts, each group only if you have its list page's permission.
+3. **Customers** — then sites, people and open alerts, each group only if you have its list page's permission.
 
 | Group | Matches on | Opens | Needs |
 |---|---|---|---|
-| **Devices** | Name, hostname, RustDesk ID, serial number, signed-in user, IP address, a network adapter's IPv4, alias | The device's page | *View computers* |
-| **Businesses** | Name, code, email, city | The business's page | Nothing beyond being in it (as the Businesses list) |
-| **Sites** | Name, city, address | The device list filtered to that site | *View computers* |
+| **Devices** | Name, hostname, RustDesk ID, serial number, signed-in user, IP address, a network adapter's IPv4, alias | The device's page | *View devices* |
+| **Customers** | Name, code, email, city | The customer's page | Nothing beyond being in it (as the Customers list) |
+| **Sites** | Name, city, address | The device list filtered to that site | *View devices* |
 | **People** | First name, last name, email — "jane doe" finds Jane Doe | The Users list, filtered to that person | *View business users* |
 | **Open alerts** | Title (open and acknowledged only) | The device's Monitoring tab, or the alerts list | *See and work alerts* |
 
-**What a device result shows.** Its name, online or offline, business and site,
+**What a device result shows.** Its name, online or offline, customer and site,
 and — unless the name itself matched — *which* field matched and its value
 (*Serial: 5CG1234XYZ*, *RustDesk ID: 123456789*, *Adapter IP: 10.0.4.17*). Only
 the field that matched is returned; the others are not sent. Every one of them
@@ -345,15 +345,15 @@ what you typed, then one that contains it; among equals, online devices first,
 then by name. Each group shows at most **8**. When there are more, the group
 says *first 8*; for devices there is a link to the device list's own search,
 which pages through everything (it matches a slightly different set of fields:
-OS, business and site names, but not serial numbers or adapter addresses).
+OS, customer and site names, but not serial numbers or adapter addresses).
 Archived devices and inactive sites are not found, as on their lists.
 
 **You only find what you could already open.** Each group is built from the
 same rule as its own list page — not a copy of it: devices from the device
 list's scope (a Business User sees only devices assigned to them or shared
-company-wide, a technician only their assignment's), businesses, sites and
+company-wide, a technician only their assignment's), customers, sites and
 people from their list routes, alerts from the alerts list. A group you have
-no permission for is **left out**, never shown as empty. Another business's
+no permission for is **left out**, never shown as empty. Another customer's
 device, site or person is not found by anything you type — not even its exact
 hostname or RustDesk ID. Search grants nothing: opening a result applies that
 page's own check again.
@@ -377,37 +377,37 @@ There is no search index; the measured trade-off is in the 0.33 changelog.
 
 ### The device workspace (0.31)
 
-Opening a computer gives you one page for it.
+Opening a device gives you one page for it.
 
 **The header** says who it is and whether it is reachable: name, status
 (*Online*, *Offline since …*, or, in amber, *Reachable (RustDesk) · agent silent
-12 d* when RustDesk can reach it but its agent has stopped checking in), business, site and **last seen**,
+12 d* when RustDesk can reach it but its agent has stopped checking in), customer, site and **last seen**,
 marked *stale* when the agent has missed its check-ins. Under it, the
 **attention strip** lists what needs looking at, each one a link to the tab that
 explains it: open alerts with the worst severity (→ Monitoring), *Restart
 pending* and pending updates with the age of the scan (→ Patches), a refused
-heartbeat or an out-of-date agent (→ Overview), and which agent the computer runs
+heartbeat or an out-of-date agent (→ Overview), and which agent the device runs
 — *Standard agent*, *Signed agent* or *RustDesk only* (see
 [What each agent can do](capabilities.md)).
 
-**Naming it (0.68).** **Rename**, next to the name, sets the name the computer
+**Naming it (0.68).** **Rename**, next to the name, sets the name the device
 goes by everywhere in Rem0te and a short description shown under it. The agent
 never overwrites the name; the hostname is kept, shown beside it when they
 differ, still searchable, and *Use hostname* puts it back. **Aliases** on the
 Overview's Assignment card are other names it is known by (searchable), added
 and removed in place. The Overview's **Notes** card shows the latest three notes
 and takes a new one; all of them, and editing, are on History. All of it needs
-*Rename/edit computers*, and renames and alias changes are in the audit log.
+*Rename/edit devices*, and renames and alias changes are in the audit log.
 
 **The actions:** **Connect**, **Tools** (below), **Diagnose** (opens Diagnostics), **Run action**
-(opens Actions; disabled, with the reason printed underneath, when the computer
+(opens Actions; disabled, with the reason printed underneath, when the device
 lacks the signed agent or no approval signer is configured), **Patch** (opens
 Patches) and **More**: view-only connect (technicians), the diagnostics report,
-*Reinstall agent* and *Archive computer*, each behind a confirmation that says
+*Reinstall agent* and *Archive device*, each behind a confirmation that says
 what it does.
 
 **Tools (0.75).** **Tools**, beside Connect, opens one panel listing what can be
-done to this computer, in eight groups: Diagnostics, PowerShell / Scripts,
+done to this device, in eight groups: Diagnostics, PowerShell / Scripts,
 Services & Processes, Software, Windows Updates, Networking, Security and
 Maintenance. Every tool is a way into a flow that already exists — picking one
 opens its tab with the right thing chosen (the diagnostic's row marked, the
@@ -432,11 +432,11 @@ Each tool says whether it can work here, and why not:
 | State | Means |
 |---|---|
 | Available | Opens and can be used now (in direct mode an action is signed when you request it, after a fresh sign-in) |
-| Needs approval | An approved action: two approvers authorize it on the approval page before the computer runs it |
-| Needs a newer agent | The computer's agent does not report the action, is older than the release that added it, or is the standard agent and the action needs the full (signed) agent |
-| Unsupported here | Linux, macOS (read-only agents) or RustDesk only: nothing on the computer can run it |
-| Paused | A containment pause on approved actions covers this business |
-| Not reporting | The computer is offline or its agent is silent: the request waits for its next check-in (a diagnostic expires after fifteen minutes) |
+| Needs approval | An approved action: two approvers authorize it on the approval page before the device runs it |
+| Needs a newer agent | The device's agent does not report the action, is older than the release that added it, or is the standard agent and the action needs the full (signed) agent |
+| Unsupported here | Linux, macOS (read-only agents) or RustDesk only: nothing on the device can run it |
+| Paused | A containment pause on approved actions covers this customer |
+| Not reporting | The device is offline or its agent is silent: the request waits for its next check-in (a diagnostic expires after fifteen minutes) |
 | Not permitted | Your role does not allow it — it is shown without a button, so nothing you can click would be refused |
 | Not set up | No approval signer is configured on this server, so no action can be approved |
 | Unavailable | Archived, not enrolled, in the unassigned pool, or never bound to a device secret |
@@ -467,49 +467,49 @@ links can be shared: `?tab=diagnostics&check=dns_resolution`,
 
 | Tab | What is on it |
 |---|---|
-| Overview | Assignment (from 0.35 with every **group** the computer is in — static groups and the rule groups it matches right now, as you would see them in the list; each links to the list filtered by it), key alerts, patch status, the **Agent** card, recent activity, then the hardware, utilisation, storage, network and update cards, each with its age |
-| Monitoring | Alerts first (acknowledge and resolve here), then what is watched on this computer in words, the agent's last report, and what changed |
+| Overview | Assignment (from 0.35 with every **group** the device is in — static groups and the rule groups it matches right now, as you would see them in the list; each links to the list filtered by it), key alerts, patch status, the **Agent** card, recent activity, then the hardware, utilisation, storage, network and update cards, each with its age |
+| Monitoring | Alerts first (acknowledge and resolve here), then what is watched on this device in words, the agent's last report, and what changed |
 | Software | Installed software with a filter, and recent software changes (Windows agents only); **Uninstall** on a program asks the full agent to remove it as an approved action (0.41 — [software-deployment.md](software-deployment.md)) |
 | Processes | Every running process, as a snapshot with its age and a Refresh (0.33); from 0.45 **End process** on a row asks the full agent to end it as an approved action ([approved-actions.md](approved-actions.md)) |
 | Services | Every service with state, start mode and run-as account; snapshot with age and Refresh (0.33); from 0.45 **Start**, **Stop**, **Restart** and **Startup type** on a row, as approved actions on the full agent, with protected services marked *Protected* |
 | Network | Every network connection: addresses, gateway, DNS, DHCP, MAC; snapshot with age and Refresh (0.33) |
 | Patches | Patch status, updates offered, Windows Update history |
 | Event logs | A page of one Windows event log, on request (Windows agents only); from 0.48 **Ask AI** and **Create ticket** on an entry ([ai-and-tickets.md](ai-and-tickets.md)) |
-| Diagnostics | Test connection: server, computer and your own RustDesk |
+| Diagnostics | Test connection: server, device and your own RustDesk |
 | Actions | Request an approved action and see past requests; from 0.47.1 the Print Spooler's last known state, with **Refresh**, and *Nothing to do* when it is already running |
-| Chat | Chat with the person at the computer, receipts and earlier transcripts; emoji, files and pictures from 0.44 (signed Windows agent; elsewhere it says why not — [chat.md](chat.md)) |
+| Chat | Chat with the person at the device, receipts and earlier transcripts; emoji, files and pictures from 0.44 (signed Windows agent; elsewhere it says why not — [chat.md](chat.md)) |
 | History | Remote sessions, technician notes, the AI-written summary (labelled as such) and who can connect |
 
-**The Agent card** (Overview, 0.34) says which agent the computer runs (*Standard*,
+**The Agent card** (Overview, 0.34) says which agent the device runs (*Standard*,
 *Signed*, or the read-only Linux/macOS agent), its version and whether that is the
 current one, the update channel and the portal's update mode, and — for a signed
 agent — the result of its last update check. Its buttons:
 
 - **Update agent** (standard Windows agent): re-runs the current installer at the
   next check-in. It is the same as *Reinstall agent*: the same permission, refused
-  while updates are paused for the business, and audited.
+  while updates are paused for the customer, and audited.
 - **Check for update now** (signed agent): the agent runs its own signed update
   at the next check-in. It installs only what the signed repository lists.
-- On Linux and macOS the card prints the exact command to re-run on the computer;
+- On Linux and macOS the card prints the exact command to re-run on the device;
   those agents act on nothing the portal sends.
 - **Upgrade to full agent** (standard Windows agent): asks for a reason and a
-  fresh sign-in, then moves this computer to the full (signed) agent at its next
+  fresh sign-in, then moves this device to the full (signed) agent at its next
   check-in, keeping its enrolment and RustDesk ID. From 0.37 it is also at the top
-  of the computer's page, beside Connect, with Update agent, and the *Agent out of
+  of the device's page, beside Connect, with Update agent, and the *Agent out of
   date* chip opens it. It is always a button: when it can't be used it is
   disabled and says exactly why — no signed release published, no device secret, the
   portal in *Signed only* mode, updates paused, a rollout running. A request can
   be cancelled until it completes. **Devices → Agent migrations** (a tab for
   anyone who may request one, from 0.35; the page itself needs only View
-  computers and is linked from every Agent card) lists pending,
-  held, not confirmed and completed requests. To move several computers, select
+  devices and is linked from every Agent card) lists pending,
+  held, not confirmed and completed requests. To move several devices, select
   them on **All devices** and use **Upgrade to full agent…** (at most 200; each one is
   refused with its own reason). See
   [Update signing → Moving existing agents](update-signing.md#moving-existing-agents).
 
 Processes, Services and Network are snapshots, not live views: each says when it
-was taken, and **Refresh** asks the computer for a new one on its next check-in.
-They have no buttons that change the computer — restarting a service is a signed
+was taken, and **Refresh** asks the device for a new one on its next check-in.
+They have no buttons that change the device — restarting a service is a signed
 maintenance action on Actions, and ending a process is not offered
 ([diagnostics.md](diagnostics.md#the-processes-services-and-network-tabs)). Old links
 (`?tab=notes`, `?tab=timeline`, `?tab=access-review`) open History.
@@ -522,20 +522,20 @@ screenshot; Processes, Services and Network in
 
 1. **Patches** — the tab.
 2. **Patch status** — the evidence (which agent's scan, how old), restart pending, and who manages patching where the signed agent can tell.
-3. **Install updates** — deploying from Rem0te; here it says why it is not available on this computer.
-4. **Scan now** — asks the computer for a new Windows Update scan on its next check-in.
+3. **Install updates** — deploying from Rem0te; here it says why it is not available on this device.
+4. **Scan now** — asks the device for a new Windows Update scan on its next check-in.
 5. **Offered** — the updates the last scan listed, with KB, severity and size.
 
 ---
 
-## 3. Connect to a computer
+## 3. Connect to a device
 
-Use **Connect** on a computer's card in **Devices → My devices**, on its row in **All devices**, or at the top of
+Use **Connect** on a device's card in **Devices → My devices**, on its row in **All devices**, or at the top of
 its page.
 
 ![My devices, with Connect](screenshots/guide/tech-03-connect.png)
 
-1. **My devices** — the computers this account may connect to.
+1. **My devices** — the devices this account may connect to.
 2. **Connect** — hands the machine's ID and password to your local RustDesk
    client and starts the session.
 
@@ -553,45 +553,45 @@ Requirements on your own workstation:
 Every connection is written to the audit log with who connected, to what, and
 when.
 
-### Managed computers (0.73, not switched on by default)
+### Managed devices (0.73, not switched on by default)
 
 Managed Secure Access is off on every production server; this section applies
 only where an administrator has switched it on. **It has been tested only in a
 Windows Server lab, never on a desktop or with a real connection.**
 
-A computer whose page says **Managed and verified** has no standing password.
-Pressing **Connect** (or **View only**) asks the computer's agent to open one
+A device whose page says **Managed and verified** has no standing password.
+Pressing **Connect** (or **View only**) asks the device's agent to open one
 session for you:
 
 1. The dialog shows progress: *Authorized*, *Received by the agent*, *Applied*.
-   It waits up to 60 seconds. If the agent does not answer (the computer is
+   It waits up to 60 seconds. If the agent does not answer (the device is
    offline, or busy), the session is cancelled and the dialog says why; nothing
    was handed over. Try again later — there is no fallback to an old password.
 2. When it says *Applied*, press **Download Connect script** and run it. The
    script carries a one-time password for this session only; it works once.
 3. What you may do is decided by your role or preset, not by the button: a
-   view-only preset gets a view-only session, and if your business requires
-   consent the person at the computer is asked to accept. Clipboard and file
-   transfer are on only when your business allows them. A TCP tunnel and a
-   remote restart are never available on a managed computer.
+   view-only preset gets a view-only session, and if your customer requires
+   consent the person at the device is asked to accept. Clipboard and file
+   transfer are on only when your customer allows them. A TCP tunnel and a
+   remote restart are never available on a managed device.
 4. The session ends when you disconnect, at your session limit, after 15
    idle minutes, or when someone disconnects it from the console.
 
-The computer's page lists its managed sessions with a timeline. *Launched*
+The device's page lists its managed sessions with a timeline. *Launched*
 means the Connect script was downloaded; it is **not** *Connected*, which
 appears only when the agent saw RustDesk accept a connection. The agent cannot
 see who connected or whether consent was accepted, and the timeline says so.
 
-You can end your own session with **Disconnect**. A business's Owner or Admin,
+You can end your own session with **Disconnect**. A customer's Owner or Admin,
 and Platform Admins, can disconnect any session there, all of a technician's,
-or all of a computer's (**Devices → Managed sessions**). A containment pause on
+or all of a device's (**Remote support → Managed sessions**). A containment pause on
 remote access ends open sessions too.
 
 ---
 
 ## 4. Help someone who is not enrolled
 
-Use **Remote Support → Quick Connect** for one-off help where nothing should be installed
+Use **Remote support → Quick Connect** for one-off help where nothing should be installed
 permanently — a machine you do not manage, or a person you are helping once.
 
 ![Quick Connect](screenshots/guide/tech-04-quick-connect.png)
@@ -602,23 +602,23 @@ permanently — a machine you do not manage, or a person you are helping once.
 
 Send them to the public download page (shown on the right of that screen), they
 run the client, and they read you the two values. Nothing is installed as a
-service and no managed computer is created — closing the client ends their
+service and no managed device is created — closing the client ends their
 availability.
 
 Rem0te does not store the Quick Connect password and never displays it again.
 
 ---
 
-## 5. Enrol a new computer
+## 5. Enrol a new device
 
 **Devices → Add device** (the *Add device* link under *Devices* in the menu, from 0.64; the button on the Devices
 page; or the *Add device* tab) walks through it in six steps on one page:
 
-![Add device, step 1: business, site and who may connect](screenshots/guide/add-device-1.png)
+![Add device, step 1: customer, site and who may connect](screenshots/guide/add-device-1.png)
 
-1. **Business** — only the businesses you manage are offered.
-2. **Site** — or *No site*; only that business's sites.
-3. **Who may connect** — specific people, or everyone in the business.
+1. **Customer** — only the customers you manage are offered.
+2. **Site** — or *No site*; only that customer's sites.
+3. **Who may connect** — specific people, or everyone in the customer.
 4. **Continue** — the three choices are fixed into the link when it is made.
 5. **Wait for the device** — like every later step, greyed until it is its turn; it is where this page watches the
    new device arrive (step 4, below).
@@ -636,11 +636,11 @@ page; or the *Add device* tab) walks through it in six steps on one page:
 2. **Wait for the device** — checks every few seconds; *Revoke this link* cancels an unused one.
 3. **First health** — fills in from what the server actually receives once the device checks in.
 
-1. **Business and site.** Pick the business, then a site or *No site*, and who
-   may connect — specific people, or everyone in the business. All three are
+1. **Customer and site.** Pick the customer, then a site or *No site*, and who
+   may connect — specific people, or everyone in the customer. All three are
    fixed into the link when it is made: the machine that runs it cannot pick a
-   different business or site. You can only pick a business you manage; the
-   server refuses any other, and a site that is not that business's.
+   different customer or site. You can only pick a customer you manage; the
+   server refuses any other, and a site that is not that customer's.
 2. **Operating system.** Windows gets RustDesk and the Rem0te agent (heartbeat,
    inventory, monitoring, update scans). Linux (0.32) and macOS (0.33, run with
    `sudo`) get RustDesk and the read-only agent: heartbeat, inventory and
@@ -656,25 +656,25 @@ page; or the *Add device* tab) walks through it in six steps on one page:
    `msiexec /i rem0te.msi TOKEN=… /qn` to copy; the .msi needs the server to
    publish the signed agent, says so when it cannot be built, leaves the agent
    in place when it is uninstalled, and has never been run on real Windows.
-   There is no .pkg; for many computers at once see
+   There is no .pkg; for many devices at once see
    [deployment.md](deployment.md). Every choice carries the same single-use
    enrolment token that expires in 24 hours; downloading does not use it up,
-   the computer's first check-in does. It is shown **once**: reload the page and
+   the device's first check-in does. It is shown **once**: reload the page and
    only the waiting continues. If the command is lost, revoke the link and make a new one.
    Making it asks you to confirm it is you (password, authenticator code or
-   passkey) unless you did in the last 10 minutes (0.33): a link adds a computer
-   to the business, so a session left open must not be enough. Your choices are
+   passkey) unless you did in the last 10 minutes (0.33): a link adds a device
+   to the customer, so a session left open must not be enough. Your choices are
    kept while you confirm, and if you cancel nothing is made — press the button
    again.
 4. **Wait for the device.** The page checks every few seconds and says *enrolled*
    only when a device has used this link. You can revoke an unused link here.
-5. **First health** — what the server has actually received: the business and
+5. **First health** — what the server has actually received: the customer and
    site it landed in, online, the agent and its version (after its first
    heartbeat, which the installer starts as it finishes), whether its device
    identity is bound, and whether its first inventory has arrived — or, until
    it has, whether it has been asked for yet, and the agent's reason if the pass
    failed. Each line says *waiting* until it is true; nothing is assumed.
-6. **Next** — open the device, its Monitoring tab, or the business's monitoring
+6. **Next** — open the device, its Monitoring tab, or the customer's monitoring
    policies, with the monitors that already apply to it listed.
 
 A Business User who adds a machine for *specific people* that does not include
@@ -683,8 +683,8 @@ list either.
 
 The installer is safe to re-run; it reconfigures an existing install rather than
 duplicating it. To re-enrol a machine whose identity is not bound, use *Make an
-enrollment link for this computer* on its page: it opens Add device bound to
-that computer.
+enrollment link for this device* on its page: it opens Add device bound to
+that device.
 
 **It will refuse to report success if the machine never reaches the server.** If
 you see an error instead of a summary, read it — it prints the service state,
@@ -708,8 +708,8 @@ then has no agent: no heartbeat, inventory or monitoring.
 5. **Quick Connect** — for a machine that is not enrolled; a session can no longer be recorded by hand.
 
 Each session's status says what is actually known about it. *Client opened*
-means RustDesk started on your computer, not that you connected. *Connection
-confirmed* comes from the remote computer's agent, or from you. A launch that
+means RustDesk started on your device, not that you connected. *Connection
+confirmed* comes from the remote device's agent, or from you. A launch that
 gets no further signal reads **Status unknown** after 30 minutes rather than
 pretending it failed or succeeded, and duration is shown only when it was
 measured. See [connecting.md](connecting.md#what-the-session-status-means-v020).
@@ -719,11 +719,11 @@ measured. See [connecting.md](connecting.md#what-the-session-status-means-v020).
 ## 7. Keep RustDesk current
 
 **Updates** covers two separate things: Rem0te itself, and the RustDesk client
-installed on each managed computer.
+installed on each managed device.
 
 ![Updates](screenshots/guide/tech-06-updates.png)
 
-1. **Settings → Updates** — Rem0te's own version, then the RustDesk server and clients.
+1. **Administration → Updates** — Rem0te's own version, then the RustDesk server and clients.
 2. **Update all outdated** — queues every machine that is behind.
 3. **Check** — re-reads the latest RustDesk release.
 
@@ -733,7 +733,7 @@ Per-machine status reads:
 | --- | --- |
 | **Current** | On the latest release. |
 | **Outdated** | Behind; an update can be queued. |
-| **Unknown** | The machine has not reported a version yet. Endpoints enrolled before v0.8.2 only start reporting after their next installer run. |
+| **Unknown** | The machine has not reported a version yet. Devices enrolled before v0.8.2 only start reporting after their next installer run. |
 | **Queued** | An update is staged and applies on the next check-in. |
 
 Queued updates apply on the machine's next heartbeat, within about 3 minutes. An
@@ -745,38 +745,38 @@ install retries instead of silently disappearing.
 
 ## 8. Support requests
 
-Customers can ask for help through their business's support link, without an
-account. Requests appear under **Remote Support → Support requests** if you hold
+Customers can ask for help through their customer's support link, without an
+account. Requests appear under **Remote support → Support requests** if you hold
 `support:requests`.
 
 1. **Claim** a request to take it. If someone beat you to it, you are told who.
-2. Check **Matched computers**: computers in the business that match what the
+2. Check **Matched devices**: devices in the customer that match what the
    customer wrote, limited to ones you can connect to.
-3. **Connect** through the computer's Connect button or Quick Connect.
+3. **Connect** through the device's Connect button or Quick Connect.
 4. **Complete** it, or **Hand off** to a colleague, or **Release** it back.
 
 The customer's status page shows your first name and the status, nothing else.
 See [support-requests.md](support-requests.md).
 
-## 9. Working for several businesses
+## 9. Working for several customers
 
-If you have technician assignments, the top bar shows a **business switcher**.
-Pick the business you are working in; everything you see is then that
-business, limited to what your assignment allows. **All assigned** gives an
+If you have technician assignments, the top bar shows a **customer switcher**.
+Pick the customer you are working in; everything you see is then that
+customer, limited to what your assignment allows. **All assigned** gives an
 overview across all of them, and lists access that is not active right now and
 why (expired, outside its hours, awaiting approval). Ask for access to another
-business from there. See [technicians.md](technicians.md).
+customer from there. See [technicians.md](technicians.md).
 
 ---
 
 ## Troubleshooting
 
-**Start with Test connection.** Every computer's page has it, on the
+**Start with Test connection.** Every device's page has it, on the
 **Diagnostics** tab (the **Diagnose** button opens it). It checks the
-server, the computer and, with *Check my computer*, your own RustDesk, and says
+server, the device and, with *Check my device*, your own RustDesk, and says
 which one is wrong. See [connecting.md](connecting.md#test-connection-v020).
 
-**A computer shows Offline but the person says it is on.**
+**A device shows Offline but the person says it is on.**
 Online is driven by the agent's 3-minute heartbeat. A machine RustDesk can
 reach with a broken heartbeat shows amber *Reachable (RustDesk) · agent silent*
 instead; one neither can see is Offline. A machine can be running fine while the

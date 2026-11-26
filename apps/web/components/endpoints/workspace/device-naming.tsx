@@ -52,7 +52,7 @@ export function RenameDevice({ endpointId, ep }: { endpointId: string; ep: Recor
   return (
     <>
       <Button type="button" size="sm" variant="ghost" className="h-8 px-2" data-testid="rename-device"
-        aria-label="Rename this computer or edit its description"
+        aria-label="Rename this device or edit its description"
         onClick={() => { setName(String(ep.name ?? '')); setDescription(String(ep.description ?? '')); save.reset(); setOpen(true); }}>
         <Pencil className="h-4 w-4" /><span className="ml-1 text-xs">Rename</span>
       </Button>
@@ -61,7 +61,7 @@ export function RenameDevice({ endpointId, ep }: { endpointId: string; ep: Recor
           <DialogHeader>
             <DialogTitle>Name and description</DialogTitle>
             <DialogDescription>
-              The name is how this computer appears everywhere in Rem0te. Its hostname{hostname ? <> (<span className="font-mono">{hostname}</span>)</> : null} is
+              The name is how this device appears everywhere in Rem0te. Its hostname{hostname ? <> (<span className="font-mono">{hostname}</span>)</> : null} is
               unchanged and still searchable.
             </DialogDescription>
           </DialogHeader>
@@ -164,7 +164,7 @@ export function OverviewNotes({ endpointId, onOpenHistory }: { endpointId: strin
       <CardContent className="space-y-3 text-sm">
         {can(CAP.COMPUTERS_EDIT) && <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); if (text.trim()) create.mutate(); }}>
           <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} maxLength={8192} className="resize-none"
-            placeholder="Add a note about this computer: a fault, a customer preference, a recent change…" aria-label="New note" data-testid="overview-note-input" />
+            placeholder="Add a note about this device: a fault, a customer preference, a recent change…" aria-label="New note" data-testid="overview-note-input" />
           <div className="flex items-center justify-end gap-2">
             {create.error && <span className="text-xs text-destructive">{apiError(create.error).message}</span>}
             <Button type="submit" size="sm" disabled={!text.trim() || create.isPending} data-testid="overview-note-add">Add note</Button>

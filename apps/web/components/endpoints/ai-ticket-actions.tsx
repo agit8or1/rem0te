@@ -23,7 +23,7 @@ import { apiError } from '@/components/security-controls/shared';
  * and links are left as plain text.
  */
 
-export const NOT_CONFIGURED_AI = 'Not configured — a Platform Admin sets a provider in Settings → AI';
+export const NOT_CONFIGURED_AI = 'Not configured — a Platform Admin sets a provider in Administration → AI';
 
 export function useAiStatus() {
   return useQuery<AiStatus>({ queryKey: ['ai-status'], queryFn: () => aiApi.status().then((r) => r.data.data), staleTime: 60_000, retry: false });
@@ -144,7 +144,7 @@ export function CreateTicketButton({ endpointId, source }: { endpointId: string;
           <DialogHeader>
             <DialogTitle>Create ticket</DialogTitle>
             <DialogDescription>
-              Sent to {status.connector?.label || status.connector?.kindLabel} ({status.connector?.scope === 'business' ? "this business's connector" : 'the platform default'}). The ticket names the computer and business and carries the entry and a link to this computer.
+              Sent to {status.connector?.label || status.connector?.kindLabel} ({status.connector?.scope === 'business' ? "this customer's connector" : 'the platform default'}). The ticket names the device and customer and carries the entry and a link to this device.
             </DialogDescription>
           </DialogHeader>
           {send.data ? (
@@ -153,7 +153,7 @@ export function CreateTicketButton({ endpointId, source }: { endpointId: string;
                 Ticket created in {send.data.kindLabel}{send.data.ref ? ` · ${send.data.ref}` : ' (the PSA returned no reference)'}.
               </p>
               {send.data.url && <p className="break-all text-xs text-muted-foreground">{send.data.url}</p>}
-              <p className="text-xs text-muted-foreground">A note was added to this computer&apos;s History.</p>
+              <p className="text-xs text-muted-foreground">A note was added to this device&apos;s History.</p>
             </div>
           ) : (
             <div className="space-y-3 text-sm">

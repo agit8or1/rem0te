@@ -17,7 +17,7 @@ still works). A Business Owner creates keys for their own business; a Platform
 Admin picks the business. The raw key is shown **once** at creation;
 server-side we store only a SHA-256 hash. Keys support:
 
-![Settings → API keys: business, name, scopes, and the key list](screenshots/guide/api-keys.png)
+![Administration → API keys: business, name, scopes, and the key list](screenshots/guide/api-keys.png)
 
 1. **Business** — Platform Admins only; a key always belongs to one business.
 2. A name you will recognise in the audit log.

@@ -123,7 +123,7 @@ const errText = (e: unknown, fallback: string) =>
 
 function StatusPill({ status }: { status: RunStatus }) {
   const map: Record<RunStatus, { label: string; cls: string; icon: React.ReactNode }> = {
-    REQUESTED: { label: 'Waiting for the computer', cls: 'bg-muted text-muted-foreground', icon: <Clock className="h-3 w-3" /> },
+    REQUESTED: { label: 'Waiting for the device', cls: 'bg-muted text-muted-foreground', icon: <Clock className="h-3 w-3" /> },
     DELIVERED: { label: 'Delivered', cls: 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200', icon: <Loader2 className="h-3 w-3 animate-spin" /> },
     RUNNING: { label: 'Running', cls: 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200', icon: <Loader2 className="h-3 w-3 animate-spin" /> },
     COMPLETED: { label: 'Completed', cls: 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-200', icon: <CheckCircle2 className="h-3 w-3" /> },
@@ -264,7 +264,7 @@ function Result({ run }: { run: Run }) {
     case 'dns_resolution':
       return (
         <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">DNS servers: <span className="font-mono">{arr(r.resolvers).join(', ') || 'none reported'}</span>. Answers may come from the computer&apos;s cache.</p>
+          <p className="text-xs text-muted-foreground">DNS servers: <span className="font-mono">{arr(r.resolvers).join(', ') || 'none reported'}</span>. Answers may come from the device&apos;s cache.</p>
           <Table head={['Name', 'Result', 'Addresses', 'Time']} rows={arr(r.lookups).map((l) => [
             <span key="n" className="font-mono">{s(l.name)}</span>, l.ok ? <span key="r" className="text-green-700 dark:text-green-400">Resolved</span> : <span key="r" className="text-red-600">{s(l.error) === '—' ? 'Failed' : s(l.error)}</span>,
             <span key="a" className="font-mono">{arr(l.addresses).join(', ') || '—'}</span>, `${s(l.latencyMs)} ms`,
@@ -343,7 +343,7 @@ function Result({ run }: { run: Run }) {
             l.ok ? <span key="r" className="text-green-700 dark:text-green-400">Resolved</span> : <span key="r" className="text-red-600">{l.timedOut ? 'Timed out' : s(l.error) === '—' ? 'Failed' : s(l.error)}</span>,
             <span key="a" className="font-mono">{arr(l.addresses).join(', ') || '—'}</span>, `${s(l.latencyMs)} ms`,
           ]]} />
-          <p className="text-xs text-muted-foreground">DNS servers: <span className="font-mono">{arr(r.resolvers).join(', ') || 'none reported'}</span>. The answer may come from the computer&apos;s cache.</p>
+          <p className="text-xs text-muted-foreground">DNS servers: <span className="font-mono">{arr(r.resolvers).join(', ') || 'none reported'}</span>. The answer may come from the device&apos;s cache.</p>
         </div>
       );
     }
@@ -407,7 +407,7 @@ function RunDetail({ run, now }: { run: Run; now: number }) {
         </span>
       </div>
       <Steps run={run} />
-      {run.status === 'REQUESTED' && <p className="text-xs text-muted-foreground">The computer collects this on its next check-in, normally within three minutes. If it does not check in within fifteen, the request expires.</p>}
+      {run.status === 'REQUESTED' && <p className="text-xs text-muted-foreground">The device collects this on its next check-in, normally within three minutes. If it does not check in within fifteen, the request expires.</p>}
       {run.error && <p className="text-xs text-red-600 dark:text-red-400">{run.error}</p>}
       {run.status === 'COMPLETED' && run.resultOnTab && <p className="text-xs text-muted-foreground">The result is on the {TAB_NAME[run.key] ?? 'device'} tab.</p>}
       {run.status === 'COMPLETED' && !run.resultOnTab && (run.resultWithheld
@@ -488,7 +488,7 @@ function OsSupportRow({ os, focused }: { os: OsSupport; focused: boolean }) {
       <p className="text-xs">{os.detail}</p>
       <p className="text-[11px] text-muted-foreground">
         {os.build ? `Build ${os.build}` : 'No build'}{os.channel ? ` · ${os.channel}` : ''}{os.endsOn ? ` · security updates until ${os.endsOn}` : ''}.
-        {' '}From the computer&apos;s last inventory{os.evidenceAt ? ` (${formatDate(os.evidenceAt)})` : ''} and a table kept on the server, last reviewed {os.tableReviewed}. Nothing is sent to the computer.
+        {' '}From the device&apos;s last inventory{os.evidenceAt ? ` (${formatDate(os.evidenceAt)})` : ''} and a table kept on the server, last reviewed {os.tableReviewed}. Nothing is sent to the device.
       </p>
     </li>
   );
@@ -525,7 +525,7 @@ export function EndpointDiagnosticsCatalog({ endpointId, focusKey }: {
     mutationFn: (v: { key: string; params?: Record<string, unknown> }) => post(v.key, v.params),
     onSuccess: (d) => {
       setSelected(d.run.id);
-      if (d.deduplicated) toast({ title: 'Already queued', description: `${d.run.label} is already waiting for this computer.` });
+      if (d.deduplicated) toast({ title: 'Already queued', description: `${d.run.label} is already waiting for this device.` });
       qc.invalidateQueries({ queryKey: ['diagnostics-runs', endpointId] });
     },
     onError: (e) => toast({ title: 'Could not run the diagnostic', description: errText(e, 'The request was refused.'), variant: 'destructive' }),
@@ -548,12 +548,12 @@ export function EndpointDiagnosticsCatalog({ endpointId, focusKey }: {
   const shown = (selected && history.find((r) => r.id === selected)) || null;
 
   if (catalog.isLoading) return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading diagnostics…</div>;
-  if (catalog.isError || !c) return <p className="text-sm text-red-600">{errText(catalog.error, 'Diagnostics are not available for this computer.')}</p>;
+  if (catalog.isError || !c) return <p className="text-sm text-red-600">{errText(catalog.error, 'Diagnostics are not available for this device.')}</p>;
 
   const blocked = !c.supported
-    ? 'These diagnostics run on Windows computers with the standard agent.'
+    ? 'These diagnostics run on Windows devices with the standard agent.'
     : !c.agentBound
-      ? 'This computer has never authenticated with a device secret, so it cannot be asked to run anything. Re-run the installer on it once.'
+      ? 'This device has never authenticated with a device secret, so it cannot be asked to run anything. Re-run the installer on it once.'
       : null;
 
   // Snapshot keys have their own tabs (Processes, Services, Network).
@@ -607,7 +607,7 @@ export function EndpointDiagnosticsCatalog({ endpointId, focusKey }: {
             {CAP_NEEDS[item.capability] && <span className="text-[11px] text-muted-foreground" title={item.capabilityReason}>{CAP_NEEDS[item.capability]}</span>}
             {item.evidence === 'lab_windows_server' && (
               <span data-lab-only="" className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                title="This check has run for real only on GitHub's Windows Server runner (the lab), never on a Windows 10 or 11 desktop or a customer's computer. Treat its reading as new.">
+                title="This check has run for real only on GitHub's Windows Server runner (the lab), never on a Windows 10 or 11 desktop or a customer's device. Treat its reading as new.">
                 <FlaskConical className="h-3 w-3" />Tested only on GitHub&rsquo;s Windows Server runner
               </span>
             )}
@@ -615,7 +615,7 @@ export function EndpointDiagnosticsCatalog({ endpointId, focusKey }: {
           <p className="text-xs text-muted-foreground">{item.description}</p>
           {item.needsNewerAgent && (
             <p className="text-xs text-amber-700 dark:text-amber-400" data-diag-needs-newer="">
-              Needs agent {item.minAgent ?? 'a newer release'} or later; this computer reports {c.agentVersion ?? 'no version'}. Update the agent from the Agent card (a signed agent gets it with the next signed release).
+              Needs agent {item.minAgent ?? 'a newer release'} or later; this device reports {c.agentVersion ?? 'no version'}. Update the agent from the Agent card (a signed agent gets it with the next signed release).
             </p>
           )}
           {item.params && !item.needsNewerAgent && item.allowed && !blocked && (
@@ -649,9 +649,9 @@ export function EndpointDiagnosticsCatalog({ endpointId, focusKey }: {
             <Badge variant="outline" className="ml-1 gap-1 font-normal"><ShieldCheck className="h-3 w-3" />Read-only</Badge>
           </CardTitle>
           <p className="text-xs text-muted-foreground">
-            Fixed checks the agent already carries. Nothing is changed on the computer and no approval is needed; every run is recorded in the audit log.
+            Fixed checks the agent already carries. Nothing is changed on the device and no approval is needed; every run is recorded in the audit log.
             {' '}A reading is Healthy, Warning, Critical, Unknown or Unsupported; Unknown means it could not be read, never that it is fine.
-            {!c.isOnline && c.supported && ` This computer looks offline (last seen ${ago(c.lastSeenAt, now)}); a request waits fifteen minutes for it.`}
+            {!c.isOnline && c.supported && ` This device looks offline (last seen ${ago(c.lastSeenAt, now)}); a request waits fifteen minutes for it.`}
           </p>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -692,7 +692,7 @@ export function EndpointDiagnosticsCatalog({ endpointId, focusKey }: {
         <CardHeader className="pb-3"><CardTitle className="text-sm">Recent runs</CardTitle></CardHeader>
         <CardContent>
           {history.length === 0
-            ? <p className="text-sm text-muted-foreground">No diagnostics have been run on this computer yet.</p>
+            ? <p className="text-sm text-muted-foreground">No diagnostics have been run on this device yet.</p>
             : (
               <Table head={['Requested', 'Diagnostic', 'By', 'Status', '']} rows={history.map((r) => [
                 <span key="t" title={formatDate(r.requestedAt)}>{ago(r.requestedAt, now)}</span>,

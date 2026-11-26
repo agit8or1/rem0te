@@ -323,8 +323,8 @@ export function EndpointEventLog({
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <p className="text-xs text-muted-foreground">
               {isOnline
-                ? 'Collected on this computer’s next heartbeat — up to about three minutes.'
-                : 'This computer is offline. The request waits up to 30 minutes for it to check in, then expires.'}
+                ? 'Collected on this device’s next heartbeat — up to about three minutes.'
+                : 'This device is offline. The request waits up to 30 minutes for it to check in, then expires.'}
             </p>
             <Button
               size="sm"
@@ -336,7 +336,7 @@ export function EndpointEventLog({
               ) : (
                 <Search className="h-3 w-3 mr-1" />
               )}
-              {waiting ? 'Waiting for the computer…' : 'Fetch'}
+              {waiting ? 'Waiting for the device…' : 'Fetch'}
             </Button>
           </div>
         </CardContent>
@@ -381,7 +381,7 @@ export function EndpointEventLog({
             {waiting && (
               <p className="text-sm text-muted-foreground py-4 text-center">
                 Requested {formatDate(shown.createdAt)}. This page updates itself when
-                the computer answers.
+                the device answers.
               </p>
             )}
 
@@ -391,8 +391,8 @@ export function EndpointEventLog({
                 <div>
                   <div className="font-medium">
                     {shown.status === 'EXPIRED'
-                      ? 'The computer never picked this up'
-                      : 'The computer could not read that log'}
+                      ? 'The device never picked this up'
+                      : 'The device could not read that log'}
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5 break-words">
                     {shown.error ??

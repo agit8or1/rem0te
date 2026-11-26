@@ -154,11 +154,11 @@ export function migrationBlock(f: MigrationFacts): MigrationBlock | null {
   if (os) {
     return { code: os === 'Linux' ? 'LINUX_AGENT_READ_ONLY' : 'MACOS_AGENT_READ_ONLY', reason: `There is no signed agent for ${os}: the ${os} agent only reports and acts on nothing the server sends.`, fix: 'To update it, re-run the installer on the computer.' };
   }
-  if (!isWindows(f.platform)) return { code: 'NOT_WINDOWS', reason: 'Only a Windows computer can run the signed agent, and this one has not reported Windows.', fix: null };
-  if (f.updateChannel === 'signed') return { code: 'ALREADY_SIGNED', reason: 'This computer already runs the signed agent.', fix: null };
-  if (f.status === 'ARCHIVED') return { code: 'ARCHIVED', reason: 'This computer is archived; nothing is sent to an archived computer.', fix: 'Restore it first.' };
+  if (!isWindows(f.platform)) return { code: 'NOT_WINDOWS', reason: 'Only a Windows device can run the signed agent, and this one has not reported Windows.', fix: null };
+  if (f.updateChannel === 'signed') return { code: 'ALREADY_SIGNED', reason: 'This device already runs the signed agent.', fix: null };
+  if (f.status === 'ARCHIVED') return { code: 'ARCHIVED', reason: 'This device is archived; nothing is sent to an archived device.', fix: 'Restore it first.' };
   if (!f.hasSecret) {
-    return { code: 'NO_DEVICE_SECRET', reason: 'This computer has never authenticated with a device secret, so the server cannot ask it to do anything.', fix: 'Re-run the installer on the computer once; after that it can be upgraded from here.' };
+    return { code: 'NO_DEVICE_SECRET', reason: 'This device has never authenticated with a device secret, so the server cannot ask it to do anything.', fix: 'Re-run the installer on the computer once; after that it can be upgraded from here.' };
   }
   if (!f.repoConfigured) {
     return {
@@ -186,7 +186,7 @@ export function migrationBlock(f: MigrationFacts): MigrationBlock | null {
   }
   if (f.updatesPause) return { code: 'CONTAINED', reason: f.updatesPause, fix: 'It can be requested once the pause is lifted.' };
   if (f.inRollout) {
-    return { code: 'IN_ROLLOUT', reason: 'A staged rollout is updating this computer; it owns its updates until its job finishes.', fix: 'Wait for the rollout job to finish, or cancel it on the Updates page.' };
+    return { code: 'IN_ROLLOUT', reason: 'A staged rollout is updating this device; it owns its updates until its job finishes.', fix: 'Wait for the rollout job to finish, or cancel it on the Updates page.' };
   }
   return null;
 }
@@ -213,20 +213,20 @@ export const HOLD_TEXT: Record<string, string> = {
 };
 
 export function migrationState(r: MigrationRow, now = Date.now()): { state: MigrationState; text: string } {
-  if (r.completedAt) return { state: 'completed', text: 'Completed: the computer reports the signed agent.' };
+  if (r.completedAt) return { state: 'completed', text: 'Completed: the device reports the signed agent.' };
   if (r.cancelledAt) {
     return { state: 'cancelled', text: r.automatic && !r.cancelledById ? 'Stopped by the automatic migration: its rollout halted.' : 'Cancelled.' };
   }
   const last = r.fetchedAt ?? r.lastDispatchedAt ?? r.dispatchedAt;
   if (last && now - last.getTime() > NOT_CONFIRMED_AFTER_MS) {
-    return { state: 'not_confirmed', text: 'Not confirmed: handed out over 2 hours ago and the computer still reports the standard agent. The migration failed or did not run; the standard agent does not report the script\'s exit code, so check its last update result or run rem0te-agent.exe status on the computer.' };
+    return { state: 'not_confirmed', text: 'Not confirmed: handed out over 2 hours ago and the device still reports the standard agent. The migration failed or did not run; the standard agent does not report the script\'s exit code, so check its last update result or run rem0te-agent.exe status on the device.' };
   }
   if (r.holdReason && (!r.lastDispatchedAt || (r.holdAt && r.holdAt > r.lastDispatchedAt))) {
     return { state: 'held', text: `Waiting: ${HOLD_TEXT[r.holdReason] ?? r.holdReason}.` };
   }
-  if (r.fetchedAt) return { state: 'downloaded', text: 'The computer downloaded the migration script; waiting for it to report the signed agent.' };
-  if (r.dispatchedAt) return { state: 'dispatched', text: 'Handed to the computer at its last check-in; it runs within 30 minutes of its previous update attempt.' };
-  return { state: 'pending', text: 'Waiting for the computer\'s next check-in (about every 3 minutes).' };
+  if (r.fetchedAt) return { state: 'downloaded', text: 'The device downloaded the migration script; waiting for it to report the signed agent.' };
+  if (r.dispatchedAt) return { state: 'dispatched', text: 'Handed to the device at its last check-in; it runs within 30 minutes of its previous update attempt.' };
+  return { state: 'pending', text: 'Waiting for the device\'s next check-in (about every 3 minutes).' };
 }
 
 export const MIGRATION_STATES: MigrationState[] = ['pending', 'held', 'dispatched', 'downloaded', 'not_confirmed', 'completed', 'cancelled'];

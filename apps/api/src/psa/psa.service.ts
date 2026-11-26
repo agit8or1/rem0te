@@ -97,7 +97,7 @@ export class PsaService {
   /** The scope a settings request is about, and whether the caller may write it. */
   private async scopeOf(a: ActorContext, scope: 'global' | 'business', businessId: string | null | undefined): Promise<Scope & { name: string; tenantId: string | null }> {
     if (scope === 'global') {
-      if (businessId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'The platform default names no business.' });
+      if (businessId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'The platform default names no customer.' });
       if (!a.isPlatformAdmin) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'The platform default PSA connector is set by a Platform Admin.' });
       return { scopeKey: 'global', customerId: null, name: 'Platform default', tenantId: a.tenantId };
     }
@@ -105,7 +105,7 @@ export class PsaService {
     if (!id || !ID.test(id)) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'businessId is required.' });
     const c = await this.prisma.customer.findUnique({ where: { id }, select: { id: true, name: true, tenantId: true } });
     if (!c || (!a.isPlatformAdmin && a.businessId !== c.id)) throw new NotFoundException('Business not found');
-    if (!a.isPlatformAdmin && (!this.acl.isBusinessOwner(a) || a.technician)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'A business\'s PSA connector is set by its Business Owner or a Platform Admin.' });
+    if (!a.isPlatformAdmin && (!this.acl.isBusinessOwner(a) || a.technician)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'A customer\'s PSA connector is set by its Business Owner or a Platform Admin.' });
     return { scopeKey: `b:${c.id}`, customerId: c.id, name: c.name, tenantId: c.tenantId };
   }
 
@@ -328,7 +328,7 @@ export class PsaService {
     const pause = await activePause(this.prisma, 'notifications', ep.customerId);
     const ready = eff ? await this.driver(eff.row.kind).ready(eff.row, this.deps, ep.customerId) : null;
     const tickets = await this.prisma.psaTicket.findMany({ where: { endpointId: ep.id }, orderBy: { createdAt: 'desc' }, take: 200, select: { id: true, sourceRef: true, fingerprint: true, connectorKind: true, ref: true, url: true, createdAt: true } });
-    const reason = !eff ? 'No PSA is connected — a Platform Admin or the Business Owner sets one in Settings → PSA / ticketing.'
+    const reason = !eff ? 'No PSA is connected — a Platform Admin or the Business Owner sets one in Administration → PSA / ticketing.'
       : pause ? pauseMessage(pause, 'notifications') : ready && !ready.ok ? ready.reason : null;
     return {
       available: !!eff && !pause && !!ready?.ok, reason,
@@ -353,7 +353,7 @@ export class PsaService {
     this.acl.assertCapability(a, CAP.TICKETS_CREATE);
     if (!this.budget.take(a.userId)) throw new HttpException({ code: 'PSA_RATE_LIMITED', message: 'You have created a lot of tickets in the last hour. Try again later.' }, 429);
     const eff = await this.effective(src.endpoint.customerId);
-    if (!eff) throw new ConflictException({ code: 'PSA_NOT_CONFIGURED', message: 'No PSA is connected — a Platform Admin or the Business Owner sets one in Settings → PSA / ticketing.' });
+    if (!eff) throw new ConflictException({ code: 'PSA_NOT_CONFIGURED', message: 'No PSA is connected — a Platform Admin or the Business Owner sets one in Administration → PSA / ticketing.' });
     const pause = await activePause(this.prisma, 'notifications', src.endpoint.customerId);
     if (pause) throw new ForbiddenException({ code: 'CONTAINED', message: pauseMessage(pause, 'notifications'), pauseId: pause.id, scope: pause.scope.toLowerCase() });
     const drv = this.driver(eff.row.kind);

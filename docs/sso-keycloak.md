@@ -66,11 +66,11 @@ Then decide what to trust (all off by default):
 
 ## 5. Organization (optional)
 
-With Keycloak 26 **organizations**, add the `organization` client scope to the client (as a default scope). The ID token then carries an `organization` claim. In Rem0te, set **Organization** to the organization's alias, or to its id when the claim's mapper includes ids. A sign-in whose token does not name it is refused (`org_mismatch`). The organization is only a gate: it grants no business, role or capability.
+With Keycloak 26 **organizations**, add the `organization` client scope to the client (as a default scope). The ID token then carries an `organization` claim. In Rem0te, set **Organization** to the organization's alias, or to its id when the claim's mapper includes ids. A sign-in whose token does not name it is refused (`org_mismatch`). The organization is only a gate: it grants no customer, role or capability.
 
 ## 6. Who must use it
 
-Once everyone is linked (**Settings → Single sign-on** shows the unlinked count per business), set a business to **Required**. Before that, set up two [break-glass accounts](break-glass.md). If Keycloak is down while a business is required, lower it from the server:
+Once everyone is linked (**Security → Single sign-on** shows the unlinked count per customer), set a customer to **Required**. Before that, set up two [break-glass accounts](break-glass.md). If Keycloak is down while a customer is required, lower it from the server:
 
 ```bash
 node dist/cli/auth-recovery.js --sso-mode optional <business id> --yes

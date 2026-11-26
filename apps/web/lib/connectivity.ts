@@ -67,5 +67,5 @@ export function connectivityLabel(c: Connectivity, lastSeenAt?: unknown, now: nu
 export function connectivityHint(c: Connectivity): string {
   if (c === 'online') return 'The agent is checking in: what it reports is current.';
   if (c === 'offline') return 'Not reachable: no heartbeat, and the RustDesk server cannot see it.';
-  return 'The RustDesk server can reach this computer, so remote control should work. Its agent has not checked in, so monitoring, patching and actions are not reporting. Try Update agent on the Agent card of its Overview.';
+  return 'The RustDesk server can reach this device, so remote control should work. Its agent has not checked in, so monitoring, patching and actions are not reporting. Try Update agent on the Agent card of its Overview.';
 }

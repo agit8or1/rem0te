@@ -151,7 +151,7 @@ export class TechniciansService {
     if (endpointIds.length === 0) return;
     const n = await this.prisma.endpoint.count({ where: { id: { in: endpointIds }, customerId: businessId } });
     if (n !== new Set(endpointIds).size) {
-      throw new BadRequestException('Every selected computer must belong to the selected business');
+      throw new BadRequestException('Every selected device must belong to the selected customer');
     }
   }
 
@@ -197,7 +197,7 @@ export class TechniciansService {
     if (input.userId) {
       const u = await this.prisma.user.findUnique({ where: { id: input.userId }, select: { id: true, status: true, isPlatformAdmin: true } });
       if (!u || u.status === 'DELETED') throw new NotFoundException('User not found');
-      if (u.isPlatformAdmin) throw new BadRequestException('Platform Admins already reach every business; they do not need assignments');
+      if (u.isPlatformAdmin) throw new BadRequestException('Platform Admins already reach every customer; they do not need assignments');
     }
     let groupCaps: string[] = [];
     if (input.groupId) {
@@ -312,7 +312,7 @@ export class TechniciansService {
     const recognised = await this.prisma.technicianGroupMember.count({ where: { userId: actor.userId } })
       + await this.prisma.technicianAssignment.count({ where: { userId: actor.userId } });
     if (recognised === 0 && !this.acl.hasPlatformPermission(actor, PLATFORM_PERM.TECHNICIANS_MANAGE)) {
-      throw new ForbiddenException('Only MSP technicians can request access to a business');
+      throw new ForbiddenException('Only MSP technicians can request access to a customer');
     }
     if (!input.expiresAt) throw new BadRequestException('An access request must have an end time');
     return this.createAssignment(actor, { ...input, userId: actor.userId }, { selfRequest: true });
@@ -376,7 +376,7 @@ export class TechniciansService {
       if (input.endpointIds) {
         const narrowed = [...new Set(input.endpointIds)];
         if (a.endpointIds.length > 0 && narrowed.some((e) => !a.endpointIds.includes(e))) {
-          throw new BadRequestException('Approval can only remove computers from a request, not add them');
+          throw new BadRequestException('Approval can only remove devices from a request, not add them');
         }
         if (a.endpointIds.length === 0 && narrowed.length === 0) { /* whole business, as requested */ } else {
           await this.assertEndpointsInBusiness(a.customerId, narrowed);
@@ -409,7 +409,7 @@ export class TechniciansService {
   async setApprovalRequired(actor: ActorContext, businessId: string, required: boolean) {
     if (!actor.isPlatformAdmin) {
       if (actor.technician || !isOwnerRole(actor.roleType) || actor.businessId !== businessId) {
-        throw new ForbiddenException('Only this business\'s Business Owner can change that');
+        throw new ForbiddenException('Only this customer\'s Business Owner can change that');
       }
     }
     const b = await this.prisma.customer.update({

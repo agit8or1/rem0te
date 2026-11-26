@@ -194,7 +194,7 @@ function ClientUpdatePolicyRow({ endpointId }: { endpointId: string }) {
   });
   if (isError || !data) return null;
   const p = data.policy;
-  const where = !p ? 'None' : p.scope === 'group' ? `Group ${p.group?.name ?? ''} (priority ${p.priority ?? '—'})` : p.scope === 'site' ? `Site ${p.site?.name ?? ''} override` : 'Business policy';
+  const where = !p ? 'None' : p.scope === 'group' ? `Group ${p.group?.name ?? ''} (priority ${p.priority ?? '—'})` : p.scope === 'site' ? `Site ${p.site?.name ?? ''} override` : 'Customer policy';
   return (
     <Row label="Client-update policy">
       <span className="text-xs" data-testid="client-update-policy">{where}{p ? ` — ${p.enabled ? 'on' : 'off'}` : ''}</span>
@@ -246,7 +246,7 @@ function UpdatesCard({ data, platform, onOpenPatches, endpointId }: { data: Inve
         <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 mt-0.5" />
           <span>
-            This computer is waiting on a restart to finish installing updates.
+            This device is waiting on a restart to finish installing updates.
           </span>
         </div>
       )}
@@ -372,7 +372,7 @@ export function EndpointSpecs({
       toast({
         title: 'Reinstall queued',
         description:
-          'The installer re-runs on this computer at its next heartbeat. It keeps the server ' +
+          'The installer re-runs on this device at its next heartbeat. It keeps the server ' +
           'config, password and enrolment — it replaces the agent and pulls the current client.',
       });
       qc.invalidateQueries({ queryKey: ['endpoint-inventory', endpointId] });
@@ -393,7 +393,7 @@ export function EndpointSpecs({
     onSuccess: () => {
       toast({
         title: 'Device secret accepted',
-        description: 'This computer reports in again on its next heartbeat — up to about three minutes.',
+        description: 'This device reports in again on its next heartbeat — up to about three minutes.',
       });
       qc.invalidateQueries({ queryKey: ['endpoint-inventory', endpointId] });
       qc.invalidateQueries({ queryKey: ['endpoint', endpointId] });
@@ -412,7 +412,7 @@ export function EndpointSpecs({
       toast({
         title: 'Queued',
         description:
-          `This computer collects its specs and checks ${updateSourcePhrase(endpoint.platform)} on its next heartbeat — up to about three minutes.`,
+          `This device collects its specs and checks ${updateSourcePhrase(endpoint.platform)} on its next heartbeat — up to about three minutes.`,
       });
       qc.invalidateQueries({ queryKey: ['endpoint-inventory', endpointId] });
     },
@@ -450,11 +450,11 @@ export function EndpointSpecs({
         <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
           <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
           <div>
-            <div className="font-medium">This computer cannot report its specs yet</div>
+            <div className="font-medium">This device cannot report its specs yet</div>
             <p className="text-muted-foreground text-xs mt-0.5">
               It enrolled before per-device secrets existed, so nothing it sends is
               trusted beyond an online check. Re-run the installer on it from an
-              enrollment link made for this computer, and everything below fills in on
+              enrollment link made for this device, and everything below fills in on
               the next heartbeat.
             </p>
             <a
@@ -463,7 +463,7 @@ export function EndpointSpecs({
                 typeof endpoint.customerId === 'string' ? `&businessId=${encodeURIComponent(endpoint.customerId)}` : ''
               }`}
             >
-              Make an enrollment link for this computer
+              Make an enrollment link for this device
             </a>
           </div>
         </div>
@@ -476,22 +476,22 @@ export function EndpointSpecs({
         <div className="flex items-start gap-2 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm">
           <AlertTriangle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
           <div className="space-y-1">
-            <div className="font-medium">This computer is calling in with a new device secret</div>
+            <div className="font-medium">This device is calling in with a new device secret</div>
             <p className="text-muted-foreground text-xs">
               Its heartbeats are being refused, so it shows offline and ignores updates and
               refreshes. This usually means its installer re-ran and lost the old secret.
               Last heartbeat {ago(data.secretMismatch.lastSeenAt)}
               {data.secretMismatch.fromIp ? ` from ${data.secretMismatch.fromIp}` : ''}.
-              Accept it only if that address is where this computer really is.
+              Accept it only if that address is where this device really is.
             </p>
             {data.secretMismatch.conflict ? (
               <p className="text-xs font-medium text-red-700 dark:text-red-400">
                 More than one new secret has been offered for this RustDesk ID, so neither can be
-                accepted. Re-run the installer on the computer from an enrollment link made for it.
+                accepted. Re-run the installer on the device from an enrollment link made for it.
               </p>
             ) : !data.secretMismatch.acceptable ? (
               <p className="text-xs text-muted-foreground">
-                Not seen in the last 15 minutes. Turn the computer on and wait for its next heartbeat.
+                Not seen in the last 15 minutes. Turn the device on and wait for its next heartbeat.
               </p>
             ) : null}
             <Button
@@ -514,8 +514,8 @@ export function EndpointSpecs({
             <div className="font-medium">Specs have not been collected yet</div>
             <p className="text-muted-foreground text-xs mt-0.5">
               {agentOutdated
-                ? 'This computer’s agent is older than v0.14.0 and cannot collect specs. Use Reinstall agent below — it keeps every setting and replaces the agent.'
-                : 'The first pass runs on this computer’s next heartbeat, up to about three minutes away.'}
+                ? 'This device’s agent is older than v0.14.0 and cannot collect specs. Use Reinstall agent below — it keeps every setting and replaces the agent.'
+                : 'The first pass runs on this device’s next heartbeat, up to about three minutes away.'}
             </p>
           </div>
         </div>

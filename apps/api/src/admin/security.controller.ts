@@ -34,7 +34,7 @@ class JailConfigDto {
 }
 
 /**
- * Admin → Security (0.74). Platform Admin only, checked first on every
+ * Security → Server security (0.74). Platform Admin only, checked first on every
  * route. Reads never change the host. Every route that changes the host or
  * the lockout policy names its step-up key (§62: `server.security`,
  * `login.lockout`) and is audited in SecurityService. §84 holds this list.

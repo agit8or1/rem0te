@@ -169,7 +169,7 @@ async function all() {
   check(!JSON.stringify(x).includes('Program Files') && !('path' in x), 'no path text is stored');
   r = await req('GET', `/msa/readiness/${A1.id}`, { s: SA });
   check(ok(r) && r.data.readiness.state === 'compatible' && r.data.readiness.verified === false && r.data.readiness.labTested === true
-    && /not available yet; nothing has changed on this computer/.test(r.data.note), 'GET /msa/readiness/A1: compatible, lab-tested, not verified, with the readiness-only note', msg(r));
+    && /not available yet; nothing has changed on this device/.test(r.data.note), 'GET /msa/readiness/A1: compatible, lab-tested, not verified, with the readiness-only note', msg(r));
 
   section('A repeated or older report never replaces a newer one');
   r = await signedBeat(A1, { rustdeskPreflight: b1 });
@@ -242,7 +242,7 @@ async function all() {
       && r.data?.managedControls === false && Object.keys(r.data?.counts ?? {}).length === 7,
     'MSA_GRANTS off: the four readiness tiles only (nothing can be Managed), managedControls false; counts still name all seven', JSON.stringify(r.data?.states));
   check((r.data?.computers ?? []).every((c) => !['managed', 'managed_verified', 'enforcement_failure'].includes(c.state)), 'no computer is managed');
-  check(/not available yet; nothing has changed on any computer|not available yet; nothing has changed on this computer/.test(r.data?.note ?? ''), 'the note is there', r.data?.note);
+  check(/not available yet; nothing has changed on any device|not available yet; nothing has changed on this device/.test(r.data?.note ?? ''), 'the note is there', r.data?.note);
   r = await req('GET', '/msa/readiness?state=compatible', { s: SA });
   check(ok(r) && r.data.computers.length >= 1 && r.data.computers.every((c) => c.state === 'compatible') && r.data.computers.some((c) => c.id === A1.id), '?state=compatible lists only compatible ones', msg(r));
   r = await req('GET', '/msa/readiness?state=managed', { s: SA });

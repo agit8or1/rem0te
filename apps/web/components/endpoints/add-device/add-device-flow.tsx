@@ -104,13 +104,13 @@ const OS: Record<Os, {
 }> = {
   windows: {
     label: 'Windows', shell: 'PowerShell, as Administrator',
-    file: 'install-reboot-remote.exe', runFile: 'Run it on the computer and accept the administrator prompt. Nothing else to type.',
+    file: 'install-reboot-remote.exe', runFile: 'Run it on the device and accept the administrator prompt. Nothing else to type.',
     path: (t) => `/api/v1/public/install/win/${t}`, cmd: (u) => `irm ${u} | iex`,
     agent: 'Installs RustDesk and the full Rem0te agent: heartbeat, inventory, monitoring, update scans, and installs, restarts and scripts from the dashboard. (Before this server publishes a signed agent, the standard agent, which can be upgraded later.)',
   },
   linux: {
     label: 'Linux', shell: 'a root shell',
-    file: 'install-rustdesk.sh', runFile: 'Copy it to the computer and run: sudo bash install-rustdesk.sh',
+    file: 'install-rustdesk.sh', runFile: 'Copy it to the device and run: sudo bash install-rustdesk.sh',
     path: (t) => `/api/v1/public/install/linux/${t}`, cmd: (u) => `curl -fsSL ${u} | sudo bash`,
     agent: 'Installs RustDesk and the read-only Linux agent: heartbeat, inventory and pending package updates every 3 minutes. It runs nothing the console sends.',
   },
@@ -379,47 +379,47 @@ export function AddDeviceFlow() {
 
   if (!user) return null;
   if (!can(CAP.COMPUTERS_ADD)) {
-    return <p className="text-sm text-muted-foreground">Adding a device needs the Add computers permission.</p>;
+    return <p className="text-sm text-muted-foreground">Adding a device needs the Add devices permission.</p>;
   }
 
   const lockedBusiness = !!ownBusinessId || !!endpointId;
-  const businessLabel = business?.name ?? status?.token.businessName ?? (businessId ? 'the selected business' : '—');
+  const businessLabel = business?.name ?? status?.token.businessName ?? (businessId ? 'the selected customer' : '—');
 
   return (
     <div className="space-y-4" data-testid="add-device-flow">
       {endpointId && (
         <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm space-y-1" data-testid="reinstall-banner">
-          <p className="font-medium">Reinstalling the agent on {existing.data?.name ?? 'an existing computer'}</p>
+          <p className="font-medium">Reinstalling the agent on {existing.data?.name ?? 'an existing device'}</p>
           <p>
-            The link below is made for this one computer. Download and run it on that computer only, as an administrator.
+            The link below is made for this one device. Download and run it on that device only, as an administrator.
             It replaces the agent, gives the machine a new device secret, and re-attaches it to the same record: its history,
             site, groups and settings are kept, and no duplicate appears in the device list. Who may connect is filled in from
-            the computer&rsquo;s current access below; change it only if you mean to. The link works once and expires after 24 hours.
+            the device&rsquo;s current access below; change it only if you mean to. The link works once and expires after 24 hours.
           </p>
         </div>
       )}
 
       {/* 1 — where it lands */}
-      <StepCard n={1} testId="step-place" title="Business and site" active={!step1Done} done={step1Done}
-        description="Fixed when the link is made: the computer that runs it cannot choose a different business or site.">
+      <StepCard n={1} testId="step-place" title="Customer and site" active={!step1Done} done={step1Done}
+        description="Fixed when the link is made: the device that runs it cannot choose a different customer or site.">
         {step1Done ? (
           <p className="text-sm" data-testid="place-summary">
             <strong>{businessLabel}</strong>
             {' · '}{endpointId ? 'site unchanged' : (site?.name ?? status?.token.siteName ?? 'no site')}
-            {' · '}{(status?.token.accessMode ?? accessMode) === 'COMPANY_WIDE' ? 'everyone in the business may connect' : 'only the chosen people may connect'}
+            {' · '}{(status?.token.accessMode ?? accessMode) === 'COMPANY_WIDE' ? 'everyone at the customer may connect' : 'only the chosen people may connect'}
           </p>
         ) : (
           <>
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-1">
-                <Label htmlFor="ad-business">Business</Label>
+                <Label htmlFor="ad-business">Customer</Label>
                 <select id="ad-business" className="w-full rounded-md border bg-background p-2 text-sm" value={businessId} disabled={lockedBusiness}
                   onChange={(e) => { setBusinessId(e.target.value); setSiteId(''); setAssignedUserIds([]); }}>
-                  <option value="">Choose a business…</option>
+                  <option value="">Choose a customer…</option>
                   {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                  {businessId && !business && <option value={businessId}>{status?.token.businessName ?? 'Current business'}</option>}
+                  {businessId && !business && <option value={businessId}>{status?.token.businessName ?? 'Current customer'}</option>}
                 </select>
-                {businesses.length === 0 && <p className="text-xs text-muted-foreground">No businesses yet. Create one under Settings › Businesses.</p>}
+                {businesses.length === 0 && <p className="text-xs text-muted-foreground">No customers yet. Create one under Settings › Customers.</p>}
               </div>
               {!endpointId && (
                 <div className="space-y-1">
@@ -428,7 +428,7 @@ export function AddDeviceFlow() {
                     <option value="">No site</option>
                     {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
-                  {businessId && sites.length === 0 && <p className="text-xs text-muted-foreground">This business has no sites. The device can be given one later from its page.</p>}
+                  {businessId && sites.length === 0 && <p className="text-xs text-muted-foreground">This customer has no sites. The device can be given one later from its page.</p>}
                 </div>
               )}
             </div>
@@ -441,11 +441,11 @@ export function AddDeviceFlow() {
               </label>
               <label className="flex cursor-pointer items-start gap-2 text-sm">
                 <input type="radio" name="ad-access" className="mt-1" checked={accessMode === 'COMPANY_WIDE'} onChange={() => setAccessMode('COMPANY_WIDE')} />
-                <span><strong>Everyone in the business</strong><br /><span className="text-xs text-muted-foreground">Every active user of the business can connect (still subject to their sign-in rules).</span></span>
+                <span><strong>Everyone at the customer</strong><br /><span className="text-xs text-muted-foreground">Every active user at the customer can connect (still subject to their sign-in rules).</span></span>
               </label>
               {accessMode === 'ASSIGNED_USERS' && (
                 <div className="max-h-56 space-y-1 overflow-y-auto rounded-md border p-3">
-                  {members.length === 0 && <p className="text-sm text-muted-foreground">{businessId ? 'No users in this business yet.' : 'Choose a business first.'}</p>}
+                  {members.length === 0 && <p className="text-sm text-muted-foreground">{businessId ? 'No users at this customer yet.' : 'Choose a customer first.'}</p>}
                   {members.map((m) => (
                     <label key={m.userId} className="flex cursor-pointer items-center gap-2 py-1 text-sm">
                       <input type="checkbox" checked={assignedUserIds.includes(m.userId)}
@@ -487,10 +487,10 @@ export function AddDeviceFlow() {
               {askEnrol ? (
                 <>
                   You will be asked to confirm it&apos;s you (password, authenticator code or passkey) unless you did in the last 10 minutes:
-                  an install link adds a computer to {businessLabel}.
+                  an install link adds a device to {businessLabel}.
                 </>
               ) : (
-                <>An install link adds a computer to {businessLabel}.</>
+                <>An install link adds a device to {businessLabel}.</>
               )}
             </p>
             <div className="flex flex-wrap gap-2">
@@ -504,9 +504,9 @@ export function AddDeviceFlow() {
       </StepCard>
 
       <StepCard n={3} testId="step-command" title="Run the installer" active={!!tokenId && !enrolled} done={enrolled}
-        description={os && !enrolled ? `Download the installer, or copy the command, and run it once on the computer. Single-use; expires ${status ? formatDate(status.token.expiresAt) : 'in 24 hours'}.` : undefined}>
+        description={os && !enrolled ? `Download the installer, or copy the command, and run it once on the device. Single-use; expires ${status ? formatDate(status.token.expiresAt) : 'in 24 hours'}.` : undefined}>
         {enrolled ? (
-          <p className="text-sm text-muted-foreground">The link has been used and cannot enrol another computer.</p>
+          <p className="text-sm text-muted-foreground">The link has been used and cannot enrol another device.</p>
         ) : commands && os ? (
           <>
             <Tabs defaultValue="download" className="space-y-3" data-testid="install-choices">
@@ -529,20 +529,20 @@ export function AddDeviceFlow() {
                 <p className="text-sm">{OS[os].runFile}</p>
                 {os === 'windows' && (
                   <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">Or send this link to the person at the computer: it downloads the same installer.</p>
+                    <p className="text-xs text-muted-foreground">Or send this link to the person at the device: it downloads the same installer.</p>
                     <CopyLine text={commands.download} label="link" />
                   </div>
                 )}
                 {os === 'windows' && (
                   <div className="space-y-1" data-testid="msi-note">
                     <p className="text-xs text-muted-foreground">
-                      The .msi installs the same signed agent, silently, as SYSTEM. Run it on this computer with:
+                      The .msi installs the same signed agent, silently, as SYSTEM. Run it on this device with:
                     </p>
                     <CopyLine text={commands.msiexec} label="msiexec" />
                     <p className="text-xs text-muted-foreground">
                       The downloaded .msi already carries this link&rsquo;s token; the line above passes it too. Uninstalling
-                      the .msi removes only its own entry in Programs and Features, never the agent: remove a computer from
-                      the console. <strong>The .msi has not yet been run on real Windows.</strong> For many computers at once
+                      the .msi removes only its own entry in Programs and Features, never the agent: remove a device from
+                      the console. <strong>The .msi has not yet been run on real Windows.</strong> For many devices at once
                       use a deployment key as the TOKEN, from Group Policy, Intune or another RMM
                       {isPlatformAdmin ? <>: <Link href="/admin/deploy" className="underline">Deploy agents</Link>.</> : ' (a Platform Admin makes one under Devices → Deploy agents).'}
                     </p>
@@ -550,11 +550,11 @@ export function AddDeviceFlow() {
                 )}
               </TabsContent>
               <TabsContent value="command" className="mt-0 space-y-2">
-                <p className="text-xs text-muted-foreground">Paste into {OS[os].shell} on the computer.</p>
+                <p className="text-xs text-muted-foreground">Paste into {OS[os].shell} on the device.</p>
                 <CopyLine text={commands.command} label="command" />
               </TabsContent>
             </Tabs>
-            <p className="text-xs text-muted-foreground">The installer, the link and the command all carry the enrolment token and are shown only now. Anyone holding one can enrol one computer into {businessLabel} until it is used or expires.</p>
+            <p className="text-xs text-muted-foreground">The installer, the link and the command all carry the enrolment token and are shown only now. Anyone holding one can enrol one device into {businessLabel} until it is used or expires.</p>
           </>
         ) : tokenId ? (
           <p className="text-sm text-muted-foreground">The install command is shown only once, when the link is made. If it was lost, revoke this link and make a new one.</p>
@@ -565,7 +565,7 @@ export function AddDeviceFlow() {
       <StepCard n={4} testId="step-wait" title="Wait for the device" active={!!tokenId && !enrolled} done={enrolled}>
         {statusErr ? (
           <div className="space-y-2 text-sm" data-testid="wait-error">
-            <p className="flex items-center gap-2 text-destructive"><XCircle className="h-4 w-4" />{statusErr.status === 404 ? 'This link no longer exists: it was revoked, or it belongs to a business you cannot see.' : statusErr.message}</p>
+            <p className="flex items-center gap-2 text-destructive"><XCircle className="h-4 w-4" />{statusErr.status === 404 ? 'This link no longer exists: it was revoked, or it belongs to a customer you cannot see.' : statusErr.message}</p>
             <Button size="sm" variant="outline" onClick={startOver}>Make a new link</Button>
           </div>
         ) : !status ? (
@@ -583,7 +583,7 @@ export function AddDeviceFlow() {
             {revoke.error && <p className="text-destructive">{apiError(revoke.error).message}</p>}
             {status.state === 'waiting' && can(CAP.COMPUTERS_REMOVE) && (
               <Button size="sm" variant="outline" disabled={revoke.isPending}
-                onClick={() => { if (window.confirm('Revoke this link? Any computer that has not yet run it will be refused.')) revoke.mutate(); }}>
+                onClick={() => { if (window.confirm('Revoke this link? Any device that has not yet run it will be refused.')) revoke.mutate(); }}>
                 Revoke this link
               </Button>
             )}
@@ -605,7 +605,7 @@ export function AddDeviceFlow() {
         )}
         {device && (
           <ul className="space-y-2 text-sm" data-testid="health-list">
-            <HealthRow testId="health-place" ok={!!device.customer} label="Business and site"
+            <HealthRow testId="health-place" ok={!!device.customer} label="Customer and site"
               detail={`${device.customer?.name ?? 'none'} · ${device.site?.name ?? 'no site'}`} />
             <HealthRow testId="health-online" ok={connectivityOf(device.isOnline, device.lastSeenAt) === 'online'} waiting={connectivityOf(device.isOnline, device.lastSeenAt) !== 'online'}
               label={connectivityLabel(connectivityOf(device.isOnline, device.lastSeenAt), device.lastSeenAt)} detail={`last check-in ${ago(device.lastSeenAt)}`} />
@@ -645,7 +645,7 @@ export function AddDeviceFlow() {
             {device && <Button variant="outline" asChild><Link href={`/endpoints/${device.id}?tab=monitoring`}>Its monitoring</Link></Button>}
             {(device?.customerId ?? status?.token.businessId) && (
               <Button variant="outline" asChild>
-                <Link href={`/settings/monitoring?businessId=${encodeURIComponent((device?.customerId ?? status?.token.businessId)!)}`} data-testid="next-policies">Business monitoring policies</Link>
+                <Link href={`/settings/monitoring?businessId=${encodeURIComponent((device?.customerId ?? status?.token.businessId)!)}`} data-testid="next-policies">Customer monitoring policies</Link>
               </Button>
             )}
             <Button variant="ghost" onClick={startOver} data-testid="add-another">Add another device</Button>

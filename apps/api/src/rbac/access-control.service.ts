@@ -121,12 +121,12 @@ export class AccessControlService {
 
     if (!actor.businessId) {
       throw new ForbiddenException(
-        'Your account is not linked to a business. Ask your Rem0te administrator to assign one.',
+        'Your account is not linked to a customer. Ask your Rem0te administrator to assign one.',
       );
     }
 
     if (requested && requested !== actor.businessId) {
-      throw new ForbiddenException('You do not have access to that business');
+      throw new ForbiddenException('You do not have access to that customer');
     }
 
     return actor.businessId;
@@ -139,7 +139,7 @@ export class AccessControlService {
   requireScope(actor: ActorContext, requestedBusinessId?: string | null): string {
     const scope = this.resolveScope(actor, requestedBusinessId);
     if (!scope) {
-      throw new ForbiddenException('A business must be selected for this action');
+      throw new ForbiddenException('A customer must be selected for this action');
     }
     return scope;
   }
@@ -371,7 +371,7 @@ export class AccessControlService {
         role: { select: { id: true, name: true, type: true } },
       },
     });
-    if (!membership) throw new NotFoundException('User not found in this business');
+    if (!membership) throw new NotFoundException('User not found in this customer');
     return membership;
   }
 

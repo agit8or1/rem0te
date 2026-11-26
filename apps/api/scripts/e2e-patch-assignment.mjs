@@ -326,7 +326,7 @@ async function all() {
   {
     let r = await req('PUT', `/endpoints/${C.id}/patch-policy`, { s: Ses.owen, business: acme.id, body: { mode: 'exclude' } });
     check(r.status === 403 && code(r) === 'STEP_UP_REQUIRED', 'changing the setting needs a fresh sign-in (patching.override)', msg(r));
-    check(r.body?.action === 'patching.override' || r.body?.message?.action === 'patching.override' || /patch policy a computer follows/.test(JSON.stringify(r.body)), 'and says what is being confirmed', msg(r));
+    check(r.body?.action === 'patching.override' || r.body?.message?.action === 'patching.override' || /patch policy a device follows/.test(JSON.stringify(r.body)), 'and says what is being confirmed', msg(r));
     r = await req('PUT', `/endpoints/${C.id}/patch-policy`, { s: Ses.bob, business: birch.id, body: { mode: 'exclude' } });
     check(r.status === 404 || r.status === 403, 'another business\'s owner cannot change it', msg(r));
     r = await req('PUT', `/endpoints/${C.id}/patch-policy`, { s: Ses.owenF, business: acme.id, body: { mode: 'everything' } });

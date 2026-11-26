@@ -338,7 +338,7 @@ export class EndpointListService {
     }
     // Membership of a rule on alert state would answer the same question.
     if (q.groupRule && ruleNeedsAlerts(q.groupRule.rule)) {
-      throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'This rule group selects computers by their alerts, which needs the monitoring:alerts permission.' });
+      throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'This rule group selects devices by their alerts, which needs the monitoring:alerts permission.' });
     }
   }
 

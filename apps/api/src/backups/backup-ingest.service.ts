@@ -44,7 +44,7 @@ export class BackupIngestService {
   /**
    * Record a refused push or a failed pull (no provider row touched).
    * `detail` is Rem0te's own message (a parse error's paths and rules), kept
-   * on the connection for Settings → Backups.
+   * on the connection for Administration → Backup connections.
    */
   async failed(conn: BackupConnection, code: string, now = new Date(), detail?: string) {
     await this.prisma.backupConnection.updateMany({

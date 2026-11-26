@@ -54,7 +54,7 @@ function RunCard({ run }: { run: Run }) {
     onError: (e: unknown) => toast({ title: 'Not done', description: apiError(e).message, variant: 'destructive' as const }),
   });
   const advance = useMutation(act(() => msaCutoverRunsApi.advance(run.id), 'Next batch moved'));
-  const confirm = useMutation(act(() => msaCutoverRunsApi.confirm(run.id), 'Verified computers confirmed'));
+  const confirm = useMutation(act(() => msaCutoverRunsApi.confirm(run.id), 'Verified devices confirmed'));
   const halt = useMutation(act(() => msaCutoverRunsApi.halt(run.id), 'Run halted'));
   const rollback = useMutation(act(() => msaCutoverRunsApi.rollback(run.id), 'Rolling the run back to Legacy'));
   const busy = advance.isPending || confirm.isPending || halt.isPending || rollback.isPending;
@@ -63,13 +63,13 @@ function RunCard({ run }: { run: Run }) {
   return (
     <li className="space-y-1.5 p-3 text-xs" data-testid="msa-run" data-state={run.state}>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-medium">{run.scope === 'group' ? `Group ${run.groupName ?? run.groupId}` : 'Whole business'} · {run.businessName ?? run.businessId}</span>
+        <span className="text-sm font-medium">{run.scope === 'group' ? `Group ${run.groupName ?? run.groupId}` : 'Whole customer'} · {run.businessName ?? run.businessId}</span>
         <span className="text-muted-foreground">started {formatDate(run.createdAt)}{run.lastBatchAt ? ` · last batch ${formatDate(run.lastBatchAt)}` : ''}</span>
       </div>
       <p className="font-medium" data-testid="msa-run-state">{RUN_STATE[run.state]}</p>
       <p className="text-muted-foreground">
         Canary: {run.canaryEndpointId ? <Link className="underline" href={`/endpoints/${run.canaryEndpointId}`}>{run.canaryName ?? run.canaryEndpointId}</Link> : 'none'}
-        {' '}· batches of {run.batchSize} · {c.total} computers: {c.verified} verified, {c.cut_over} pending, {c.queued} queued, {c.skipped} skipped, {c.failed} failed{c.rolled_back ? `, ${c.rolled_back} rolled back` : ''}
+        {' '}· batches of {run.batchSize} · {c.total} devices: {c.verified} verified, {c.cut_over} pending, {c.queued} queued, {c.skipped} skipped, {c.failed} failed{c.rolled_back ? `, ${c.rolled_back} rolled back` : ''}
       </p>
       {run.next.reason && <p className="text-muted-foreground" data-testid="msa-run-next">{run.next.reason}</p>}
       <div className="flex flex-wrap gap-2">
@@ -77,7 +77,7 @@ function RunCard({ run }: { run: Run }) {
         {open && <Button size="sm" variant="outline" disabled={busy} onClick={() => confirm.mutate()} data-testid="msa-run-confirm">Confirm verified</Button>}
         {open && <Button size="sm" variant="outline" disabled={busy} onClick={() => halt.mutate()} data-testid="msa-run-halt">Halt</Button>}
         {run.state !== 'rolled_back' && <Button size="sm" variant="outline" disabled={busy} onClick={() => rollback.mutate()} data-testid="msa-run-rollback">Roll back the run</Button>}
-        <Button size="sm" variant="ghost" className="h-8 px-2 text-xs" onClick={() => setShowMembers((v) => !v)} aria-expanded={showMembers}>{showMembers ? 'Hide computers' : 'Computers'}</Button>
+        <Button size="sm" variant="ghost" className="h-8 px-2 text-xs" onClick={() => setShowMembers((v) => !v)} aria-expanded={showMembers}>{showMembers ? 'Hide devices' : 'Devices'}</Button>
       </div>
       {showMembers && detail?.members && (
         <ul className="divide-y rounded-md border" data-testid="msa-run-members">
@@ -135,14 +135,14 @@ export function MsaCutoverRuns() {
         <div>
           <p className="font-medium">Cutover runs (Platform Admin)</p>
           <p className="text-xs text-muted-foreground">
-            Move a device group or a whole business into Managed Secure Access. The canary goes first and must become Managed and verified — a managed
-            test session on its own page, then Confirm verified — before Advance moves anyone else. Each Advance moves one batch, every computer is
+            Move a device group or a whole customer into Managed Secure Access. The canary goes first and must become Managed and verified — a managed
+            test session on its own page, then Confirm verified — before Advance moves anyone else. Each Advance moves one batch, every device is
             checked on its own, and nothing advances by itself. Halt and Roll back never ask you to confirm it is you.
           </p>
         </div>
         <div className="grid gap-2 sm:grid-cols-4">
           <div className="space-y-1">
-            <Label htmlFor="msa-run-business">Business</Label>
+            <Label htmlFor="msa-run-business">Customer</Label>
             <select id="msa-run-business" className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={businessId}
               onChange={(e) => { setBusinessId(e.target.value); setGroupId(''); }} data-testid="msa-run-business">
               <option value="">Choose…</option>
@@ -153,12 +153,12 @@ export function MsaCutoverRuns() {
             <Label htmlFor="msa-run-group">Device group (optional)</Label>
             <select id="msa-run-group" className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={groupId}
               onChange={(e) => setGroupId(e.target.value)} disabled={!businessId} data-testid="msa-run-group">
-              <option value="">The whole business</option>
+              <option value="">The whole customer</option>
               {(groups ?? []).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
             </select>
           </div>
           <div className="space-y-1">
-            <Label htmlFor="msa-run-canary">Canary computer id (optional)</Label>
+            <Label htmlFor="msa-run-canary">Canary device id (optional)</Label>
             <Input id="msa-run-canary" value={canary} onChange={(e) => setCanary(e.target.value)} placeholder="Chosen for you if empty" />
           </div>
           <div className="space-y-1">

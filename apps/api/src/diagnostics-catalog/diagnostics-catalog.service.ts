@@ -140,7 +140,7 @@ export class DiagnosticsCatalogService {
     const cap = entry.capability as Capability;
     const endpoint = await this.assertVisible(actor, endpointId, cap);
     this.acl.assertCapability(actor, cap);
-    if (endpoint.status === 'ARCHIVED') throw new BadRequestException({ code: 'ENDPOINT_ARCHIVED', message: 'This computer is archived.' });
+    if (endpoint.status === 'ARCHIVED') throw new BadRequestException({ code: 'ENDPOINT_ARCHIVED', message: 'This device is archived.' });
     // 0.57 (§70): nothing runs on a computer in the unassigned pool.
     assertAssigned(endpoint);
 
@@ -149,16 +149,16 @@ export class DiagnosticsCatalogService {
       this.prisma.rustdeskNode.findUnique({ where: { endpointId }, select: { agentSecretHash: true } }),
     ]);
     if (!isWindows(ep?.platform)) {
-      throw new BadRequestException({ code: 'DIAGNOSTIC_OS_UNSUPPORTED', message: `${entry.label} runs on Windows computers with the standard agent.` });
+      throw new BadRequestException({ code: 'DIAGNOSTIC_OS_UNSUPPORTED', message: `${entry.label} runs on Windows devices with the standard agent.` });
     }
     // The heartbeat only hands work to a machine that proved it is the device;
     // staging for one that never has would look like it worked and do nothing.
     if (!node?.agentSecretHash) {
-      throw new ConflictException({ code: 'AGENT_NOT_BOUND', message: 'This computer has never authenticated with a device secret, so it cannot be asked to run anything. Re-run the installer on it once.' });
+      throw new ConflictException({ code: 'AGENT_NOT_BOUND', message: 'This device has never authenticated with a device secret, so it cannot be asked to run anything. Re-run the installer on it once.' });
     }
     // 0.76: an agent known to predate this key would only refuse it.
     if (agentTooOld(entry, ep?.agentVersion)) {
-      throw new ConflictException({ code: 'DIAGNOSTIC_NEEDS_NEWER_AGENT', message: `${entry.label} needs agent ${entry.minAgent} or later; this computer reports ${ep?.agentVersion}. Update the agent from the Agent card (a signed agent gets it with the next signed release).` });
+      throw new ConflictException({ code: 'DIAGNOSTIC_NEEDS_NEWER_AGENT', message: `${entry.label} needs agent ${entry.minAgent} or later; this device reports ${ep?.agentVersion}. Update the agent from the Agent card (a signed agent gets it with the next signed release).` });
     }
 
     // One open run of a key per computer: a second click returns the first —

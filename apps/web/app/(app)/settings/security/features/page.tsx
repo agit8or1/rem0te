@@ -7,7 +7,7 @@ import { PageHeader } from '@/components/common/page-header';
 import { SecurityFeaturesTab } from '@/components/security-controls/security-features';
 
 /**
- * Settings → Security → Security Features (v0.25). Read-only.
+ * Security → Security features (v0.25). Read-only.
  *
  * The server decides what each caller may see (security-features.service.ts):
  * Platform Admins and technician managers, any scope; a Business Owner, their
@@ -22,7 +22,7 @@ export default function SecurityFeaturesPage() {
       <Link href="/settings" className="inline-flex items-center text-sm text-muted-foreground hover:underline">
         <ArrowLeft className="mr-1 h-4 w-4" />Settings
       </Link>
-      <PageHeader title="Security Features" description="Which technician can reach a customer's computer, and what evidence you will have afterwards." />
+      <PageHeader title="Security features" description="Which technician can reach a customer's device, and what evidence you will have afterwards." />
       {allowed
         ? <SecurityFeaturesTab />
         : <p className="text-sm text-muted-foreground">Security configuration is visible to Platform Admins, technician managers and Business Owners, from their own account.</p>}

@@ -373,7 +373,7 @@ async function all() {
       ['svchost', { pid: 1100, name: 'svchost', startedAt: new Date(T0).toISOString() }, 'PROTECTED_PROCESS', /stop the service instead/],
       ['lsass', { pid: 700, name: 'lsass', startedAt: new Date(T0).toISOString() }, 'PROTECTED_PROCESS', /protected/],
       ['System (pid 4)', { pid: 4, name: 'System', startedAt: new Date(T0).toISOString() }, 'PROTECTED_PROCESS', /kernel/],
-      ['rustdesk', { pid: 900, name: 'rustdesk', startedAt: T0_MS }, 'PROTECTED_PROCESS', /how this computer is reached/],
+      ['rustdesk', { pid: 900, name: 'rustdesk', startedAt: T0_MS }, 'PROTECTED_PROCESS', /how this device is reached/],
     ];
     for (const [what, body, c, re] of procCases) {
       r = (await ask(pc, 'proc', body)).r;

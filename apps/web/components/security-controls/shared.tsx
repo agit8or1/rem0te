@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Shapes and small pieces shared by Settings → Security → Technician Access,
+ * Shapes and small pieces shared by Security → Technician access,
  * the Security Features catalog and the Connect page's temporary-access card.
  * Shapes come from apps/api/src/security-controls (presets.ts,
  * policy-admin.service.ts, access-policy.service.ts).

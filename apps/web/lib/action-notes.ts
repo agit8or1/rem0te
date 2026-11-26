@@ -13,7 +13,7 @@ export interface TargetTally {
 const WORDS: [keyof Omit<TargetTally, 'total' | 'partial'>, string][] = [
   ['succeeded', 'succeeded'],
   ['failed', 'failed'],
-  ['refused', 'refused by the computer'],
+  ['refused', 'refused by the device'],
   ['not_executed', 'not executed'],
   ['uncertain', 'uncertain'],
   ['waiting', 'still waiting'],
@@ -23,7 +23,7 @@ const WORDS: [keyof Omit<TargetTally, 'total' | 'partial'>, string][] = [
 /** "Of 5 computers: 3 succeeded, 1 failed, 1 still waiting." Zero counts are left out. */
 export function tallyText(t: TargetTally): string {
   const parts = WORDS.filter(([k]) => t[k] > 0).map(([k, w]) => `${t[k]} ${w}`);
-  return `Of ${t.total} computer${t.total === 1 ? '' : 's'}: ${parts.length ? parts.join(', ') : 'none counted'}.`;
+  return `Of ${t.total} device${t.total === 1 ? '' : 's'}: ${parts.length ? parts.join(', ') : 'none counted'}.`;
 }
 
 /** Some computers did it and some did not (failed, refused, not executed or uncertain). */

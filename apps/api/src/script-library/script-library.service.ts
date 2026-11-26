@@ -120,7 +120,7 @@ export class ScriptLibraryService {
   async list(actor: ActorContext, businessId?: string) {
     if (!this.anyRight(actor)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'The script library needs the Write scripts or Review scripts permission.' });
     const scope = listScope(actor, businessId);
-    if (!actor.isPlatformAdmin && businessId && businessId !== actor.businessId) throw new ForbiddenException('You do not have access to that business');
+    if (!actor.isPlatformAdmin && businessId && businessId !== actor.businessId) throw new ForbiddenException('You do not have access to that customer');
     const where: Prisma.ScriptWhereInput = libraryWhere(actor, scope);
     const rows = await this.prisma.script.findMany({
       where, orderBy: [{ scope: 'asc' }, { name: 'asc' }], take: 500,
@@ -244,13 +244,13 @@ export class ScriptLibraryService {
     this.checkContent(d.content);
     let customer: { id: string; tenantId: string } | null = null;
     if (d.scope === 'global') {
-      if (d.businessId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'A global script names no business.' });
+      if (d.businessId) throw new BadRequestException({ code: 'INVALID_REQUEST', message: 'A global script names no customer.' });
       if (!actor.isPlatformAdmin) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Global scripts are written by a Platform Admin.' });
     } else {
-      if (!actor.isPlatformAdmin && !actor.businessId) throw new ForbiddenException('Your account is not linked to a business.');
+      if (!actor.isPlatformAdmin && !actor.businessId) throw new ForbiddenException('Your account is not linked to a customer.');
       // The business comes from the actor; a body naming another is refused.
       const businessId = this.acl.requireScope(actor, d.businessId ?? (actor.isPlatformAdmin ? null : actor.businessId));
-      if (!this.hasBusinessCap(actor, CAP.SCRIPTS_AUTHOR)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Adding a script needs the Write scripts permission on the whole business.' });
+      if (!this.hasBusinessCap(actor, CAP.SCRIPTS_AUTHOR)) throw new ForbiddenException({ code: 'NOT_ALLOWED', message: 'Adding a script needs the Write scripts permission on the whole customer.' });
       customer = await this.prisma.customer.findUnique({ where: { id: businessId }, select: { id: true, tenantId: true } });
       if (!customer) throw new NotFoundException('Business not found');
     }

@@ -79,8 +79,8 @@ const CHECK_STYLE: Record<CheckStatus, { label: string; icon: React.ElementType;
 };
 
 const LOCATION_LABEL: Record<CheckLocation, string> = {
-  technician: 'Your computer',
-  endpoint: 'This computer',
+  technician: 'Your device',
+  endpoint: 'This device',
   server: 'Rem0te server',
 };
 
@@ -142,7 +142,7 @@ export function DiagnosticsPanel({ endpointId, canConnect }: { endpointId: strin
     if (helperAt && latestAt > helperAt) {
       setHelperAt(null);
       qc.invalidateQueries({ queryKey: ['diagnostics', endpointId] });
-      toast({ title: 'Report received from your computer' });
+      toast({ title: 'Report received from your device' });
     }
   }, [helperAt, latestAt, endpointId, qc, toast]);
 
@@ -155,7 +155,7 @@ export function DiagnosticsPanel({ endpointId, canConnect }: { endpointId: strin
     },
     onSuccess: () => {
       // Each of these is queued for the computer's next check-in, not done.
-      toast({ title: 'Requested', description: 'The computer applies this on its next check-in.' });
+      toast({ title: 'Requested', description: 'The device applies this on its next check-in.' });
       setPending(null);
       qc.invalidateQueries({ queryKey: ['diagnostics', endpointId] });
       qc.invalidateQueries({ queryKey: ['endpoint', endpointId] });
@@ -205,7 +205,7 @@ export function DiagnosticsPanel({ endpointId, canConnect }: { endpointId: strin
                 <Button size="sm" variant="outline" asChild>
                   <a href={diagnosticsApi.helperUrl(endpointId)} onClick={() => setHelperAt(Date.now())}>
                     <Laptop className="h-3.5 w-3.5 mr-1" />
-                    Check my computer
+                    Check my device
                   </a>
                 </Button>
               )}
@@ -281,17 +281,17 @@ export function DiagnosticsPanel({ endpointId, canConnect }: { endpointId: strin
       {canConnect && (
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Latest check of your computer</CardTitle>
+            <CardTitle className="text-sm">Latest check of your device</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
             {helperAt && (
               <p className="text-xs text-muted-foreground">
-                Waiting for the helper to report. Run the downloaded file on your Windows computer.
+                Waiting for the helper to report. Run the downloaded file on your Windows device.
               </p>
             )}
             {!latest ? (
               <p className="text-muted-foreground">
-                No report yet. &ldquo;Check my computer&rdquo; downloads a read-only helper for Windows that reports back here.
+                No report yet. &ldquo;Check my device&rdquo; downloads a read-only helper for Windows that reports back here.
               </p>
             ) : (
               <>
@@ -311,7 +311,7 @@ export function DiagnosticsPanel({ endpointId, canConnect }: { endpointId: strin
         open={!!pending}
         onOpenChange={(o) => { if (!o) setPending(null); }}
         title={pending?.label ?? ''}
-        description="This changes configuration on the computer. It is queued and applied on the computer's next check-in."
+        description="This changes configuration on the device. It is queued and applied on the device's next check-in."
         confirmLabel="Request it"
         loading={action.isPending}
         onConfirm={() => pending && action.mutate(pending.id)}

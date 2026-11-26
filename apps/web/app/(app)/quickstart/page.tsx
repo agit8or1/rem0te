@@ -11,7 +11,7 @@ import { CheckCircle2, Circle, ChevronRight, ChevronLeft, Sparkles, Monitor, Ser
 import Link from 'next/link';
 
 const STEPS = [
-  { label: 'Verify Server', icon: Server },
+  { label: 'Verify server', icon: Server },
   { label: 'Install RustDesk', icon: Monitor },
   { label: 'Add a device', icon: Sparkles },
   { label: "You're Ready!", icon: CheckCircle2 },
@@ -59,7 +59,7 @@ export default function QuickstartPage() {
   return (
     <div className="p-6 space-y-6 max-w-2xl">
       <PageHeader
-        title="Quick Start"
+        title="Quick start"
         description="Get your remote support environment set up in a few steps."
       />
 
@@ -172,7 +172,7 @@ function StepVerifyServer({
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-4 rounded-md border px-4 py-3">
             <div>
-              <p className="text-sm font-medium">Relay Host</p>
+              <p className="text-sm font-medium">Relay host</p>
               <p className="text-xs text-muted-foreground mt-0.5">
                 {relayHost || 'Not configured — go to Settings → RustDesk tab'}
               </p>
@@ -189,7 +189,7 @@ function StepVerifyServer({
 
           <div className="flex items-center justify-between gap-4 rounded-md border px-4 py-3">
             <div>
-              <p className="text-sm font-medium">Public Key</p>
+              <p className="text-sm font-medium">Public key</p>
               <p className="text-xs text-muted-foreground mt-0.5 font-mono break-all">
                 {publicKey || 'Not configured — go to Settings → RustDesk tab'}
               </p>
@@ -246,7 +246,7 @@ function StepInstallRustDesk({
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          To connect to a remote computer you need RustDesk installed on your own machine, to reach
+          To connect to a remote device you need RustDesk installed on your own machine, to reach
           devices.
         </p>
 
@@ -331,13 +331,13 @@ function StepEnrollDevice({ downloadPageUrl }: { downloadPageUrl: string }) {
       <CardContent className="space-y-5">
         <p className="text-sm text-muted-foreground">
           Adding a device installs RustDesk (and, on Windows, the Rem0te agent) on it and enrols it into a
-          business, so you can connect without asking for its ID every time.
+          customer, so you can connect without asking for its ID every time.
         </p>
 
         <div className="space-y-3">
           <p className="text-sm font-medium">Add device (recommended)</p>
           <p className="text-sm text-muted-foreground">
-            Choose the business and site, pick the operating system, copy the install command, and the page
+            Choose the customer and site, pick the operating system, copy the install command, and the page
             shows the device arriving and its first health.
           </p>
           <Link href="/endpoints/enroll">
@@ -348,7 +348,7 @@ function StepEnrollDevice({ downloadPageUrl }: { downloadPageUrl: string }) {
         <div className="border-t pt-4 space-y-3">
           <p className="text-sm font-medium">Download page (for a person to fetch RustDesk themselves)</p>
           <p className="text-sm text-muted-foreground">
-            This page offers RustDesk pre-configured for your server. It does not enrol the computer: use Add
+            This page offers RustDesk pre-configured for your server. It does not enrol the device: use Add
             device for that.
           </p>
           <CodeBlock>{downloadPageUrl}</CodeBlock>
@@ -395,7 +395,7 @@ function StepReady() {
           <Link href="/quick-connect">
             <Button>
               <Link2 className="h-4 w-4 mr-2" />
-              Connect to a Device
+              Connect to a device
             </Button>
           </Link>
           <Link href="/endpoints">

@@ -39,7 +39,7 @@ owns identity, authorisation, credentials and audit; RustDesk owns the pixels.
 The two vertical paths never meet. The API never talks to hbbs during a
 connection, and hbbs never asks the API whether a connection is allowed —
 authorisation happens *before*, when the API decides whether to hand out the
-endpoint's credential.
+device's credential.
 
 ---
 
@@ -61,7 +61,7 @@ No Docker. Deployment is systemd units and a build on disk.
 ### The integration worker is deliberately small
 
 `dist/integration/worker.main.js` loads Prisma, RBAC and audit and nothing else —
-no sessions, launcher, enrollment, endpoint-command or admin modules — so a job
+no sessions, launcher, enrollment, device-command or admin modules — so a job
 built from an untrusted ticket has no code path to any of them. Its only outbound
 HTTP goes to the two URLs in the root-owned peers file, with redirects refused.
 `scripts/check-security-invariants.mjs` (section 10) holds both properties. See
@@ -69,7 +69,7 @@ HTTP goes to the two URLs in the root-owned peers file, with redirects refused.
 
 ### The portal mirrors updates; it does not sign them (0.24)
 
-Agent code reaches Windows endpoints through a TUF repository signed with `rem0te-release`
+Agent code reaches Windows devices through a TUF repository signed with `rem0te-release`
 (`tools/windows-installer`). The signing happens offline on a release machine, or, from 0.37, on the portal host under
 a separate `rem0te-release` user the API can't read (`deploy/release/`,
 [update-signing.md](update-signing.md#the-easy-way-single-host-037)). Either way the API only serves the copy under
@@ -111,19 +111,19 @@ Tenant  ─┬─ Customer (a BUSINESS — the security boundary)
          └── TenantSettings / TenantBranding / TenantPolicy
 ```
 
-- **`Customer` is the business**, and the security boundary. Every
-  business-scoped query goes through `AccessControlService`.
+- **`Customer` is the customer**, and the security boundary. Every
+  customer-scoped query goes through `AccessControlService`.
 - **`Tenant`** is an internal platform container, not a boundary.
-- **`Endpoint`** is a managed computer; **`RustdeskNode`** holds its RustDesk
+- **`Endpoint`** is a managed device; **`RustdeskNode`** holds its RustDesk
   identity — the peer ID, reported version, and the AES-256-GCM encrypted
   permanent password.
-- **`EndpointInventory`** is what that computer reports about itself — one row,
+- **`EndpointInventory`** is what that device reports about itself — one row,
   rewritten in place, a snapshot rather than a history. **`EndpointCommand`** is
-  the queue that asks it: the console stages a row, the endpoint's next
+  the queue that asks it: the console stages a row, the device's next
   heartbeat carries it out. There is no push channel and no command type that
   runs arbitrary code. See [inventory.md](inventory.md).
 - **`ChatConversation` / `ChatMessage`** (0.34) are chats with the person at a
-  computer. They are the one exception to "the next heartbeat": while a chat is
+  device. They are the one exception to "the next heartbeat": while a chat is
   open, the signed agent long-polls `/enrollment/chat/poll` with the device
   secret, and the API holds each poll up to 25 s in memory. The poll carries
   chat text and receipts only, never commands. See [chat.md](chat.md).
@@ -145,7 +145,7 @@ Full model in [access-control.md](access-control.md).
 - JWT in an `access_token` cookie, and accepted as `Authorization: Bearer`.
 - Payload: `{ sub, email, tenantId, businessId, roleType, capabilities,
   isPlatformAdmin, mfaVerified, partial? }`.
-- **Role, business and capabilities are re-read from the database on every
+- **Role, customer and capabilities are re-read from the database on every
   request.** The token is never trusted for authorisation — only for identity.
 - TOTP secrets: AES-256-GCM, stored as `iv:authTag:ciphertext` hex.
 - Launcher tokens: signed with a **separate** `LAUNCHER_TOKEN_SECRET`, 120s TTL,
@@ -166,12 +166,12 @@ Full model in [access-control.md](access-control.md).
   `UserMfaMethod` rows of type `WEBAUTHN`; challenges in `WebAuthnChallenge`,
   single-use, 5 minutes; user verification required.
 - **Technician scope** (v0.20): `TechnicianAssignment` rows (per user or
-  group, per business, capabilities, optional computers, window and schedule)
+  group, per customer, capabilities, optional devices, window and schedule)
   resolved on every request by `ActorResolverService`, which also honours the
-  `rem0te_business` cookie / `X-Rem0te-Business` header only for a business
+  `rem0te_business` cookie / `X-Rem0te-Business` header only for a customer
   the person can reach right now.
 - **Presets and the launch policy** (v0.23): `TechnicianPreset` rows give a
-  preset-backed assignment its capabilities live; capability and computer
+  preset-backed assignment its capabilities live; capability and device
   scope are evaluated per grant (`technicianGrantAllows`).
   `AccessPolicyService.evaluateLaunch` runs inside
   `EndpointsService.authorizeConnect`, so connect, `connect.cmd`, grant
@@ -263,7 +263,7 @@ stale sweep uses: **online** (green) when the agent heartbeat is inside it;
 **agent_silent** (amber, "Reachable (RustDesk) · agent silent 12 d") when
 `isOnline` holds with no heartbeat inside it, never reported included; and
 **offline** (grey). The device list, device page, `GET /endpoints`, My
-computers, search, the dashboard and its map, and the RustDesk client-update
+devices, search, the dashboard and its map, and the RustDesk client-update
 list send it. The list's `online` filter takes `online`, `silent` or
 `offline` server-side, and an "online" rule group means the first. The sweep
 is unchanged — `isOnline` stays true for a silent agent, because Connect still
@@ -283,7 +283,7 @@ A second, different question — *has hbbs ever accepted a registration from
 this ID?* — is answered from hbbs's peer table (`db_v2.sqlite3`, read-only;
 `RUSTDESK_DB_PATH` overrides the path). It is the `rustdeskRegistered` field of
 an authenticated heartbeat response, which the Windows installer polls before
-it will report success, and the "has registered before" line in a computer's
+it will report success, and the "has registered before" line in a device's
 diagnostics. Until 0.34 every heartbeat started a `sqlite3` process for it.
 Since 0.34 one `sqlite3` reads every digits-only peer ID at most once per
 `HBBS_PEER_CACHE_SECONDS` (default 10, clamped to 1–30) and heartbeats in that

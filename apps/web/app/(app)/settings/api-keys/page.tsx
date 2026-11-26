@@ -16,7 +16,7 @@ import { apiError } from '@/components/security-controls/shared';
 import { useAsks } from '@/lib/confirm-policy';
 
 /**
- * Settings → API keys (0.29).
+ * Administration → API keys (0.29).
  *
  * Keys for the public API (/api/v1/pub/v1, docs/PUBLIC-API.md). A key belongs
  * to exactly one business and carries only the scopes ticked here. The key
@@ -36,14 +36,14 @@ type Key = {
 };
 
 const SCOPE_HINT: Record<string, string> = {
-  'companies:read': 'List and read businesses',
-  'companies:write': 'Create businesses',
+  'companies:read': 'List and read customers',
+  'companies:write': 'Create customers',
   'users:read': 'List people',
   'users:write': 'Invite people',
-  'computers:read': 'List and read computers',
-  'computers:write': 'Change computers',
+  'computers:read': 'List and read devices',
+  'computers:write': 'Change devices',
   'sessions:read': 'Read session history',
-  'enrollment:write': 'Create enrollment tokens (installs a computer into the business)',
+  'enrollment:write': 'Create enrollment tokens (installs a device into the customer)',
   'audit:read': 'Read the audit log',
 };
 const fmt = (d: string | null) => (d ? new Date(d).toLocaleString() : '—');
@@ -112,7 +112,7 @@ export default function ApiKeysPage() {
       </Link>
       <PageHeader
         title="API keys"
-        description="Keys for the public API at /api/v1/pub/v1. Each key belongs to one business and can do only what its scopes allow."
+        description="Keys for the public API at /api/v1/pub/v1. Each key belongs to one customer and can do only what its scopes allow."
       />
       {notice && (
         <div className={`rounded-md border p-3 text-sm ${notice.ok ? 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100' : 'border-destructive/40 bg-destructive/10 text-destructive'}`}>{notice.text}</div>
@@ -137,12 +137,12 @@ export default function ApiKeysPage() {
       {needsBusiness && (
         <Card>
           <CardContent className="space-y-1 pt-6 text-sm">
-            <Label htmlFor="ak-business">Business</Label>
+            <Label htmlFor="ak-business">Customer</Label>
             <select id="ak-business" className="w-full rounded-md border bg-background p-2 md:w-96" value={target} onChange={(e) => setTarget(e.target.value)}>
-              <option value="">All businesses (list only)</option>
+              <option value="">All customers (list only)</option>
               {(businesses ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
-            <p className="text-xs text-muted-foreground">A key is always created inside one business — no key reaches every business.</p>
+            <p className="text-xs text-muted-foreground">A key is always created inside one customer — no key reaches every customer.</p>
           </CardContent>
         </Card>
       )}
@@ -185,7 +185,7 @@ export default function ApiKeysPage() {
               : 'A key keeps working after you sign out. '}
             Scopes cannot be changed later — create a new key and revoke the old one.{askCreate ? ' Revoking never asks.' : ''}
           </p>
-          {needsBusiness && !target && <p className="text-xs text-muted-foreground">Choose a business above first.</p>}
+          {needsBusiness && !target && <p className="text-xs text-muted-foreground">Choose a customer above first.</p>}
         </CardContent>
       </Card>
 

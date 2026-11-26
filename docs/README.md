@@ -12,15 +12,15 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 
 ## Using it
 
-- **[technician-guide.md](technician-guide.md)** — day-to-day: find a computer,
+- **[technician-guide.md](technician-guide.md)** — day-to-day: find a device,
   connect, help someone unenrolled, review sessions; which Devices-list columns show on narrower windows (0.48.1).
 - **[NAVIGATION_MIGRATION.md](NAVIGATION_MIGRATION.md)** — where every menu entry went in 0.87,
   Standard and Advanced modes, favourites and the Ctrl+K palette. No address changed.
 - **[clients.md](clients.md)** — every RustDesk client Rem0te hands out, who each
   is for, and how it learns where this server is.
-- **[deployment.md](deployment.md)** — rolling the agent out to many computers:
+- **[deployment.md](deployment.md)** — rolling the agent out to many devices:
   multi-use deployment keys, ready-made instructions for Group Policy, Intune, an
-  existing RMM, Linux and macOS, the Unassigned computers list, assignment rules
+  existing RMM, Linux and macOS, the Unassigned devices list, assignment rules
   (suggestions only) and adoption (0.57).
 - **[connecting.md](connecting.md)** — what actually happens when you click
   Connect, the three connect paths, and why they are not equivalent.
@@ -32,12 +32,12 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   read the `lab-evidence-windows` artifact, and what it cannot prove.
 - **[rmm-expansion-audit.md](rmm-expansion-audit.md)** — the 0.73.2 audit of the full-RMM directive: each item's
   status and strongest evidence, where it conflicts with a security invariant, the P0 release sequence, and what
-  still needs a real computer to prove it.
+  still needs a real device to prove it.
 - **[session-maintenance-mdm-backup-audit.md](session-maintenance-mdm-backup-audit.md)** — the 0.76.1 audit of
   the four-phase directive: what RustDesk can and cannot enforce for clipboard, file transfer, elevation and
   session length (with sources), the owner's decision on a background terminal and file transfer, MDM and backup
   provider options, owner decisions 8–20, and the phased roadmap.
-- **[inventory.md](inventory.md)** — the specs a managed computer reports, its
+- **[inventory.md](inventory.md)** — the specs a managed device reports, its
   installed software and change history, its pending Windows updates, and how
   to read a slice of its event log.
 - **[diagnostics.md](diagnostics.md)** — one-click read-only diagnostics: disk space,
@@ -46,23 +46,23 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   Services and Network snapshot tabs (0.33), and the buttons on them that start, stop or restart a service, change
   its startup type, or end a process (0.45).
 - **[remote-terminal.md](remote-terminal.md)** — the background terminal (0.77): a cmd or PowerShell on a Windows
-  computer as SYSTEM with no screen sharing, for Platform Admins only; how it reaches the computer (outbound, up to
+  device as SYSTEM with no screen sharing, for Platform Admins only; how it reaches the device (outbound, up to
   three minutes to start), the 15-minute idle and 60-minute limits, ending and revocation, opt-in transcripts, and
   exactly which rules it reverses.
 - **[file-transfer.md](file-transfer.md)** — background file transfer (0.78): send a file to, or fetch one from, a
-  Windows computer as SYSTEM, for Platform Admins only (sending and fetching separately); the path rule, SHA-256 at
+  Windows device as SYSTEM, for Platform Admins only (sending and fetching separately); the path rule, SHA-256 at
   both ends, never over an existing file unless asked, the size limit (100 MB default, 2 GB at most), the clocks,
   and what is kept (the hash, never the content).
 - **[monitoring.md](monitoring.md)** — monitors (offline, disk, CPU, memory,
   services, event log, pending restart), inheritance, alerts, site outages,
   maintenance windows, escalation and ClientSt0r tickets (0.29).
 - **[group-policies.md](group-policies.md)** — monitors and client-update policies for a device group (0.35):
-  computer > group > site > business, priorities between groups, membership computed at each evaluation,
-  what the pages show, and the measured cost at 5,000 computers.
-- **[metric-history.md](metric-history.md)** — CPU, memory and disk over 24 hours to 90 days on a computer's
-  Performance tab: what is recorded, gaps, roll-up and retention settings, storage per 1,000 computers (0.33).
+  device > group > site > customer, priorities between groups, membership computed at each evaluation,
+  what the pages show, and the measured cost at 5,000 devices.
+- **[metric-history.md](metric-history.md)** — CPU, memory and disk over 24 hours to 90 days on a device's
+  Performance tab: what is recorded, gaps, roll-up and retention settings, storage per 1,000 devices (0.33).
 - **[reports.md](reports.md)** — patch compliance, agent coverage, alert frequency and offline time per
-  business and site, what each is computed from and what it cannot tell you, and the audited CSV export (0.32);
+  customer and site, what each is computed from and what it cannot tell you, and the audited CSV export (0.32);
   software version compliance per catalog entry (0.34).
 - **[warranty.md](warranty.md)** — hardware warranty and support links (0.56): links to each vendor's support,
   warranty and driver pages, warranty dates entered by hand or looked up from Dell or Lenovo (off by default; the
@@ -73,12 +73,12 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   device. Read-only, and **requires setup**: no real provider can be connected yet.
 - **[own-mdm.md](own-mdm.md)** — Rem0te as its own MDM (design, 0.81.1; the owner's decision of 2026-11-21): the
   Apple MDM server and the Android EMM, what the owner must obtain from Apple and Google (with cost and lead time),
-  the Settings → Mobile devices wizard, the security model, and the order of work. Nothing is built yet.
+  the Administration → Mobile device setup wizard, the security model, and the order of work. Nothing is built yet.
 - **[backups.md](backups.md)** — backup status from a provider (0.81): completion, integrity and a verified
   restore kept apart, the St0r push and its token, Comet (planned), RPO/RTO against target, the four opt-in backup
   monitors and the UrBackup and Comet service templates. Read-only: nothing starts a backup, restore or failover.
-  From 0.82, **Settings → Backups** sets St0r up per business, step by step: the token shown once, the push
-  address, a test push, rotation and revocation, and linking an asset to a computer by hand.
+  From 0.82, **Administration → Backup connections** sets St0r up per customer, step by step: the token shown once, the push
+  address, a test push, rotation and revocation, and linking an asset to a device by hand.
 - **[st0r-push-contract.md](st0r-push-contract.md)** — for St0r's developers (0.82): how St0r pushes backup status
   to Rem0te, contract version 1. The token, the exact body
   ([JSON Schema](https://github.com/agit8or1/rem0te/blob/main/docs/st0r-push-contract.schema.json)), limits, idempotency, the dry run, error codes, retries and
@@ -92,21 +92,21 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[integration-clientst0r.md](integration-clientst0r.md)** — ClientSt0r ticket
   analysis (contract ticket-rmm-v1): staff-only findings, what a job can and
   cannot touch, peers file, mappings. Contract: [contracts/ticket-rmm-v1](contracts/ticket-rmm-v1/README.md).
-- **[chat.md](chat.md)** — chatting with the person at a Windows computer: receipts, recording, limits,
+- **[chat.md](chat.md)** — chatting with the person at a Windows device: receipts, recording, limits,
   containment, audit and 400-day retention; emoji, files and pictures, and the chat inbox in the header (0.44);
   not yet run on real Windows (0.34, through the tray from 0.36).
-- **[tray.md](tray.md)** — the tray icon on Windows computers, with either agent: chat, support requests with
+- **[tray.md](tray.md)** — the tray icon on Windows devices, with either agent: chat, support requests with
   usage and a screenshot, self-help tools, the credentials each part holds; not yet run on real Windows (0.36).
 - **[support-requests.md](support-requests.md)** — the customer support link,
   the status page, and the technician queue.
-- **[technicians.md](technicians.md)** — MSP technicians: per-business,
-  time-limited and scheduled access, groups, approval, the business switcher.
+- **[technicians.md](technicians.md)** — MSP technicians: per-customer,
+  time-limited and scheduled access, groups, approval, the customer switcher.
 
 ## Running it
 
 - **[security-model.md](security-model.md)** — which technician can reach a customer's PC and what evidence you will
-  have afterwards: the portal / RustDesk / endpoint boundary, what each session mode really does, roles vs presets,
-  and the roadmap. The same controls, with effective state, are in Settings → Security → Security Features.
+  have afterwards: the portal / RustDesk / device boundary, what each session mode really does, roles vs presets,
+  and the roadmap. The same controls, with effective state, are in Security → Security features.
 - **[update-signing.md](update-signing.md)** — the offline-signed update chain (0.24): what a compromised portal can
   and cannot do, key ceremony, shipping a release, signed-only containment, migrating legacy agents, rotation, recovery.
 - **[approved-actions.md](approved-actions.md)** — the first approved action (0.26): starting the Print Spooler once,
@@ -116,10 +116,10 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   which functions ask you to confirm it is you, set per function since 0.49 and off by default since 0.64 ([sign-in.md](sign-in.md#which-functions-ask-049)).
 - **[staged-patching.md](staged-patching.md)** — Windows updates in stages (0.27): a canary, then rings, each a
   signed plan two approvers authorize; what is installed and refused, the promotion gate, what *effective* means,
-  and what is and is not proven. Since 0.32 it also covers installing from one computer's Patches tab and patch
+  and what is and is not proven. Since 0.32 it also covers installing from one device's Patches tab and patch
   policies, which are approved once and then signed ring by ring by the signer inside a maintenance window.
 - **[software-deployment.md](software-deployment.md)** — software deployment (0.34): a catalog of allowlisted winget
-  packages pinned by version and installer SHA-256, installed or uninstalled on one computer or by canary and rings
+  packages pinned by version and installer SHA-256, installed or uninstalled on one device or by canary and rings
   as signed two-approver actions; detection rules, version compliance, who verifies what, and what is not proven.
   Searching winget and adding with one click (0.41), browsing the whole catalog and adding up to 25 at once (0.43),
   and removing an installed program from the Software tab (0.41, more uninstaller kinds in 0.42).
@@ -128,19 +128,19 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   runs on Windows as the signed action `windows.script.run@1`, only once its hash is on the approval signer's own
   allowlist; the page covers that path, its limits, the threat model, and that it hasn't run on real Windows yet.
 - **[automation.md](automation.md)** — automation schedules (0.58): an approved script or a catalog package run
-  every few hours, daily, weekly or monthly on named computers or a device group. Two passkey approvers approve the
-  schedule once on the approval signer, which signs each run under it and holds it to the same task, computers,
+  every few hours, daily, weekly or monthly on named devices or a device group. Two passkey approvers approve the
+  schedule once on the approval signer, which signs each run under it and holds it to the same task, devices,
   window and offline rule, one run at a time. Pause, revoke, revisions, history, and one-time scheduling of a run.
 - **[restart-windows.md](restart-windows.md)** — restart windows (0.60): "restart if Windows needs it, nightly
-  02:00–04:00" on a business, a device group or one computer (or *No automatic restarts*), computer > group >
-  business. Approved once on the approval signer; each restart a signed plan with the 15-minute warning, deferred
-  for a RustDesk session and tried again. With nothing set, nothing restarts a computer automatically.
+  02:00–04:00" on a customer, a device group or one device (or *No automatic restarts*), device > group >
+  customer. Approved once on the approval signer; each restart a signed plan with the 15-minute warning, deferred
+  for a RustDesk session and tried again. With nothing set, nothing restarts a device automatically.
 - **[patching-setup.md](patching-setup.md)** — turning on signed patching in production, in order (0.32): signed
   release, signed channel, signer, approvers, the first policy; where each key lives; the live pre-flight.
 - **[containment.md](containment.md)** — stopping writes during an incident (0.28): a global write pause and
-  per-business suspension, enforced by the portal, the approval signer and a signed pause the agents obey; the
+  per-customer suspension, enforced by the portal, the approval signer and a signed pause the agents obey; the
   tamper-evident audit log, its off-host export and verification; watching from outside.
-- **[server-security.md](server-security.md)** — Admin → Security (0.74): a posture score over SSH, firewall,
+- **[server-security.md](server-security.md)** — Security → Server security (0.74): a posture score over SSH, firewall,
   listening ports, updates, restarts, fail2ban, certificates, security headers, MFA coverage, API keys, the audit
   chain and the API's own off switches; audited, confirmed fail2ban and OS-update actions; unknown is never OK.
 - **[incident-recovery.md](incident-recovery.md)** — the runbook: a compromised account, portal or database; key
@@ -149,11 +149,11 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
   launch policy, protected device classes, fleet-abuse limits, independent
   review of trust changes, and what this build can and cannot enforce.
 - **[setup.md](setup.md)** — installation, configuration, ports, operations.
-- **[server-sizing.md](server-sizing.md)** — how big a server for 50 to 5,000 computers, from measured heartbeat cost and row sizes.
+- **[server-sizing.md](server-sizing.md)** — how big a server for 50 to 5,000 devices, from measured heartbeat cost and row sizes.
 - **[data-retention.md](data-retention.md)** — what ages out of the database and when, what never does (the audit log), and the `RETENTION_*` settings.
 - **[updates.md](updates.md)** — the three things that can be out of date
   (Rem0te, the RustDesk clients, hbbs/hbbr) and how each is updated; automatic agent updates, and turning them on
-  or off for one computer or one business (0.46).
+  or off for one device or one customer (0.46).
 - **[architecture.md](architecture.md)** — what runs where, the data model, and
   the RustDesk configuration chain.
 - **[NAVIGATION_ARCHITECTURE.md](NAVIGATION_ARCHITECTURE.md)** — how the console's menu, header,
@@ -161,7 +161,7 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 - **[UI_DESIGN_SYSTEM.md](UI_DESIGN_SYSTEM.md)** — the colour tokens with their WCAG contrast,
   type, spacing, density, focus and motion (0.87).
 - **[access-control.md](access-control.md)** — the permission model in full.
-- **[offboarding.md](offboarding.md)** — who can reach a computer and why, and
+- **[offboarding.md](offboarding.md)** — who can reach a device and why, and
   removing someone's access — including what revocation cannot undo.
 - **[sign-in.md](sign-in.md)** — passwords, SSO (OIDC), passkeys, step-up and which
   functions ask for it (*Settings → Confirm it is you*, 0.49), and
@@ -186,7 +186,7 @@ contents panel on every page and search across all of it (press <kbd>/</kbd>).
 ## The one thing worth knowing up front
 
 Rem0te decides *who may connect to what* and hands out the credential. RustDesk
-carries the session. They have **separate ideas of whether a computer is
+carries the session. They have **separate ideas of whether a device is
 online**, and a Connect depends only on RustDesk's.
 
 When they disagree — a green dot in Rem0te and "offline" from RustDesk — ask

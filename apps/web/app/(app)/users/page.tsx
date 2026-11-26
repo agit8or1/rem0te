@@ -168,8 +168,8 @@ export default function UsersPage() {
       <PageHeader
         title="Users"
         description={isPlatformAdmin
-          ? 'Everyone across every business.'
-          : `People in ${businessName ?? 'your business'}.`}
+          ? 'Everyone across every customer.'
+          : `People in ${businessName ?? 'your customer'}.`}
       >
         {canManage && (
           <Button
@@ -202,9 +202,9 @@ export default function UsersPage() {
         </div>
         {isPlatformAdmin && (
           <Select value={businessFilter} onValueChange={setBusinessFilter}>
-            <SelectTrigger className="w-56" aria-label="Filter by business"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-56" aria-label="Filter by customer"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All businesses</SelectItem>
+              <SelectItem value="all">All customers</SelectItem>
               {businesses.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
             </SelectContent>
           </Select>
@@ -222,7 +222,7 @@ export default function UsersPage() {
               <thead className="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th className="px-4 py-3 font-medium">Person</th>
-                  {isPlatformAdmin && <th className="px-4 py-3 font-medium">Business</th>}
+                  {isPlatformAdmin && <th className="px-4 py-3 font-medium">Customer</th>}
                   <th className="px-4 py-3 font-medium">Level</th>
                   <th className="px-4 py-3 font-medium">Permissions</th>
                   <th className="px-4 py-3 font-medium">MFA</th>
@@ -380,7 +380,7 @@ export default function UsersPage() {
           <DialogHeader>
             <DialogTitle>Add a person</DialogTitle>
             <DialogDescription>
-              Business Users start with <em>View computers</em> and <em>Remote connect</em>. Adjust
+              Business Users start with <em>View devices</em> and <em>Remote connect</em>. Adjust
               their permissions right afterwards.
             </DialogDescription>
           </DialogHeader>
@@ -417,9 +417,9 @@ export default function UsersPage() {
               </div>
               {isPlatformAdmin && (
                 <div>
-                  <Label>Business</Label>
+                  <Label>Customer</Label>
                   <Select value={invite.businessId} onValueChange={(v) => setInvite({ ...invite, businessId: v })}>
-                    <SelectTrigger><SelectValue placeholder="Choose a business" /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder="Choose a customer" /></SelectTrigger>
                     <SelectContent>
                       {businesses.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
                     </SelectContent>
@@ -504,7 +504,7 @@ function PermissionsDialog({
         <DialogHeader>
           <DialogTitle>Permissions</DialogTitle>
           <DialogDescription>
-            {membership ? `${fullName(membership.user)} · ${membership.business?.name ?? 'No business'}` : ''}
+            {membership ? `${fullName(membership.user)} · ${membership.business?.name ?? 'No customer'}` : ''}
           </DialogDescription>
         </DialogHeader>
 

@@ -74,7 +74,7 @@ function ComputerPicker({
   useEffect(() => { if (results.length) onKnown(results); }, [results, onKnown]);
 
   const toggle = (id: string) => onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
-  const label = (e?: EndpointLite) => (e ? `${e.name}${e.customer ? ` · ${e.customer.name}` : ''}` : 'Computer');
+  const label = (e?: EndpointLite) => (e ? `${e.name}${e.customer ? ` · ${e.customer.name}` : ''}` : 'Device');
 
   return (
     <div className="space-y-2">
@@ -92,13 +92,13 @@ function ComputerPicker({
       )}
       <div className="relative">
         <Search className="absolute left-2.5 top-3 h-4 w-4 text-muted-foreground" />
-        <Input className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search computers by name, hostname, ID…" />
+        <Input className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search devices by name, hostname, ID…" />
       </div>
       <div className="max-h-48 overflow-y-auto rounded-md border divide-y">
         {isLoading ? (
           <p className="p-2 text-xs text-muted-foreground">Loading…</p>
         ) : results.length === 0 ? (
-          <p className="p-2 text-xs text-muted-foreground">No computers match.</p>
+          <p className="p-2 text-xs text-muted-foreground">No devices match.</p>
         ) : (
           results.map((e) => (
             <label key={e.id} className="flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-muted/50">
@@ -162,7 +162,7 @@ function PinCard() {
         <CardTitle className="flex items-center gap-2 text-base"><Pin className="h-4 w-4" /> Supported RustDesk version</CardTitle>
         <CardDescription>
           The RustDesk client version that every installer, Connect script and Quick Connect download installs.
-          It does not change computers that are already installed — use a rollout for that.
+          It does not change devices that are already installed — use a rollout for that.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -234,7 +234,7 @@ function PilotGroupDialog({
         <DialogHeader>
           <DialogTitle>{group ? `Edit ${group.name}` : 'New pilot group'}</DialogTitle>
           <DialogDescription>
-            Computers in a rollout&apos;s pilot group go first, as batch 0. The rest of the rollout waits until every pilot
+            Devices in a rollout&apos;s pilot group go first, as batch 0. The rest of the rollout waits until every pilot
             job has finished and the failure threshold has not been reached.
           </DialogDescription>
         </DialogHeader>
@@ -248,7 +248,7 @@ function PilotGroupDialog({
             <Textarea value={description} maxLength={500} rows={2} onChange={(e) => setDescription(e.target.value)} />
           </div>
           <div className="space-y-1">
-            <Label>Computers ({ids.length})</Label>
+            <Label>Devices ({ids.length})</Label>
             <ComputerPicker selected={ids} onChange={setIds} known={known} onKnown={onKnown} />
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
@@ -273,7 +273,7 @@ function PilotGroupsCard({ groups, isLoading }: { groups: PilotGroup[]; isLoadin
         <div className="flex items-start justify-between gap-3">
           <div>
             <CardTitle className="flex items-center gap-2 text-base"><Users className="h-4 w-4" /> Pilot groups</CardTitle>
-            <CardDescription>Computers that take an update first, before the rest of the fleet.</CardDescription>
+            <CardDescription>Devices that take an update first, before the rest of the fleet.</CardDescription>
           </div>
           <Button variant="outline" size="sm" onClick={() => { setEditing(null); setOpen(true); }}>
             <Plus className="h-4 w-4 mr-1" /> New group
@@ -292,7 +292,7 @@ function PilotGroupsCard({ groups, isLoading }: { groups: PilotGroup[]; isLoadin
                 <div className="min-w-0">
                   <p className="text-sm font-medium">{g.name}</p>
                   <p className="text-xs text-muted-foreground truncate">
-                    {g.members.length} computer{g.members.length === 1 ? '' : 's'}{g.description ? ` · ${g.description}` : ''}
+                    {g.members.length} device{g.members.length === 1 ? '' : 's'}{g.description ? ` · ${g.description}` : ''}
                   </p>
                 </div>
                 <Button variant="ghost" size="sm" onClick={() => { setEditing(g); setOpen(true); }}>Edit</Button>
@@ -425,8 +425,8 @@ function CreateRolloutDialog({
         <DialogHeader>
           <DialogTitle>New staged update</DialogTitle>
           <DialogDescription>
-            Creates a draft with one job per targeted computer. Nothing is sent to any computer until you start it.
-            Staged updates are Windows-only; other computers are skipped. Rollback is not offered.
+            Creates a draft with one job per targeted device. Nothing is sent to any device until you start it.
+            Staged updates are Windows-only; other devices are skipped. Rollback is not offered.
           </DialogDescription>
         </DialogHeader>
 
@@ -450,7 +450,7 @@ function CreateRolloutDialog({
               <p className="text-xs text-muted-foreground">
                 {component === 'AGENT'
                   ? `The agent can only be updated to this server's own version${appVersion?.version ? ` (${appVersion.version})` : ''}.`
-                  : 'Exact version, like 1.4.4. Computers already on a newer version are skipped — downgrades are not supported.'}
+                  : 'Exact version, like 1.4.4. Devices already on a newer version are skipped — downgrades are not supported.'}
               </p>
               {targetVersion.trim() && !versionValid && <p className="text-xs text-destructive">Exact version only, like 1.4.4.</p>}
             </div>
@@ -459,10 +459,10 @@ function CreateRolloutDialog({
           <div className="space-y-2">
             <p className="text-sm font-medium">Targets</p>
             <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Businesses ({businessIds.length})</Label>
+              <Label className="text-xs text-muted-foreground">Customers ({businessIds.length})</Label>
               <div className="max-h-32 overflow-y-auto rounded-md border p-2 grid grid-cols-1 sm:grid-cols-2 gap-1">
                 {businesses.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No businesses.</p>
+                  <p className="text-xs text-muted-foreground">No customers.</p>
                 ) : businesses.map((b) => (
                   <label key={b.id} className="flex items-center gap-2 text-sm cursor-pointer">
                     <input type="checkbox" checked={businessIds.includes(b.id)}
@@ -473,18 +473,18 @@ function CreateRolloutDialog({
               </div>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Specific computers ({endpointIds.length})</Label>
+              <Label className="text-xs text-muted-foreground">Specific devices ({endpointIds.length})</Label>
               <ComputerPicker selected={endpointIds} onChange={setEndpointIds} known={known} onKnown={onKnown} />
             </div>
             <p className="text-xs text-muted-foreground">
               {noTargets
-                ? <span className="text-yellow-700 dark:text-yellow-400 font-medium">Nothing selected: the rollout will include every managed computer that is not archived.</span>
+                ? <span className="text-yellow-700 dark:text-yellow-400 font-medium">Nothing selected: the rollout will include every managed device that is not archived.</span>
                 : endpointIds.length && businessIds.length
-                  ? 'Both are set, so only the selected computers that also belong to a selected business are included.'
+                  ? 'Both are set, so only the selected devices that also belong to a selected customer are included.'
                   : endpointIds.length
-                    ? 'Only the selected computers are included.'
-                    : 'Every managed computer in the selected businesses is included.'}
-              {' '}Computers that are not Windows, have not authenticated with a device secret, are already on the target,
+                    ? 'Only the selected devices are included.'
+                    : 'Every managed device in the selected customers is included.'}
+              {' '}Devices that are not Windows, have not authenticated with a device secret, are already on the target,
               or are in another active rollout for this component are listed as skipped.
             </p>
           </div>
@@ -496,7 +496,7 @@ function CreateRolloutDialog({
               {pilotGroups.map((g) => <option key={g.id} value={g.id}>{g.name} ({g.members.length})</option>)}
             </select>
             <p className="text-xs text-muted-foreground">
-              Targeted computers that are in the pilot group go first, as batch 0. Pilot members outside the targets are not added.
+              Targeted devices that are in the pilot group go first, as batch 0. Pilot members outside the targets are not added.
             </p>
           </div>
 
@@ -575,7 +575,7 @@ function CreateRolloutDialog({
             <span>
               <span className="font-medium">Defer when session state is unknown</span>
               <span className="block text-xs text-muted-foreground">
-                A computer with a confirmed active session is always deferred. With this on, it is also deferred while a remote
+                A device with a confirmed active session is always deferred. With this on, it is also deferred while a remote
                 session launched in the last two hours has not been confirmed or closed.
               </span>
             </span>
@@ -588,7 +588,7 @@ function CreateRolloutDialog({
                 <span className="font-medium">Allow signature-only verification</span>
                 <span className="block text-xs text-muted-foreground">
                   Normally the exact installer is pinned by the SHA-256 that GitHub publishes for the release, and creating the
-                  rollout fails if GitHub returns none. With this on, the rollout is created without a pinned digest: each computer
+                  rollout fails if GitHub returns none. With this on, the rollout is created without a pinned digest: each device
                   downloads that version from the RustDesk GitHub release and installs it only if Windows reports a valid
                   Authenticode signature. Any signature Windows trusts passes — the signer is logged, not checked — so this
                   is weaker than the digest. Leave it off unless the digest is genuinely unavailable.
@@ -645,7 +645,7 @@ export default function RolloutsPage() {
     <div className="p-6 space-y-6 max-w-6xl">
       <PageHeader
         title="Staged updates"
-        description="Roll RustDesk client and Rem0te agent updates out to managed computers in batches. Platform Admins only."
+        description="Roll RustDesk client and Rem0te agent updates out to managed devices in batches. Platform Admins only."
         actions={<Button onClick={() => setCreating(true)}><Plus className="h-4 w-4 mr-1" /> New rollout</Button>}
       />
 
@@ -676,7 +676,7 @@ export default function RolloutsPage() {
                     <th className="px-3 py-2 font-medium">Component</th>
                     <th className="px-3 py-2 font-medium">Target</th>
                     <th className="px-3 py-2 font-medium">Status</th>
-                    <th className="px-3 py-2 font-medium">Computers</th>
+                    <th className="px-3 py-2 font-medium">Devices</th>
                     <th className="px-3 py-2 font-medium">Batch</th>
                     <th className="px-3 py-2 font-medium">Created</th>
                   </tr>

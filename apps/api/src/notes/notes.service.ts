@@ -110,7 +110,7 @@ export class NotesService {
       tenantId = session.tenantId;
       noteBusinessId = session.customerId;
     } else {
-      throw new BadRequestException('A note must be attached to a computer, a business or a session');
+      throw new BadRequestException('A note must be attached to a device, a customer or a session');
     }
 
     if (!tenantId) throw new BadRequestException('No platform context');
@@ -121,7 +121,7 @@ export class NotesService {
     if (dto.sessionId) {
       const session = await this.assertSessionInScope(actor, dto.sessionId);
       if (session.customerId !== noteBusinessId) {
-        throw new BadRequestException('That session belongs to a different business');
+        throw new BadRequestException('That session belongs to a different customer');
       }
     }
 

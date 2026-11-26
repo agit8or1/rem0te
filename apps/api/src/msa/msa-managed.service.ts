@@ -100,9 +100,9 @@ export class MsaManagedService {
   /** Why cutover would be refused now, as codes with sentences. Empty means allowed. */
   private async cutoverBlockers(ep: { id: string; customerId: string | null; tenantId: string | null; platform: string | null; updateChannel: string | null; signedSeenAt: Date | null }) {
     const out: { code: string; message: string }[] = [];
-    if (!ep.customerId || !ep.tenantId) out.push({ code: 'ENDPOINT_UNASSIGNED', message: 'The computer is in the unassigned pool.' });
+    if (!ep.customerId || !ep.tenantId) out.push({ code: 'ENDPOINT_UNASSIGNED', message: 'The device is in the unassigned pool.' });
     if (!isWindowsPlatform(ep.platform) || !runsSignedAgent({ updateChannel: ep.updateChannel, signedSeenAt: ep.signedSeenAt })) {
-      out.push({ code: 'MSA_SIGNED_AGENT_REQUIRED', message: 'Managed Secure Access needs a Windows computer running the signed agent.' });
+      out.push({ code: 'MSA_SIGNED_AGENT_REQUIRED', message: 'Managed Secure Access needs a Windows device running the signed agent.' });
     }
     const pr = await this.msa.preflightReadiness(ep.id);
     if (!pr || pr.readiness.state !== 'compatible') {
@@ -110,7 +110,7 @@ export class MsaManagedService {
     }
     const v = compareVersion(pr?.agentVersion ?? null, MIN_ENFORCING_AGENT);
     if (v === null || v < 0) out.push({ code: 'MSA_AGENT_TOO_OLD', message: `The signed agent must be ${MIN_ENFORCING_AGENT} or later to enforce a grant.` });
-    if (ep.customerId && (await activePause(this.prisma, 'remote', ep.customerId))) out.push({ code: 'CONTAINED', message: 'Remote connections are paused for this computer.' });
+    if (ep.customerId && (await activePause(this.prisma, 'remote', ep.customerId))) out.push({ code: 'CONTAINED', message: 'Remote connections are paused for this device.' });
     if (!(await this.grants.activePublishedKeyId())) {
       out.push({ code: 'MSA_GRANT_KEY_NOT_PUBLISHED', message: 'The grant key is not in the signed release metadata yet (Settings shows the two commands to run on the release host).' });
     }
@@ -138,7 +138,7 @@ export class MsaManagedService {
     this.assertEnabled();
     const ep = await this.computer(actor, endpointId);
     assertAssigned(ep);
-    if (await this.row(ep.id)) throw new ConflictException({ code: 'MSA_ALREADY_MANAGED', message: 'This computer is already in Managed Secure Access.' });
+    if (await this.row(ep.id)) throw new ConflictException({ code: 'MSA_ALREADY_MANAGED', message: 'This device is already in Managed Secure Access.' });
     const blockers = await this.cutoverBlockers(ep);
     if (blockers.length) {
       const first = blockers[0];
@@ -152,7 +152,7 @@ export class MsaManagedService {
     try {
       await this.prisma.msaManagedComputer.create({ data: { endpointId: ep.id, state: 'pending', requestedById: actor.userId, runId } });
     } catch {
-      throw new ConflictException({ code: 'MSA_ALREADY_MANAGED', message: 'This computer is already in Managed Secure Access.' });
+      throw new ConflictException({ code: 'MSA_ALREADY_MANAGED', message: 'This device is already in Managed Secure Access.' });
     }
     return this.view(actor, ep.id);
   }
@@ -169,8 +169,8 @@ export class MsaManagedService {
     this.assertEnabled();
     const ep = await this.computer(actor, endpointId);
     const row = await this.row(ep.id);
-    if (!row) throw new ConflictException({ code: 'MSA_NOT_MANAGED', message: 'This computer is in Legacy mode.' });
-    if (row.state !== 'pending') throw new ConflictException({ code: 'MSA_NOT_PENDING', message: 'Only a computer in Managed (pending) can be confirmed.' });
+    if (!row) throw new ConflictException({ code: 'MSA_NOT_MANAGED', message: 'This device is in Legacy mode.' });
+    if (row.state !== 'pending') throw new ConflictException({ code: 'MSA_NOT_PENDING', message: 'Only a device in Managed (pending) can be confirmed.' });
     if (!row.readbackOkAt || !(await this.testSessionConnected(ep.id, row.requestedAt))) {
       throw new ConflictException({ code: 'MSA_NO_TEST_SESSION', message: 'Confirm only after a managed test session: a test grant the agent applied and read back, and a RustDesk connection it saw.' });
     }
@@ -181,7 +181,7 @@ export class MsaManagedService {
     const moved = await this.prisma.msaManagedComputer.updateMany({
       where: { endpointId: ep.id, state: 'pending' }, data: { state: 'verified', verifiedAt: new Date(), verifiedById: actor.userId },
     });
-    if (moved.count !== 1) throw new ConflictException({ code: 'MSA_NOT_PENDING', message: 'Only a computer in Managed (pending) can be confirmed.' });
+    if (moved.count !== 1) throw new ConflictException({ code: 'MSA_NOT_PENDING', message: 'Only a device in Managed (pending) can be confirmed.' });
     this.grants.wake(ep.id);
     return this.view(actor, ep.id);
   }
@@ -230,10 +230,10 @@ export class MsaManagedService {
     this.assertEnabled();
     const ep = await this.computer(actor, endpointId);
     const row = await this.row(ep.id);
-    if (!row) throw new ConflictException({ code: 'MSA_NOT_MANAGED', message: 'This computer is already in Legacy mode.' });
+    if (!row) throw new ConflictException({ code: 'MSA_NOT_MANAGED', message: 'This device is already in Legacy mode.' });
     const base = { actorId: actor.userId, actorIp: actor.ip, tenantId: ep.tenantId ?? undefined, customerId: ep.customerId ?? undefined, resource: 'endpoint', resourceId: ep.id };
     if (row.state === 'rollback_pending') {
-      if (!force) throw new ConflictException({ code: 'MSA_ROLLBACK_PENDING', message: 'This computer is already rolling back; it finishes when the agent reports. Force it only if the agent will not report again.' });
+      if (!force) throw new ConflictException({ code: 'MSA_ROLLBACK_PENDING', message: 'This device is already rolling back; it finishes when the agent reports. Force it only if the agent will not report again.' });
       await this.audit.logOrFail({ ...base, action: 'MSA_ROLLED_BACK', meta: { endpointId: ep.id, before: 'rollback_pending', after: 'legacy', forced: true } });
       await this.prisma.msaManagedComputer.deleteMany({ where: { endpointId: ep.id, state: 'rollback_pending' } });
       return this.view(actor, ep.id);
@@ -242,7 +242,7 @@ export class MsaManagedService {
     const moved = await this.prisma.msaManagedComputer.updateMany({
       where: { endpointId: ep.id, state: row.state }, data: { state: 'rollback_pending', rollbackRequestedAt: new Date(), rollbackRequestedById: actor.userId },
     });
-    if (moved.count !== 1) throw new ConflictException({ code: 'MSA_STATE_CHANGED', message: 'The computer\'s managed state changed meanwhile. Reload and try again.' });
+    if (moved.count !== 1) throw new ConflictException({ code: 'MSA_STATE_CHANGED', message: 'The device\'s managed state changed meanwhile. Reload and try again.' });
     await this.prisma.msaGrant.updateMany({ where: { endpointId: ep.id, state: 'issued' }, data: { state: 'cancelled' } });
     await this.endpoints.stageRotationForMsa(ep.id, actor.userId, 'msa_rollback');
     this.grants.wake(ep.id);
@@ -269,7 +269,7 @@ export class MsaManagedService {
       where: { id: dev.endpointId },
       select: { id: true, tenantId: true, customerId: true, platform: true, updateChannel: true, signedSeenAt: true },
     });
-    if (!ep) throw new NotFoundException('This device is not attached to a computer');
+    if (!ep) throw new NotFoundException('This device is not attached to a device');
     if (!isWindowsPlatform(ep.platform) || !runsSignedAgent({ updateChannel: ep.updateChannel, signedSeenAt: ep.signedSeenAt })) {
       throw new ForbiddenException({ code: 'MSA_SIGNED_AGENT_REQUIRED', message: 'Only the signed Windows agent may report.' });
     }

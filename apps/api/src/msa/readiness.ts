@@ -87,9 +87,9 @@ export const REPORT_MAX_AGE_MS = 7 * 24 * 3600_000;
 export const PREFLIGHT_KEY_COUNT = 11;
 
 export const READINESS_NOTE =
-  'Readiness only — Managed Secure Access is not available yet; nothing has changed on this computer.';
+  'Readiness only — Managed Secure Access is not available yet; nothing has changed on this device.';
 export const READINESS_FLEET_NOTE =
-  'Readiness only — Managed Secure Access is not available yet; nothing has changed on any computer.';
+  'Readiness only — Managed Secure Access is not available yet; nothing has changed on any device.';
 /** 0.72: the fleet note while MSA_GRANTS is on (a test server). */
 export const READINESS_FLEET_MANAGED_NOTE =
   'Managed Secure Access is switched on for testing: a Platform Admin can move one computer, or a group or business canary first. It has run only in the Windows lab.';
@@ -241,7 +241,7 @@ export function decideReadiness(f: ReadinessFacts, now: number = Date.now()): Re
   if (agentCmp === null || agentCmp < 0) {
     return out('upgrade_available', [
       `The signed agent${f.agentVersion ? ` (${f.agentVersion})` : ''} is too old to check RustDesk: agents from ${MIN_REPORTING_AGENT} do.`,
-      'Signed agents update themselves under the automatic update policy (Settings → Client updates), or with Update agent on this page.',
+      'Signed agents update themselves under the automatic update policy (Patching → Client updates), or with Update agent on this page.',
     ]);
   }
 

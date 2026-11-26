@@ -94,11 +94,11 @@ function ProfileTab() {
           <p className="text-sm font-medium mb-2">Identity</p>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label>First Name</Label>
+              <Label>First name</Label>
               <Input value={form.firstName} onChange={e => set('firstName', e.target.value)} />
             </div>
             <div className="space-y-1">
-              <Label>Last Name</Label>
+              <Label>Last name</Label>
               <Input value={form.lastName} onChange={e => set('lastName', e.target.value)} />
             </div>
             <div className="space-y-1 col-span-2">
@@ -120,13 +120,13 @@ function ProfileTab() {
               <Input value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="+1 555 555 0100" />
             </div>
             <div className="space-y-1">
-              <Label>Job Title</Label>
+              <Label>Job title</Label>
               <Input value={form.jobTitle} onChange={e => set('jobTitle', e.target.value)} placeholder="e.g. Support Technician" />
             </div>
           </div>
         </div>
         <div>
-          <p className="text-sm font-medium mb-2">Mailing Address</p>
+          <p className="text-sm font-medium mb-2">Mailing address</p>
           <div className="grid grid-cols-6 gap-3">
             <div className="space-y-1 col-span-6">
               <Label>Street</Label>
@@ -137,11 +137,11 @@ function ProfileTab() {
               <Input value={form.city} onChange={e => set('city', e.target.value)} />
             </div>
             <div className="space-y-1 col-span-2">
-              <Label>State / Region</Label>
+              <Label>State / region</Label>
               <Input value={form.state} onChange={e => set('state', e.target.value)} />
             </div>
             <div className="space-y-1 col-span-2">
-              <Label>Postal Code</Label>
+              <Label>Postal code</Label>
               <Input value={form.postalCode} onChange={e => set('postalCode', e.target.value)} />
             </div>
             <div className="space-y-1 col-span-3">
@@ -159,7 +159,7 @@ function ProfileTab() {
           {me?.isPlatformAdmin && <span className="ml-2 text-orange-600 font-medium">Platform Admin</span>}
         </div>
         <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
-          {mutation.isPending ? 'Saving…' : 'Save Changes'}
+          {mutation.isPending ? 'Saving…' : 'Save changes'}
         </Button>
       </CardContent>
     </Card>
@@ -192,25 +192,25 @@ function PasswordTab() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2"><KeyRound className="h-4 w-4" /> Change Password</CardTitle>
+        <CardTitle className="flex items-center gap-2"><KeyRound className="h-4 w-4" /> Change password</CardTitle>
         <CardDescription>You must enter your current password to set a new one.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 max-w-md">
         <div className="space-y-1">
-          <Label>Current Password</Label>
+          <Label>Current password</Label>
           <Input type="password" value={current} onChange={e => setCurrent(e.target.value)} autoComplete="current-password" />
         </div>
         <div className="space-y-1">
-          <Label>New Password</Label>
+          <Label>New password</Label>
           <Input type="password" value={next} onChange={e => setNext(e.target.value)} autoComplete="new-password" placeholder="Minimum 8 characters" />
         </div>
         <div className="space-y-1">
-          <Label>Confirm New Password</Label>
+          <Label>Confirm new password</Label>
           <Input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} autoComplete="new-password" />
           {mismatch && <p className="text-xs text-destructive">Passwords do not match</p>}
         </div>
         <Button onClick={() => mutation.mutate()} disabled={!valid || mutation.isPending}>
-          {mutation.isPending ? 'Changing…' : 'Change Password'}
+          {mutation.isPending ? 'Changing…' : 'Change password'}
         </Button>
       </CardContent>
     </Card>
@@ -313,7 +313,7 @@ function MfaTab() {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Set Up Authenticator App</CardTitle>
+          <CardTitle>Set up authenticator app</CardTitle>
           <CardDescription>Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.), then enter the 6-digit code to confirm.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 max-w-sm">
@@ -327,7 +327,7 @@ function MfaTab() {
             <code className="block text-xs bg-muted px-2 py-1.5 rounded break-all">{setupData.secret}</code>
           </div>
           <div className="space-y-1">
-            <Label>Verification Code</Label>
+            <Label>Verification code</Label>
             <Input
               maxLength={6}
               value={setupCode}
@@ -390,7 +390,7 @@ function MfaTab() {
                   <Button variant="destructive" size="sm"
                     onClick={() => disableMutation.mutate()}
                     disabled={disableCode.length !== 6 || disableMutation.isPending}>
-                    {disableMutation.isPending ? 'Disabling…' : 'Confirm Disable'}
+                    {disableMutation.isPending ? 'Disabling…' : 'Confirm disable'}
                   </Button>
                 </div>
               </div>
@@ -705,7 +705,7 @@ function AccountTabs() {
 export default function AccountPage() {
   return (
     <div className="p-6 space-y-6">
-      <PageHeader title="My Account" description="Manage your profile, password, and security" />
+      <PageHeader title="My account" description="Manage your profile, password, and security" />
       <Suspense fallback={<p className="text-sm text-muted-foreground">Loading…</p>}>
         <AccountTabs />
       </Suspense>

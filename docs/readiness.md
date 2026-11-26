@@ -1,6 +1,6 @@
 # Readiness: what works, and how we know
 
-This page says, feature by feature, what Rem0te does on each kind of computer,
+This page says, feature by feature, what Rem0te does on each kind of device,
 who enforces it, and **what evidence there is that it works on a real
 machine**. A feature is not called ready because its API exists, or because a
 simulator passed. It supersedes the capability and gap tables in
@@ -30,17 +30,17 @@ From strongest to weakest. Each row in the matrix names the strongest it has.
 Four real Windows computers, all on the signed agent. This is the only
 real-machine evidence there is, and it is observational.
 
-| Computer | OS | Build | Agent | Enrolled |
+| Device | OS | Build | Agent | Enrolled |
 |---|---|---|---|---|
 | DESKTOP-4SADDCN | Windows 11 Pro | 26100 | signed 0.64.0 | 2026-08-25 |
 | DS-HOME1 | Windows 10 Pro | 19045 | signed 0.67.0 | 2026-08-27 |
 | DEWEY-WKS2022 | Windows 11 Pro | 22000 | signed 0.64.0 | 2026-11-13 |
 | DSLAPTOP-2021 | Windows 11 Pro | 22631 | signed 0.67.0 | 2026-11-19 |
 
-No Windows Server, Linux or macOS computer has ever been enrolled. The two at
+No Windows Server, Linux or macOS device has ever been enrolled. The two at
 0.64.0 pick up the current agent at their next daily signed update check (they
 last checked before 0.65 was published): **a published agent can take up to a
-day to reach a computer.**
+day to reach a device.**
 
 What the fleet's records show worked (read from the production database
 2026-11-19, read-only):
@@ -78,7 +78,7 @@ uninstall, containment pauses, PSA tickets, chat files, support requests, the
 "Windows-only").
 
 **Enforced by:** *portal* (the API refuses), *signer* (the separate approval
-signer signs or refuses), *agent* (the endpoint verifies the signed plan and
+signer signs or refuses), *agent* (the device verifies the signed plan and
 refuses on its own).
 
 | Feature | Std | Sgn | Lin | Mac | Enforced by | Strongest evidence | Readiness |
@@ -93,7 +93,7 @@ refuses on its own).
 | Monitors: updates missing / update failed | No | Yes | No | No | portal | Fleet (2 alerts) | Windows signed: in use |
 | Patch scan | read-only | Yes, with other-manager detection | from cache | last result | — | Fleet (218 scans) | Windows: in use. WSUS/Intune detection: Sim only |
 | Patch install (deployments, policies, all at once or canary) | No | Yes | No | No | **signer + agent** | Fleet (1 install, direct mode) | Partly proven: one install, restart pending; rings, canary gate, signed results: Sim only |
-| Restart scheduling, restart windows, in-window restart after updates | No | Yes | No | No | signer + agent | Sim | **Unverified: has never restarted a real computer** |
+| Restart scheduling, restart windows, in-window restart after updates | No | Yes | No | No | signer + agent | Sim | **Unverified: has never restarted a real device** |
 | Software install / uninstall (winget, pinned hash) | No | Yes | No | No | signer + agent | Sim | Unverified |
 | Remove an installed program | No | Yes | No | No | agent (reads key, recognised forms only) | Fleet (1 removal) | Partly proven: one MSI-or-quiet form; Inno/NSIS/Chromium forms Sim only |
 | Scripts (`script.run`), automation schedules | No | Yes | No | No | signer + agent | Sim with pwsh 7 | **Unverified under Windows PowerShell 5.1 as SYSTEM** |
@@ -103,7 +103,7 @@ refuses on its own).
 | Remote access (RustDesk launch, presets, grants) | Yes | Yes | Yes | Yes | **portal only** | Fleet (109 sessions) | In use, with the limits below |
 | Password rotation, reinstall, RustDesk update | Yes | Yes | No | No | portal stages, agent applies | Fleet | In use |
 | View-only, consent, clipboard, file transfer, ending a session | No | No | No | No | portal refusal only | API (enforcement simulated) | **Not enforceable today** (below) |
-| Managed Secure Access readiness (0.69): RustDesk preflight, readiness state | No (Unsupported) | Yes | No (Unsupported) | No (Unsupported) | agent reads, portal decides; **changes nothing** | Lab (preflight, Windows Server, as SYSTEM); API | Readiness only; no computer can be Managed. Not yet seen on the fleet |
+| Managed Secure Access readiness (0.69): RustDesk preflight, readiness state | No (Unsupported) | Yes | No (Unsupported) | No (Unsupported) | agent reads, portal decides; **changes nothing** | Lab (preflight, Windows Server, as SYSTEM); API | Readiness only; no device can be Managed. Not yet seen on the fleet |
 | Chat, tray, self-help | Yes (3 read-only tools) | Yes | No | No | portal + pipe DACL | Fleet (2 tools, 2 chats) | Partly proven; chat files, elevated self-help unverified |
 | Support request → PSA ticket | Yes | Yes | No | No | portal | API (stub PSA) | Unverified: no real PSA called |
 | Agent auto-update, migration to signed | Yes | Yes | No | No | portal; Sgn verifies signatures | Fleet | In use; first real migrations failed (0.37.3 BOM) before this worked |
@@ -126,9 +126,9 @@ the RustDesk architecture as shipped.
    RustDesk client pointed at the server, and no session record is made.
 2. **Revoking access does not revoke a seen password.** It stops new launches
    through Rem0te at once. Rotation is staged and applied at the next
-   check-in; until then the old password works, and an offline computer stays
+   check-in; until then the old password works, and an offline device stays
    exposed. Linux and macOS cannot be rotated from the console.
-3. **View-only and consent are not enforced by the endpoint.** For preset
+3. **View-only and consent are not enforced by the device.** For preset
    technicians the portal refuses them (`endpoint_cannot_enforce_view_only`,
    `_consent`), so nothing weaker is substituted. For owners and admins they
    are "not applied".
@@ -154,7 +154,7 @@ To be corrected in the next documentation release:
     diagnostics catalog, no compliance report, unsigned ring results, no
     script scheduling, AI only via ClientSt0r. All since changed.
   - `security-model.md` and `integration-clientst0r.md` still say Rem0te has
-    no AI provider endpoint or key (reversed in 0.48), and that patching
+    no AI provider device or key (reversed in 0.48), and that patching
     always canaries with two approvers (all at once is the default since
     0.62; direct mode since 0.40).
   - `implementation-status.md` is a 0.54 snapshot.
@@ -167,7 +167,7 @@ To be corrected in the next documentation release:
 Each step is its own release with tests and docs. Nothing in it relaxes the
 approval signer, the signed plans, containment or tenant isolation.
 
-### 1. Real-endpoint validation (Phase 1) — first
+### 1. Real-device validation (Phase 1) — first
 
 Without it, everything after it builds on unproven ground.
 
@@ -201,19 +201,19 @@ Without it, everything after it builds on unproven ground.
 ### 2. Remote access security (Phase 2): Managed Secure Access
 
 Designed in [managed-secure-access.md](managed-secure-access.md). Build behind
-a feature flag, every computer staying in today's mode until an admin moves it.
+a feature flag, every device staying in today's mode until an admin moves it.
 
 **Step 2 is built (0.69):** the signed agent's read-only RustDesk preflight and
-each computer's readiness state (Unsupported, Upgrade available, Compatible,
-Unknown) on the device page and *Devices → Remote access readiness*. It changes
-nothing on any computer; nothing can be Managed yet
+each device's readiness state (Unsupported, Upgrade available, Compatible,
+Unknown) on the device page and *Remote support → Remote access readiness*. It changes
+nothing on any device; nothing can be Managed yet
 ([managed-secure-access.md §3.9](managed-secure-access.md#39-readiness-reporting-built-069)).
 
 - **Ephemeral credentials:** the signed agent sets a fresh one-time password
   for each portal-authorised session and clears it at session end or expiry,
   replacing the permanent password. A grant is short-lived, signed, and bound
-  to one technician and one computer.
-- **Endpoint enforcement:** the signed agent applies view-only, consent,
+  to one technician and one device.
+- **Device enforcement:** the signed agent applies view-only, consent,
   clipboard and file-transfer restrictions through RustDesk's local
   configuration before the session and verifies them; if it cannot, the
   session is refused (today's rule, kept).

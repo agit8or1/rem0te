@@ -105,7 +105,7 @@ function JobItem({
         {job.status === 'REQUESTED' && job.nextAttemptAt && new Date(job.nextAttemptAt) > new Date() && (
           <p>Next attempt not before {formatDate(job.nextAttemptAt)}</p>
         )}
-        {job.credentialSync && <p>Credential sync: the computer {CREDENTIAL_SYNC[job.credentialSync] ?? job.credentialSync}</p>}
+        {job.credentialSync && <p>Credential sync: the device {CREDENTIAL_SYNC[job.credentialSync] ?? job.credentialSync}</p>}
       </div>
 
       {open && (
@@ -252,7 +252,7 @@ export default function RolloutDetailPage() {
       )}
       {r.status === 'DRAFT' && (
         <p className="text-sm text-muted-foreground">
-          This is a draft: nothing has been sent to any computer. Review the jobs below, then start it.
+          This is a draft: nothing has been sent to any device. Review the jobs below, then start it.
         </p>
       )}
 
@@ -262,7 +262,7 @@ export default function RolloutDetailPage() {
             <CardTitle className="flex items-center gap-2 text-base">Status <RolloutStatusBadge status={r.status} /></CardTitle>
             <CardDescription>
               {r.status === 'RUNNING' ? 'Refreshes every 15 seconds while running. ' : ''}
-              A job counts as succeeded only when an authenticated heartbeat reports the approved version and the computer is registered with the RustDesk server (or that check was unavailable, which is shown).
+              A job counts as succeeded only when an authenticated heartbeat reports the approved version and the device is registered with the RustDesk server (or that check was unavailable, which is shown).
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -335,7 +335,7 @@ export default function RolloutDetailPage() {
                 <CardTitle className="flex flex-wrap items-center gap-2 text-base">
                   {batch === 0 ? 'Batch 0 — pilot' : `Batch ${batch}`}
                   <span className="text-xs font-normal text-muted-foreground">
-                    {jobs.length} computer{jobs.length === 1 ? '' : 's'}
+                    {jobs.length} device{jobs.length === 1 ? '' : 's'}
                     {r.status !== 'DRAFT' && (released(batch) ? ' · released' : ' · not released yet')}
                     {r.status !== 'DRAFT' && batch === r.currentBatch && ' · current'}
                   </span>
@@ -355,7 +355,7 @@ export default function RolloutDetailPage() {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Rollback is not offered. If an update leaves a computer unusable, follow the recovery steps in
+        Rollback is not offered. If an update leaves a device unusable, follow the recovery steps in
         {' '}<Link href="/docs/updates" className="underline">Updates</Link>.
       </p>
 
@@ -364,7 +364,7 @@ export default function RolloutDetailPage() {
         onOpenChange={setConfirmCancel}
         title="Cancel this rollout?"
         description={
-          'Jobs that have not been sent yet will stop. Jobs already dispatched cannot be recalled — the installer may already be running on those computers, ' +
+          'Jobs that have not been sent yet will stop. Jobs already dispatched cannot be recalled — the installer may already be running on those devices, ' +
           'so they are marked canceled and may still finish installing. This cannot be undone; create a new rollout to continue later.'
         }
         confirmLabel="Cancel rollout"
@@ -375,11 +375,11 @@ export default function RolloutDetailPage() {
       <ConfirmDialog
         open={!!cancelJob}
         onOpenChange={(o) => { if (!o) setCancelJob(null); }}
-        title={`Cancel the job for ${cancelJob?.endpoint?.name ?? 'this computer'}?`}
+        title={`Cancel the job for ${cancelJob?.endpoint?.name ?? 'this device'}?`}
         description={
           cancelJob && cancelJob.status !== 'REQUESTED'
-            ? 'This job has already been dispatched. Canceling stops tracking it, but cannot recall the update: the installer may still run on the computer.'
-            : 'The update will not be sent to this computer as part of this rollout.'
+            ? 'This job has already been dispatched. Canceling stops tracking it, but cannot recall the update: the installer may still run on the device.'
+            : 'The update will not be sent to this device as part of this rollout.'
         }
         confirmLabel="Cancel job"
         destructive

@@ -2,7 +2,7 @@
  * Scheduled RustDesk client updates (0.32): the labels the pages share. The
  * reasons themselves are decided by the API (client-updates/policy.ts); these
  * only put them into words, so the Updates page, the device page and
- * Settings → Client updates say the same thing.
+ * Patching → Client updates say the same thing.
  */
 export const HOLD_LABEL: Record<string, string> = {
   policy_off: 'the update policy that queued it is now off',

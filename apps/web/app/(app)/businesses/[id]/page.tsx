@@ -67,7 +67,7 @@ export default function BusinessDetailPage() {
     mutationFn: (epId: string) => adoptionApi.assign({ endpointIds: [epId], businessId: id }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['adoption'] });
-      toast({ title: 'Computer moved into this business' });
+      toast({ title: 'Device moved into this customer' });
       setSelectedUnassigned('');
       qc.invalidateQueries({ queryKey: ['endpoints'] });
     },
@@ -78,7 +78,7 @@ export default function BusinessDetailPage() {
   const unassignMutation = useMutation({
     mutationFn: (epId: string) => endpointsApi.update(epId, { customerId: null }),
     onSuccess: () => {
-      toast({ title: 'Computer removed from this business' });
+      toast({ title: 'Device removed from this customer' });
       qc.invalidateQueries({ queryKey: ['endpoints'] });
     },
     onError: (e: { response?: { data?: { message?: string } } }) =>
@@ -117,7 +117,7 @@ export default function BusinessDetailPage() {
       <Tabs defaultValue="overview">
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="computers">Computers ({endpointList.length})</TabsTrigger>
+          <TabsTrigger value="computers">Devices ({endpointList.length})</TabsTrigger>
           {can(CAP.USERS_VIEW) && <TabsTrigger value="people">People ({peopleList.length})</TabsTrigger>}
           <TabsTrigger value="downloads">Downloads</TabsTrigger>
           <TabsTrigger value="sites">Sites ({siteList.length})</TabsTrigger>
@@ -145,7 +145,7 @@ export default function BusinessDetailPage() {
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                Allows this business&apos;s users to connect to a temporary support client using an
+                Allows this customer&apos;s users to connect to a temporary support client using an
                 ID and password the remote person reads out. The platform master switch has to be on
                 as well, and each Business User still needs the <em>Use Quick Connect</em> permission.
               </p>
@@ -159,7 +159,7 @@ export default function BusinessDetailPage() {
                   onChange={(e) => setQuickConnect.mutate(e.target.checked)}
                 />
                 <Label htmlFor="qc-enabled">
-                  Quick Connect {quickConnectEnabled ? 'enabled' : 'disabled'} for this business
+                  Quick Connect {quickConnectEnabled ? 'enabled' : 'disabled'} for this customer
                 </Label>
               </div>
               {!isPlatformAdmin && (
@@ -180,15 +180,15 @@ export default function BusinessDetailPage() {
         <TabsContent value="computers" className="mt-4 space-y-4">
           {isPlatformAdmin && unassignedList.length > 0 && (
             <Card>
-              <CardHeader><CardTitle className="text-sm">Move an unassigned computer here</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-sm">Move an unassigned device here</CardTitle></CardHeader>
               <CardContent>
                 <p className="text-xs text-muted-foreground mb-3">
-                  Unassigned computers have checked in but do not belong to any business yet.
+                  Unassigned devices have checked in but do not belong to any customer yet.
                 </p>
                 <div className="flex gap-2">
                   <Select value={selectedUnassigned} onValueChange={setSelectedUnassigned}>
                     <SelectTrigger className="flex-1">
-                      <SelectValue placeholder="Select an unassigned computer" />
+                      <SelectValue placeholder="Select an unassigned device" />
                     </SelectTrigger>
                     <SelectContent>
                       {unassignedList.map((ep) => (
@@ -217,14 +217,14 @@ export default function BusinessDetailPage() {
                   <th className="text-left px-4 py-3 font-medium">Name</th>
                   <th className="text-left px-4 py-3 font-medium">Platform</th>
                   <th className="text-left px-4 py-3 font-medium">Status</th>
-                  <th className="text-left px-4 py-3 font-medium">Last Seen</th>
+                  <th className="text-left px-4 py-3 font-medium">Last seen</th>
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {endpointList.length === 0 ? (
                   <tr><td colSpan={5} className="text-center py-6 text-muted-foreground">
-                    No computers in this business yet. Use the Downloads tab to add one.
+                    No devices in this customer yet. Use the Downloads tab to add one.
                   </td></tr>
                 ) : endpointList.map((ep) => (
                   <tr key={ep.id as string} className="hover:bg-muted/30">
@@ -249,7 +249,7 @@ export default function BusinessDetailPage() {
                           variant="ghost"
                           size="sm"
                           className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                          title="Remove from this business"
+                          title="Remove from this customer"
                           onClick={() => unassignMutation.mutate(ep.id as string)}
                           disabled={unassignMutation.isPending}
                         >
@@ -313,13 +313,13 @@ export default function BusinessDetailPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-sm">
-                <Download className="h-4 w-4" /> Managed Device Installer
+                <Download className="h-4 w-4" /> Managed device installer
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                Installs the permanent Rem0te agent. Any computer that runs this link is enrolled as
-                a <strong>managed computer belonging to {b.name as string}</strong> — the binding is
+                Installs the permanent Rem0te agent. Any device that runs this link is enrolled as
+                a <strong>managed device belonging to {b.name as string}</strong> — the binding is
                 fixed when the link is created and the machine cannot change it.
               </p>
               {/* One way in (0.32): Add device, with this business chosen. It
@@ -329,7 +329,7 @@ export default function BusinessDetailPage() {
                   <Link href={`/endpoints/enroll?businessId=${encodeURIComponent(id)}`}>Add a device to {b.name as string}</Link>
                 </Button>
               ) : (
-                <p className="text-sm text-muted-foreground">Adding a device needs the Add computers permission.</p>
+                <p className="text-sm text-muted-foreground">Adding a device needs the Add devices permission.</p>
               )}
             </CardContent>
           </Card>
@@ -343,7 +343,7 @@ export default function BusinessDetailPage() {
             <CardContent className="space-y-3">
               <p className="text-sm text-muted-foreground">
                 For temporary support only. The person runs it, reads out the ID and password it
-                shows, and closes it when you are done. <strong>No permanent managed computer is
+                shows, and closes it when you are done. <strong>No permanent managed device is
                 created</strong> and nothing is installed as a service.
               </p>
               {quickConnectEnabled ? (
@@ -354,7 +354,7 @@ export default function BusinessDetailPage() {
                 </Button>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  Quick Connect is disabled for this business.
+                  Quick Connect is disabled for this customer.
                 </p>
               )}
             </CardContent>
@@ -368,7 +368,7 @@ export default function BusinessDetailPage() {
                 <tr className="border-b bg-muted/50">
                   <th className="text-left px-4 py-3 font-medium">Name</th>
                   <th className="text-left px-4 py-3 font-medium">City</th>
-                  <th className="text-left px-4 py-3 font-medium">Computers</th>
+                  <th className="text-left px-4 py-3 font-medium">Devices</th>
                 </tr>
               </thead>
               <tbody className="divide-y">

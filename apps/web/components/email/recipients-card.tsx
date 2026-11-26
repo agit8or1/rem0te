@@ -21,7 +21,7 @@ import { reauthSuffix, useAsks } from '@/lib/confirm-policy';
  */
 export function EmailOffNotice({ enabled }: { enabled: boolean | undefined }) {
   if (enabled !== false) return null;
-  return <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-100">Outbound email is not configured on this server. A Platform Admin sets it up under Settings → Email; until then no confirmation, alert email or report is sent.</p>;
+  return <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-100">Outbound email is not configured on this server. A Platform Admin sets it up under Administration → Email; until then no confirmation, alert email or report is sent.</p>;
 }
 
 export function RecipientsCard({ scope, businessId, ok, fail }: { scope: 'global' | 'business'; businessId: string | null; ok: (t: string) => void; fail: (e: unknown) => void }) {
@@ -44,12 +44,12 @@ export function RecipientsCard({ scope, businessId, ok, fail }: { scope: 'global
 
   return (
     <Card data-testid="email-recipients">
-      <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><Mail className="h-4 w-4" />Email recipients {scope === 'global' ? '— global (the MSP)' : 'for this business'}</CardTitle></CardHeader>
+      <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><Mail className="h-4 w-4" />Email recipients {scope === 'global' ? '— global (the MSP)' : 'for this customer'}</CardTitle></CardHeader>
       <CardContent className="space-y-3 text-sm">
         <p className="text-muted-foreground">
           Alert emails and scheduled reports go only to addresses on this list that have been confirmed: whoever reads the mailbox
           clicks the link sent to it. A typed address is never used directly, so a stolen session cannot mail data to anyone.
-          {scope === 'business' ? ' A business\'s policies and schedules use only its own list.' : ' The global notification policy and platform-wide reports use this list.'}
+          {scope === 'business' ? ' A customer\'s policies and schedules use only its own list.' : ' The global notification policy and platform-wide reports use this list.'}
         </p>
         {error ? <p className="text-muted-foreground">{apiError(error).message}</p> : null}
         <EmailOffNotice enabled={data?.email.enabled} />

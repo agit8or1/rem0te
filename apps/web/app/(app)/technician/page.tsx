@@ -76,7 +76,7 @@ const INACTIVE_REASON: Record<string, string> = {
   outside_schedule: 'Outside its weekly schedule right now',
   pending_approval: "Waiting for the Business Owner's approval",
   denied: 'Denied by the Business Owner',
-  business_disabled: 'The business is disabled or archived',
+  business_disabled: 'The customer is disabled or archived',
 };
 const TEMP_STYLE = 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200';
 const SCHED_STYLE = 'bg-sky-100 text-sky-800 dark:bg-sky-900/60 dark:text-sky-200';
@@ -157,8 +157,8 @@ export default function TechnicianOverviewPage() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader
-        title="All assigned businesses"
-        description="Every business you can reach as a technician right now. Each card shows only what your access to that business allows."
+        title="All assigned customers"
+        description="Every customer you can reach as a technician right now. Each card shows only what your access to that customer allows."
       />
 
       {technician && (
@@ -176,7 +176,7 @@ export default function TechnicianOverviewPage() {
       {loadingOverview ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : overviewError ? (
-        <Card><CardContent className="p-6 text-sm text-destructive">{errMsg(overviewError) ?? 'Could not load your businesses.'}</CardContent></Card>
+        <Card><CardContent className="p-6 text-sm text-destructive">{errMsg(overviewError) ?? 'Could not load your customers.'}</CardContent></Card>
       ) : overview.length === 0 ? (
         <Card><CardContent className="p-6 text-sm text-muted-foreground">
           You have no technician access that is active right now. See &ldquo;My access&rdquo; below for anything pending, scheduled or expired.
@@ -198,7 +198,7 @@ export default function TechnicianOverviewPage() {
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
                   <div className="grid grid-cols-4 gap-2">
-                    <Stat label="Computers" value={b.computers} />
+                    <Stat label="Devices" value={b.computers} />
                     <Stat label="Reachable" value={b.online} />
                     <Stat label="Open sessions" value={b.openSessions} />
                     <Stat label="Waiting requests" value={b.waitingRequests} />
@@ -228,7 +228,7 @@ export default function TechnicianOverviewPage() {
                   <Button className="w-full" size="sm" variant={current ? 'outline' : 'default'} disabled={!!switching}
                     onClick={() => (current ? router.push('/dashboard') : workIn(b.businessId))}>
                     {switching === b.businessId ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowRight className="mr-2 h-4 w-4" />}
-                    {current ? 'Open dashboard' : 'Work in this business'}
+                    {current ? 'Open dashboard' : 'Work in this customer'}
                   </Button>
                 </CardContent>
               </Card>
@@ -268,7 +268,7 @@ function MyAccess({ mine, capLabels }: { mine?: Mine; capLabels: Map<string, str
                 <div key={b.businessId} className="space-y-2 rounded-md border p-3">
                   <div className="flex flex-wrap justify-between gap-2">
                     <span className="font-medium">{b.businessName}</span>
-                    <span className="text-xs text-muted-foreground">{b.endpointIds ? `${b.endpointIds.length} selected computer(s)` : 'All computers'}</span>
+                    <span className="text-xs text-muted-foreground">{b.endpointIds ? `${b.endpointIds.length} selected device(s)` : 'All devices'}</span>
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {b.capabilities.map((c) => <Badge key={c} variant="outline" className="font-normal">{capLabels.get(c) ?? c}</Badge>)}
@@ -296,7 +296,7 @@ function MyAccess({ mine, capLabels }: { mine?: Mine; capLabels: Map<string, str
                     </Badge>
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {g.via === 'DIRECT' ? 'Assigned to you directly' : `Through the group ${g.groupName ?? ''}`} · {g.endpointIds ? `${g.endpointIds.length} selected computer(s)` : 'All computers'}
+                    {g.via === 'DIRECT' ? 'Assigned to you directly' : `Through the group ${g.groupName ?? ''}`} · {g.endpointIds ? `${g.endpointIds.length} selected device(s)` : 'All devices'}
                   </div>
                   <WhenBadges s={g} />
                   <div className="flex flex-wrap gap-1">
@@ -338,7 +338,7 @@ function RequestAccess({
 
   const endpointIds = f.endpointIds.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
   const problem = (() => {
-    if (!f.businessId) return 'Choose a business.';
+    if (!f.businessId) return 'Choose a customer.';
     if (f.capabilities.length === 0) return 'Choose at least one permission.';
     if (!f.expiresAt) return 'An access request needs an end time.';
     if (new Date(f.expiresAt) <= new Date(f.startsAt || Date.now())) return 'The end must be after the start.';
@@ -356,7 +356,7 @@ function RequestAccess({
       reason: f.reason.trim(),
     }),
     onSuccess: () => {
-      toast({ title: 'Request sent', description: "It grants nothing until the business's Business Owner approves it." });
+      toast({ title: 'Request sent', description: "It grants nothing until the customer's Business Owner approves it." });
       setF({ businessId: '', capabilities: [], endpointIds: '', startsAt: '', expiresAt: '', reason: '' });
       qc.invalidateQueries({ queryKey: ['technicians'] });
     },
@@ -370,8 +370,8 @@ function RequestAccess({
       <CardHeader>
         <CardTitle className="text-base">Request access</CardTitle>
         <CardDescription>
-          Ask for time-limited access to a business. The request is pending until that business&apos;s Business Owner approves it,
-          and they can narrow it (fewer permissions, fewer computers, an earlier end).
+          Ask for time-limited access to a customer. The request is pending until that customer&apos;s Business Owner approves it,
+          and they can narrow it (fewer permissions, fewer devices, an earlier end).
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
@@ -379,12 +379,12 @@ function RequestAccess({
           <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
             {autoPinned ? (
               <p>
-                You have no business of your own and exactly one assignment, so Rem0te always works in that business for you,
+                You have no customer of your own and exactly one assignment, so Rem0te always works in that customer for you,
                 and requests cannot be sent from a technician context. Ask your MSP&apos;s technician manager to add the access instead.
               </p>
             ) : (
               <>
-                <p>Requests can only be sent from your own account, not while you work in a business as a technician.</p>
+                <p>Requests can only be sent from your own account, not while you work in a customer as a technician.</p>
                 <Button size="sm" variant="outline" onClick={onLeaveContext}>Switch to my own account</Button>
               </>
             )}
@@ -392,13 +392,13 @@ function RequestAccess({
         ) : (
           <>
             <div className="space-y-1.5">
-              <Label>Business</Label>
+              <Label>Customer</Label>
               <Select value={f.businessId} onValueChange={(v) => setF({ ...f, businessId: v })}>
-                <SelectTrigger><SelectValue placeholder={businesses.length ? 'Choose a business' : 'No businesses to choose from'} /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder={businesses.length ? 'Choose a customer' : 'No customers to choose from'} /></SelectTrigger>
                 <SelectContent>{businesses.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}</SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Listed: businesses you have, or had, an assignment with. For any other business, ask your technician manager. Only people your MSP already recognises as technicians can send requests.
+                Listed: customers you have, or had, an assignment with. For any other customer, ask your technician manager. Only people your MSP already recognises as technicians can send requests.
               </p>
             </div>
 
@@ -447,8 +447,8 @@ function RequestAccess({
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="rq-c">Specific computers (optional)</Label>
-              <Textarea id="rq-c" rows={2} placeholder="Computer IDs, one per line. Leave empty to ask for the whole business."
+              <Label htmlFor="rq-c">Specific devices (optional)</Label>
+              <Textarea id="rq-c" rows={2} placeholder="Device IDs, one per line. Leave empty to ask for the whole customer."
                 value={f.endpointIds} onChange={(e) => setF({ ...f, endpointIds: e.target.value })} />
             </div>
 

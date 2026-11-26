@@ -174,7 +174,7 @@ export function VersionEditor({ initial, submitLabel, busy, onSubmit, onCancel, 
           <select id="sv-risk" className={selectClass} value={risk} onChange={(e) => setRisk(e.target.value as ScriptRisk)}>
             <option value="low">Low: reads, or changes nothing that matters</option>
             <option value="medium">Medium: changes settings or services</option>
-            <option value="high">High: could disrupt the computer or its user</option>
+            <option value="high">High: could disrupt the device or its user</option>
           </select></div>
       </div>
       <div className="space-y-1">
