@@ -154,7 +154,7 @@ company-wide; for a technician, only the machines your assignment names.
 
 | Column | What it shows |
 |---|---|
-| **Device** | Name, hostname, and a dot: green online (the agent is checking in), amber reachable through RustDesk with the agent silent, grey offline. |
+| **Device** | Name, hostname, and a dot: green online (the agent is checking in), amber reachable through RustDesk with the agent silent, grey offline. A star marks one of your favourites (0.89). **When another device you can see has the same name**, the cell also says its customer and site, at every width (0.89): two "RECEPTION-PC"s in two customers are told apart on the row itself, and each still opens by its own record. On a phone every row says its customer and site there, because the Customer column is hidden. |
 | **Customer / Site** | Who the machine belongs to and where. |
 | **OS** | An icon and the reported Windows edition or platform. |
 | **Health** | The worst *open* monitoring alert, in words (0.68): **Issues** (a critical alert), **Warning** (a warning), **Healthy** (none, or informational ones only, and the agent is reporting) or **Unknown** (no warning or critical alert, but the agent is silent or the device offline: a silent agent raises nothing). Healthy is not a promise nothing is wrong, only that no monitor says so. Click the label to open that device's **Monitoring** tab (0.70). **Clear**, beside Warning or Issues, resolves every open alert on that device after you confirm. It does not change any monitor, so anything still wrong is raised again, as a new alert, at the device's next check; each cleared alert is recorded in the audit log. |
@@ -173,8 +173,9 @@ everything but Logged-in user. The dot beside each name still says online, agent
 picker shows each one's width, for example *(1700 px and wider)*. A column you chose is never removed, only hidden
 while the window is narrower than that. **Alerts** is off by default, because **Health** already shows the worst open alert (*Healthy* when
 there is none); turn it on under **Columns**. A browser that saved its own column choice keeps it. Device names
-never wrap; long customer and site names are cut short, with the full name on hover; and **Connect** stays pinned
-on the right.
+never wrap on a desktop; long customer and site names are cut short, with the full name on hover; and **Connect** stays pinned
+on the right. **On a phone (0.89)** the Customer column is hidden (the Device cell says it), and a long name wraps,
+at its hyphens first, rather than sliding under the pinned Connect column.
 
 **Every number says how old it is, and an old one is greyed.** A resource sample
 is stale after 15 minutes (five missed heartbeats); an update scan after 36 hours.
@@ -189,21 +190,46 @@ at the bottom.
 - **Filters** — customer (when you can see more than one), site, device group,
   online (*Online (agent checking in)*, *Reachable, agent silent* or *Offline*), open or critical alerts, *Restart pending*, agent type, and
   archived devices. **More filters** (0.34) adds platform (Windows, Linux,
-  macOS, other), OS name contains, tag (exact), update state (pending, none
-  pending, scan stale, never scanned), a RustDesk version range (dotted numbers,
+  macOS, other), **Windows role** (0.89: *Server* when the reported OS name says
+  Server; *Workstation* when it names another Windows edition; a device that reports
+  no edition — only "Windows NT 10.0…", which Windows 11 24H2 and Server 2025
+  share, or nothing — is in neither, never guessed), OS name contains, tag (exact),
+  update state (pending, none pending, scan stale, never scanned, and from 0.89
+  *security or critical updates pending*, which only a signed agent's scan can
+  say because only it records each update's classification), a RustDesk version range (dotted numbers,
   compared numerically — 1.10 is above 1.9; a device with no reported version
   or a non-numeric one such as a nightly never matches a range) and last seen
   (not seen for N days, which includes never; seen within N days).
   They combine, and *Clear* resets them. The address bar carries the current view,
   so you can bookmark it; whoever opens the link still sees only their own devices.
-  On a phone (0.35) the filters sit behind a **Filters (n)** button beside the
-  search, *n* being how many are set; it opens a sheet with the same controls,
-  each applying at once, and *Show N devices* closes it.
+  On a phone (0.35) the filters sit behind a **Filters** button beside the
+  search, showing how many are set; it opens a sheet with the same controls,
+  each applying at once, and *Show N devices* closes it. From 0.89 the phone's
+  toolbar is one row: search, **Filters**, **Views** and **⋯** (compact rows,
+  Export CSV).
 - **Columns** — choose which columns show (a *Groups* column is available; it
   lists every group the device is in, and the CSV's *Groups* column does the same,
   separated by `; `).
-  **Compact / Comfortable** sets the row height. Both are remembered in this
-  browser.
+  **Compact rows** is a toggle (pressed means compact; until 0.89 the button
+  showed the current state instead). Both are remembered in this browser.
+- **Built-in views** (0.89, at the top of **Views**) — *My favourites*,
+  *Recently opened*, *Critical alerts* (with *monitoring:alerts*), *Offline*,
+  *Windows servers*, *Windows workstations*, *Linux*, *macOS*, *Restart
+  pending*, *Security or critical updates pending*, *Agent needs an update* and
+  *Warranty ending* (within 90 days). Each one only sets the list's own filters
+  (the customer and site you chose stay), so it shows exactly what the same
+  filters would, scoped to you, and nothing is stored; the line above the
+  table says which view is open and what it shows. The menu also says which of
+  the views the UI directive asks for are not offered yet, and why: failed
+  automation and backup failures (the list does not read task or backup
+  results yet) and aging hardware (no purchase or manufacture date is
+  collected).
+- **Favourites** (0.89) — *Add to favourites* in a row's **⋯** menu, or the
+  star on a device's page, adds it to *My favourites*, the same favourites as
+  the sidebar's (0.87; at most 50, yours alone). *Recently opened* lists the
+  devices you opened last (up to 15). Both are yours only: they can be saved
+  in a view, which then shows each person their own, but never used in a rule
+  group. A favourite you can no longer see is simply not listed.
 - **Views** (0.33) — save the current filters, sort, columns and density under a
   name. A view is stored on your account, so it follows you to another device.
   It holds only the list's own parameters, never the devices. It is either
@@ -216,7 +242,7 @@ at the bottom.
   "everything" view gets their own devices, and a view filtering on alerts is
   refused to someone without *monitoring:alerts*. Views saved in a browser by
   0.31 or 0.32 are offered for import once (*Import N views saved in this
-  browser*).
+  browser*). Deleting a shared view asks first, in a dialog (0.89).
 - **Device groups** (0.33, *Views → Device groups…*) — named, static groups of
   one customer's devices, for filtering and for acting on together. From 0.34 a
   device can be in **several** groups of its customer: adding it to one never

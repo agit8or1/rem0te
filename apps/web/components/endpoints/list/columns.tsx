@@ -4,7 +4,7 @@ import { agentVersionTitle, shownAgentVersion } from '@/lib/agent-version';
 import * as React from 'react';
 import { CONNECTIVITY_DOT, CONNECTIVITY_TEXT, connectivityFrom, connectivityHint, connectivityLabel } from '@/lib/connectivity';
 import Link from 'next/link';
-import { Apple, Monitor, Terminal, HelpCircle, ExternalLink } from 'lucide-react';
+import { Apple, Monitor, Terminal, HelpCircle, ExternalLink, Star } from 'lucide-react';
 import { supportInfo, WARRANTY_STATE_LABEL } from '@/lib/hardware-support';
 import { Badge } from '@/components/ui/badge';
 import { ClearAlertsButton } from '@/components/monitoring/clear-alerts';
@@ -28,6 +28,8 @@ export interface CellContext {
   liveStaleMs: number;
   patchStaleMs: number;
   alertsVisible: boolean;
+  /** 0.89: whether the viewer starred this device (0.87's favourites). */
+  favorite?: (id: string) => boolean;
 }
 
 export interface ColumnDef {
@@ -67,6 +69,23 @@ function OsIcon({ platform }: { platform: string | null }) {
   return <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />;
 }
 
+/**
+ * 0.89 (UX P1-3, directive §9): the customer and site under the name — on a
+ * phone always, where the Customer column is hidden, and at every width when
+ * the server says another visible device has the same name. The row itself
+ * is identified by its id (the link); this is for the person reading it.
+ */
+function DeviceWhere({ r }: { r: DeviceRow }) {
+  const where = [r.business?.name, r.site?.name].filter(Boolean).join(' · ');
+  if (!where) return null;
+  return (
+    <p className={cn('max-w-[16rem] text-xs text-muted-foreground [overflow-wrap:anywhere] sm:truncate', !r.nameShared && 'sm:hidden')}
+      data-testid="device-where" data-shared={r.nameShared ? 'true' : undefined} title={where}>
+      {r.nameShared && <span className="sr-only">Another device has this name. </span>}{where}
+    </p>
+  );
+}
+
 const stale = 'text-muted-foreground opacity-60';
 const dash = <span className="text-muted-foreground">—</span>;
 
@@ -76,11 +95,13 @@ function Pct({ label, v }: { label: string; v: number | null }) {
   return <span className={hot}>{label} {v}%</span>;
 }
 
-export type HideBelow = 'lastSeen' | 'agent' | 'os' | 'site' | 'user';
+export type HideBelow = 'business' | 'lastSeen' | 'agent' | 'os' | 'site' | 'user';
 /** The window width each column needs; the column picker shows it. */
-export const HIDE_BELOW_PX: Record<HideBelow, number> = { lastSeen: 1440, agent: 1536, os: 1700, site: 1860, user: 2000 };
+export const HIDE_BELOW_PX: Record<HideBelow, number> = { business: 640, lastSeen: 1440, agent: 1536, os: 1700, site: 1860, user: 2000 };
 /** The same widths as literal classes, so Tailwind generates them. */
 export const HIDE_BELOW: Record<HideBelow, string> = {
+  // 0.89: below 640 px the Device cell names the customer and site itself.
+  business: 'hidden sm:table-cell',
   lastSeen: 'hidden min-[1440px]:table-cell',
   agent: 'hidden min-[1536px]:table-cell',
   os: 'hidden min-[1700px]:table-cell',
@@ -95,17 +116,26 @@ export const COLUMNS: ColumnDef[] = [
       <div className="flex items-center gap-2 min-w-0">
         <span className={cn('h-2 w-2 rounded-full shrink-0', CONNECTIVITY_DOT[connectivityFrom(r, c.now)])} data-connectivity={connectivityFrom(r, c.now)}
           title={`${connectivityLabel(connectivityFrom(r, c.now), r.lastSeenAt, c.now)}. ${connectivityHint(connectivityFrom(r, c.now))}`} />
-        <div className="min-w-0">
-          <Link href={`/endpoints/${r.id}`} className="font-medium hover:underline whitespace-nowrap">{r.name}</Link>
+        {/* 0.89 (F-21): on a phone the table scrolls sideways under a sticky Connect
+            column, which covered the end of a long name. There the cell is as wide
+            as the gap between the checkbox and that column (the window less about
+            16.5rem: page padding, checkbox, Connect and ⋯), and the name wraps in
+            it, at its hyphens first. */}
+        <div className="w-[calc(100vw-16.5rem)] min-w-[6.5rem] sm:w-auto sm:min-w-0">
+          <span className="flex items-center gap-1">
+            <Link href={`/endpoints/${r.id}`} className="font-medium hover:underline [overflow-wrap:anywhere] sm:whitespace-nowrap" data-testid="device-name">{r.name}</Link>
+            {c.favorite?.(r.id) && <Star className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-500" aria-label="Favourite" data-testid="row-favorite" />}
+          </span>
           {r.hostname && r.hostname.toLowerCase() !== r.name.toLowerCase() ? (
             <p className="text-xs text-muted-foreground truncate">{r.hostname}</p>
           ) : null}
+          <DeviceWhere r={r} />
           {r.status !== 'ACTIVE' ? <Badge variant="outline" className="mt-0.5 text-[10px]">{r.status === 'PENDING_ENROLLMENT' ? 'Pending enrollment' : r.status.toLowerCase()}</Badge> : null}
         </div>
       </div>
     ),
   },
-  { id: 'business', label: 'Customer', defaultOn: true, sort: 'business', cell: (r) => r.business?.name ? <span className="block max-w-[10rem] truncate" title={r.business.name}>{r.business.name}</span> : dash },
+  { id: 'business', label: 'Customer', defaultOn: true, sort: 'business', hideBelow: 'business', cell: (r) => r.business?.name ? <span className="block max-w-[10rem] truncate" title={r.business.name}>{r.business.name}</span> : dash },
   { id: 'site', label: 'Site', defaultOn: true, sort: 'site', hideBelow: 'site', cell: (r) => r.site?.name ? <span className="block max-w-[8rem] truncate" title={r.site.name}>{r.site.name}</span> : dash },
   // Id kept as 'group' so saved views from 0.33 keep the column.
   {

@@ -16,7 +16,7 @@ export function toParams(f: DeviceFilters, sort: SortKey, dir: 'asc' | 'desc', p
   if (f.agent) p.agent = f.agent;
   if (f.status !== 'current') p.status = f.status;
   if (f.groupId) p.groupId = f.groupId;
-  for (const k of ['platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays', 'warranty'] as const) {
+  for (const k of ['platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays', 'warranty', 'windowsRole', 'mine'] as const) {
     if (f[k].trim()) p[k] = f[k].trim();
   }
   if (page) p.page = String(page);
@@ -36,6 +36,7 @@ export function viewFilters(f: SavedView['filters']): DeviceFilters {
     patches: (s('patches') as DeviceFilters['patches']) || '',
     rustdeskMin: s('rustdeskMin'), rustdeskMax: s('rustdeskMax'), notSeenDays: s('notSeenDays'), seenWithinDays: s('seenWithinDays'),
     warranty: (s('warranty') as DeviceFilters['warranty']) || '',
+    windowsRole: (s('windowsRole') as DeviceFilters['windowsRole']) || '', mine: (s('mine') as DeviceFilters['mine']) || '',
   };
 }
 
@@ -57,13 +58,14 @@ export const WARRANTY_FILTER_LABEL: Record<string, string> = {
   expired: 'warranty expired', d30: 'warranty ends within 30 days', d60: 'warranty ends within 60 days', d90: 'warranty ends within 90 days',
   active: 'warranty still running', unknown: 'no warranty date',
 };
-const PATCH_LABEL: Record<string, string> = { pending: 'updates pending', current: 'no updates pending', unknown: 'never scanned for updates', stale: 'update scan stale' };
+const PATCH_LABEL: Record<string, string> = { pending: 'updates pending', current: 'no updates pending', unknown: 'never scanned for updates', stale: 'update scan stale', critical: 'security or critical updates pending' };
 
 /** A rule in words, for the groups dialog and the save dialog. Site names come from the caller. */
 export function describeRule(r: DeviceRule, siteName?: (id: string) => string | undefined): string {
   const out: string[] = [];
   if (r.online) out.push(r.online === 'online' ? 'online (agent checking in)' : r.online === 'silent' ? 'reachable, agent silent' : 'offline');
   if (r.platform) out.push(PLATFORM_LABEL[String(r.platform)] ?? String(r.platform));
+  if (r.windowsRole) out.push(r.windowsRole === 'server' ? 'Windows server' : 'Windows workstation');
   if (r.os) out.push(`OS contains “${r.os}”`);
   if (r.siteId) out.push(`site ${siteName?.(String(r.siteId)) ?? '(a site)'}`);
   if (r.tag) out.push(`tagged “${r.tag}”`);

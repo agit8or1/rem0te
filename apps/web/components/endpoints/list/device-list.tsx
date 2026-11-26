@@ -5,8 +5,10 @@ import Link from 'next/link';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowDown, ArrowUp, ArrowUpDown, Bookmark, Check, ChevronLeft, ChevronRight, Columns3, Download, FolderTree,
-  Loader2, MoreHorizontal, Rows3, Search, SlidersHorizontal, Trash2, Users, X,
+  Loader2, MoreHorizontal, Rows3, Search, SlidersHorizontal, Star, Trash2, Users, X,
 } from 'lucide-react';
+import { useNavigation } from '@/lib/navigation';
+import { BUILTIN_VIEWS, NOT_OFFERED, matchBuiltin, type BuiltinView } from '@/lib/device-builtin-views';
 import { endpointsApi } from '@/lib/api-client';
 import { usePermissions, CAP } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -49,10 +51,12 @@ function readUrl(): { filters: DeviceFilters; sort: SortKey; dir: 'asc' | 'desc'
         groupId: q.get('groupId') ?? '',
         platform: pick('platform', ['', 'windows', 'linux', 'macos', 'other'] as const, ''),
         os: q.get('os') ?? '', tag: q.get('tag') ?? '',
-        patches: pick('patches', ['', 'pending', 'current', 'unknown', 'stale'] as const, ''),
+        patches: pick('patches', ['', 'pending', 'current', 'unknown', 'stale', 'critical'] as const, ''),
         rustdeskMin: q.get('rustdeskMin') ?? '', rustdeskMax: q.get('rustdeskMax') ?? '',
         notSeenDays: q.get('notSeenDays') ?? '', seenWithinDays: q.get('seenWithinDays') ?? '',
         warranty: pick('warranty', ['', 'expired', 'd30', 'd60', 'd90', 'active', 'unknown'] as const, ''),
+        windowsRole: pick('windowsRole', ['', 'server', 'workstation'] as const, ''),
+        mine: pick('mine', ['', 'favorite', 'recent'] as const, ''),
       },
       sort, dir: pick('dir', ['asc', 'desc'] as const, DEFAULT_DIR[sort] ?? 'desc'),
       page: Math.max(1, parseInt(q.get('page') ?? '1', 10) || 1),
@@ -97,6 +101,9 @@ export function DeviceList() {
   const [exporting, setExporting] = React.useState(false);
   const [now, setNow] = React.useState(() => Date.now());
   const [ready, setReady] = React.useState(false);
+  // 0.89: a shared view's delete is confirmed in a dialog, not the browser's confirm box.
+  const [deleting, setDeleting] = React.useState<SavedView | null>(null);
+  const nav = useNavigation();
 
   // Per-viewer state from this browser, after mount (localStorage is not there during SSR).
   React.useEffect(() => {
@@ -136,6 +143,14 @@ export function DeviceList() {
     } catch { /* history unavailable: the view still works */ }
   }, [params, ready]);
 
+  // 0.89: the favourites and recent views list whatever the server holds now,
+  // so a star added or removed (here or on a device page) refreshes them.
+  const myDevices = (filters.mine === 'favorite' ? nav.favorites : filters.mine === 'recent' ? nav.recent : [])
+    .filter((f) => f.kind === 'device').map((f) => f.ref).join(',');
+  React.useEffect(() => {
+    if (ready && filters.mine) qc.invalidateQueries({ queryKey: ['device-list'] });
+  }, [myDevices, filters.mine, ready, qc]);
+
   const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ['device-list', params],
     queryFn: () => deviceListApi.list(params),
@@ -168,7 +183,7 @@ export function DeviceList() {
   const offered = COLUMNS.filter((c) => !c.needsAlerts || alertsVisible);
   const shown = offered.filter((c) => c.fixed || columns.includes(c.id));
   const ctx: CellContext = {
-    now, alertsVisible,
+    now, alertsVisible, favorite: (id) => !!nav.favoriteOf('device', id),
     liveStaleMs: data?.thresholds.liveStaleMs ?? 15 * 60_000,
     patchStaleMs: data?.thresholds.patchStaleMs ?? 36 * 3600_000,
   };
@@ -228,8 +243,17 @@ export function DeviceList() {
     setDensity(v.density);
     setActiveView(v);
   }
-  async function deleteView(v: SavedView) {
-    if (v.shared && !window.confirm(`Delete the shared view “${v.name}” for everyone in ${v.business?.name ?? 'this customer'}?`)) return;
+  /** 0.89: a built-in view sets only its own filters (the customer and site stay); nothing is stored. */
+  function applyBuiltin(v: BuiltinView) {
+    setFilters({ ...EMPTY_FILTERS, businessId: filters.businessId, siteId: filters.siteId, ...v.filters });
+    setSearchInput(''); setPage(1); setActiveView(null);
+  }
+  function deleteView(v: SavedView) {
+    if (v.shared) setDeleting(v);
+    else void removeView(v);
+  }
+  async function removeView(v: SavedView) {
+    setDeleting(null);
     try {
       await deviceViewsApi.remove(v.id);
       if (activeView?.id === v.id) setActiveView(null);
@@ -332,7 +356,10 @@ export function DeviceList() {
       toast({ title: 'Rule group not created', description: await refusalMessage(e, 'The group could not be created.'), variant: 'destructive' });
     }
   }
-  const MORE_KEYS = ['platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays', 'warranty'] as const;
+  const MORE_KEYS = ['platform', 'windowsRole', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays', 'warranty'] as const;
+  const builtin = matchBuiltin(filters);
+  const builtins = BUILTIN_VIEWS.filter((v) => !v.needsAlerts || alertsVisible);
+  const viewLabel = activeView ? activeView.name : builtin ? builtin.label : 'Views';
   const moreActive = MORE_KEYS.filter((k) => !!filters[k]).length;
   const siteName = (id: string) => data?.facets.sites.find((x) => x.id === id)?.name;
 
@@ -409,27 +436,42 @@ export function DeviceList() {
 
   return (
     <div className="space-y-3">
-      {/* Toolbar: search and filters on the left, view controls on the right. */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full sm:w-72">
+      {/* Toolbar: search and filters on the left, view controls on the right.
+          0.89 (UX P1-3): one row on a phone — search, Filters, Views and a
+          menu holding density and export; inline from `sm` up, as before. */}
+      <div className="flex items-center gap-2 sm:flex-wrap" data-testid="device-toolbar">
+        <div className="relative min-w-0 flex-1 sm:w-72 sm:flex-none">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input placeholder="Search name, host, IP, user, customer…" className="pl-9 h-9" value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)} aria-label="Search devices" />
         </div>
         <div className="hidden sm:contents">{filterControls(false)}</div>
-        <Button variant={filterCount ? 'default' : 'outline'} size="sm" className="h-9 sm:hidden" onClick={() => setFiltersOpen(true)}
-          aria-haspopup="dialog" data-testid="filters-sheet-trigger">
-          <SlidersHorizontal className="h-4 w-4 mr-1.5" />Filters{filterCount ? ` (${filterCount})` : ''}
+        <Button variant={filterCount ? 'default' : 'outline'} size="sm" className="h-9 shrink-0 px-2.5 sm:hidden" onClick={() => setFiltersOpen(true)}
+          aria-haspopup="dialog" aria-label={filterCount ? `Filters (${filterCount} set)` : 'Filters'} data-testid="filters-sheet-trigger">
+          <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />{filterCount ? <span className="ml-1">{filterCount}</span> : null}
         </Button>
 
-        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+        <div className="flex shrink-0 items-center gap-2 sm:ml-auto">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-9" title={activeView ? `View: ${activeView.name}` : 'Saved views'}>
-                <Bookmark className="h-4 w-4 mr-1.5" /><span className="max-w-[10rem] truncate">{activeView ? activeView.name : 'Views'}</span>
+              <Button variant={activeView || builtin ? 'default' : 'outline'} size="sm" className="h-9 px-2.5 sm:px-3" title={activeView || builtin ? `View: ${viewLabel}` : 'Views'}
+                aria-label={viewLabel} data-testid="views-menu">
+                <Bookmark className="h-4 w-4 sm:mr-1.5" aria-hidden="true" /><span className="hidden max-w-[10rem] truncate sm:inline">{viewLabel}</span>
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-72">
+            <DropdownMenuContent align="end" className="max-h-[70vh] w-72 overflow-y-auto">
+              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Built in (they keep the customer filter)</DropdownMenuLabel>
+              {builtins.map((v) => (
+                <DropdownMenuItem key={v.id} onSelect={() => applyBuiltin(v)} data-testid={`builtin-${v.id}`} title={v.description}>
+                  <Check className={cn('h-4 w-4 mr-2 shrink-0', builtin?.id === v.id ? 'opacity-100' : 'opacity-0')} aria-hidden="true" />
+                  {v.id === 'favorites' && <Star className="h-3.5 w-3.5 mr-1.5 shrink-0 text-muted-foreground" aria-hidden="true" />}
+                  <span className="truncate">{v.label}</span>
+                </DropdownMenuItem>
+              ))}
+              <p className="px-2 pb-1.5 pt-0.5 text-xs text-muted-foreground" data-testid="builtin-not-offered">
+                Not offered yet: {NOT_OFFERED.map((n) => `${n.label.toLowerCase()} (${n.why})`).join('; ')}.
+              </p>
+              <DropdownMenuSeparator />
               {viewsQ.isError && <p className="px-2 py-1.5 text-xs text-destructive">Saved views could not be loaded.</p>}
               {(['personal', 'shared'] as const).map((kind) => {
                 const vs = views.filter((v) => (kind === 'shared') === v.shared);
@@ -465,7 +507,7 @@ export function DeviceList() {
           </DropdownMenu>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-9"><Columns3 className="h-4 w-4 mr-1.5" />Columns</Button>
+              <Button variant="outline" size="sm" className="hidden h-9 sm:inline-flex"><Columns3 className="h-4 w-4 mr-1.5" />Columns</Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-72">
               <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Remembered in this browser</DropdownMenuLabel>
@@ -478,16 +520,39 @@ export function DeviceList() {
               <DropdownMenuItem onSelect={() => { setColumns(DEFAULT_COLUMNS); persist(DEFAULT_COLUMNS, density); }}>Reset to default</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="outline" size="sm" className="h-9" onClick={() => setDens(density === 'compact' ? 'comfortable' : 'compact')}
-            title={density === 'compact' ? 'Switch to comfortable rows' : 'Switch to compact rows'}>
-            <Rows3 className="h-4 w-4 mr-1.5" />{density === 'compact' ? 'Compact' : 'Comfortable'}
+          {/* 0.89 (F-21): a toggle named for what it is, its state in aria-pressed — not a label naming the current state. */}
+          <Button variant={density === 'compact' ? 'default' : 'outline'} size="sm" className="hidden h-9 sm:inline-flex" onClick={() => setDens(density === 'compact' ? 'comfortable' : 'compact')}
+            aria-pressed={density === 'compact'} data-testid="density-toggle" title={density === 'compact' ? 'Compact rows are on: press for comfortable rows' : 'Press for compact rows'}>
+            <Rows3 className="h-4 w-4 mr-1.5" />Compact rows
           </Button>
-          <Button variant="outline" size="sm" className="h-9" onClick={exportCsv} disabled={exporting || !data?.total}
+          <Button variant="outline" size="sm" className="hidden h-9 sm:inline-flex" onClick={exportCsv} disabled={exporting || !data?.total}
             title="Download every device in the current filtered view as CSV. Recorded in the audit log.">
             {exporting ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Download className="h-4 w-4 mr-1.5" />}Export CSV
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-9 px-2.5 sm:hidden" aria-label="More list options" data-testid="list-more">
+                <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-60">
+              <DropdownMenuItem onSelect={() => setDens(density === 'compact' ? 'comfortable' : 'compact')} data-testid="list-more-density">
+                <Check className={cn('h-4 w-4 mr-2', density === 'compact' ? 'opacity-100' : 'opacity-0')} aria-hidden="true" />Compact rows
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={exportCsv} disabled={exporting || !data?.total} data-testid="list-more-export">
+                <Download className="h-4 w-4 mr-2" aria-hidden="true" />Export CSV
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
+
+      {builtin && (
+        <p className="text-xs text-muted-foreground" data-testid="builtin-view">
+          <span className="font-medium text-foreground">{builtin.label}.</span> {builtin.description}
+          {filters.mine && !nav.ready ? ' Loading your list…' : ''}
+        </p>
+      )}
 
       {selected.size > 0 ? (
         <BulkBar selected={selected} groups={groups} isPlatformAdmin={isPlatformAdmin} canEdit={can(CAP.COMPUTERS_EDIT)} sort={sort} dir={dir}
@@ -537,7 +602,9 @@ export function DeviceList() {
               <tr><td colSpan={shown.length + 2} className="text-center py-8 text-muted-foreground">Loading…</td></tr>
             ) : !data?.rows.length ? (
               <tr><td colSpan={shown.length + 2} className="text-center py-8 text-muted-foreground">
-                {active ? 'No devices match these filters.' : 'No devices yet. Enroll one to see it here.'}
+                {filters.mine === 'favorite' && active === 1 ? 'No favourite devices yet. Star one from its page, or from the ⋯ menu on its row.'
+                  : filters.mine === 'recent' && active === 1 ? 'No recently opened devices yet. The devices you open appear here.'
+                    : active ? 'No devices match these filters.' : 'No devices yet. Enroll one to see it here.'}
               </td></tr>
             ) : data.rows.map((r) => (
               <tr key={r.id} className={cn('group hover:bg-muted/30', !r.isOnline && 'bg-muted/10', selected.has(r.id) && 'bg-primary/5')}>
@@ -570,6 +637,10 @@ export function DeviceList() {
                             <Link href={`/endpoints/enroll?endpointId=${encodeURIComponent(r.id)}${r.business?.id ? `&businessId=${encodeURIComponent(r.business.id)}` : ''}`}>Reinstall agent (download link)</Link>
                           </DropdownMenuItem>
                         )}
+                        <DropdownMenuItem disabled={!nav.ready || nav.favPending} onSelect={() => nav.toggleFavorite('device', r.id)} data-testid="row-toggle-favorite">
+                          <Star className={cn('h-4 w-4 mr-2', nav.favoriteOf('device', r.id) && 'fill-amber-400 text-amber-500')} aria-hidden="true" />
+                          {nav.favoriteOf('device', r.id) ? 'Remove from favourites' : 'Add to favourites'}
+                        </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onSelect={() => {
                           navigator.clipboard?.writeText(r.hostname ?? r.name).then(
@@ -676,6 +747,16 @@ export function DeviceList() {
                 </SelectContent>
               </Select>
             </label>
+            <label className="space-y-1"><span className="text-xs text-muted-foreground">Windows role</span>
+              <Select value={moreDraft.windowsRole || ALL} onValueChange={(v) => setMoreDraft((d) => ({ ...d, windowsRole: (v === ALL ? '' : v) as DeviceFilters['windowsRole'] }))}>
+                <SelectTrigger className="h-9" aria-label="Windows role" data-testid="filter-windows-role"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>Any</SelectItem>
+                  <SelectItem value="server">Server (OS name says Server)</SelectItem>
+                  <SelectItem value="workstation">Workstation (Windows, not Server)</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
             <label className="space-y-1"><span className="text-xs text-muted-foreground">Updates</span>
               <Select value={moreDraft.patches || ALL} onValueChange={(v) => setMoreDraft((d) => ({ ...d, patches: (v === ALL ? '' : v) as DeviceFilters['patches'] }))}>
                 <SelectTrigger className="h-9" aria-label="Updates"><SelectValue /></SelectTrigger>
@@ -683,6 +764,7 @@ export function DeviceList() {
                   <SelectItem value={ALL}>Any</SelectItem>
                   <SelectItem value="pending">Updates pending</SelectItem><SelectItem value="current">No updates pending</SelectItem>
                   <SelectItem value="stale">Scan is stale</SelectItem><SelectItem value="unknown">Never scanned</SelectItem>
+                  <SelectItem value="critical">Security or critical updates pending (signed agent scan)</SelectItem>
                 </SelectContent>
               </Select>
             </label>
@@ -757,6 +839,21 @@ export function DeviceList() {
               </>
             );
           })()}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deleting} onOpenChange={(o) => { if (!o) setDeleting(null); }}>
+        <DialogContent data-testid="delete-view-dialog">
+          <DialogHeader>
+            <DialogTitle>Delete the shared view “{deleting?.name}”?</DialogTitle>
+            <DialogDescription>
+              It goes from the Views menu of everyone in {deleting?.business?.name ?? 'this customer'}. No device is changed. The deletion is recorded in the audit log.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleting(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => deleting && removeView(deleting)}>Delete for everyone</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

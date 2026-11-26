@@ -2458,7 +2458,11 @@ still checks for itself. (§94 is 0.85's; §95 is 0.86's, #205.)
 
 - **Own rows only.** `UserNavPreference` and `UserNavItem` are read and
   written only in `navigation/navigation.service.ts`, every call naming
-  `userId: actor.userId`. No route names another person.
+  `userId: actor.userId`. No route names another person. One exception
+  (0.89): `navigation/my-device-items.ts` reads the caller's own `device`
+  items (one `findMany`, `take: 50`) for the device list's *My favourites* /
+  *Recently opened* filter (`mine`), which the list ANDs with its own
+  `scopedWhere`; unread is nothing, and `mine` is refused in a rule.
 - **A kind and a reference, never a name or URL.** A record id, or a console
   path (`PAGE_REF` in `navigation/model.ts`, the same expression as 0104's
   CHECK, at most 120 characters). The web sends `{ kind, ref }` only.

@@ -5,6 +5,125 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.89.0] — 2026-11-26 · *Manifest*
+
+The device list: UX_ROADMAP.md P1-3 (audit F-21, directive §9). On a phone the
+list hid which customer a device belonged to (the Customer column was off to the
+right of a sideways-scrolling table), long names slid under the pinned Connect
+column, and the toolbar took four rows before the first device. At any width,
+two devices with the same name in two customers looked identical on their rows.
+The directive's "useful default views" and favourite devices did not exist.
+
+### Added
+
+- **Customer and site under the name when it is shared.** The list's answer
+  now says, per row, whether another device the viewer can see has the same
+  name, case-insensitively (`nameShared`; one extra read per page, through
+  the list's own `scopedWhere` and archived filter, so it never counts a
+  device the viewer cannot see). Such a row shows its customer and site under
+  the name at every width. On a phone every row does, and the Customer column
+  is hidden there. Rows are still identified by id; this is for the reader.
+- **Built-in views**, at the top of *Views*: *My favourites*, *Recently
+  opened*, *Critical alerts* (only with `monitoring:alerts`), *Offline*,
+  *Windows servers*, *Windows workstations*, *Linux*, *macOS*, *Restart
+  pending*, *Security or critical updates pending*, *Agent needs an update*
+  and *Warranty ending* (90 days). Each is a set of the list's own filters
+  and nothing else: it keeps the chosen customer and site, goes in the
+  address bar, is scoped by the server exactly as typed filters are, and
+  stores nothing. A line above the table names the open view and what it
+  shows. The definitions are `apps/web/lib/device-builtin-views.ts` (pure).
+- **Not offered, and why.** Three of §9's views are listed in the menu as
+  text, not approximated: failed automation and backup failures (the list
+  does not read task or backup results yet) and aging hardware (no purchase
+  or manufacture date is collected).
+- **Three list filters**, each also usable in a saved view:
+  - `windowsRole=server|workstation`, from the reported OS name (inventory
+    caption, else the recorded OS version). *Server* when it says Server;
+    *workstation* when it names another Windows edition. A device that names
+    no edition is in neither. The demo fleet showed why this matters: six
+    devices report only `Microsoft Windows NT 10.0.26100.0`, and build 26100
+    is both Windows 11 24H2 and Windows Server 2025. Allowed in rule groups.
+  - `patches=critical`: a pending update classified *Security Updates* or
+    *Critical Updates*, by the GUIDs a signed agent's scan records
+    (`patching/posture.ts`). A standard agent's scan records no
+    classification, so its devices never match, and the view says so.
+    Allowed in rule groups.
+  - `mine=favorite|recent`: the viewer's own favourite or recently opened
+    devices (0.87's navigation items). Refused in a rule group by name (a
+    rule is the same for everyone who reads it).
+- **Favourites from the list.** *Add to favourites* / *Remove from
+  favourites* in each row's ⋯ menu, and a star on a favourite's row. These
+  are 0.87's favourites (at most 50, the viewer's own), so the sidebar, the
+  device page's star and the list agree. *My favourites* refreshes when one
+  is added or removed, here or elsewhere.
+
+### Changed
+
+- **The phone toolbar is one row**: search, *Filters* (an icon with the
+  number set), *Views* (an icon, named for the open view) and ⋯ (compact
+  rows, Export CSV). From 640 px it is as before.
+- **Long names wrap on a phone**, at their hyphens first, in a Device cell as
+  wide as the gap between the checkbox and the pinned Connect column. Before,
+  the column took the full name's width and Connect covered its end. Checked
+  at 375, 390, 640 and 1280: no name is covered on the docs fleet.
+- **Density is a toggle named *Compact rows***, its state in `aria-pressed`
+  (F-21: the button used to show the current state, *Comfortable*, which
+  reads as what pressing it does).
+- **Deleting a shared view asks in a dialog**, not the browser's confirm box,
+  and says the deletion is audited (it already was,
+  `DEVICE_VIEW_SHARED_CHANGED`). The groups dialog still uses two browser
+  confirm boxes; they are not part of this item.
+
+### Security
+
+- §96 widened by exactly one file. `UserNavItem` is read outside
+  `navigation.service.ts` only by `navigation/my-device-items.ts`: one
+  `findMany` of the caller's own `device` items (`userId: actor.userId`,
+  `take: 50`), no write, no visibility rule of its own. It is a plain function
+  because `NavigationService` already depends on `EndpointListService`. The
+  list uses the ids only AND-ed with its own `scopedWhere`. An unread list is
+  `{ id: { in: [] } }`, nothing, never everything. `mineIds` is never parsed
+  from a request. All of this is checked in §96.
+- The two new SQL conditions are single `Prisma.sql` templates in
+  `derivedConds` with the classification list as a bound parameter, as §35
+  requires.
+
+### Not changed
+
+- The desktop toolbar still wraps to three rows at 1280 px. P1-3 asked for
+  the phone's, and the desktop's inline filters are their own item.
+- No new route, migration, permission or agent change. The CSV export's audit
+  entry records the two new filters with the others.
+
+### Tests
+
+- `apps/web/scripts/unit-device-list-views.mjs` (175 checks, in CI as *Device
+  list built-in views (unit)*). It reads the API's own `list-query.ts` and
+  checks:
+  - every built-in view uses only list filters and values the API accepts;
+  - each of §9's thirteen views is offered or listed with a reason;
+  - `matchBuiltin` is exact (customer and site kept; a search, a group or the
+    archived filter break it);
+  - the web's filter shape and rule keys equal the API's;
+  - no browser confirm box is left in the device list.
+- `unit-dynamic-groups.mjs` (+10): the Windows role and critical updates are
+  allowed in a rule, `mine` is refused (also beside another condition), the
+  closed lists, and `mineIds` never parsed.
+- `e2e-ui.mjs`, in all four combinations:
+  - two same-name devices in two customers each show their customer, and
+    open by their own ids;
+  - phone: every row shows its customer, the toolbar is one row of four
+    controls, and no name is under Connect;
+  - desktop: no customer line on an unshared name, and the density toggle;
+  - the Views menu lists every built-in and the not-offered three;
+  - *Windows workstations* and *Windows servers* against Windows 11 Pro
+    fixtures;
+  - a star from the row menu marks the row and lists the device in *My
+    favourites*, and taking it off removes it without a reload;
+  - the phone Filters button is checked by its accessible name.
+
+---
+
 ## [0.88.0] — 2026-11-26 · *Bridge*
 
 The device workspace: UX_ROADMAP.md P1-2 (audit F-7). The device page is the

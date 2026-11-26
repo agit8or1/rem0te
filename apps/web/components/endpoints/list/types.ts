@@ -27,7 +27,8 @@ export interface DeviceFilters {
   os: string;
   /** A tag, exactly. */
   tag: string;
-  patches: '' | 'pending' | 'current' | 'unknown' | 'stale';
+  /** 0.89: critical = a security or critical update pending (signed agent scans only). */
+  patches: '' | 'pending' | 'current' | 'unknown' | 'stale' | 'critical';
   /** RustDesk client version range, inclusive (dotted numbers). */
   rustdeskMin: string;
   rustdeskMax: string;
@@ -36,17 +37,23 @@ export interface DeviceFilters {
   seenWithinDays: string;
   /** 0.56: by hardware warranty end date. d30/d60/d90 = ends within that many days. */
   warranty: '' | 'expired' | 'd30' | 'd60' | 'd90' | 'active' | 'unknown';
+  /** 0.89: a Windows server or workstation, from the reported OS name (neither when it says neither). */
+  windowsRole: '' | 'server' | 'workstation';
+  /** 0.89: the viewer's own favourite or recently opened devices. Never part of a rule. */
+  mine: '' | 'favorite' | 'recent';
 }
 
 export const EMPTY_FILTERS: DeviceFilters = {
   search: '', businessId: '', siteId: '', online: '', alerts: '', restartPending: false, agent: '', status: 'current', groupId: '',
   platform: '', os: '', tag: '', patches: '', rustdeskMin: '', rustdeskMax: '', notSeenDays: '', seenWithinDays: '', warranty: '',
+  windowsRole: '', mine: '',
 };
 
 /** The filters a rule group may use (0.34) — the server refuses any other in a rule. */
 export const RULE_KEYS = [
   'siteId', 'online', 'alerts', 'restartPending', 'agent',
   'platform', 'os', 'tag', 'patches', 'rustdeskMin', 'rustdeskMax', 'notSeenDays', 'seenWithinDays', 'warranty',
+  'windowsRole',
 ] as const satisfies readonly (keyof DeviceFilters)[];
 export type DeviceRule = Partial<Record<(typeof RULE_KEYS)[number], string | boolean>>;
 
@@ -61,6 +68,11 @@ export interface DeviceRow {
   /** 0.35, from the server: isOnline alone is "reachable" (lib/connectivity.ts). */
   connectivity?: 'online' | 'agent_silent' | 'offline';
   lastSeenAt: string | null;
+  /**
+   * 0.89, from the server: another device the viewer can see has this name
+   * (case-insensitively), so the row says its customer and site beside it.
+   */
+  nameShared?: boolean;
   deviceClass: string;
   accessMode: string;
   business: { id: string; name: string | null } | null;

@@ -129,5 +129,20 @@ section('Bulk on a group: endpointIds XOR targetGroupId');
   check(R.parseBulk({ action: 'group.add', groupId: G1, targetGroupId: 'cmgroupabc0002' }).groupId === G1, 'members of one group into another parses');
 }
 
+section('0.89: Windows role, critical updates, and the viewer\'s own devices (UX P1-3)');
+{
+  check(J(G.parseRule({ platform: 'windows', windowsRole: 'server' })) === '{"platform":"windows","windowsRole":"server"}', 'a rule may name a Windows role');
+  check(G.parseRule({ patches: 'critical' }).patches === 'critical', 'a rule may ask for security or critical updates pending');
+  check(!!refusal(() => G.parseRule({ windowsRole: 'domain-controller' })), 'an unknown Windows role is refused');
+  check(!!refusal(() => G.parseRule({ mine: 'favorite' })), 'a rule never holds "my favourites": it is one person\'s');
+  check(!!refusal(() => G.parseRule({ online: 'online', mine: 'recent' })), '…not even beside another condition (refused, never dropped)');
+  const f = Q.parseListFilters({ windowsRole: 'workstation', mine: 'favorite', patches: 'critical' });
+  check(f.windowsRole === 'workstation' && f.mine === 'favorite' && f.patches === 'critical', 'the list parses all three');
+  check(!!refusal(() => Q.parseListFilters({ mine: 'everyone' })), 'mine is favorite or recent only');
+  check(!!refusal(() => Q.parseListFilters({ windowsRole: 'server; drop' })), 'windowsRole is a closed list');
+  check(J(Q.WINDOWS_ROLES) === '["server","workstation"]' && J(Q.MINE) === '["favorite","recent"]', 'the closed lists are exactly these');
+  check(Q.parseListFilters({ mineIds: ['x'] }).mineIds === undefined, 'mineIds is never parsed from a request');
+}
+
 console.log(`\n${fail ? '\x1b[31m' : '\x1b[32m'}${pass} passed, ${fail} failed\x1b[0m`);
 if (failures.length) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

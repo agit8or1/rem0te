@@ -8841,8 +8841,27 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   const sql = read('apps/api/prisma/migrations/0104_navigation/migration.sql');
 
   const writers = walk('apps/api/src').filter((f) => /\.ts$/.test(f) && /\buserNav(Item|Preference)\b/.test(code(read(f))));
-  check('only navigation.service.ts reads or writes UserNavPreference / UserNavItem',
-    JSON.stringify(writers) === JSON.stringify([`${N}/navigation.service.ts`]), writers.join(', '));
+  check('only navigation.service.ts reads or writes UserNavPreference / UserNavItem, and (0.89) my-device-items.ts reads it',
+    JSON.stringify(writers.sort()) === JSON.stringify([`${N}/my-device-items.ts`, `${N}/navigation.service.ts`]), writers.join(', '));
+  // 0.89 (UX P1-3): the device list's "My favourites" / "Recent devices"
+  // views read the caller's own device ids. One findMany, the caller's own
+  // rows, kind device, bounded; it returns ids and decides no visibility (the
+  // list ANDs them with its own scopedWhere, below).
+  const mine = code(read(`${N}/my-device-items.ts`));
+  const mineCalls = [...mine.matchAll(/\bprisma\.userNav(?:Item|Preference)\.(\w+)\(/g)].map((m) => m[1]);
+  check('my-device-items.ts: one read of the caller\'s own device items (userId: actor.userId, kind device, take 50), no write, no visibility rule',
+    JSON.stringify(mineCalls) === '["findMany"]'
+      && /where: \{ userId: actor\.userId, list, kind: 'device' \},\s*select: \{ ref: true \},\s*take: 50,/.test(mine)
+      && !/endpointVisibilityWhere|scopedWhere|isPlatformAdmin|create|update|delete|upsert/.test(mine),
+    `${N}/my-device-items.ts`);
+  const elsSvc = code(read('apps/api/src/endpoints/endpoint-list.service.ts'));
+  check('the device list uses those ids only AND-ed with its own scopedWhere: unread is nothing, never everything; never in a rule',
+    /if \(q\.mine\) and\.push\(\{ id: \{ in: q\.mineIds \?\? \[\] \} \}\);/.test(elsSvc)
+      && /mineIds: await myDeviceIds\(this\.prisma, actor, q\.mine\)/.test(elsSvc)
+      && /const and: Prisma\.EndpointWhereInput\[\] = \[this\.scopedWhere\(actor, q\), \.\.\.this\.filterConds\(q\)\];/.test(elsSvc)
+      && /mine: 'favourites and recent devices are one person/.test(read('apps/api/src/device-views/group-rule.ts'))
+      && !/'mine'/.test((read('apps/api/src/device-views/group-rule.ts').match(/export const RULE_KEYS = \[([\s\S]*?)\] as const/) ?? ['', ''])[1]),
+    'endpoint-list.service.ts / group-rule.ts');
   const calls = [...svc.matchAll(/\b(?:this\.prisma|tx)\.userNav(?:Item|Preference)\.(\w+)\(([\s\S]*?)\);/g)];
   check('every one of its calls names the caller: userId: actor.userId (or the key built from it)',
     calls.length >= 8 && calls.every((m) => /userId: actor\.userId|where: \{ userId_list_kind_ref: key \}/.test(m[2]))
