@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BellOff, ExternalLink } from 'lucide-react';
+import { BellOff, Clock, ExternalLink } from 'lucide-react';
 import { monitoringApi } from '@/lib/api-client';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -27,7 +27,11 @@ export type AlertRow = {
   /** 0.66: the classifier's verdict (null on alerts raised before 0.66). */
   classification?: { class: AlertClass; basis: string; matched: string | null; version: number | null } | null;
   fingerprint?: string | null;
+  /** 0.92 (UX P1-6): how fresh the evidence is (alert-questions.ts freshnessOf). */
+  freshness?: 'fresh' | 'stale' | 'absence' | 'stored' | 'unknown';
 };
+/** 0.92: one of the eight questions §16 says every alert answers, with the server's answer. */
+export type AlertAnswer = { key: 'what' | 'who' | 'when' | 'fresh' | 'why' | 'act' | 'ticket' | 'resolved'; question: string; text: string; status?: string };
 export type AlertClass = 'CRITICAL' | 'WARNING' | 'INFORMATIONAL' | 'BENIGN' | 'UNKNOWN';
 type Explanation = {
   whatHappened: string; whyGenerated: string; howSerious: string; recommendedAction: string; certainty: string;
@@ -41,6 +45,7 @@ type Detail = AlertRow & {
   /** 0.67: the approved alert quality rules that changed it, and its false-positive reports. */
   qualityRules?: { id: string; name: string; status: string }[];
   falsePositive?: { reports: number; mine: { reason: string; createdAt: string } | null };
+  questions?: AlertAnswer[];
 };
 export type Summary = { visible: boolean; open: number; acknowledged: number; critical: number; warning: number; info: number; suppressed: number };
 
@@ -49,12 +54,18 @@ export function SeverityBadge({ s }: { s: AlertRow['severity'] }) {
   const cls = s === 'CRITICAL' ? 'bg-red-600 text-white hover:bg-red-600' : s === 'WARNING' ? 'bg-amber-500 text-black hover:bg-amber-500' : 'bg-sky-600 text-white hover:bg-sky-600';
   return <Badge className={cls}>{s.toLowerCase()}</Badge>;
 }
-export function StateBadge({ a }: { a: Pick<AlertRow, 'state' | 'suppressed' | 'resolvedBy'> }) {
-  if (a.state === 'RESOLVED') return <Badge variant="outline">resolved{a.resolvedBy === 'monitor' ? ' (cleared)' : ''}</Badge>;
+export function StateBadge({ a }: { a: Pick<AlertRow, 'state' | 'suppressed' | 'resolvedBy'> & { freshness?: AlertRow['freshness'] } }) {
+  if (a.state === 'RESOLVED') return <Badge variant="outline">resolved{a.resolvedBy === 'monitor' ? ' (by the monitor)' : ' (by a person)'}</Badge>;
   return (
     <>
       <Badge variant={a.state === 'OPEN' ? 'destructive' : 'secondary'}>{a.state === 'OPEN' ? 'open' : 'acknowledged'}</Badge>
       {a.suppressed && <Badge variant="outline" className="ml-1"><BellOff className="mr-1 h-3 w-3" />maintenance</Badge>}
+      {/* 0.92: missing or stale telemetry is never healthy, so say so on the row. */}
+      {(a.freshness === 'stale' || a.freshness === 'unknown') && (
+        <Badge variant="outline" className="ml-1 border-destructive/50 text-destructive" data-testid="alert-stale" title="The device's agent has not reported recently: this alert shows the device as it was then.">
+          <Clock className="mr-1 h-3 w-3" />{a.freshness === 'stale' ? 'evidence stale' : 'no recent report'}
+        </Badge>
+      )}
     </>
   );
 }
@@ -106,9 +117,48 @@ function DetailList({ detail }: { detail: Record<string, unknown> }) {
   );
 }
 
-/** 0.66: the plain-English explanation — what happened, why, how serious, what to do — and how sure Rem0te is. */
-function ExplanationBox({ e }: { e: Explanation }) {
-  const rows: [string, string][] = [
+/** 0.92: where on the device each kind is investigated; opening a tab changes nothing. */
+const INVESTIGATE: Record<string, { tab: string; label: string }> = {
+  SERVICE_STOPPED: { tab: 'services', label: 'Services' }, CPU_HIGH: { tab: 'processes', label: 'Processes' }, MEMORY_HIGH: { tab: 'processes', label: 'Processes' },
+  EVENT_MATCH: { tab: 'events', label: 'Event log' }, UPDATES_MISSING: { tab: 'patches', label: 'Patches' }, UPDATE_FAILED: { tab: 'patches', label: 'Patches' },
+  REBOOT_PENDING: { tab: 'patches', label: 'Patches' }, UPTIME_LONG: { tab: 'patches', label: 'Patches' },
+  DISK_FREE: { tab: 'performance', label: 'Performance' }, DRIVE_FREE: { tab: 'performance', label: 'Performance' },
+  AGENT_SILENT: { tab: 'overview', label: 'Overview (Agent card)' }, OFFLINE: { tab: 'overview', label: 'Overview' }, WARRANTY_EXPIRING: { tab: 'overview', label: 'Overview (Hardware)' },
+};
+
+const STATUS_WORD: Record<string, string> = {
+  fresh: 'Current', stale: 'Stale', absence: 'No reports', stored: 'Stored data', unknown: 'Unknown',
+  open: 'Not yet', verified: 'Verified', unverified: 'Not verified', person: 'By a person',
+  linked: 'Linked', none: 'None',
+};
+const STATUS_BAD = new Set(['stale', 'unknown', 'unverified']);
+
+/**
+ * 0.92 (UX P1-6, directive §16): the eight questions every alert answers, in
+ * the server's words (monitoring/alert-questions.ts). "Is there a related
+ * ticket?" is absent when no PSA is configured and no ticket exists.
+ */
+function AlertQuestions({ q }: { q: AlertAnswer[] }) {
+  return (
+    <dl className="min-w-0 space-y-2 rounded-md border bg-background p-3 [overflow-wrap:anywhere]" data-testid="alert-questions">
+      {q.map((a) => (
+        <div key={a.key} data-question={a.key} data-status={a.status ?? ''}>
+          <dt className="flex flex-wrap items-center gap-2 text-xs font-medium text-foreground">
+            {a.question}
+            {a.status && STATUS_WORD[a.status] && (
+              <Badge variant="outline" className={`h-5 px-1.5 text-xs font-normal ${STATUS_BAD.has(a.status) ? 'border-destructive/50 text-destructive' : ''}`}>{STATUS_WORD[a.status]}</Badge>
+            )}
+          </dt>
+          <dd className="text-sm text-muted-foreground">{a.text}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** 0.66: the plain-English explanation — what happened, why, how serious, what to do — and how sure Rem0te is. From 0.92, with the eight questions above it, only why it was raised and how it was classified. */
+function ExplanationBox({ e, short }: { e: Explanation; short?: boolean }) {
+  const rows: [string, string][] = short ? [['Why was this alert generated?', e.whyGenerated]] : [
     ['What happened?', e.whatHappened], ['Why was this alert generated?', e.whyGenerated], ['How serious is it?', e.howSerious], ['Recommended action', e.recommendedAction],
   ];
   return (
@@ -167,7 +217,13 @@ export function AlertDetail({ id, onChanged }: { id: string; onChanged: () => vo
         )}
         {data.resolveNote && <div className="md:col-span-3"><div className="text-xs text-muted-foreground">Resolution</div>{data.resolveNote}</div>}
       </div>
-      {data.explanation && <ExplanationBox e={data.explanation} />}
+      {data.questions && data.questions.length > 0 && <AlertQuestions q={data.questions} />}
+      {data.computer && INVESTIGATE[data.kind] && (
+        <p className="text-sm" data-testid="alert-investigate">
+          <Link className="text-primary hover:underline" href={`/endpoints/${data.computer.id}?tab=${INVESTIGATE[data.kind].tab}`}>Investigate on the device: {INVESTIGATE[data.kind].label}</Link>
+        </p>
+      )}
+      {data.explanation && <ExplanationBox e={data.explanation} short={!!data.questions?.length} />}
       {!!data.qualityRules?.length && (
         <p className="text-xs text-muted-foreground" data-testid="alert-quality-rules">
           Changed by {data.qualityRules.map((q, i) => <span key={q.id}>{i ? ', ' : ''}<Link className="text-primary hover:underline" href={`/alerts/quality?rule=${q.id}`}>{q.name}</Link>{q.status !== 'active' ? ` (${q.status.replace('_', ' ')})` : ''}</span>)}.

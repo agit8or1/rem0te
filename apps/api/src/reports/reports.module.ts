@@ -4,6 +4,8 @@ import { ReportsService } from './reports.service';
 import { ReportSchedulesController } from './report-schedules.controller';
 import { ReportSchedulesService } from './report-schedules.service';
 import { MonitoringAdminService } from '../monitoring/monitoring-admin.service';
+// 0.92: MonitoringAdminService asks PsaService.configuredFor for an alert's ticket question; PsaService is not global.
+import { PsaModule } from '../psa/psa.module';
 
 /**
  * MonitoringAdminService is provided here, as in DashboardModule, so the alert
@@ -11,6 +13,7 @@ import { MonitoringAdminService } from '../monitoring/monitoring-admin.service';
  * instead of a copy that could drift from it. It is stateless.
  */
 @Module({
+  imports: [PsaModule],
   // ReportSchedulesController first: its `schedules` path must not be read as a report name.
   controllers: [ReportSchedulesController, ReportsController],
   providers: [ReportsService, ReportSchedulesService, MonitoringAdminService],

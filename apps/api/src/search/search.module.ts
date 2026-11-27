@@ -7,6 +7,8 @@ import { SitesModule } from '../sites/sites.module';
 import { UsersModule } from '../users/users.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { MonitoringAdminService } from '../monitoring/monitoring-admin.service';
+// 0.92: MonitoringAdminService asks PsaService.configuredFor for an alert's ticket question; PsaService is not global.
+import { PsaModule } from '../psa/psa.module';
 import { PatchingModule } from '../patching/patching.module';
 import { AutomationModule } from '../automation/automation.module';
 
@@ -16,7 +18,7 @@ import { AutomationModule } from '../automation/automation.module';
  * visibility rule — instead of a copy. It is stateless.
  */
 @Module({
-  imports: [EndpointsModule, BusinessesModule, SitesModule, UsersModule, RbacModule, PatchingModule, AutomationModule],
+  imports: [PsaModule, EndpointsModule, BusinessesModule, SitesModule, UsersModule, RbacModule, PatchingModule, AutomationModule],
   controllers: [SearchController],
   providers: [SearchService, MonitoringAdminService],
 })

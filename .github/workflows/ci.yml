@@ -211,6 +211,11 @@ jobs:
       - name: Alert classification tests
         run: node apps/api/scripts/unit-alert-classification.mjs
 
+      # The eight questions every alert answers (0.92, UX P1-6): freshness,
+      # verification and the ticket question (monitoring/alert-questions.ts).
+      - name: Alert questions (unit)
+        run: node apps/api/scripts/unit-alert-questions.mjs
+
       # Alert quality rules (0.67): narrowness, risk, expiry, scope (never
       # across a business), shadow rules counted but never applied,
       # precedence and conflicts, the unseen-event floor, simulation and its

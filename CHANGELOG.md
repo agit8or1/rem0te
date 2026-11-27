@@ -5,6 +5,86 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.92.0] — 2026-11-27 · *Signal*
+
+Alerts answer the eight questions: UX_ROADMAP.md P1-6, directive §16 ("Every
+alert should answer: what happened, which customer and device, when observed,
+how fresh is the evidence, why it matters, what the technician can safely do,
+an existing ticket if a PSA is configured, was it verified as resolved";
+"do not classify missing or stale telemetry as healthy"). Before this, an
+alert's detail had 0.66's four-part explanation and nothing about freshness
+or verification. An alert on a device whose agent had stopped reporting
+looked as current as one seen a minute ago, and could sit open for days
+with nothing saying its evidence had gone stale. A resolved row said only
+*resolved* or *resolved (cleared)*, so a technician's own "resolved" looked
+the same as a measurement. A monitor that was **closed** (it no longer
+applied, or the device was retired) read *cleared*.
+
+### Added
+
+- **The eight questions, first in every alert.**
+  `apps/api/src/monitoring/alert-questions.ts` (pure) answers them on read
+  from the alert view, the device's last report (`Endpoint.lastSeenAt`), the
+  explanation and the tickets made for the alert. Nothing is stored.
+  - **How fresh is the evidence?** Each monitor kind has a source (agent,
+    absence of reports, warranty date, backup provider). An agent-sourced
+    alert is *Current* only while the agent has reported inside
+    `HEARTBEAT_STALE_MS` (30 minutes, the same window as the device's
+    Online). Past it the alert is *Stale*: it shows the device as it was,
+    cannot clear, and "silence is not health". With no report at all it is
+    *Unknown*.
+  - **Why does it matter?** A sentence per kind, then the severity's reading.
+  - **What can I safely do?** The recommended action. It says Acknowledge and
+    Resolve change nothing on the device and need no ticket. A link opens the
+    device tab where the kind is investigated.
+  - **Is there a related ticket?** Present only when a ticket exists for the
+    alert (PSA, automatic or ClientSt0r) or a connector applies
+    (`PsaService.configuredFor`, a read). Standalone, the question is absent.
+  - **Was it verified as resolved?**
+    - *Verified* only when the monitor measured it clear while the agent was
+      reporting.
+    - *By a person* for a person's resolve, with their note. It is not a
+      measurement, and the monitor raises a new alert if it sees the problem
+      again.
+    - *Not verified* for a `Closed:` monitor, and for a clear when the agent
+      had not reported inside the window (an event monitor's quiet period
+      passing while the agent was silent).
+- **Rows say when evidence is stale.** An open alert whose device's agent has
+  gone quiet carries *evidence stale* (or *no recent report*), on /alerts, the
+  device's Monitoring tab and its Overview. A resolved row says *by the
+  monitor* or *by a person*. The list view carries `freshness`; the device
+  include gains `lastSeenAt` (notification payloads pick their fields and are
+  unchanged).
+
+### Changed
+
+- The 0.66 explanation box now keeps only **Why was this alert generated?**
+  and **Classification details** under the questions. What happened, how
+  serious and the recommended action are in the answers, not repeated.
+
+### Tests
+
+- `apps/api/scripts/unit-alert-questions.mjs` (in CI, 69 checks): the keys in
+  order; every `MONITOR_KINDS` entry has a source. Freshness: 29 min Current,
+  31 min Stale, none or an unparseable date Unknown, every agent kind Stale at
+  2 h, absence and stored for the rest. Verification: open, a person never
+  verified, a clear verified only with the agent reporting, `Closed:`
+  unverified. The ticket question is absent standalone, *None* with a PSA and
+  listed with tickets. The module imports only `common/connectivity`, reads no
+  clock and has one caller.
+- `check-security-invariants.mjs` §97 holds the same rules statically.
+- `e2e-ui.mjs` `alertExplanation`: the DS-HOME1 alert answers the questions in
+  order, with a freshness status and "Not yet" resolved. It says acknowledging
+  and resolving change nothing. The explanation box no longer repeats the
+  answers, and the event alert links to the device's Event log.
+
+### Docs
+
+- `docs/monitoring.md` (*What an alert says*: the questions and what answers
+  each), `/help`, `CLAUDE.md` (§97) and `docs/ux/UX_ROADMAP.md` (P1-6 done).
+
+---
+
 ## [0.91.0] — 2026-11-27 · *Beacon*
 
 Remote support states: UX_ROADMAP.md P1-5, directive §12 ("clearly

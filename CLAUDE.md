@@ -2492,6 +2492,20 @@ Behavioural proof: `e2e-nav-prefs.mjs` (port 4101, in `run-e2e.sh`). Unit:
 the second also proves every pre-0.87 URL in `docs/NAVIGATION_MIGRATION.md` is
 reachable and Standard mode hides no page). Browser: `e2e-ui.mjs` (`navShell`).
 
+
+§97 (0.92) is the eight questions every alert answers (directive §16), display
+only. `monitoring/alert-questions.ts` is pure: it imports only
+`common/connectivity` (itself import-free), reads no clock, and its one
+caller is the alert detail. **Stale or missing telemetry is never healthy**:
+an agent-sourced alert is *Current* only inside `HEARTBEAT_STALE_MS`, *Stale*
+past it and *Unknown* with no report. **Only a measurement verifies**: a
+person's resolve is *By a person*, a monitor's `Closed:` note and a clear with
+no agent report inside the window are *Not verified*. The ticket question
+exists only with a ticket or a configured connector, learnt from
+`PsaService.configuredFor` (a read); the alert detail sends nothing. Unit:
+`unit-alert-questions.mjs` (in CI); browser: `e2e-ui.mjs`
+(`alertExplanation`).
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs
