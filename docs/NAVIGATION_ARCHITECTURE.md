@@ -60,6 +60,22 @@ so it is a section tab on a standard page's tab row, and every page is in the
 palette's *Pages* group whatever the mode. `unit-nav-model.mjs` checks both for
 every role.
 
+## Technician workspaces (0.90)
+
+A second preference, `workspace` (`all`, `l1`, `l2`, `l3`; 0105's CHECK), is
+the UX directive's §11. `apps/web/lib/workspace-modes.ts` (pure, no imports)
+names each workspace's pages as menu hrefs and its order for the device
+page's seven tab groups. In a workspace, `sidebarItems` lists exactly the
+visible entries (`show`) that the workspace names, whatever the mode; a group
+with none is left out, and the current page is still listed. *All pages* is
+the 0.87 behaviour.
+
+A workspace is presentation only. It never adds an entry `show` hides, and
+nothing on the server reads it except to store and return it (§96). The
+palette, the hub tabs and every URL are unchanged, and each page and route
+still checks permissions. `unit-nav-model.mjs` checks every workspace for
+every role and mode.
+
 ## The sidebar
 
 - **Expanded**, 232 px: group rows 36 px, page rows 32 px (compact density:
@@ -94,7 +110,7 @@ the critical-alerts bell, chat, tasks, help, and the profile menu.
   narrows no query by itself.
 - **Profile menu.** Theme (Light, Dark, **System**; the theme store is still
   `localStorage.theme` through `ThemeProvider`), density (Comfortable,
-  Compact), mode (Standard, Advanced), My account, About, sign out, and —
+  Compact), mode (Standard, Advanced), workspace (0.90), My account, About, sign out, and —
   for staff only (Platform Admins and MSP technicians, owner decision 2b) —
   *Support Rem0te*.
 - **Alerts bell.** Critical active alerts the person can see (the alerts list's

@@ -2025,6 +2025,7 @@ model UserNavPreference {
   sidebarCollapsed  Boolean  @default(false)
   pinnedGroups      String[] @default([])
   density           String   @default("comfortable")
+  workspace         String   @default("all")
   contextBusinessId String?
   updatedAt         DateTime @updatedAt
 }

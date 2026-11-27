@@ -47,10 +47,18 @@ const icons = new Proxy({}, { get: (_t, name) => { const f = () => null; f.iconN
 const src = readFileSync(join(WEB, 'components', 'layout', 'nav-model.ts'), 'utf8');
 const js = ts.transpileModule(src, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 } }).outputText;
 const mod = { exports: {} };
+// 0.90: the technician workspaces (pure, no imports).
+const wsSrc = readFileSync(join(WEB, 'lib', 'workspace-modes.ts'), 'utf8');
+const wsJs = ts.transpileModule(wsSrc, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 } }).outputText;
+if (/\brequire\s*\(/.test(wsJs)) throw new Error('lib/workspace-modes.ts imports a module: it must stay pure');
+const wsMod = { exports: {} };
+new Function('module', 'exports', wsJs)(wsMod, wsMod.exports);
+const W = wsMod.exports;
 const req = (id) => {
   if (id === 'lucide-react') return icons;
   if (id === '@/lib/auth') return { CAP };
-  throw new Error(`nav-model.ts imports ${id}: only lucide-react and @/lib/auth are allowed`);
+  if (id === '@/lib/workspace-modes') return W;
+  throw new Error(`nav-model.ts imports ${id}: only lucide-react, @/lib/auth and @/lib/workspace-modes are allowed`);
 };
 new Function('module', 'exports', 'require', js)(mod, mod.exports, req);
 const M = mod.exports;
@@ -172,6 +180,60 @@ for (const mode of ['standard', 'advanced']) {
     const h = HEADER + PAD + groups.length * ROW + biggest * CHILD + FOOTER;
     check(`${role}/${mode}: fits a 1,080 p screen with the largest group open (${h} px ≤ 950)`, h <= 950, `${h}`);
   }
+}
+
+
+// ── Technician workspaces (0.90, P1-4; directive §11) ───────────────────────
+{
+  const allHrefs = new Set([...leaves.map((l) => l.href)]);
+  const apiModel = readFileSync(join(API, 'src', 'navigation', 'model.ts'), 'utf8');
+  const apiWs = [...((apiModel.match(/export const WORKSPACES = \[([^\]]*)\] as const;/) ?? ['', ''])[1]).matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  const sqlWs = [...((readFileSync(join(API, 'prisma', 'migrations', '0105_nav_workspace', 'migration.sql'), 'utf8').match(/"workspace" IN \(([^)]*)\)/) ?? ['', ''])[1]).matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  check('workspaces: the web, the API and 0105 name the same ids in the same order', JSON.stringify(W.WORKSPACE_IDS) === JSON.stringify(apiWs) && JSON.stringify(apiWs) === JSON.stringify(sqlWs), `${W.WORKSPACE_IDS} / ${apiWs} / ${sqlWs}`);
+  check('workspaces: "all" is first and is every page (the default)', W.WORKSPACES[0].id === 'all' && W.WORKSPACES[0].pages === null && W.WORKSPACES[0].deviceGroups === null);
+  const dm = readFileSync(join(WEB, 'components', 'endpoints', 'workspace', 'device-model.ts'), 'utf8');
+  const groupIds = [...((dm.match(/export const TAB_GROUPS[\s\S]*?\n\];/) ?? [''])[0]).matchAll(/\{ id: '([a-z]+)'/g)].map((m) => m[1]);
+  check('workspaces: the device page has seven tab groups to order', groupIds.length === 7, groupIds.join(','));
+  let prev = null;
+  for (const w of W.WORKSPACES.slice(1)) {
+    for (const h of w.pages) check(`workspace ${w.id}: ${h} is a menu page`, allHrefs.has(h));
+    check(`workspace ${w.id}: no page twice`, new Set(w.pages).size === w.pages.length);
+    check(`workspace ${w.id}: starts at the dashboard`, w.pages[0] === '/dashboard');
+    if (prev) check(`workspace ${w.id}: includes every page of ${prev.id}`, prev.pages.every((h) => w.pages.includes(h)));
+    check(`workspace ${w.id}: orders every device tab group exactly once`, JSON.stringify([...w.deviceGroups].sort()) === JSON.stringify([...groupIds].sort()), w.deviceGroups.join(','));
+    check(`workspace ${w.id}: Overview stays first on the device page`, w.deviceGroups[0] === 'overview');
+    prev = w;
+  }
+  // §11 L1: assigned customers, device search, health, alerts, remote support, support requests, action status.
+  for (const h of ['/technician', '/endpoints', '/dashboard', '/alerts', '/sessions', '/support-requests', '/automation/tasks']) check(`workspace l1 has ${h}`, W.inWorkspace('l1', h));
+  for (const h of ['/patching', '/automation/software', '/automation/scripts']) check(`workspace l2 has ${h} (L1 does not)`, W.inWorkspace('l2', h) && !W.inWorkspace('l1', h));
+  for (const h of ['/automation/schedules', '/admin/rollouts', '/settings/client-updates', '/settings/security/containment']) check(`workspace l3 has ${h} (L2 does not)`, W.inWorkspace('l3', h) && !W.inWorkspace('l2', h));
+  check('workspace l1 puts Tools before System on the device page', W.WORKSPACES[1].deviceGroups.indexOf('tools') < W.WORKSPACES[1].deviceGroups.indexOf('system'));
+  check('an unknown workspace is "all"', W.workspaceOf('l9').id === 'all' && W.workspaceOf(undefined).id === 'all' && W.inWorkspace('nope', '/admin/sso'));
+  const groupsIn = [{ id: 'overview' }, { id: 'health' }, { id: 'software' }, { id: 'system' }, { id: 'tools' }, { id: 'remote' }, { id: 'history' }];
+  check('orderGroups("all") keeps the page\'s order', JSON.stringify(W.orderGroups('all', groupsIn).map((g) => g.id)) === JSON.stringify(groupsIn.map((g) => g.id)));
+  check('orderGroups never drops or adds a group', W.WORKSPACES.every((w) => W.orderGroups(w.id, groupsIn).length === groupsIn.length));
+  check('orderGroups keeps a group the list does not name, at the end', W.orderGroups('l1', [...groupsIn, { id: 'extra' }]).at(-1).id === 'extra');
+  check('the not-a-page list names escalation and PSA tickets, each with a reason', ['Escalation', 'Related PSA tickets'].every((l) => W.NOT_A_PAGE.some((n) => n.label === l && n.why.length > 20)));
+
+  // Presentation only: in every role and workspace, the sidebar lists only what show() allows, and nothing outside the workspace.
+  for (const [role, c] of Object.entries(ROLES)) {
+    for (const w of W.WORKSPACES) {
+      for (const mode of ['standard', 'advanced']) {
+        for (const s of NAV) {
+          const items = M.sidebarItems(s, c, mode, w.id);
+          for (const l of items) {
+            check(`${role}/${w.id}/${mode}: ${l.href} only when show() says so`, l.show(c));
+            check(`${role}/${w.id}/${mode}: ${l.href} is in the workspace`, W.inWorkspace(w.id, l.href));
+          }
+          if (w.pages) check(`${role}/${w.id}/${mode}/${s.id}: the mode does not matter inside a workspace`, JSON.stringify(items.map((i) => i.href)) === JSON.stringify(M.sidebarItems(s, c, mode === 'standard' ? 'advanced' : 'standard', w.id).map((i) => i.href)));
+        }
+      }
+      // Every page this person can open is still in the palette, in every workspace (allPages takes no workspace).
+      check(`${role}/${w.id}: the palette still offers every page`, M.allPages.length === 1);
+    }
+  }
+  check('sidebarItems defaults to every page ("all")', NAV.every((s) => JSON.stringify(M.sidebarItems(s, ROLES.platformAdmin, 'advanced')) === JSON.stringify(M.sidebarItems(s, ROLES.platformAdmin, 'advanced', 'all'))));
 }
 
 console.log(`unit-nav-model: ${passed} passed, ${failures.length} failed`);

@@ -1778,7 +1778,10 @@ const SECTIONS: Section[] = [
           <strong className="text-foreground">Security</strong> (containment, the audit log, server security, access
           control) and <strong className="text-foreground">Administration</strong> (settings, users, technicians,
           integrations). <em>Standard</em> mode, the default, lists the everyday pages; the rest are tabs on those pages
-          and in Ctrl+K, and <em>Advanced</em> in your profile menu lists them all. The toggle at the top left collapses
+          and in Ctrl+K, and <em>Advanced</em> in your profile menu lists them all. A <em>workspace</em> (0.90, also in
+          the profile menu: All pages, L1 support, L2 support or L3) lists only that role&apos;s pages and orders a
+          device&apos;s tab groups for it; it is a menu, not a permission, so every page is still in Ctrl+K and checks
+          what you may do as before. The toggle at the top left collapses
           the menu to icons. Help is the <strong className="text-foreground">?</strong> in the top bar; your theme
           (Light, Dark or System), density, mode and Sign out are in the profile menu at the top right. Star a device or
           customer to keep it under the star in the top bar. Nothing moved address:{' '}

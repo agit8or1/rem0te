@@ -2463,6 +2463,12 @@ still checks for itself. (§94 is 0.85's; §95 is 0.86's, #205.)
   items (one `findMany`, `take: 50`) for the device list's *My favourites* /
   *Recently opened* filter (`mine`), which the list ANDs with its own
   `scopedWhere`; unread is nothing, and `mine` is refused in a rule.
+- **A workspace is a menu (0.90).** `workspace` (`all`, `l1`, `l2`, `l3`,
+  0105's CHECK, model.ts `WORKSPACES`, the web's `lib/workspace-modes.ts`,
+  in order) is stored and returned and read for nothing else.
+  `workspace-modes.ts` is pure and names no capability or role, and
+  `sidebarItems` only filters `visibleItems`, so a workspace never shows an
+  entry `show` hides.
 - **A kind and a reference, never a name or URL.** A record id, or a console
   path (`PAGE_REF` in `navigation/model.ts`, the same expression as 0104's
   CHECK, at most 120 characters). The web sends `{ kind, ref }` only.

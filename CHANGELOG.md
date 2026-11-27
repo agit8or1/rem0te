@@ -5,6 +5,94 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.90.0] — 2026-11-26 · *Focus*
+
+Technician workspaces: UX_ROADMAP.md P1-4, directive §11 ("optional
+role-focused presentation modes … presentation preferences, not changes to
+authorization"). Before this, everyone saw the same nine-group menu; 0.87's
+Standard and Advanced decide how many pages each group lists, not which jobs
+come first. An L1 technician answering support requests scrolled past
+patch policies, rollouts and security configuration to reach Alerts and
+Quick Connect.
+
+### Added
+
+- **A workspace, in the profile menu**: *All pages* (the default, the menu
+  as before), *L1 support*, *L2 support* and *L3*. It is stored with the
+  person's navigation preferences (`workspace`, migration 0105, CHECK
+  `all|l1|l2|l3`), so it follows them to another browser.
+  - **L1**: the dashboard; all, my and assigned devices, customers; alerts;
+    sessions, Quick Connect, support requests, the technician client; tasks.
+  - **L2**: L1 plus patch management, the software catalog, the script
+    library and the patch and software compliance reports.
+  - **L3**: L2 plus schedules, client updates and rollouts, monitoring
+    policies, false positives and rules, backups, unassigned devices,
+    deploying agents, the full agent and agent migrations, mobile devices,
+    managed sessions and remote access readiness, the Security group, and
+    the agent coverage, alert frequency and offline time reports.
+  - Administration is in *All pages* only.
+- **The sidebar in a workspace** lists exactly that workspace's pages, of
+  those the person may see; Standard or Advanced makes no difference there.
+  A group with none of them leaves the menu. The page you are on is always
+  listed. A line at the menu's foot names the workspace and offers *Show
+  every page*.
+- **The device page in a workspace** orders its seven tab groups for the
+  role (L1: Overview, Health, Tools, Remote, History, then Software and
+  System; L2 puts System and Software before Remote; L3 puts Tools, System and
+  Software first). Every group and tab is still there, with the same `?tab=`.
+- **What §11 names that has no page** is said, not approximated
+  (`NOT_A_PAGE`): escalation (alerts escalate through a monitoring policy's
+  notification steps), related PSA tickets (shown on the alert and the device
+  when a PSA is configured), and diagnostics, services and processes (tabs of
+  each device, put first by the workspace's order).
+
+### Security
+
+- **A workspace is a menu, never a permission** (§96, extended).
+  - `apps/web/lib/workspace-modes.ts` is pure: no import, no capability, no
+    role, no request.
+  - `sidebarItems` starts from `visibleItems` (each entry's `show`) and only
+    filters it, so no workspace shows an entry its `show` hides.
+  - The API stores the value and returns it, and reads it for nothing else.
+  - Ctrl+K's pages, the hub tabs and every URL are unchanged, and every page
+    and route checks permissions exactly as before.
+  - The lists agree in order: `navigation/model.ts` `WORKSPACES`, 0105's
+    CHECK and the web's workspaces.
+- `e2e-nav-prefs.mjs` shows a Business User choosing L3 and still getting a
+  403 from a Platform Admin route.
+
+### Not changed
+
+- Standard and Advanced, pinned groups, favourites and the palette. The
+  dashboard is the same in every workspace.
+- No route, permission or agent change. One migration, 0105, adds the
+  column with a default, so existing preferences read as *All pages*.
+- 0.89's open item stands: a search typed straight after opening a built-in
+  device view was dropped in two local test runs and never by hand.
+
+### Tests
+
+- `unit-nav-model.mjs` (CI, +1,845 checks):
+  - every workspace page is a menu page, listed once, starting at the
+    dashboard; each workspace contains the one before it;
+  - each orders all seven device tab groups once, Overview first;
+  - §11's L1, L2 and L3 pages are where it puts them;
+  - in every role, workspace and mode, the sidebar lists only entries
+    `show` allows and the workspace names, and the mode does not change a
+    workspace's list;
+  - the web, the API and 0105 name the same workspaces in order.
+- `e2e-nav-prefs.mjs` (+9): every workspace saved with the other fields
+  kept, an unknown or capitalised one refused, one person's not another's,
+  and a workspace granting nothing.
+- `e2e-ui.mjs`, in all four combinations: the profile menu offers the four
+  with the "not what you may do" note; L1 is kept on the server; on a
+  desktop, Patching and Administration leave the sidebar and the foot line
+  appears; Ctrl+K still offers Patch management and `/patching` opens; the
+  device page's groups are in L1's order; *Show every page* or *All pages*
+  puts everything back.
+
+---
+
 ## [0.89.0] — 2026-11-26 · *Manifest*
 
 The device list: UX_ROADMAP.md P1-3 (audit F-21, directive §9). On a phone the

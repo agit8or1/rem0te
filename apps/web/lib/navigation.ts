@@ -21,7 +21,7 @@ import { NAV, pageLabel, type NavCtx } from '@/components/layout/nav-model';
 export const NAV_KEY = ['me', 'navigation'] as const;
 const MIRROR = 'nav.prefs';
 
-const DEFAULTS: NavPreferences = { mode: 'standard', sidebarCollapsed: false, pinnedGroups: [], density: 'comfortable', contextBusiness: null };
+const DEFAULTS: NavPreferences = { mode: 'standard', sidebarCollapsed: false, pinnedGroups: [], density: 'comfortable', workspace: 'all', contextBusiness: null };
 
 function readMirror(): Partial<NavPreferences> {
   try {
@@ -33,11 +33,12 @@ function readMirror(): Partial<NavPreferences> {
       sidebarCollapsed: v.sidebarCollapsed === true,
       pinnedGroups: Array.isArray(v.pinnedGroups) ? v.pinnedGroups.filter((g: unknown) => typeof g === 'string' && groups.has(g)) : [],
       density: v.density === 'compact' ? 'compact' : 'comfortable',
+      workspace: ['l1', 'l2', 'l3'].includes(v.workspace) ? v.workspace : 'all',
     };
   } catch { return {}; }
 }
 function writeMirror(p: NavPreferences) {
-  try { window.localStorage.setItem(MIRROR, JSON.stringify({ mode: p.mode, sidebarCollapsed: p.sidebarCollapsed, pinnedGroups: p.pinnedGroups, density: p.density })); } catch { /* storage unavailable */ }
+  try { window.localStorage.setItem(MIRROR, JSON.stringify({ mode: p.mode, sidebarCollapsed: p.sidebarCollapsed, pinnedGroups: p.pinnedGroups, density: p.density, workspace: p.workspace })); } catch { /* storage unavailable */ }
 }
 
 export function useNavCtx(): NavCtx {

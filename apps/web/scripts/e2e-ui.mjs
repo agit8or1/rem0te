@@ -2023,12 +2023,81 @@ async function navShell(browser, f, vp, theme, label) {
     check(await page.locator('[data-testid="app-switcher"]').count() === 0 && await page.locator('header a[href*="clientst0r" i], header a[href*="agit8or" i]').count() === 0,
       `${label}: standalone: no app switcher and no link to another product in the header`);
     check(await page.locator('[data-testid="skip-link"]').count() === 1 && await page.locator('main#main-content').count() === 1, `${label}: a skip link to the main content`);
+    await workspaceModes(page, f, vp, label);
     await cleanCheck(page, `${label} shell`);
   } finally {
     await ctx.close();
     await prisma.userNavItem.deleteMany({ where: { userId: f.owner.id } });
     await prisma.userNavPreference.deleteMany({ where: { userId: f.owner.id } });
   }
+}
+
+/**
+ * 0.90 (UX P1-4, directive §11): technician workspaces are a menu, never a
+ * permission. L1 narrows the sidebar to its pages and reorders the device
+ * page's tab groups; every other page is still in Ctrl+K and opens by URL.
+ */
+async function workspaceModes(page, f, vp, label) {
+  const savedAs = async (w) => {
+    for (let i = 0; i < 20; i++) { if ((await prisma.userNavPreference.findUnique({ where: { userId: f.owner.id } }))?.workspace === w) return true; await new Promise((x) => setTimeout(x, 250)); }
+    return false;
+  };
+  await go(page, '/dashboard');
+  await page.locator('[data-testid="profile-menu-trigger"]').click();
+  const menu = page.locator('[data-testid="profile-menu"]');
+  await menu.waitFor({ timeout: 5_000 }).catch(() => {});
+  check(await menu.locator('[data-testid^="workspace-"][role="menuitemradio"]').count() === 4 && /changes the menu, not what you may do/.test(await menu.locator('[data-testid="workspace-note"]').innerText().catch(() => '')),
+    `${label}: the profile menu offers four workspaces and says a workspace is not a permission`);
+  await menu.locator('[data-testid="workspace-l1"]').click();
+  check(await savedAs('l1'), `${label}: choosing L1 support is kept on the server`);
+  await page.keyboard.press('Escape').catch(() => {});
+  if (vp === 'desktop') {
+    const side = page.locator('[data-testid="sidebar"]').first();
+    await page.locator('[data-testid="nav-workspace"]').waitFor({ timeout: 5_000 }).catch(() => {});
+    check(/L1 support/.test(await page.locator('[data-testid="nav-workspace"]').innerText().catch(() => '')), `${label}: the sidebar names the workspace at its foot`);
+    check(await side.locator('[data-nav="patching"], [data-nav-item="/patching"]').count() === 0 && await side.locator('[data-nav="admin"], [data-nav-item="/settings"]').count() === 0,
+      `${label}: in L1, Patching and Administration leave the sidebar`);
+    // Devices has several L1 pages, so it is a group (closed on the dashboard); Monitoring has one, Alerts, so it is a link.
+    check(await side.locator('[data-nav-item="/alerts"]').count() >= 1 && await side.locator('[data-nav="devices"]').count() >= 1,
+      `${label}: and Alerts and the Devices group stay`);
+  }
+  // Not a permission: Ctrl+K still offers a page outside the workspace, and its URL opens.
+  if (vp === 'desktop') await page.keyboard.press('Control+k');
+  else await page.locator('[data-testid="global-search-trigger"]').click();
+  const pal = page.locator('[data-testid="global-search"]');
+  await pal.waitFor({ timeout: 5_000 }).catch(() => {});
+  await page.locator('[data-testid="global-search-input"]').pressSequentially('Patch management', { delay: 15 });
+  await page.waitForTimeout(600);
+  check((await pal.locator('[data-group="pages"] [role="option"]').allInnerTexts()).some((t) => /Patch management/.test(t)), `${label}: in L1, Ctrl+K still offers Patch management`);
+  await page.keyboard.press('Escape');
+  await go(page, '/patching');
+  check(new URL(page.url()).pathname === '/patching' && !/not allowed|forbidden/i.test(await page.locator('main').innerText().catch(() => '')), `${label}: and /patching opens as before`, page.url());
+  // The device page: L1 puts Health and Tools before Software and System.
+  await go(page, `/endpoints/${f.main.id}`);
+  await page.locator('[data-testid="workspace-groups"] [data-tabs]').first().waitFor({ timeout: 15_000 }).catch(() => {});
+  const order = await page.locator('[data-testid="workspace-groups"] [data-tabs]').evaluateAll((els) => els.map((e) => e.getAttribute('data-tabs') ?? ''));
+  const at = (tab) => order.findIndex((t) => t.split(' ').includes(tab));
+  check(at('overview') === 0 && at('diagnostics') > -1 && at('diagnostics') < at('processes') && at('monitoring') < at('software'),
+    `${label}: in L1 the device page shows Health and Tools before Software and System, every group still there`, order.join(' | '));
+  // Back to every page.
+  if (vp === 'desktop') {
+    await page.locator('[data-testid="nav-workspace-all"]').click();
+  } else {
+    await page.locator('[data-testid="profile-menu-trigger"]').click();
+    await page.locator('[data-testid="profile-menu"] [data-testid="workspace-all"]').click();
+    await page.keyboard.press('Escape').catch(() => {});
+  }
+  check(await savedAs('all'), `${label}: "All pages" is kept on the server`);
+  if (vp === 'desktop') {
+    await page.locator('[data-testid="nav-workspace"]').waitFor({ state: 'detached', timeout: 5_000 }).catch(() => {});
+    check(await page.locator('[data-testid="nav-workspace"]').count() === 0 && await page.locator('[data-testid="sidebar"] [data-nav="patching"], [data-testid="sidebar"] [data-nav-item="/patching"]').count() >= 1,
+      `${label}: "Show every page" brings Patching back and drops the workspace line`);
+  }
+  await go(page, `/endpoints/${f.main.id}`);
+  await page.locator('[data-testid="workspace-groups"] [data-tabs]').first().waitFor({ timeout: 15_000 }).catch(() => {});
+  const back = await page.locator('[data-testid="workspace-groups"] [data-tabs]').evaluateAll((els) => els.map((e) => e.getAttribute('data-tabs') ?? ''));
+  const atB = (tab) => back.findIndex((t) => t.split(' ').includes(tab));
+  check(atB('software') < atB('diagnostics'), `${label}: and the device page's own order returns`, back.join(' | '));
 }
 
 async function combo(browser, f, vp, theme) {

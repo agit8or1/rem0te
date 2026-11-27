@@ -16,6 +16,10 @@
  *   Drawer     Below `md` the same sidebar, always expanded, inside the
  *              off-canvas drawer (nav-drawer.tsx).
  *
+ * A technician workspace (0.90, lib/workspace-modes.ts) lists only its own
+ * pages and leaves out a group with none (the page you are on is still
+ * listed); a line at the foot names it and goes back to every page.
+ *
  * Collapsed, mode and pinned groups are the person's own preferences, kept
  * on the server (GET/PUT /me/navigation). Hiding an entry is a convenience,
  * never the control: every route checks permissions itself.
@@ -26,6 +30,7 @@ import { ChevronDown, Pin, PinOff, Shield } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { NAV, locate, sidebarItems, under, visibleItems, type NavLeaf, type NavSection } from './nav-model';
+import { workspaceOf } from '@/lib/workspace-modes';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { updateApi } from '@/lib/api-client';
@@ -44,6 +49,7 @@ export function Sidebar({ className, inDrawer = false }: { className?: string; i
   const { prefs, setPrefs } = useNavigation();
   const collapsed = !inDrawer && prefs.sidebarCollapsed;
   const mode = prefs.mode;
+  const workspace = workspaceOf(prefs.workspace);
   const pinned = useMemo(() => new Set(prefs.pinnedGroups), [prefs.pinnedGroups]);
   const { portalTitle, logoUrl, accentColor, ink } = useBrandAccent();
   const here = locate(pathname);
@@ -103,9 +109,10 @@ export function Sidebar({ className, inDrawer = false }: { className?: string; i
   function group(section: NavSection) {
     const visible = visibleItems(section, ctx);
     if (!visible.length) return null;
-    let items = sidebarItems(section, ctx, mode);
+    let items = sidebarItems(section, ctx, mode, workspace.id);
     // In Standard, an advanced page you are on is still listed, so you can see where you are.
     if (here?.section.id === section.id && here.leaf && !items.includes(here.leaf) && visible.includes(here.leaf)) items = [...items, here.leaf];
+    if (!items.length && workspace.pages) return null;
     if (!items.length) items = visible.slice(0, 1);
     const Icon = section.icon;
     const active = activeGroup === section.id;
@@ -217,6 +224,17 @@ export function Sidebar({ className, inDrawer = false }: { className?: string; i
         onScroll={() => setTip(null)}>
         <ul className="space-y-0.5">{NAV.map(group)}</ul>
       </nav>
+
+      {workspace.pages && (
+        <div className={cn('shrink-0 border-t border-[var(--nav-border)] py-2', collapsed ? 'px-1 text-center' : 'px-3')} data-testid="nav-workspace">
+          {!collapsed && <p className="truncate text-xs text-[var(--nav-fg-muted)]">Workspace: {workspace.label}</p>}
+          <button type="button" onClick={() => setPrefs({ workspace: 'all' })} data-testid="nav-workspace-all"
+            className="mt-0.5 block w-full truncate rounded text-left text-xs text-[var(--nav-fg)] underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[var(--nav-focus)]"
+            aria-label={`Show every page (leave the ${workspace.label} workspace)`} {...(collapsed ? tipFor('Show every page') : {})}>
+            {collapsed ? 'All' : 'Show every page'}
+          </button>
+        </div>
+      )}
 
       {build?.version && (
         <div className={cn('shrink-0 border-t border-[var(--nav-border)] py-2', collapsed ? 'px-1 text-center' : 'px-3')}>

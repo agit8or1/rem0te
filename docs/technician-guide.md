@@ -49,13 +49,31 @@ holding the page you are on opens by itself; pin one to keep it open.
 - **Standard** mode (the default) lists the everyday pages. Every other page
   is a tab on one of them and is in Ctrl+K. **Advanced**, in the profile menu
   at the top right, lists them all.
+- **Workspace** (0.90), also in the profile menu, puts a role's pages in
+  front. *All pages* is the default. *L1 support* lists the dashboard,
+  devices, alerts, remote support (sessions, Quick Connect, support
+  requests, the technician client) and Tasks. *L2 support* adds patching,
+  the software catalog, the script library and the patch and software
+  compliance reports. *L3* adds schedules, client updates and rollouts,
+  monitoring policies and alert rules, backups, agent deployment and
+  migration, mobile devices, managed sessions and the Security group.
+  Administration is in *All pages* only. A group with none of the
+  workspace's pages leaves the menu; the page you are on is always listed;
+  a line at the menu's foot names the workspace, with *Show every page*.
+  On a device's page a workspace orders the tab groups (L1 puts Health,
+  Tools and Remote first) and removes none. **A workspace is a menu, not a
+  permission**: it never grants or removes anything, every page is still in
+  Ctrl+K and opens from a link, and every page checks what you may do
+  exactly as before. Escalation and PSA tickets have no page of their own:
+  alerts escalate through a monitoring policy's notification steps, and
+  tickets show on the alert and the device when a PSA is set up.
 - **The toggle** at the top left collapses the menu to icons. Hover or focus
   one for its name; click it for its pages. It stays as you left it, on any
   browser you sign in on.
 - **The top bar** holds the breadcrumbs, the customer you are working in,
   search, quick actions, your **favourites and recent items** (the star),
   critical alerts, chat, tasks, Help and the profile menu (theme Light, Dark or
-  System; density; mode; *Sign out*).
+  System; density; mode; workspace; *Sign out*).
 - **Favourites.** The star on a device or customer page adds it; the star menu
   adds the page you are on. At most 50. Something you can no longer see drops
   out of the list by itself.

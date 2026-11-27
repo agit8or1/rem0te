@@ -43,6 +43,8 @@ import { useToast } from '@/hooks/use-toast';
 import { FreshnessLine } from '@/components/common/freshness';
 import { tabFreshness } from '@/lib/device-freshness';
 import { HEARTBEAT_STALE_MS } from '@/lib/connectivity';
+import { useNavigation } from '@/lib/navigation';
+import { orderGroups } from '@/lib/workspace-modes';
 
 /**
  * The device workspace (0.31): one page for one computer.
@@ -64,6 +66,7 @@ export default function EndpointDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { toast } = useToast();
   const { can, isPlatformAdmin, technician } = usePermissions();
+  const { prefs: navPrefs } = useNavigation();
   const canView = can(CAP.COMPUTERS_VIEW);
   const canEventLogs = can(CAP.COMPUTERS_EVENT_LOGS);
 
@@ -255,7 +258,8 @@ export default function EndpointDetailPage() {
     'history',
   ];
   const active: WorkspaceTab = tabs.includes(tab) ? tab : 'overview';
-  const groups = TAB_GROUPS.map((g) => ({ ...g, tabs: g.tabs.filter((t) => tabs.includes(t)) })).filter((g) => g.tabs.length);
+  // 0.90 (P1-4): a technician workspace orders the groups (lib/workspace-modes.ts); every tab stays.
+  const groups = orderGroups(navPrefs.workspace, TAB_GROUPS).map((g) => ({ ...g, tabs: g.tabs.filter((t) => tabs.includes(t)) })).filter((g) => g.tabs.length);
   const activeGroup = groupOf(active);
   const groupTabs = groups.find((g) => g.id === activeGroup)?.tabs ?? [active];
   // 0.88 (P1-2): how old the open tab's data is, from what the page already
