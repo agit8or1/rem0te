@@ -13,6 +13,7 @@ import { formatDate } from '@/lib/utils';
 import { apiError } from '@/components/security-controls/shared';
 import { useToast } from '@/hooks/use-toast';
 import { SessionTimeline, sessionWhat, technicianText, type MsaSession } from '@/components/endpoints/msa-sessions';
+import { MsaStageBadge } from '@/components/sessions/session-status-badge';
 
 /**
  * Remote support → Managed sessions (0.73): every live Managed Secure Access session
@@ -80,14 +81,15 @@ export default function ManagedSessionsPage() {
                 <Card>
                   <CardContent className="p-0">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b p-3 text-sm">
-                      <span className="font-medium">Live sessions: {sessions.length}</span>
+                      {/* 0.91 (P1-5): "live" is a grant that is, or can still become, a session; only Connected rows are connections. */}
+                      <span className="font-medium">Open grants: {sessions.length} · connected as the agent saw it: {sessions.filter((s) => s.timeline.current === 'connected').length}</span>
                       {revocable.length > 0 && (
                         <Button size="sm" variant="outline" disabled={picked.size === 0 || revoke.isPending} onClick={() => setAsking([...picked])} data-testid="msa-sessions-bulk-disconnect">
                           Disconnect selected ({picked.size})
                         </Button>
                       )}
                     </div>
-                    {sessions.length === 0 ? <p className="p-4 text-sm text-muted-foreground">No live managed sessions.</p> : (
+                    {sessions.length === 0 ? <p className="p-4 text-sm text-muted-foreground">No open managed grants.</p> : (
                       <ul className="divide-y" data-testid="msa-sessions-rows">
                         {sessions.map((s) => (
                           <li key={s.grantId} className="space-y-1.5 p-3 text-xs" data-state={s.state}>
@@ -102,7 +104,7 @@ export default function ManagedSessionsPage() {
                                 <p className="text-muted-foreground break-words">{s.endpoint?.businessName ?? ''}{s.endpoint?.businessName ? ' · ' : ''}{technicianText(s)} · {formatDate(s.createdAt)}</p>
                               </div>
                               <div className="min-w-0 flex-[2] basis-64">
-                                <p className="font-medium">{s.timeline.status}</p>
+                                <p className="flex flex-wrap items-center gap-2 font-medium"><MsaStageBadge current={s.timeline.current} />{s.timeline.status}</p>
                                 <p className="text-muted-foreground">{sessionWhat(s)}</p>
                               </div>
                               <div className="flex gap-1.5">

@@ -10,6 +10,7 @@ import { setActiveBusiness, techniciansApi } from '@/lib/api-client';
 import { PageHeader } from '@/components/common/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { SessionStatusBadge } from '@/components/sessions/session-status-badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -80,7 +81,6 @@ const INACTIVE_REASON: Record<string, string> = {
 };
 const TEMP_STYLE = 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200';
 const SCHED_STYLE = 'bg-sky-100 text-sky-800 dark:bg-sky-900/60 dark:text-sky-200';
-const OPEN_STATUSES = ['LAUNCH_REQUESTED', 'LAUNCHER_ACKNOWLEDGED', 'CLIENT_OPENED', 'SESSION_STARTED'];
 
 function toLocalInput(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
@@ -216,9 +216,8 @@ export default function TechnicianOverviewPage() {
                           <li key={s.id} className="flex items-center gap-2 text-xs">
                             <Monitor className="h-3 w-3 shrink-0 text-muted-foreground" />
                             <span className="min-w-0 flex-1 truncate">{s.endpoint?.name ?? 'Quick Connect'}</span>
-                            <Badge variant={OPEN_STATUSES.includes(s.status) ? 'warning' : 'secondary'} className="font-normal">
-                              {s.status.replace(/_/g, ' ').toLowerCase()}
-                            </Badge>
+                            {/* 0.91 (P1-5): the stage, not the raw status ("session started" read as a connection). */}
+                            <SessionStatusBadge status={s.status} session={s as unknown as Record<string, unknown>} className="font-normal" />
                             <span className="shrink-0 text-muted-foreground">{formatDate(s.createdAt)}</span>
                           </li>
                         ))}

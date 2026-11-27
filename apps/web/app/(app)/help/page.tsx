@@ -1458,11 +1458,16 @@ const SECTIONS: Section[] = [
           <em> Download report</em> gives a redacted copy safe to attach to a ticket.
         </p>
         <p>
-          A session&apos;s status names the evidence behind it. <strong className="text-foreground">Client opened</strong>{' '}
-          means RustDesk started on your own computer — not that you connected.{' '}
-          <strong className="text-foreground">Connection confirmed</strong> comes from the remote device&apos;s agent
-          (0.20.0 or later) or from you. With no confirming or failing signal, a session reads{' '}
-          <strong className="text-foreground">Status unknown</strong>, and its duration is shown only when it was measured.
+          A session&apos;s status names the evidence behind it, in eight stages (0.91): Launch requested,{' '}
+          <strong className="text-foreground">Authorization granted</strong> (a credential was released — not a session),{' '}
+          <strong className="text-foreground">Client opened</strong> (RustDesk started on your own computer — not that you
+          connected), Device connection confirmed (by the remote device&apos;s agent, 0.20.0 or later, or by you),{' '}
+          <strong className="text-foreground">Session active</strong> (only while that agent still sees the connection),
+          Session ended, Session failed and, with no confirming or failing signal,{' '}
+          <strong className="text-foreground">Connection state unknown</strong>. Duration is shown only when it was measured.
+          A device&apos;s Secure remote access card also lists what Managed Secure Access does there, item by item: support,
+          readiness, whether it is on, the agent, enforcement, the temporary credential, consent, clipboard, files,
+          expiry, revocation and termination, each with a plain Yes, No or Partly and why.
         </p>
         <p>
           More in <Link href="/docs/connecting" className="underline text-foreground">Connecting</Link>.
@@ -1890,7 +1895,7 @@ const SECTIONS: Section[] = [
           launch a session to which device and records it; RustDesk carries the session. Once connected, clipboard,
           file transfer and RustDesk&apos;s in-session chat are RustDesk&apos;s own defaults (the Chat tab is separate), a device installed by Rem0te accepts its password
           without asking the person at it, and nothing ends a session from the portal. <em>Client opened</em> is not a
-          connection; <em>Connection confirmed</em> comes from the device&apos;s agent or from you. Platform Admins,
+          connection; <em>Device connection confirmed</em> comes from the device&apos;s agent or from you, and only the agent&apos;s recent signal makes it <em>Session active</em>. Platform Admins,
           technician managers and Business Owners can see every control and its effective state under Settings →
           Security → Security Features. More in{' '}
           <Link href="/docs/security-model" className="underline text-foreground">Security model</Link>.

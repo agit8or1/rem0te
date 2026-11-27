@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertTriangle, Apple, CheckCircle2, Download, Loader2, Monitor,
+  AlertTriangle, Apple, Clock, Download, Loader2, Monitor,
   PhoneCall, Server, Zap,
 } from 'lucide-react';
 import { quickConnectApi } from '@/lib/api-client';
@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
+import { SessionStatusBadge } from '@/components/sessions/session-status-badge';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 
@@ -76,7 +76,7 @@ export default function QuickConnectPage() {
 
       setPassword('');
       qc.invalidateQueries({ queryKey: ['quick-connect', 'sessions'] });
-      toast({ title: 'Opening RustDesk…', description: `Connecting to ${data.rustdeskId}` });
+      toast({ title: 'Opening RustDesk…', description: `Asked RustDesk to connect to ${data.rustdeskId}. Nothing has confirmed a connection yet.` });
     },
     onError: (e: { response?: { data?: { message?: string } } }) =>
       toast({
@@ -182,10 +182,17 @@ export default function QuickConnectPage() {
             </p>
 
             {active && (
-              <div className="flex items-center justify-between rounded-md border bg-muted/40 p-3">
-                <div className="flex items-center gap-2 text-sm">
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                  Session open with <span className="font-mono">{active.rustdeskId}</span>
+              <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/40 p-3" data-testid="quick-connect-active">
+                {/* 0.91 (P1-5): the portal released the credential to RustDesk; it cannot see whether a connection followed. */}
+                <div className="min-w-0 text-sm">
+                  <p className="flex items-center gap-2 font-medium">
+                    <Clock className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                    Authorization granted for <span className="font-mono">{active.rustdeskId}</span>
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    RustDesk was asked to connect. A Quick Connect device has no Rem0te agent, so nothing can confirm the
+                    connection; mark it finished when you are done.
+                  </p>
                 </div>
                 <Button size="sm" variant="outline" onClick={() => endSession.mutate(active.sessionId)}>
                   Mark finished
@@ -285,9 +292,7 @@ export default function QuickConnectPage() {
                       {`${s.technician.firstName ?? ''} ${s.technician.lastName ?? ''}`.trim() || s.technician.email}
                     </td>
                     <td className="px-4 py-3">
-                      <Badge variant={s.status === 'SESSION_COMPLETED' ? 'default' : 'secondary'}>
-                        {s.status.replace(/_/g, ' ').toLowerCase()}
-                      </Badge>
+                      <SessionStatusBadge status={s.status} session={s as unknown as Record<string, unknown>} />
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{formatDate(s.createdAt)}</td>
                   </tr>

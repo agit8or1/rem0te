@@ -166,7 +166,9 @@ is one line and printing it would put the credential in the log.
 
 ---
 
-## A session says "Status unknown"
+## A session says "Connection state unknown"
+
+(Called "Status unknown" before 0.91.)
 
 Nothing confirmed or failed it within 30 minutes of the launch (or 12 hours
 after the client opened). That is the honest answer when the remote device's

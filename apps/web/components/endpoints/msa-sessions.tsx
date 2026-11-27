@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { apiError } from '@/components/security-controls/shared';
 import { useToast } from '@/hooks/use-toast';
+import { MsaStageBadge } from '@/components/sessions/session-status-badge';
 import { formatDate } from '@/lib/utils';
 
 /**
@@ -125,6 +126,7 @@ export function MsaSessionsList({ endpointId }: { endpointId: string }) {
           {data.sessions.map((s) => (
             <li key={s.grantId} className="space-y-1.5 px-2.5 py-2" data-state={s.state} data-live={s.timeline.live ? 'true' : 'false'}>
               <div className="flex flex-wrap items-center gap-2">
+                <MsaStageBadge current={s.timeline.current} />
                 <span className="font-medium" data-testid="msa-session-status">{s.timeline.status}</span>
                 <span className="text-muted-foreground">{SOURCE_TEXT[s.source] ?? s.source} · {technicianText(s)} · {formatDate(s.createdAt)}</span>
                 <span className="ml-auto flex gap-1.5">

@@ -2129,6 +2129,7 @@ async function combo(browser, f, vp, theme) {
     await coverage035(page, f, vp, label);
     await fullAgentPage(page, f, vp, theme, label);
     await msaReadinessUi(page, f, vp, theme, label);
+    await remoteStatesUi(page, f, vp, label);
     await headerAgentUpgrade(page, f, vp, theme, label);
     await toolsPanel(page, f, vp, theme, label);
     await rollbackDisplays(page, f, vp, theme, label);
@@ -2664,6 +2665,54 @@ async function msaReadinessUi(page, f, vp, theme, label) {
   check(cur === 'Managed sessions', `${label}: Managed sessions is the current Remote support tab (0.87)`, String(cur));
   if (vp === 'phone') await noSideScroll(page, `${label} Managed sessions`);
   await cleanCheck(page, `${label} Managed sessions`);
+}
+
+/**
+ * 0.91 (UX P1-5, directive §12): the eight remote-support states. Three
+ * sessions on the main device, each with only the evidence its stage needs:
+ * the agent seeing it now (Session active), RustDesk opened (Client opened)
+ * and the technician's own word (confirmed, never active). Then the device's
+ * Managed Secure Access card lists its twelve items, with Enabled "No" while
+ * the switch is off.
+ */
+async function remoteStatesUi(page, f, vp, label) {
+  const base = { tenantId: f.tenant.id, customerId: f.A.id, endpointId: f.main.id, technicianId: f.admin.id, launchRequestedAt: new Date(Date.now() - 5 * 60_000) };
+  const rows = await Promise.all([
+    prisma.supportSession.create({ data: { ...base, status: 'SESSION_STARTED', statusSource: 'endpoint_agent', clientOpenedAt: new Date(Date.now() - 4 * 60_000), connectionConfirmedAt: new Date(Date.now() - 3 * 60_000), lastSignalAt: new Date() } }),
+    prisma.supportSession.create({ data: { ...base, status: 'CLIENT_OPENED', statusSource: 'connect_script', clientOpenedAt: new Date(Date.now() - 60_000), lastSignalAt: new Date() } }),
+    prisma.supportSession.create({ data: { ...base, status: 'SESSION_STARTED', statusSource: 'technician', connectionConfirmedAt: new Date(), lastSignalAt: new Date() } }),
+  ]);
+  try {
+    await go(page, '/sessions');
+    await page.locator('[data-testid="session-stage"]').first().waitFor({ timeout: 15_000 }).catch(() => {});
+    const tab = await page.getByRole('tab').first().innerText().catch(() => '');
+    check(/Open now/.test(tab) && !/^Connected/.test(tab), `${label}: the Sessions tab is "Open now", not "Connected"`, tab);
+    const stages = await page.locator('[data-testid="session-stage"]').evaluateAll((els) => els.map((e) => ({ s: e.getAttribute('data-stage'), t: (e.getAttribute('title') ?? '') })));
+    const has = (st) => stages.find((x) => x.s === st);
+    check(!!has('active') && /agent saw the connection/.test(has('active').t), `${label}: the agent's recent signal reads "Session active", and says the agent saw it`, JSON.stringify(stages.slice(0, 6)));
+    check(!!has('client_opened') && /not confirmed|has not confirmed/.test(has('client_opened').t), `${label}: RustDesk opening reads "Client opened", not a connection`);
+    check(stages.some((x) => x.s === 'connection_confirmed' && /You reported/.test(x.t)), `${label}: the technician's own word is "confirmed by you", never "Session active"`);
+    const labels = await page.locator('[data-testid="session-stage"]').allInnerTexts();
+    check(labels.some((t) => /Session active/.test(t)) && labels.some((t) => /Client opened/.test(t)) && labels.some((t) => /Connection confirmed by you/.test(t)), `${label}: each badge names its stage`, labels.slice(0, 6).join(' | '));
+    if (vp === 'phone') await noSideScroll(page, `${label} sessions (0.91)`);
+    await shot(page, `${label}-remote-states`);
+    await go(page, '/dashboard');
+    const dash = await page.locator('main').innerText().catch(() => '');
+    check(!/connected now/.test(dash), `${label}: the dashboard no longer says "connected now"`);
+    // Managed Secure Access, item by item (switch off in this suite).
+    await go(page, `/endpoints/${f.msa.ready.id}`);
+    const facts = page.getByTestId('msa-facts');
+    await facts.waitFor({ timeout: 15_000 }).catch(() => {});
+    await facts.locator('summary').click().catch(() => {});
+    const items = await facts.locator('[data-fact]').evaluateAll((els) => els.map((e) => [e.getAttribute('data-fact'), e.getAttribute('data-answer')]));
+    const k = Object.fromEntries(items);
+    check(items.length === 12 && k.enabled === 'no' && k.credential === 'no' && k.revocation === 'no' && k.support === 'yes',
+      `${label}: the Managed Secure Access card lists the twelve items; with the switch off Enabled, credential and revocation are "No"`, JSON.stringify(items));
+    check(/not switched on/i.test(await facts.locator('[data-fact="enabled"]').innerText().catch(() => '')), `${label}: and says the switch is off`);
+    await cleanCheck(page, `${label} remote states (0.91)`);
+  } finally {
+    await prisma.supportSession.deleteMany({ where: { id: { in: rows.map((r) => r.id) } } });
+  }
 }
 
 // ── 0.81: Backups ───────────────────────────────────────────────────────────
