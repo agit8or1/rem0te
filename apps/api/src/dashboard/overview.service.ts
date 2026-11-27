@@ -311,7 +311,7 @@ export class DashboardOverviewService {
         }
       : null;
     const sessionSelect = {
-      id: true, status: true, createdAt: true, lastSignalAt: true, connectionConfirmedAt: true, isAdHoc: true,
+      id: true, status: true, createdAt: true, lastSignalAt: true, connectionConfirmedAt: true, statusSource: true, isAdHoc: true,
       technician: { select: { id: true, firstName: true, lastName: true, email: true } },
       endpoint: { select: { id: true, name: true, hostname: true } },
       customer: { select: { id: true, name: true } },
@@ -434,7 +434,8 @@ export class DashboardOverviewService {
 
     const sessionView = (s: (typeof liveSessions)[number]) => ({
       id: s.id, status: s.status, connected: s.status === 'SESSION_STARTED', isAdHoc: s.isAdHoc,
-      startedAt: s.createdAt.toISOString(), lastSignalAt: iso(s.lastSignalAt ?? s.updatedAt),
+      // 0.91 (P1-5): a signal is a signal; updatedAt (any write) is not one, so it is not offered as one.
+      startedAt: s.createdAt.toISOString(), lastSignalAt: iso(s.lastSignalAt), statusSource: s.statusSource,
       technician: person(s.technician), device: dev(s.endpoint), business: s.customer,
     });
     const jobView = (j: (typeof inFlight)[number]) => ({

@@ -58,7 +58,7 @@ function Sessions({ sessions }: { sessions: SessionRow[] }) {
           <ul className="divide-y rounded-md border">
             {sessions.map((s) => (
               <li key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
-                <SessionStatusBadge status={s.status} />
+                <SessionStatusBadge status={s.status} session={s as unknown as Record<string, unknown>} />
                 <span className="font-medium">{personName(s.technician)}</span>
                 <span className="text-xs text-muted-foreground">{formatDate(s.createdAt)}</span>
                 {/* Duration is measured connection time only; it is null when either end was not observed. */}

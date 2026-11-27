@@ -768,10 +768,17 @@ then has no agent: no heartbeat, inventory or monitoring.
 4. **Connect** — start a session with that machine.
 5. **Quick Connect** — for a machine that is not enrolled; a session can no longer be recorded by hand.
 
-Each session's status says what is actually known about it. *Client opened*
-means RustDesk started on your device, not that you connected. *Connection
-confirmed* comes from the remote device's agent, or from you. A launch that
-gets no further signal reads **Status unknown** after 30 minutes rather than
+Each session's status says what is actually known about it, in eight stages
+(0.91): *Launch requested*, *Authorization granted* (a credential was
+released; no session yet), *Client opened* (RustDesk started on your device,
+not a connection), *Device connection confirmed*, *Session active* (only
+while the remote device's agent still sees the connection, within 10
+minutes), *Session ended*, *Session failed* and *Connection state unknown*.
+If you press *I'm connected* it reads *Connection confirmed by you*, never
+*Session active*. A session's details list each step with its time. The
+Sessions page's first tab is **Open now** (open sessions at every stage, and
+reachable devices), not "Connected". A launch that
+gets no further signal reads **Connection state unknown** after 30 minutes rather than
 pretending it failed or succeeded, and duration is shown only when it was
 measured. See [connecting.md](connecting.md#what-the-session-status-means-v020).
 

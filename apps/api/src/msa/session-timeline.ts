@@ -109,7 +109,8 @@ export function sessionTimeline(r: TimelineRow, now = Date.now()): Timeline {
       status = 'Expired — never delivered';
       break;
     case 'cancelled':
-      current = 'failed';
+      // 0.91 (P1-5): withdrawn by the portal before delivery, not a failure on the computer.
+      current = 'revoked';
       status = 'Cancelled — replaced or rolled back before delivery';
       break;
     default:

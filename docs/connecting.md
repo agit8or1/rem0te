@@ -128,15 +128,25 @@ Rem0te hands out a credential and RustDesk carries the connection. Nothing in
 that handoff proves a remote desktop connection happened, so each status names
 the evidence behind it and nothing more:
 
-| Status | Means | Set by |
+From 0.91 the console names them in the UX directive's eight stages
+(`apps/web/lib/remote-states.ts`; the API's `STATUS_LABEL` uses the same
+words):
+
+| Shown as | Means | Set by |
 |---|---|---|
-| Launch requested | a credential was released for this session | the server |
-| Launcher acknowledged | the launcher redeemed its token, or the Connect script checked in | the server |
+| Launch requested | the session was recorded; no credential released yet | the server |
+| Authorization granted | a credential was released for this session, or the launcher redeemed its token, or the Connect script checked in. **Not** a session | the server |
 | Client opened | RustDesk started on the technician's device. **Not** a connection | the launcher or Connect script |
-| Connection confirmed | a RustDesk connection is running on the remote device, and this is the only launch it can belong to; or the technician said so (recorded as theirs) | the device's agent (0.20.0+), or the technician |
-| Disconnected / ended | the connection ended (measured), the technician completed it (reported), or a timeout (inferred) | the agent, technician or timeout |
-| Failed / Canceled | reported failure before any confirmation / technician | |
-| Status unknown | no confirming or failing signal arrived in time: 30 minutes after a launch, 12 hours after a client opened | timeout |
+| Session active | the device's agent sees a RustDesk connection that can only belong to this launch, and reported it within the last 10 minutes | the device's agent (0.20.0+) |
+| Device connection confirmed | the agent saw it once and nothing has seen it in 10 minutes; or *Connection confirmed by you*: the technician said so, recorded as theirs and never shown as active | the agent, or the technician |
+| Session ended | the connection ended (measured), the technician completed or canceled it (reported), or a timeout (inferred, and it says so) | the agent, technician or timeout |
+| Session failed | a reported failure before any confirmation | the launcher, script or technician |
+| Connection state unknown | no confirming or failing signal arrived in time: 30 minutes after a launch, 12 hours after a client opened | timeout |
+
+A session's details list each step with the time its own signal arrived and
+"not seen" for the rest. Quick Connect computers have no Rem0te agent, so a
+Quick Connect session never gets past *Authorization granted* on evidence:
+the page says so instead of "Session open".
 
 **Duration is shown only when it was measured**: a confirmed start and an
 observed end, both from the device. Otherwise it reads *unknown* and the

@@ -287,15 +287,20 @@ export const OPEN_STATUSES: SessionStatusValue[] = [
 /** Launched, but nothing has opened a client yet. A launcher token may only be bound to one of these. */
 export const PRE_CLIENT_STATUSES: SessionStatusValue[] = ['PENDING', 'LAUNCH_REQUESTED', 'LAUNCHER_ACKNOWLEDGED'];
 
-/** Human label for a status, shared vocabulary with the web badge. */
+/**
+ * Human label for a status, shared vocabulary with the web badge (0.91: the
+ * UX directive's eight stages, apps/web/lib/remote-states.ts). From the
+ * status alone SESSION_STARTED is "Device connection confirmed"; the web
+ * says "Session active" only while the agent's signal is recent.
+ */
 export const STATUS_LABEL: Record<SessionStatusValue, string> = {
-  PENDING: 'Recorded',
-  LAUNCH_REQUESTED: 'Launch requested',
-  LAUNCHER_ACKNOWLEDGED: 'Launcher acknowledged',
+  PENDING: 'Launch requested',
+  LAUNCH_REQUESTED: 'Authorization granted',
+  LAUNCHER_ACKNOWLEDGED: 'Authorization granted',
   CLIENT_OPENED: 'Client opened',
-  SESSION_STARTED: 'Connection confirmed',
-  SESSION_COMPLETED: 'Disconnected',
-  FAILED: 'Failed',
-  CANCELED: 'Canceled',
-  STATUS_UNKNOWN: 'Status unknown',
+  SESSION_STARTED: 'Device connection confirmed',
+  SESSION_COMPLETED: 'Session ended',
+  FAILED: 'Session failed',
+  CANCELED: 'Session ended',
+  STATUS_UNKNOWN: 'Connection state unknown',
 };

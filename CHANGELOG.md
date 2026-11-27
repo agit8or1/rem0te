@@ -5,6 +5,101 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.91.0] — 2026-11-27 · *Beacon*
+
+Remote support states: UX_ROADMAP.md P1-5, directive §12 ("clearly
+distinguish" eight states; "never imply that portal authorization proves a
+remote session"; "for Managed Secure Access, clearly display" twelve items).
+Before this, the console printed the session enum as it stood: the Sessions
+page's first tab was **Connected** and counted every open session, including
+ones where only a credential had been released; Quick Connect said *Session
+open with <id>* the moment RustDesk was asked to dial a device that has no
+Rem0te agent to confirm anything; the dashboard tile said *connected now*
+for the same count; and a Managed Secure Access grant that a technician
+cancelled before it was applied showed as *Failed*. No new evidence is
+collected: this release only stops the console claiming more than the
+evidence it already had.
+
+### Changed
+
+- **Eight stages, one model.** `apps/web/lib/remote-states.ts` (pure) maps
+  every `SessionStatus` to *Launch requested*, *Authorization granted*,
+  *Client opened*, *Device connection confirmed*, *Session active*,
+  *Session ended*, *Session failed* or *Connection state unknown*.
+  `LAUNCH_REQUESTED` and `LAUNCHER_ACKNOWLEDGED` are *Authorization granted*:
+  a credential was released, nothing more. **Session active** needs the
+  device's own agent (`statusSource = endpoint_agent`) and a `lastSignalAt`
+  inside 10 minutes (a little over three heartbeats); after that it falls
+  back to *Device connection confirmed* with "last saw … ago". A
+  technician's *I'm connected* reads **Connection confirmed by you** and is
+  never active. An inferred end says it was inferred; an unknown status is
+  *Connection state unknown*, never success. The API's `STATUS_LABEL`
+  (used in conflict messages) has the same words.
+- **Everywhere a launch is shown**: the Sessions page (the tab is now **Open
+  now**; each badge carries its one-sentence detail as a tooltip and for
+  screen readers; the details dialog lists each step with its own time and
+  "not seen" for the rest, plus *Last signal*), the device History tab, the
+  technician page, Quick Connect (*Authorization granted for <id>*, and it
+  says no agent can confirm the connection), support requests (*Session
+  launched*, not "connecting"), managed sessions and the device's managed
+  session list (a stage badge before the grant status).
+- **The dashboard** counts *Session active* only from the agent's recent
+  signal: "N confirmed, not seen since · M not yet connected" instead of
+  *connected now*. The overview API now returns `statusSource` and the real
+  `lastSignalAt` (no `updatedAt` stand-in), and the feed says "no signal
+  from the device" when there is none.
+- **A cancelled Managed Secure Access grant** reads *Revoked* in the session
+  timeline (`msa/session-timeline.ts`), not *Failed*: nobody's session
+  failed.
+
+### Added
+
+- **What Managed Secure Access does here**, on every device's *Secure remote
+  access readiness* card: the directive's twelve items (endpoint support,
+  readiness, enabled, agent compatibility, endpoint enforcement, temporary
+  credential, consent, clipboard, file transfer, session expiration,
+  revocation, termination), each *Yes*, *No*, *Partly* or *Unknown* with
+  the reason. `apps/api/src/msa/access-facts.ts` (pure, no clock, no
+  switch) decides them from what `MsaService.forEndpoint` already had: the
+  switch, the readiness decision, the managed row and the agent version,
+  plus the grant constants (60 s to apply, 8 hours at most, the six locked
+  keys). **Display only**: nothing on the list turns anything on, no route
+  acts on it, and `MSA_GRANTS` is not set anywhere it was not before. With
+  the switch off every enforced item is *No* and names the permanent
+  password's protections (step-up, rotation, never shown in full); consent,
+  clipboard and files are never better than *Partly*, because the agent
+  cannot see the person accept RustDesk's prompt or what happens inside the
+  session. With the switch on, an unmanaged device's note now says a
+  Platform Admin could move it in (`READINESS_SWITCHED_ON_NOTE`) instead of
+  "not available yet".
+
+### Tests
+
+- `apps/web/scripts/unit-remote-states.mjs` (in CI, 66 checks): the eight
+  labels in the directive's order; every schema status maps; active only on
+  the agent's signal within the window (10 min yes, 11 no, none no, a
+  technician's never); nothing before a confirmation claims one; the API's
+  labels agree; every MSA timeline step maps and *Launched* is never a
+  connection; no page prints a raw status; no amber/yellow/orange/emerald or
+  hex colour in the badge.
+- `apps/api/scripts/unit-msa-access-facts.mjs` (in CI, 41 checks): the
+  twelve keys in order; switch off, switch on unmanaged, pending, verified,
+  enforcement failure, agent 0.72 and 0.60, standard agent and Linux; no
+  *Yes* for anything not enforced; the module stays pure and has one caller.
+- `e2e-ui.mjs` `remoteStatesUi`: three seeded sessions read *Session
+  active*, *Client opened* and *Connection confirmed by you*; the tab is
+  *Open now*; the dashboard no longer says "connected now"; the readiness
+  card lists the twelve items with Enabled, credential and revocation *No*.
+
+### Docs
+
+- `docs/connecting.md`'s status table is the eight stages;
+  `docs/technician-guide.md`, `docs/troubleshooting.md` ("Connection state
+  unknown", formerly "Status unknown"), `docs/managed-secure-access.md` (the
+  card, item by item), `/help` and `docs/ux/UX_ROADMAP.md` (P1-5 done).
+
+---
+
 ## [0.90.0] — 2026-11-26 · *Focus*
 
 Technician workspaces: UX_ROADMAP.md P1-4, directive §11 ("optional

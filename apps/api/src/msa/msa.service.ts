@@ -8,10 +8,12 @@ import { UpdateTrustService } from '../update-trust/update-trust.service';
 import { parsePreflight, PREFLIGHT_KEYS } from './preflight';
 import {
   decideReadiness, LAB_TESTED_MAX, LAB_TESTED_MIN, LAB_TESTED_RUSTDESK, MANAGED_NOTE, MIN_REPORTING_AGENT, PRODUCIBLE_STATES,
-  READINESS_FLEET_MANAGED_NOTE, READINESS_FLEET_NOTE, READINESS_NOTE, READINESS_STATES, STATE_LABEL, type ManagedFacts, type ProducibleState, type Readiness,
+  READINESS_FLEET_MANAGED_NOTE, READINESS_FLEET_NOTE, READINESS_NOTE, READINESS_SWITCHED_ON_NOTE, READINESS_STATES, STATE_LABEL, type ManagedFacts, type ProducibleState, type Readiness,
 } from './readiness';
 import { msaGrantsEnabled } from './msa-grants-flag';
 import { rotationHeld, type ManagedState } from './managed';
+import { accessFacts } from './access-facts';
+import { isWindowsPlatform } from '../common/platform';
 
 /** The fleet view's ceiling: the same as the Full agent page's. */
 export const FLEET_MAX = 5000;
@@ -95,20 +97,30 @@ export class MsaService {
     const r = await this.prisma.endpoint.findFirst({ where: { AND: [{ id: endpointId }, this.acl.endpointVisibilityWhere(actor)] }, select: READ_SELECT });
     if (!r) return null;
     const pf = r.rustdeskPreflight;
+    const served = this.updateTrust.servedAgent();
+    const readiness = this.decide(r, now, served);
+    const switchOn = msaGrantsEnabled();
     return {
       endpointId: r.id,
-      readiness: this.decide(r, now, this.updateTrust.servedAgent()),
+      readiness,
+      // 0.91 (P1-5): the directive's twelve items, display only (msa/access-facts.ts).
+      facts: accessFacts({
+        switchOn, readiness, managed: r.msaManaged ? { state: r.msaManaged.state, verifiedAt: r.msaManaged.verifiedAt } : null,
+        agentVersion: this.updateTrust.agentVersionOf(r, served).label, windows: isWindowsPlatform(r.platform ?? ''),
+        signedAgent: runsSignedAgent({ updateChannel: r.updateChannel, signedSeenAt: r.signedSeenAt }, new Date(now)),
+      }),
       preflight: pf ? {
         checkedAt: pf.checkedAt.toISOString(), installed: pf.installed, expectedPath: pf.expectedPath, version: pf.version,
         build: pf.build, service: pf.service, cli: pf.cli, keysOk: pf.keysOk, keysTotal: PREFLIGHT_KEYS.length,
       } : null,
-      note: r.msaManaged ? MANAGED_NOTE : READINESS_NOTE,
+      // 0.91: with the switch on, an unmanaged computer is not "not available yet": it can be moved in.
+      note: r.msaManaged ? MANAGED_NOTE : switchOn ? READINESS_SWITCHED_ON_NOTE : READINESS_NOTE,
       labTested: { versions: [...LAB_TESTED_RUSTDESK], min: LAB_TESTED_MIN, max: LAB_TESTED_MAX },
       minAgent: MIN_REPORTING_AGENT,
       // 0.72: whether the Managed Secure Access routes exist on this server
       // (MSA_GRANTS on). The console asks /msa/managed/:id only when this is
       // true, so with the switch off it makes no request to a gated route.
-      managedControls: msaGrantsEnabled(),
+      managedControls: switchOn,
     };
   }
 

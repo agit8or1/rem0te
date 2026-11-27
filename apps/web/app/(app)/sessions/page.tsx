@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/dialog';
 import {
   SessionStatusBadge,
+  SessionStages,
   isTerminalSessionStatus,
 } from '@/components/sessions/session-status-badge';
 import { usePermissions, CAP } from '@/lib/auth';
@@ -146,7 +147,7 @@ export default function SessionsPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <PageHeader title="Sessions" description="Connected clients and session history">
+      <PageHeader title="Sessions" description="Open sessions, reachable devices and session history">
         {/* Ad-hoc sessions go through Quick Connect; POST /sessions refuses them. */}
         {can(CAP.QUICK_CONNECT) && (
           <Button size="sm" variant="outline" asChild>
@@ -162,7 +163,8 @@ export default function SessionsPage() {
         <TabsList>
           <TabsTrigger value="connected" className="gap-2">
             <Wifi className="h-3.5 w-3.5" />
-            Connected
+            {/* 0.91 (P1-5): it lists open sessions (any stage) and reachable devices, not connections. */}
+            Open now
             {connectedCount > 0 && (
               <Badge variant="secondary" className="ml-1 h-4 px-1.5 text-[10px]">
                 {connectedCount}
@@ -217,7 +219,7 @@ export default function SessionsPage() {
                               {(s.contactName as string) ?? '—'}
                             </td>
                             <td className="px-4 py-3">
-                              <SessionStatusBadge status={s.status as string} />
+                              <SessionStatusBadge status={s.status as string} session={s} />
                             </td>
                             <td className="px-4 py-3 text-muted-foreground text-xs">
                               {formatDate(s.createdAt as string)}
@@ -418,7 +420,7 @@ export default function SessionsPage() {
                             {dur.real ? dur.text : <span className="italic">{dur.text}</span>}
                           </td>
                           <td className="px-4 py-3">
-                            <SessionStatusBadge status={status} />
+                            <SessionStatusBadge status={status} session={s} />
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1">
@@ -555,7 +557,7 @@ function SessionDetailDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 flex-wrap">
             Session
-            {s && <SessionStatusBadge status={status} />}
+            {s && <SessionStatusBadge status={status} session={s} />}
           </DialogTitle>
           <DialogDescription>
             {ep ? ep.name : (s?.adHocRustdeskId as string | undefined) ? `Quick Connect · ${s?.adHocRustdeskId as string}` : ' '}
@@ -569,11 +571,7 @@ function SessionDetailDialog({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
               <Field label="Technician">{tech ? ([tech.firstName, tech.lastName].filter(Boolean).join(' ') || tech.email) : '—'}</Field>
               <Field label="Contact">{(s.contactName as string) || '—'}</Field>
-              <Field label="Launch requested">{s.launchRequestedAt ? formatDate(s.launchRequestedAt as string) : '—'}</Field>
-              <Field label="Connection confirmed">{s.connectionConfirmedAt ? formatDate(s.connectionConfirmedAt as string) : '—'}</Field>
-              <Field label="Ended">
-                {s.endedAt ? `${formatDate(s.endedAt as string)}${s.endInferred ? ' (inferred)' : ''}` : '—'}
-              </Field>
+              <Field label="Last signal">{s.lastSignalAt ? formatDate(s.lastSignalAt as string) : 'none'}</Field>
               <Field label="Duration">
                 {dur?.real ? dur.text : <span className="italic text-muted-foreground">Unknown</span>}
               </Field>
@@ -582,6 +580,8 @@ function SessionDetailDialog({
               )}
               {!!s.disposition && <Field label="Disposition">{s.disposition as string}</Field>}
             </div>
+
+            <SessionStages session={s} />
 
             {dur && !dur.real && dur.why && (
               <p className="text-xs text-muted-foreground rounded-md border bg-muted/40 px-3 py-2">

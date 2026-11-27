@@ -12,6 +12,7 @@ import { api } from '@/lib/api-client';
 import { usePermissions } from '@/lib/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ClientMap } from '@/components/dashboard/client-map';
+import { stageOf } from '@/lib/remote-states';
 
 /**
  * The technician dashboard (0.31).
@@ -45,7 +46,7 @@ interface Overview {
   patch: null | { definition: string; staleAfterHours: number; total: number; fresh: number; upToDate: number; needsUpdates: number; stale: number; noScan: number; newestScanAt: string | null; oldestFreshScanAt: string | null; compliancePercent: number | null; coveragePercent: number | null };
   actions: null | { awaitingApproval: number; failed: number; uncertain: number; inFlight: { id: string; title: string; status: string; targets: number; createdAt: string; dispatchedAt: string | null; business: Biz; device: Dev; href: string }[] };
   patchDeployments: null | { id: string; name: string; status: string; pausedReason: string | null; business: Biz; createdAt: string }[];
-  sessions: null | { liveAfterHours: number; live: { id: string; status: string; connected: boolean; isAdHoc: boolean; startedAt: string; lastSignalAt: string | null; technician: string | null; device: Dev; business: Biz }[] };
+  sessions: null | { liveAfterHours: number; live: { id: string; status: string; connected: boolean; isAdHoc: boolean; startedAt: string; lastSignalAt: string | null; statusSource?: string | null; technician: string | null; device: Dev; business: Biz }[] };
   acknowledged: null | { id: string; title: string; severity: string; business: Biz; device: Dev; acknowledgedAt: string | null; by: string | null; href: string }[];
   /** 0.55: null without monitoring:alerts. */
   recentAlerts?: null | {
@@ -114,8 +115,11 @@ export default function DashboardPage() {
 
   const d = data;
   const liveOutages = d.alerts?.outages.filter((o) => o.state === 'OPEN' && !o.suppressed) ?? [];
-  const connected = d.sessions?.live.filter((s) => s.connected).length ?? 0;
-  const launching = (d.sessions?.live.length ?? 0) - connected;
+  // 0.91 (P1-5): "active" only while the computer's agent still sees the connection (lib/remote-states.ts).
+  const liveStages = (d.sessions?.live ?? []).map((s) => stageOf(s).stage);
+  const connected = liveStages.filter((x) => x === 'active').length;
+  const confirmedEarlier = liveStages.filter((x) => x === 'connection_confirmed').length;
+  const launching = liveStages.length - connected - confirmedEarlier;
   const failedActions = d.actions ? d.actions.failed + d.actions.uncertain : 0;
 
   const mapOn = showMap && !!d.devices;
@@ -209,7 +213,7 @@ export default function DashboardPage() {
         )}
         {d.sessions && (
           <Tile href="/sessions" icon={PlayCircle} label="Active sessions" value={connected}
-            sub={launching ? `${launching} launching` : 'connected now'} />
+            sub={[confirmedEarlier ? `${confirmedEarlier} confirmed, not seen since` : '', launching ? `${launching} not yet connected` : ''].filter(Boolean).join(' · ') || (connected ? 'seen by the agents now' : 'none open')} />
         )}
       </div>
 
@@ -399,8 +403,8 @@ function InProgress({ d, now }: { d: Overview; now: number }) {
   for (const s of d.sessions?.live ?? []) {
     rows.push({
       key: `s:${s.id}`, icon: PlayCircle,
-      text: `${s.technician ?? 'Someone'} ${s.connected ? 'connected to' : 'launching'} ${s.device?.name ?? (s.isAdHoc ? 'a Quick Connect device' : 'a device')}`,
-      sub: `${s.business?.name ? `${s.business.name} · ` : ''}last signal ${ago(s.lastSignalAt, now)}`, href: '/sessions',
+      text: `${s.technician ?? 'Someone'} → ${s.device?.name ?? (s.isAdHoc ? 'a Quick Connect device' : 'a device')}: ${stageOf(s, now).label.toLowerCase()}`,
+      sub: `${s.business?.name ? `${s.business.name} · ` : ''}${s.lastSignalAt ? `last signal ${ago(s.lastSignalAt, now)}` : 'no signal from the device'}`, href: '/sessions',
     });
   }
   for (const a of d.acknowledged ?? []) {

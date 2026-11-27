@@ -700,3 +700,18 @@ actions, patch policies, service and process control; 611 checks). The plan:
 - Lab jobs on `windows-latest` for the real-Windows paths, including RustDesk.
 - Each release's notes carry the matrix: versions tested, at which evidence
   level, and what was not tested.
+
+## The device card, item by item (0.91)
+
+Every device's *Secure remote access readiness* card has a *What Managed
+Secure Access does here* list: endpoint support, readiness, enabled, agent
+compatibility, endpoint enforcement, temporary credential, consent,
+clipboard, file transfer, session expiration, revocation and termination
+(the UX directive's §12). Each is *Yes*, *No*, *Partly* or *Unknown* with the
+reason, decided by `apps/api/src/msa/access-facts.ts` from the switch, the
+readiness decision, the managed row and the agent version. It is display
+only: nothing on the list turns anything on, and with `MSA_GRANTS` off every
+enforced item says *No* and that the permanent RustDesk password's
+protections apply. With the switch on, an unmanaged computer's note says it
+could be moved in rather than "not available yet".
+

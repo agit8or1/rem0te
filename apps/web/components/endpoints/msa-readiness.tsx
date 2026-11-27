@@ -34,8 +34,36 @@ export interface MsaEndpointView {
   note: string;
   labTested: { versions: string[]; min: string; max: string };
   minAgent: string;
+  /** 0.91 (P1-5): the directive's twelve items for this computer, display only (msa/access-facts.ts). */
+  facts?: MsaFact[];
   /** 0.72: MSA_GRANTS is on, so the managed routes exist. Absent or false: never ask them. */
   managedControls?: boolean;
+}
+
+export interface MsaFact { key: string; label: string; answer: 'yes' | 'no' | 'partial' | 'unknown'; text: string }
+const ANSWER_LABEL: Record<MsaFact['answer'], string> = { yes: 'Yes', no: 'No', partial: 'Partly', unknown: 'Unknown' };
+
+/**
+ * 0.91 (P1-5, directive §12): what Managed Secure Access does and does not do
+ * on this computer, item by item, in words. Display only: no control here
+ * turns anything on, and a "No" says why instead of offering a button.
+ */
+export function MsaFacts({ facts }: { facts: MsaFact[] }) {
+  return (
+    <details className="rounded-md border px-3 py-2 text-xs" data-testid="msa-facts">
+      <summary className="cursor-pointer text-sm font-medium">What Managed Secure Access does here</summary>
+      <dl className="mt-2 grid grid-cols-1 gap-y-1.5 sm:grid-cols-[minmax(8rem,auto)_1fr] sm:gap-x-3">
+        {facts.map((f) => (
+          <div key={f.key} className="contents" data-fact={f.key} data-answer={f.answer}>
+            <dt className="font-medium text-foreground">{f.label}</dt>
+            <dd className="min-w-0 break-words text-muted-foreground">
+              <span className="font-medium text-foreground">{ANSWER_LABEL[f.answer]}.</span> {f.text}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </details>
+  );
 }
 
 /** The one sentence every readiness view leads with (the API's READINESS_NOTE). */
@@ -117,6 +145,7 @@ export function MsaReadinessCard({ endpointId }: { endpointId: string }) {
             </p>
           </>
         )}
+        {data?.facts && data.facts.length > 0 && <MsaFacts facts={data.facts} />}
         {data?.managedControls === true && (
           <>
             <MsaManagedControls endpointId={endpointId} />

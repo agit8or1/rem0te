@@ -59,7 +59,8 @@ interface SupportRequestDetail extends SupportRequest {
 const STATUS_LABEL: Record<RequestStatus, string> = {
   WAITING: 'Waiting',
   CLAIMED: 'Claimed',
-  CONNECTING: 'Connecting',
+  // 0.91 (P1-5): set when a session is recorded, so it means a launch, not a connection.
+  CONNECTING: 'Session launched',
   COMPLETED: 'Completed',
   CANCELED: 'Canceled',
   EXPIRED: 'Expired',
@@ -376,7 +377,7 @@ function RequestDetailDialog({ id, onClose }: { id: string; onClose: () => void 
                 <ul className="space-y-1.5">
                   {r.sessions.map((s) => (
                     <li key={s.id} className="flex flex-wrap items-center gap-2">
-                      <SessionStatusBadge status={s.status} />
+                      <SessionStatusBadge status={s.status} session={s as unknown as Record<string, unknown>} />
                       <span className="text-xs text-muted-foreground">{s.isAdHoc ? 'Quick Connect' : 'Managed device'} · {formatDate(s.createdAt)}</span>
                     </li>
                   ))}
@@ -584,7 +585,7 @@ function QuickConnectDialog({
       const data = res.data?.data as { rustdeskId: string; password: string };
       setPassword('');
       window.location.href = `rustdesk://connection/new/${data.rustdeskId}?password=${encodeURIComponent(data.password)}`;
-      toast({ title: 'Opening RustDesk…', description: `Connecting to ${data.rustdeskId}` });
+      toast({ title: 'Opening RustDesk…', description: `Asked RustDesk to connect to ${data.rustdeskId}. Nothing has confirmed a connection yet.` });
       onDone();
       onClose();
     },

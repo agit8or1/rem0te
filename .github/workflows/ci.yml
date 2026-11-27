@@ -90,6 +90,9 @@ jobs:
       - name: Device list built-in views (unit)
         run: node apps/web/scripts/unit-device-list-views.mjs
 
+      - name: Remote support states (unit)
+        run: node apps/web/scripts/unit-remote-states.mjs
+
       # The navigation (0.87): every entry is a page, every pre-0.87 URL is
       # still reachable (docs/NAVIGATION_MIGRATION.md's table), Standard mode
       # never hides a page, roles, the 1,080 p budget, and the group ids
@@ -222,6 +225,11 @@ jobs:
       # state among them (0.72: the managed states only from a managed fact).
       - name: MSA readiness tests
         run: node apps/api/scripts/unit-msa-readiness.mjs
+
+      # Managed Secure Access, item by item (0.91, UX P1-5): the twelve facts
+      # the device card shows, display only (msa/access-facts.ts).
+      - name: Managed Secure Access facts (unit)
+        run: node apps/api/scripts/unit-msa-access-facts.mjs
 
       # Managed Secure Access grants (0.71): the switch's exactness, the grant
       # document's canonical form and signature, and the shared fixture —
