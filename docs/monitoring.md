@@ -378,14 +378,31 @@ alerts with the same fingerprint that you can see.
 
 ### What an alert says
 
-Every alert has a plain-English explanation: **What happened?**, **Why was
-this alert generated?** (the monitor, what it watches, and how the severity was
-decided), **How serious is it?** (honest about what one event can and cannot
-show), **Recommended action**, and **Classification details** (a known pattern,
-a catalogued event, the event level, or "unverified"). Under it: *View raw
-event*, *View similar alerts* and *View matching monitor rule*. The alert list
-shows a small badge for an event alert's class (*known failure*, *known
-warning*, *informational*, *unverified*, *partly checked*).
+From 0.92 every alert opens on the eight questions of the UX directive's §16,
+answered by the server (`apps/api/src/monitoring/alert-questions.ts`):
+
+| Question | Answered from |
+|---|---|
+| What happened? | the explanation below |
+| Which customer and device are affected? | the alert's customer, site and device; a site outage counts its devices |
+| When was it observed? | first and last seen, how many times, and whether a maintenance window is holding notifications |
+| How fresh is the evidence? | where it comes from. An alert from the device's agent is **Current** only while the agent has reported inside the 30-minute heartbeat window, and **Stale** after it: it then shows the device as it was, cannot clear, and is not "healthy". Offline and agent-silent alerts are the lack of reports; warranty and backup alerts are stored data |
+| Why does it matter? | a sentence per kind, then how serious the severity makes it |
+| What can I safely do? | the recommended action, and that Acknowledge and Resolve change nothing on the device and need no ticket. A link opens the device tab where it is investigated (Services, Processes, Event log, Patches, Performance) |
+| Is there a related ticket? | only when a ticket connector is configured or a ticket exists: the PSA, automatic and ClientSt0r tickets made for this alert |
+| Was it verified as resolved? | **Verified** only when the monitor measured it clear while the agent was reporting. A person's resolve is *By a person* (their note, not a measurement; the monitor raises a new alert if it sees the problem again). A monitor that was closed (no longer applies, device retired) or a clear while the agent was silent is **Not verified** |
+
+The alert list marks an open alert whose agent has gone quiet *evidence
+stale* (or *no recent report*), and a resolved one says whether the monitor or
+a person resolved it. The whole workflow is local: acknowledge while you
+investigate, then resolve with a note. A ticket is never required.
+
+Under the questions, **Why was this alert generated?** (the monitor, what it
+watches, and how the severity was decided) and **Classification details** (a
+known pattern, a catalogued event, the event level, or "unverified"), then
+*View raw event*, *View similar alerts* and *View matching monitor rule*. The
+alert list shows a small badge for an event alert's class (*known failure*,
+*known warning*, *informational*, *unverified*, *partly checked*).
 
 ## False positives and alert quality rules (0.67)
 

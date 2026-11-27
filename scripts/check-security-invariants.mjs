@@ -8963,6 +8963,52 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
     'run-e2e.sh / ci.yml / e2e-ui.mjs');
 }
 
+// ── §97 (0.92 Signal): the eight questions every alert answers ──────────────
+//     Display only (directive §16). monitoring/alert-questions.ts is pure: it
+//     imports only common/connectivity (itself import-free), reads no clock,
+//     and has one caller, the alert detail. Stale or missing telemetry is
+//     never "fresh": an agent-sourced alert is fresh only inside
+//     HEARTBEAT_STALE_MS. Only a measurement verifies: a person's resolve is
+//     `person`, a "Closed:" monitor note and a clear with no agent report
+//     inside the window are `unverified`. The ticket question exists only
+//     with a ticket or a configured connector, which the detail learns from
+//     PsaService.configuredFor (a read) — nothing in the alert detail sends.
+{
+  const code = (t) => t.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const q = read('apps/api/src/monitoring/alert-questions.ts');
+  const qc = code(q);
+  check('alert-questions.ts imports only common/connectivity, reads no clock, and common/connectivity imports nothing',
+    [...q.matchAll(/from '([^']+)'/g)].map((m) => m[1]).join() === '../common/connectivity' && !/Date\.now\(|new Date\(\)/.test(qc)
+      && !/^import /m.test(read('apps/api/src/common/connectivity.ts')),
+    'alert-questions.ts');
+  check('freshness: "fresh" only for an agent report inside HEARTBEAT_STALE_MS; stale past it; unknown without one',
+    /if \(!Number\.isFinite\(agentAge\)\) return \{ status: 'unknown'/.test(qc) && /if \(i\.now - agentAge > HEARTBEAT_STALE_MS\) \{\s*return \{ status: 'stale'/.test(qc)
+      && (qc.match(/status: 'fresh'/g) ?? []).length === 1,
+    'alert-questions.ts freshnessOf');
+  check('verification: a person is never verified; "Closed" is unverified; an agent clear needs a report inside the window; one "verified"',
+    /if \(i\.resolvedBy === 'person'\) \{\s*return \{ status: 'person'/.test(qc) && /if \(!note\.startsWith\('Cleared'\)\) \{\s*return \{ status: 'unverified'/.test(qc)
+      && /agentAt < resolved - HEARTBEAT_STALE_MS/.test(qc) && (qc.match(/status: 'verified'/g) ?? []).length === 1,
+    'alert-questions.ts verificationOf');
+  check('the ticket question only with a ticket or a configured connector',
+    /if \(i\.tickets\.length\) \{[\s\S]{0,300}\} else if \(i\.psaConfigured\) \{/.test(qc) && (qc.match(/add\('ticket'/g) ?? []).length === 2,
+    'alert-questions.ts answerAlert');
+  const adm = code(read('apps/api/src/monitoring/monitoring-admin.service.ts'));
+  check('one caller (the detail); the PSA is only asked configuredFor, and the alert detail sends nothing',
+    (adm.match(/answerAlert\(/g) ?? []).length === 1 && /this\.psa\.configuredFor\(r\.customerId\)/.test(adm) && !/this\.psa\.(?!configuredFor)\w+\(/.test(adm)
+      && /async configuredFor\(customerId: string \| null\): Promise<boolean> \{\s*return !!\(await this\.effective\(customerId\)\);\s*\}/.test(code(read('apps/api/src/psa/psa.service.ts'))),
+    'monitoring-admin.service.ts / psa.service.ts');
+  // Nest resolves providers at boot, not at compile time: 0.92's first run failed to start because
+  // DashboardModule provides MonitoringAdminService without PsaModule. Every module that provides it imports PsaModule.
+  const providers = walk('apps/api/src').filter((f) => f.endsWith('.module.ts')).filter((f) => /providers: \[[^\]]*\bMonitoringAdminService\b/.test(read(f)));
+  check('every module that provides MonitoringAdminService imports PsaModule (or is MonitoringModule, which does)',
+    providers.length >= 4 && providers.every((f) => /imports: \[[^\]]*\bPsaModule\b/.test(read(f))),
+    providers.filter((f) => !/imports: \[[^\]]*\bPsaModule\b/.test(read(f))).join(', ') || 'modules');
+  check('suites: unit-alert-questions in CI; e2e-ui checks the answers on an alert',
+    /unit-alert-questions\.mjs/.test(read('.github/workflows/ci.yml')) && /alert-questions/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    'ci.yml / e2e-ui.mjs');
+  console.log('\n§97 Alert questions (0.92): pure, stale never fresh, only a measurement verifies, ticket question only with a PSA or a ticket');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

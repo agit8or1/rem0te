@@ -1404,9 +1404,22 @@ async function alertExplanation(page, f, vp, label) {
   const box = page.getByTestId('alert-explanation').first();
   await box.waitFor({ timeout: 20_000 }).catch(() => {});
   const t = await box.innerText().catch(() => '');
-  check(['What happened?', 'Why was this alert generated?', 'How serious is it?', 'Recommended action', 'Classification details'].every((h) => t.includes(h))
-    && /shadow copy/i.test(t) && /cannot be ruled out/.test(t) && /Partly seen/.test(t),
-    `${label}: the alert explains itself — what happened, why, how serious, what to do, and how sure Rem0te is`, t.replace(/\s+/g, ' ').slice(0, 400));
+  // 0.92 (UX P1-6): the eight questions come first; the explanation box keeps why it was raised and how it was classified.
+  const qs = page.getByTestId('alert-questions').first();
+  await qs.waitFor({ timeout: 20_000 }).catch(() => {});
+  const qt = await qs.innerText().catch(() => '');
+  const answers = await qs.locator('[data-question]').evaluateAll((els) => els.map((e) => [e.getAttribute('data-question'), e.getAttribute('data-status')]));
+  const ak = answers.map((x) => x[0]);
+  check(['What happened?', 'Which customer and device are affected?', 'When was it observed?', 'How fresh is the evidence?', 'Why does it matter?', 'What can I safely do?', 'Was it verified as resolved?'].every((h) => qt.includes(h))
+    && /shadow copy/i.test(qt) && /cannot be ruled out/.test(qt),
+    `${label}: the alert answers the eight questions (what, who, when, how fresh, why it matters, what to do, verified)`, qt.replace(/\s+/g, ' ').slice(0, 400));
+  check(JSON.stringify(ak.filter((k) => k !== 'ticket')) === JSON.stringify(['what', 'who', 'when', 'fresh', 'why', 'act', 'resolved'])
+    && ['fresh', 'stale', 'unknown'].includes(answers.find((x) => x[0] === 'fresh')?.[1] ?? '') && answers.find((x) => x[0] === 'resolved')?.[1] === 'open',
+    `${label}: in order, with the evidence's freshness and "not yet" resolved`, JSON.stringify(answers));
+  check(/change nothing on the device/.test(qt) && /no ticket is needed/.test(qt), `${label}: and says acknowledging and resolving change nothing on the device and need no ticket`);
+  check(['Why was this alert generated?', 'Classification details'].every((h) => t.includes(h)) && !t.includes('Recommended action') && /Partly seen/.test(t),
+    `${label}: the explanation box keeps why it was raised and how sure Rem0te is, without repeating the answers`, t.replace(/\s+/g, ' ').slice(0, 300));
+  check(await page.getByTestId('alert-investigate').first().innerText().catch(() => '') === 'Investigate on the device: Event log', `${label}: an event alert links to the device's Event log`);
   const badge = await page.locator('[data-testid="alerts-list"] [data-testid="alert-class"]').first().innerText().catch(() => '');
   check(/partly checked/.test(badge), `${label}: the alert row says it was only partly checked`, badge);
   const views = page.getByTestId('alert-views').first();

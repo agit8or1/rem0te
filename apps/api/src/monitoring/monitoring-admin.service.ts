@@ -19,6 +19,8 @@ import { AlertEventsService } from './alert-events.service';
 import { GroupMembershipService } from '../group-policy/membership.service';
 import { FINGERPRINT_RE, type Classification } from './classify';
 import { explainAlert } from './explain';
+import { answerAlert, freshnessOf } from './alert-questions';
+import { AUTO_CREATOR, PsaService } from '../psa/psa.service';
 import { BACKUP_AGENT_TEMPLATES, TEMPLATE_IDS } from './backup-agent-templates';
 
 const bad = (e: z.ZodError) => new BadRequestException({ code: 'INVALID_REQUEST', message: e.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ') });
@@ -64,6 +66,7 @@ export class MonitoringAdminService {
     private readonly events: AlertEventsService,
     private readonly email: EmailService,
     private readonly groups: GroupMembershipService,
+    private readonly psa: PsaService,
   ) {}
 
   // ── Who ───────────────────────────────────────────────────────────────────
@@ -120,12 +123,15 @@ export class MonitoringAdminService {
   private view(r: Prisma.MonitorAlertGetPayload<{ include: typeof VIEW_INCLUDE }>) {
     return {
       id: r.id, kind: r.kind, monitor: r.ruleKey, severity: r.severity, state: r.state, title: r.title, detail: r.detail,
-      business: r.customer ? { id: r.customer.id, name: r.customer.name } : null, site: r.site, computer: r.endpoint,
+      business: r.customer ? { id: r.customer.id, name: r.customer.name } : null, site: r.site,
+      computer: r.endpoint ? { id: r.endpoint.id, name: r.endpoint.name, hostname: r.endpoint.hostname } : null,
+      // 0.92 (UX P1-6): how fresh the evidence is, from its source and the agent's last report. Never "fresh" without one.
+      freshness: freshnessOf({ kind: r.kind, lastSeenAt: r.lastSeenAt, agentLastSeenAt: r.endpoint?.lastSeenAt ?? null, now: Date.now(), childCount: 0 }).status,
       firstSeenAt: r.firstSeenAt, lastSeenAt: r.lastSeenAt, occurrences: r.occurrences,
       notifyFrom: r.notifyFrom, escalationLevel: r.escalationLevel, lastNotifiedAt: r.lastNotifiedAt,
       suppressed: r.suppressed, suppressionId: r.suppressionId, parentId: r.parentId,
       acknowledgedAt: r.acknowledgedAt, acknowledgedById: r.acknowledgedById,
-      resolvedAt: r.resolvedAt, resolvedById: r.resolvedById, resolvedBy: r.resolvedAt ? (r.resolvedById ? 'person' : 'monitor') : null, resolveNote: r.resolveNote,
+      resolvedAt: r.resolvedAt, resolvedById: r.resolvedById, resolvedBy: (r.resolvedAt ? (r.resolvedById ? 'person' : 'monitor') : null) as 'person' | 'monitor' | null, resolveNote: r.resolveNote,
       ticket: r.ticketId ? { id: r.ticketId, url: r.ticketUrl, peer: r.ticketPeerId, linkedAt: r.ticketLinkedAt } : null,
       // 0.66: the classifier's verdict, in short (the full record is on the detail).
       classification: r.classification ? { class: (r.classification as unknown as Classification).class, basis: (r.classification as unknown as Classification).basis, matched: (r.classification as unknown as Classification).matched, version: r.classifierVersion } : null,
@@ -181,18 +187,34 @@ export class MonitoringAdminService {
     const classification = (r.classification as unknown as Classification | null) ?? null;
     // 0.67: the approved alert quality rules that changed it (names only), and its false-positive reports.
     const ruleIds = [...new Set((classification?.qualityRules ?? []).filter((x) => typeof x === 'string'))].slice(0, 20);
-    const [qualityRules, fpReports, myReport] = await Promise.all([
+    const [qualityRules, fpReports, myReport, psaTickets, psaConfigured] = await Promise.all([
       ruleIds.length ? this.prisma.alertQualityRule.findMany({ where: { id: { in: ruleIds } }, select: { id: true, name: true, status: true } }) : [],
       this.prisma.alertFalsePositiveReport.count({ where: { alertId: id } }),
       this.prisma.alertFalsePositiveReport.findFirst({ where: { alertId: id, reportedById: a.userId }, select: { reason: true, createdAt: true } }),
+      // 0.92: tickets made for this alert (by a person or automatically), and whether a connector applies at all.
+      this.prisma.psaTicket.findMany({ where: { sourceRef: `alert:${id}` }, orderBy: { createdAt: 'asc' }, take: 10, select: { ref: true, url: true, createdById: true } }),
+      this.psa.configuredFor(r.customerId).catch(() => false),
     ]);
     const explanation = explainAlert({
       kind: r.kind, ruleKey: r.ruleKey, title: r.title, severity: r.severity, detail: r.detail, classification,
       rule: rule ? { name: rule.name, severity: rule.severity, params: (rule.params ?? {}) as Record<string, unknown> } : null,
       qualityRules: qualityRules.map((q) => ({ id: q.id, name: q.name })),
     });
+    const view = this.view(r);
+    const questions = answerAlert({
+      kind: r.kind, severity: r.severity, state: r.state, business: r.customer, site: r.site,
+      device: r.endpoint ? { name: r.endpoint.name ?? r.endpoint.hostname ?? r.endpoint.id } : null,
+      childCount: children.length, firstSeenAt: r.firstSeenAt, lastSeenAt: r.lastSeenAt, occurrences: r.occurrences, suppressed: r.suppressed,
+      resolvedAt: r.resolvedAt, resolvedBy: view.resolvedBy, resolveNote: r.resolveNote, agentLastSeenAt: r.endpoint?.lastSeenAt ?? null,
+      explanation, psaConfigured, now: Date.now(),
+      tickets: [
+        ...psaTickets.map((t) => ({ ref: t.ref, url: t.url, via: t.createdById === AUTO_CREATOR ? 'automatic' as const : 'psa' as const })),
+        ...(r.ticketId ? [{ ref: r.ticketId, url: r.ticketUrl, via: 'clientst0r' as const }] : []),
+      ],
+    });
     return {
-      ...this.view(r),
+      ...view,
+      questions,
       events: events.map((e) => ({ type: e.type, actorId: e.actorId, detail: e.detail, at: e.createdAt })), children: children.map((c) => this.view(c)),
       explanation, classificationDetail: classification,
       rule: rule ? { ...rule, scope: scopeOfKey(rule.scopeKey) } : null,

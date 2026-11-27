@@ -184,6 +184,15 @@ export class PsaService {
   // the computer's History and the screenshot still work; the request's
   // event log says which ticket it became.
 
+  /**
+   * 0.92 (UX P1-6): whether a ticket connector applies to this business (its
+   * own, or the global one). The alert detail asks it only to decide whether
+   * "Is there a related ticket?" is a question at all; it reads, never sends.
+   */
+  async configuredFor(customerId: string | null): Promise<boolean> {
+    return !!(await this.effective(customerId));
+  }
+
   /** Whether the tray offers support requests for a computer of this business. */
   async trayOffered(customerId: string | null): Promise<boolean> {
     return !!customerId && !!(await this.effective(customerId));

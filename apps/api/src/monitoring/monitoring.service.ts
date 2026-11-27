@@ -743,7 +743,8 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
 }
 
 export const VIEW_INCLUDE = {
-  endpoint: { select: { id: true, name: true, hostname: true } },
+  // 0.92: lastSeenAt is the agent's last report, for the alert's freshness (alert-questions.ts).
+  endpoint: { select: { id: true, name: true, hostname: true, lastSeenAt: true } },
   site: { select: { id: true, name: true } },
   customer: { select: { id: true, name: true } },
   // 0.55: the automatic PSA ticket, if one was made or tried.

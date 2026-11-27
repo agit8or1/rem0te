@@ -1250,9 +1250,12 @@ const SECTIONS: Section[] = [
           edited is left alone.
         </p>
         <p>
-          Open an alert for <strong className="text-foreground">What happened?</strong>,{' '}
-          <strong className="text-foreground">Why was this alert generated?</strong>,{' '}
-          <strong className="text-foreground">How serious is it?</strong>, a recommended action and how sure Rem0te is, then{' '}
+          Open an alert and it answers eight questions (0.92): what happened, which customer and device, when it was observed,{' '}
+          <strong className="text-foreground">how fresh the evidence is</strong> (an alert from a device whose agent has gone quiet
+          says <em>Stale</em>, never healthy), why it matters, what you can safely do, any related ticket (only when a ticket
+          connector is set up), and <strong className="text-foreground">whether it was verified as resolved</strong> — only a
+          measurement verifies; your own resolve is recorded as yours. Acknowledge and Resolve change nothing on the device and
+          never need a ticket. Below that: why the alert was generated and how sure Rem0te is, then{' '}
           <em>View raw event</em>, <em>View similar alerts</em> (the same event fingerprint) and <em>View matching monitor rule</em>.
           Rem0te has no SMART polling and no backup-product integration: a backup failure is watched only by an event-log
           monitor you add. See{' '}
