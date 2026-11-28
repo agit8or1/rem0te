@@ -784,6 +784,18 @@ const SECTIONS: Section[] = [
           content, and the server keeps no copy. More in{' '}
           <Link href="/docs/file-transfer" className="underline text-foreground">Background file transfer</Link>.
         </p>
+        <p className="font-medium text-foreground">References, deadlines and search (0.93)</p>
+        <p>
+          The Terminal, Files, Event log and Diagnostics tabs, and a request from the Services and Processes tabs,
+          name the device and customer they act on and show each operation&apos;s{' '}
+          <strong className="text-foreground">reference</strong>, with Copy and an{' '}
+          <strong className="text-foreground">Audit log</strong> link to that operation&apos;s own entries, within what
+          you may already read. Every deadline is the server&apos;s own time (a terminal&apos;s hard limit, when a
+          transfer stops without progress, when an unanswered request expires, when an action&apos;s signed window
+          closes). Errors say what the server said, then what to do. You can search a terminal&apos;s output and
+          transcript, the collected event-log entries and the recent transfers. None of this changes who may use a
+          tool.
+        </p>
         <p className="font-medium text-foreground">Nothing here is live</p>
         <p>
           Apart from the Terminal and Files, Rem0te has no channel to reach into a device. Everything on that tab arrived

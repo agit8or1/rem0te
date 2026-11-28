@@ -2506,6 +2506,19 @@ exists only with a ticket or a configured connector, learnt from
 `unit-alert-questions.mjs` (in CI); browser: `e2e-ui.mjs`
 (`alertExplanation`).
 
+§98 (0.93) is the background tools, presented (directive §13): display only,
+and **nothing widens who may run a tool**. `apps/web/lib/tool-ops.ts` is pure
+(no import, no clock, no fetch), and `tool-chrome.tsx` makes no request.
+Deadlines come only from dates the server sent (`deadlineText` returns null
+without one), and every `TOOL_FIXES` code is one the API returns. `GET /audit`
+takes `resourceId` only after `resolveScope`, as an equality next to the scope.
+It refuses a malformed id (`BAD_RESOURCE_ID`) and an unknown action
+(`BAD_ACTION`, formerly a 500). 0106 indexes `(resource, resourceId)`. The
+terminal and files tabs keep their capability checks. Unit:
+`apps/web/scripts/unit-tool-ops.mjs` (in CI). Behavioural:
+`e2e-terminal.mjs` (audit by record, other owner gets nothing). Browser:
+`e2e-ui.mjs` (`terminalPanel`, `filesPanel`).
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

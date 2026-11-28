@@ -2976,6 +2976,14 @@ async function terminalPanel(page, f, vp, theme, label) {
   const total = await page.getByTestId('terminal-total').innerText().catch(() => '');
   check(/^1[45]:\d\d$/.test(idle) && /^(59|60):\d\d$/.test(total), `${label}: both clocks are shown (idle ${idle}, total ${total})`);
   check(/next check-in/.test(await page.getByTestId('terminal-state').innerText()), `${label}: the waiting state says it starts at the next check-in`);
+  // 0.93 (UX P1-7): the target, the server's hard limit as a clock time, the session's reference and audit link.
+  const target = await live.getByTestId('tool-target').innerText().catch(() => '');
+  check(target.includes(String(ep.name ?? '')) && /Customer/.test(target) && /Runs as SYSTEM/.test(target), `${label}: the terminal names its device, customer and SYSTEM`, target);
+  const dl = await page.getByTestId('terminal-deadline').innerText().catch(() => '');
+  check(/Hard limit: ends at \d\d:\d\d \(in (59|60) min\)/.test(dl) || /in 1 h 00 min/.test(dl), `${label}: the hard limit is the server's own time`, dl);
+  const ref = live.getByTestId('op-ref').first();
+  const auditLink = await ref.getByTestId('op-audit').getAttribute('href').catch(() => null);
+  check(await ref.getAttribute('data-ref') === row?.id && auditLink === `/audit?resource=terminal_session&resourceId=${row?.id}`, `${label}: the session shows its reference and links to its own audit rows`, `${auditLink}`);
   await themeCheck(page, theme, `${label} Terminal tab`);
   if (vp === 'phone') await noSideScroll(page, `${label} Terminal tab`);
   await shot(page, `${label}-terminal`);
@@ -2984,6 +2992,15 @@ async function terminalPanel(page, f, vp, theme, label) {
   const ended = await prisma.terminalSession.findUnique({ where: { id: row?.id ?? '' } });
   check(ended?.state === 'ended' && ended.endReason === 'closed', `${label}: End session closes it`, `${ended?.state} ${ended?.endReason}`);
   await cleanCheck(page, `${label} Terminal tab`);
+  if (vp === 'desktop' && auditLink) {
+    await go(page, auditLink);
+    await page.getByTestId('audit-record-filter').waitFor({ timeout: 10_000 }).catch(() => {});
+    await page.waitForFunction(() => document.querySelectorAll('table tbody tr').length > 0, null, { timeout: 10_000 }).catch(() => {});
+    const body = await page.locator('table tbody').innerText().catch(() => '');
+    check(/TERMINAL[ _]OPENED/i.test(body) && (await page.getByTestId('audit-record-filter').innerText().catch(() => '')).includes(row?.id ?? '?'),
+      `${label}: the audit link opens this session's rows`, body.slice(0, 200));
+    await cleanCheck(page, `${label} audit log by record`);
+  }
   await go(page, `/endpoints/${f.tools.standard.id}?tab=terminal`);
   await page.getByTestId('terminal-unsupported').waitFor({ timeout: 10_000 }).catch(() => {});
   check(/full \(signed\) agent/.test(await page.getByTestId('terminal-unsupported').innerText().catch(() => '')) && await page.getByTestId('terminal-open').count() === 0,
@@ -3050,6 +3067,11 @@ async function filesPanel(page, f, vp, theme, label) {
   check(up?.state === 'pending' && up.sha256 === createHash('sha256').update(body).digest('hex') && Number(up.size) === body.length,
     `${label}: a send declares the size and the SHA-256 the browser computed`, `${up?.state} ${up?.sha256}`);
   check(/Sending to the device/.test(await upCard.innerText().catch(() => '')), `${label}: the send shows its direction`);
+  // 0.93 (UX P1-7): the server's clocks, the target and the transfer's reference.
+  const fdl = await card.getByTestId('files-deadline').innerText().catch(() => '');
+  check(/Hard limit: ends at \d\d:\d\d/.test(fdl) && /Without progress it stops at \d\d:\d\d/.test(fdl), `${label}: a transfer shows its hard limit and stall time`, fdl);
+  check(await card.getByTestId('op-ref').getAttribute('data-ref').catch(() => null) === down?.id && /Runs as SYSTEM/.test(await card.getByTestId('tool-target').innerText().catch(() => '')),
+    `${label}: a transfer shows its reference and target`);
   await themeCheck(page, theme, `${label} Files tab`);
   if (vp === 'phone') await noSideScroll(page, `${label} Files tab`);
   await shot(page, `${label}-files`);
@@ -3062,6 +3084,11 @@ async function filesPanel(page, f, vp, theme, label) {
     check(row?.state === 'cancelled' && row.endReason === 'cancelled' && await c.getAttribute('data-state') === 'cancelled', `${label}: Cancel ends the ${what}, and the card says so`, `${row?.state} ${row?.endReason}`);
   }
   check((await page.getByTestId('files-row').count()) >= 2, `${label}: both appear under Recent transfers`);
+  await page.getByTestId('files-filter').fill('ui-check.txt');
+  check(await page.getByTestId('files-row').count() === 1, `${label}: the transfer filter narrows the list`);
+  await page.getByTestId('files-filter').fill('no-such-file-anywhere');
+  check(await page.getByTestId('files-filter-none').count() === 1, `${label}: a filter that matches nothing says so`);
+  await page.getByTestId('files-filter').fill('');
   await cleanCheck(page, `${label} Files tab`);
   await go(page, `/endpoints/${f.tools.standard.id}?tab=files`);
   await page.getByTestId('files-unsupported').waitFor({ timeout: 10_000 }).catch(() => {});

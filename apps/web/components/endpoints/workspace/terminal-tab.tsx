@@ -13,6 +13,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useToast } from '@/hooks/use-toast';
 import { compareVersions } from '@/lib/device-tools';
 import { agentType, ago } from './device-model';
+import { errorLine, OperationRef, OutputSearch, ToolTarget } from './tool-chrome';
+import { AUDIT_RESOURCE, deadlineText } from '@/lib/tool-ops';
 
 /**
  * Terminal (0.77 Conduit, docs/remote-terminal.md): a background cmd or
@@ -59,8 +61,8 @@ const END_TEXT: Record<string, string> = {
 };
 
 const mmss = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.max(0, s) % 60).padStart(2, '0')}`;
-const errText = (e: unknown, fallback: string) =>
-  (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message?.toString() ?? fallback;
+// 0.93: the server's own words, then what to do (lib/tool-ops.ts TOOL_FIXES).
+const errText = (e: unknown, fallback: string) => errorLine(e, fallback);
 const errCode = (e: unknown) => (e as { response?: { data?: { code?: string } } })?.response?.data?.code;
 
 function decode(b64: string): string {
@@ -141,7 +143,7 @@ export function DeviceTerminalTab({ endpointId, ep }: { endpointId: string; ep: 
         </CardContent></Card>
       ) : null}
 
-      {viewing && <LiveTerminal key={viewing} endpointId={endpointId} sid={viewing} onClosed={() => void qc.invalidateQueries({ queryKey: ['terminal', endpointId] })} onDismiss={() => setViewing(null)} />}
+      {viewing && <LiveTerminal key={viewing} ep={ep} endpointId={endpointId} sid={viewing} onClosed={() => void qc.invalidateQueries({ queryKey: ['terminal', endpointId] })} onDismiss={() => setViewing(null)} />}
 
       {canOpen && windowsSigned && versionOk && !mine && (
         <Card data-testid="terminal-open">
@@ -185,6 +187,7 @@ export function DeviceTerminalTab({ endpointId, ep }: { endpointId: string; ep: 
                         <div className="min-w-0">
                           <div className="font-medium">{s.shell === 'cmd' ? 'cmd' : 'PowerShell'} · {s.technicianEmail ?? 'a technician'} · {s.state === 'ended' ? (END_TEXT[s.endReason ?? ''] ?? s.endReason) : s.state === 'open' ? 'Open' : 'Waiting for the device'}</div>
                           <div className="break-words text-xs text-muted-foreground">“{s.reason}” · opened {ago(s.createdAt)} · {s.bytesIn} B in, {s.bytesOut} B out{s.exitCode != null ? ` · exit ${s.exitCode}` : ''}</div>
+                          <OperationRef id={s.id} resource={AUDIT_RESOURCE.terminal} label="Session" />
                         </div>
                         <div className="flex gap-2">
                           {s.retained && canOpen && <Button size="sm" variant="outline" onClick={() => void showTranscript(s.id)}>Transcript</Button>}
@@ -203,6 +206,7 @@ export function DeviceTerminalTab({ endpointId, ep }: { endpointId: string; ep: 
             <DialogTitle>Transcript</DialogTitle>
             <DialogDescription>Kept because this customer keeps terminal transcripts. Lines you typed start with “&gt;”.</DialogDescription>
           </DialogHeader>
+          {transcript?.text ? <OutputSearch text={transcript.text} label="Find in the transcript" testId="transcript-find" /> : null}
           <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded bg-muted p-3 font-mono text-xs">{transcript?.text || '(empty)'}</pre>
         </DialogContent>
       </Dialog>
@@ -211,7 +215,7 @@ export function DeviceTerminalTab({ endpointId, ep }: { endpointId: string; ep: 
 }
 
 /** One live session of the person's own: the screen, the clocks, typing, Keep alive and End. */
-function LiveTerminal({ endpointId, sid, onClosed, onDismiss }: { endpointId: string; sid: string; onClosed: () => void; onDismiss: () => void }) {
+function LiveTerminal({ ep, endpointId, sid, onClosed, onDismiss }: { ep: Record<string, unknown>; endpointId: string; sid: string; onClosed: () => void; onDismiss: () => void }) {
   const { toast } = useToast();
   const [text, setText] = useState('');
   const [session, setSession] = useState<Session | null>(null);
@@ -287,16 +291,21 @@ function LiveTerminal({ endpointId, sid, onClosed, onDismiss }: { endpointId: st
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
+        <ToolTarget ep={ep} runsAs="SYSTEM" />
         {live && (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" data-testid="terminal-clocks">
             <span className="flex items-center gap-1"><Timer className="h-3 w-3" />Idle limit in <strong className="text-foreground" data-testid="terminal-idle">{mmss(idleLeft)}</strong></span>
             <span>Session ends in <strong className="text-foreground" data-testid="terminal-total">{mmss(totalLeft)}</strong> (never extended)</span>
+            {/* 0.93: the server's own hard limit, as a clock time. */}
+            {session && <span data-testid="terminal-deadline">Hard limit: {deadlineText(session.notAfter, now)}</span>}
           </div>
         )}
+        <OperationRef id={sid} resource={AUDIT_RESOURCE.terminal} label="Session" />
         <pre ref={screen} data-testid="terminal-screen" aria-live="polite"
           className="h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-zinc-950 p-3 font-mono text-xs leading-relaxed text-zinc-100 sm:h-96">
           {text || (session?.state === 'pending' ? 'The shell starts when the device next checks in…' : '')}
         </pre>
+        {text && <OutputSearch text={text} label="Find in this terminal's output" testId="terminal-find" />}
         {live && (
           <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(e) => {
             e.preventDefault();

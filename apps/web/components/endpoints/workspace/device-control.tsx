@@ -14,6 +14,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ago } from './device-model';
+import { OperationRef } from './tool-chrome';
+import { AUDIT_RESOURCE, deadlineText } from '@/lib/tool-ops';
 
 /**
  * Service control and End process on the Services and Processes tabs (0.45):
@@ -197,7 +199,7 @@ export function ControlDialog({ endpointId, actionId, title, children, valid = t
   const [reason, setReason] = useState('');
   const [windowHours, setWindowHours] = useState(1);
   const [ack, setAck] = useState(false);
-  const [done, setDone] = useState<{ approvalUrl: string | null; direct: boolean } | null>(null);
+  const [done, setDone] = useState<{ approvalUrl: string | null; direct: boolean; id: string | null; notAfter: string | null } | null>(null);
   const { data: catalog } = useQuery({
     queryKey: ['actions-catalog', endpointId],
     queryFn: () => actionsApi.catalog(endpointId).then((r) => r.data.data as { actions: CatalogAction[]; approval: 'direct' | 'signed' | null }),
@@ -205,10 +207,10 @@ export function ControlDialog({ endpointId, actionId, title, children, valid = t
   const isDirect = (catalog?.approval ?? mode) === 'direct';
   const action = catalog?.actions.find((a) => a.id === actionId);
   const m = useMutation({
-    mutationFn: () => send(reason.trim() || undefined, windowHours) as Promise<{ data: { data: { job?: { approvalUrl?: string; direct?: boolean } } } }>,
+    mutationFn: () => send(reason.trim() || undefined, windowHours) as Promise<{ data: { data: { job?: { id?: string; approvalUrl?: string; direct?: boolean; window?: { notAfter?: string | null } } } } }>,
     onSuccess: (r) => {
       const j = r.data.data.job;
-      setDone({ approvalUrl: j?.approvalUrl ?? null, direct: !!j?.direct });
+      setDone({ approvalUrl: j?.approvalUrl ?? null, direct: !!j?.direct, id: j?.id ?? null, notAfter: j?.window?.notAfter ?? null });
       toast(j?.direct ? { title: 'Approved automatically', description: DIRECT_TOAST } : { title: 'Requested', description: 'Nothing runs until two approvers authorize it on the approval page.' });
       qc.invalidateQueries({ queryKey: ['device-control', endpointId] });
       qc.invalidateQueries({ queryKey: ['endpoint-actions', endpointId] });
@@ -230,6 +232,9 @@ export function ControlDialog({ endpointId, actionId, title, children, valid = t
               : <p>Requested. Nothing runs until two people on the approval roster approve it; you cannot approve your own request.</p>}
             {done.approvalUrl && !done.direct && <p><a className="underline inline-flex items-center gap-1" href={done.approvalUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5" />Open the approval page</a></p>}
             <p className="text-xs text-muted-foreground">The row shows the result when the device reports it, and the list is refreshed then.</p>
+            {/* 0.93: the signed window's end, and the request's own audit rows. */}
+            {done.notAfter && <p className="text-xs text-muted-foreground" data-testid="control-window">If it has not run by then, it never runs: the signed window {deadlineText(done.notAfter, Date.now(), { future: 'closes', past: 'closed' })}.</p>}
+            {done.id && <OperationRef id={done.id} resource={AUDIT_RESOURCE.action} label="Request" />}
             <DialogFooter><Button size="sm" onClick={onClose}>Close</Button></DialogFooter>
           </div>
         ) : (

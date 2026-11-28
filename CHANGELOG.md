@@ -5,6 +5,102 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.93.0] — 2026-11-27 · *Lantern*
+
+Background technician tools, presented: UX_ROADMAP.md P1-7, directive §13
+("visible device and customer identity; operation state, progress and
+timeout information; cancellation where supported; clear output and
+searchable results; file-transfer progress and result verification; audit
+references and actionable errors", and "never broaden arbitrary command
+execution access as part of a usability improvement").
+
+Before this, the tools mostly worked but said too little:
+
+- **Hard-coded deadlines.** Several were wrong for anything but the
+  default. Diagnostics said a request expires "within fifteen" minutes and
+  the event log said "30 minutes", while the API already returned each
+  request's `expiresAt`. The terminal showed countdowns but never the
+  server's `notAfter`. The Files tab showed neither the transfer's hard
+  limit nor when it would stall out.
+- **No way from an operation to its audit rows.** `GET /audit` could not
+  filter by record. A technician asked "which session was that?" had only
+  the time to go on.
+- **Raw messages.** Errors were the bare server message: *This device's
+  agent is too old* with nothing about what to do. With no message at all,
+  some tabs showed axios's *Request failed with status code 409*.
+- **Nothing to search.** There was no search over terminal output, a
+  transcript, collected event-log entries or the transfer list.
+- **Others' transfers showed no progress.** A transfer run by another tab or
+  technician showed no bytes moved.
+
+### Added
+
+- **Identity in the tool.** `ToolTarget` (`components/endpoints/workspace/
+  tool-chrome.tsx`) shows the device, customer, hostname and *Runs as
+  SYSTEM* inside the terminal card and each transfer card. The Tools dialog
+  names the customer under its title.
+- **Deadlines from the server.** `deadlineText` (`lib/tool-ops.ts`, pure)
+  words a date the API sent as "ends at 15:42 (in 58 min)" and returns
+  nothing without one, so nothing is invented. Each tool uses its own date:
+  - the terminal's hard limit (`notAfter`);
+  - a transfer's hard limit, and when it stops without progress
+    (`lastProgressAt` + the stall limit);
+  - event-log and diagnostics expiry (`expiresAt`), replacing the
+    hard-coded text;
+  - a Services/Processes request's signed window (`job.window.notAfter`).
+- **References and audit links.** `OperationRef` shows an operation's id
+  with *Copy* and *Audit log* for terminal sessions, transfers, event-log
+  requests, diagnostics runs and device-control requests. The link opens
+  `/audit?resource=…&resourceId=…[&action=…]`. The audit page reads those
+  from the URL and shows what it is filtered to, with *Show everything*.
+- **`GET /audit?resourceId=`.** It is applied after `resolveScope`, as an
+  equality next to the scope, so it only narrows. A Business Owner naming
+  another business's session gets nothing. A malformed id is `400
+  BAD_RESOURCE_ID`, and an unknown `action` is now `400 BAD_ACTION`; it was
+  a 500 from Prisma. Migration **0106** indexes `ActivityLog(resource,
+  resourceId)`.
+- **Errors with the next step.** `toolError` keeps the server's message
+  (it already carries the specifics) and appends a fix for known codes,
+  such as *Update the agent from its Agent card (Overview), then try
+  again.* Every code in `TOOL_FIXES` is checked against `apps/api/src`.
+  axios's generic text is never shown; the tab's own fallback is.
+- **Search.**
+  - The terminal output and the transcript dialog: matching lines with
+    their numbers.
+  - Collected event-log entries. Each row keeps its index in the result,
+    which *Ask AI* and *Create ticket* name it by.
+  - *Recent transfers*: by path, reason, person or state.
+
+  All of it is over what is already on screen.
+- **Transfer progress for others.** A row this browser is not running shows
+  bytes and percentage from `bytesDone`.
+
+### Unchanged
+
+No tool, capability, permission, agent build, signer rule or limit changed.
+The terminal and files tabs keep their `can(CAP.…)` checks (§98 asserts
+it), and the agent's evidence level is as before. The terminal and file
+transfer have run only on Windows Server in the lab.
+
+### Checks
+
+- `apps/web/scripts/unit-tool-ops.mjs` (53 checks, in CI): the audit link,
+  deadlines, every fix code against the API, the services' audit resources,
+  the filters, each tab wired, and no forbidden colour or small text.
+- `scripts/check-security-invariants.mjs` §98.
+- `e2e-terminal.mjs`: audit by record for the Platform Admin and the owner,
+  nothing for another business's owner, and 400 for a bad id or action.
+- `e2e-ui.mjs`: the terminal's target, hard limit, reference and audit
+  link, opening the audit page by record; a transfer's clocks, reference
+  and target; the transfer filter.
+
+### Deploy
+
+Schema change: run `prisma migrate deploy` (0106, one index), then
+`prisma generate` at the target. There is no agent or signer change.
+
+---
+
 ## [0.92.0] — 2026-11-27 · *Signal*
 
 Alerts answer the eight questions: UX_ROADMAP.md P1-6, directive §16 ("Every

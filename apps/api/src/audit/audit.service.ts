@@ -28,6 +28,8 @@ interface QueryParams {
   action?: ActivityAction;
   actorId?: string;
   resource?: string;
+  /** 0.93: one record's rows (a terminal session, a file transfer). Narrows; never widens the scope. */
+  resourceId?: string;
   fromDate?: Date;
   toDate?: Date;
   page?: number;
@@ -113,6 +115,7 @@ export class AuditService {
       ...(params.action ? { action: params.action } : {}),
       ...(params.actorId ? { actorId: params.actorId } : {}),
       ...(params.resource ? { resource: params.resource } : {}),
+      ...(params.resourceId ? { resourceId: params.resourceId } : {}),
       ...(params.fromDate || params.toDate
         ? {
             createdAt: {

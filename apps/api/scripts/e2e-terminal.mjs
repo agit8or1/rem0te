@@ -288,6 +288,20 @@ async function all() {
   const opened = await prisma.activityLog.findFirst({ where: { action: 'TERMINAL_OPENED', resourceId: s1 } });
   check(!!opened && opened.actorId === admin.id && opened.customerId === bizA.id && opened.metadata.endpointId === A1.id && opened.metadata.reason === 'e2e: check the spooler' && opened.metadata.identity === 'SYSTEM',
     'TERMINAL_OPENED: who, which computer, the reason, SYSTEM', J(opened?.metadata));
+  // 0.93 (UX P1-7): the terminal links to its own audit rows. The filter narrows the reader's scope, never widens it.
+  r = await req('GET', `/audit?resource=terminal_session&resourceId=${s1}`, { s: SAd });
+  check(ok(r) && r.data.logs.length >= 1 && r.data.logs.every((l) => l.resourceId === s1 && l.resource === 'terminal_session') && r.data.logs.some((l) => l.action === 'TERMINAL_OPENED'),
+    'audit by record: the Platform Admin gets this session\'s rows and only them', msg(r));
+  r = await req('GET', `/audit?resource=terminal_session&resourceId=${s1}`, { s: SOA });
+  check(ok(r) && r.data.scope === 'business' && r.data.logs.some((l) => l.resourceId === s1), "audit by record: business A's owner sees it in their own scope", msg(r));
+  r = await req('GET', `/audit?resource=terminal_session&resourceId=${s1}&businessId=${bizA.id}`, { s: SOB });
+  check(r.status === 403 && !r.data?.logs, "audit by record: business B's owner naming business A is refused (403)", msg(r));
+  r = await req('GET', `/audit?resource=terminal_session&resourceId=${s1}`, { s: SOB });
+  check(ok(r) && r.data.scope === 'business' && r.data.logs.length === 0, "audit by record: business B's owner gets nothing for A's session in their own scope", msg(r));
+  r = await req('GET', '/audit?resourceId=..%2Fx%27%20OR%201%3D1', { s: SAd });
+  check(r.status === 400 && code(r) === 'BAD_RESOURCE_ID', 'audit by record: a malformed resourceId is refused (400)', msg(r));
+  r = await req('GET', '/audit?action=NOT_A_REAL_ACTION', { s: SAd });
+  check(r.status === 400 && code(r) === 'BAD_ACTION', 'audit: an unknown action is refused (400), not a 500', msg(r));
   r = await signedBeat(A1);
   check(ok(r) && r.data.remotePoll === true, 'a terminal waits: the heartbeat says remotePoll: true', msg(r));
   r = await poll(B1);
