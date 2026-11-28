@@ -222,6 +222,9 @@ jobs:
       - name: Background tools (unit)
         run: node apps/web/scripts/unit-tool-ops.mjs
 
+      - name: Patching, guided (unit)
+        run: node apps/web/scripts/unit-patch-lifecycle.mjs
+
       # Alert quality rules (0.67): narrowness, risk, expiry, scope (never
       # across a business), shadow rules counted but never applied,
       # precedence and conflicts, the unseen-event floor, simulation and its

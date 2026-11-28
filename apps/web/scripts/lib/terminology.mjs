@@ -21,6 +21,7 @@ export const KEEP_PHRASES = [
   { re: /\bbusiness (owner|user)s?\b/g, why: 'role name' },
   // Other people's names for things.
   { re: /\bApple Business Manager\b/g, why: "Apple's product name" },
+  { re: /\bWindows Update for Business\b/g, why: "Microsoft's product name" },
   { re: /\b[Cc]omputer [Nn]ames?\b/g, why: "Windows' and RustDesk's term for the host name" },
   { re: /\bComputer (Management|Configuration)\b/g, why: 'Windows console and Group Policy node names' },
   { re: /\bDomain Computers\b/g, why: 'Active Directory group name' },

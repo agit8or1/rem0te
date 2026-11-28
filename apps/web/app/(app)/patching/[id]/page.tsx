@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
+import { updateStateOf } from '@/lib/patch-lifecycle';
 import { formatDate } from '@/lib/utils';
 import { DIRECT_DEFAULT_REASON, DIRECT_TOAST, oldAgentUpdateRefusal } from '@/lib/direct-mode';
 import { useAsks } from '@/lib/confirm-policy';
@@ -67,15 +68,7 @@ const RESTART_DEFERRED: Record<string, string> = {
   schedule_failed: 'Windows refused to schedule it', install_uncertain: 'the install outcome is not known', no_maintenance: 'this agent cannot schedule restarts',
 };
 
-const STATE: Record<string, { label: string; variant: 'success' | 'destructive' | 'warning' | 'outline' | 'secondary' }> = {
-  not_planned: { label: 'not in plan', variant: 'outline' }, awaiting_approval: { label: 'pending approval', variant: 'outline' },
-  scheduled: { label: 'scheduled', variant: 'secondary' }, delivered: { label: 'delivered', variant: 'secondary' },
-  installed: { label: 'installed', variant: 'secondary' }, restart_required: { label: 'restart required', variant: 'warning' },
-  effective: { label: 'effective', variant: 'success' }, superseded: { label: 'superseded', variant: 'outline' },
-  not_applicable: { label: 'not offered', variant: 'outline' }, excluded: { label: 'excluded', variant: 'outline' },
-  failed: { label: 'failed', variant: 'destructive' }, refused: { label: 'refused', variant: 'destructive' },
-  not_executed: { label: 'not executed', variant: 'outline' }, unknown: { label: 'unknown', variant: 'destructive' }, canceled: { label: 'canceled', variant: 'outline' },
-};
+// 0.94 (UX P1-8): one label per state, named by its lifecycle stage (lib/patch-lifecycle.ts).
 const key = (u: { updateId: string; revision: number }) => `${u.updateId}@${u.revision}`;
 function apiMessage(e: unknown, fallback: string) {
   return (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message?.toString() ?? fallback;
@@ -254,7 +247,7 @@ function RingCard({ r, d, onChanged }: { r: Ring; d: Deployment; onChanged: () =
                     {r.job && c.status === 'UNKNOWN' && !c.reconciled && <Reconcile jobId={r.job.id} endpointId={c.endpointId} onDone={onChanged} />}
                   </td>
                   {c.updates.map((s) => {
-                    const v = STATE[s.state] ?? { label: s.state, variant: 'outline' as const };
+                    const v = updateStateOf(s.state);
                     return <td key={s.key} className="py-1 pr-2"><Badge variant={v.variant} className="text-[10px]" title={s.detail ?? undefined}>{v.label}</Badge>{s.detail && ['failed', 'refused', 'unknown', 'canceled', 'superseded', 'excluded'].includes(s.state) && <span className="block text-muted-foreground max-w-[14rem]" data-testid={oldAgentUpdateRefusal(s.detail) ? 'old-agent-update' : undefined}>{oldAgentUpdateRefusal(s.detail) ?? s.detail}</span>}</td>;
                   })}
                 </tr>

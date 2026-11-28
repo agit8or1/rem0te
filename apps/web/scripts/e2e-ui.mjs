@@ -3760,6 +3760,24 @@ async function patchingApprovalModes(page, f, vp, label) {
       } else {
         check(btn === 'Propose for approval' && reason && !note, `${label} (signed): the policy form keeps "Propose for approval" and the approvers' reason`, `button "${btn}", reason shown ${reason}, note ${note}`);
       }
+      if (mode === 'signed') {
+        // 0.94 (UX P1-8): a template previews, fills in only its settings, and creates nothing.
+        const posts = [];
+        const onReq = (r) => { if (r.method() !== 'GET' && /\/api\/v1\/patching/.test(r.url())) posts.push(r.url()); };
+        page.on('request', onReq);
+        await page.locator('[data-testid="pol-template-servers"]').check();
+        const pv = await page.locator('[data-testid="pol-template-preview"]').innerText();
+        check(/Restarts: not set by the template/.test(pv) && /Devices: not set by the template/.test(pv) && /Security Updates/.test(pv) && !(await testFirst.isChecked()),
+          `${label}: choosing the Servers template only previews it (restarts and devices not set; the form unchanged)`, pv.slice(0, 300));
+        await page.locator('[data-testid="pol-template-apply"]').click();
+        await page.locator('[data-testid="pol-template-applied"]').waitFor({ timeout: 5_000 });
+        const reboot = await page.locator('[data-testid="reboot-choice"] select').inputValue();
+        const rule = await page.locator('[data-testid="pol-restart-rule"]').inputValue();
+        const pickedAny = await page.locator('[data-testid^="pol-pick-"]:checked').count();
+        check(await testFirst.isChecked() && reboot === 'never' && rule === 'none' && pickedAny === 0 && posts.length === 0 && await page.locator('[data-testid="pol-submit"]').isVisible(),
+          `${label}: filling in from a template sets its staging, keeps restarts off and no device ticked, and sends nothing`, `testFirst ${await testFirst.isChecked()}, reboot ${reboot}, rule ${rule}, picked ${pickedAny}, writes ${posts.join(' ')}`);
+        page.off('request', onReq);
+      }
       await testFirst.check();
       const staged = await page.locator('[data-testid="pol-staging"]').innerText();
       check(/One device installs first/.test(staged) && /Soak between rings/.test(await page.locator('main').innerText()),
@@ -3791,10 +3809,51 @@ async function patchingApprovalModes(page, f, vp, label) {
   }
 }
 
+// 0.94 (UX P1-8): the Patches tab names the eleven stages from evidence only, and explains who owns updates.
+async function patchLifecycleUi(page, f, vp, label) {
+  const ep = f.tools.signed;
+  const fake = async (route) => {
+    const res = await route.fetch();
+    const body = await res.json().catch(() => ({}));
+    const d = body.data ?? {};
+    const scannedAt = new Date(Date.now() - 3600_000).toISOString();
+    await route.fulfill({ response: res, json: { ...body, data: {
+      ...d, supported: true, scannedAt, scanRequestedAt: null, scanPending: false, error: null, autoUpdate: 'enabled',
+      managers: [{ id: 'wsus', label: 'WSUS' }], reboot: { pending: false, sources: [] }, history: [], afterInstall: null,
+      updates: [{ updateId: 'u-1', revision: 1, kb: 'KB5000001', title: 'Security update', className: 'Security Updates', severity: 'Critical', downloaded: true, rebootBehavior: 0, sizeBytes: 1 << 24, installable: false, notInstallableBecause: 'managed by WSUS' }],
+      install: { possible: false, reason: 'Updates on this device are managed by WSUS.', fix: null, installable: 0 },
+    } } });
+  };
+  await page.route(`**/api/v1/endpoints/${ep.id}/patches`, fake);
+  try {
+    await go(page, `/endpoints/${ep.id}?tab=patches`);
+    const card = page.locator('[data-testid="patch-lifecycle"]');
+    await card.waitFor({ timeout: 20_000 });
+    const st = async (id) => page.locator(`[data-testid="lifecycle-${id}"]`).getAttribute('data-status');
+    const rows = await page.locator('[data-testid^="lifecycle-"][data-status]').count();
+    const got = { scan: await st('scan_completed'), dl: await st('downloaded'), appr: await st('approved'), ver: await st('verified'), unk: await st('unknown'), rc: await st('restart_completed') };
+    check(rows === 11 && got.scan === 'done' && got.dl === 'done' && got.appr === 'not_seen' && got.ver === 'not_seen' && got.unk === 'not_seen' && got.rc === 'not_seen',
+      `${label}: the update lifecycle shows eleven stages, done only where the scan says so`, `${rows} rows ${JSON.stringify(got)}`);
+    await page.locator('[data-testid="lifecycle-downloaded"] button').click();
+    const means = await page.locator('[data-testid="lifecycle-downloaded-means"]').innerText();
+    check(/does not see downloads/.test(means), `${label}: "What is this?" says what Rem0te cannot see`, means);
+    const own = page.locator('[data-testid="update-ownership"]');
+    const ot = await own.innerText();
+    check(await own.getAttribute('data-state') === 'external' && /Managed by WSUS/.test(ot) && /never installs updates here/.test(ot) && /WSUS server/.test(ot),
+      `${label}: WSUS ownership is explained in plain English, and Rem0te says it never installs there`, ot.slice(0, 300));
+    if (vp === 'phone') await noSideScroll(page, `${label} patch lifecycle`);
+    await shot(page, `${label}-patch-lifecycle`);
+    await cleanCheck(page, `${label} patch lifecycle`);
+  } finally {
+    await page.unroute(`**/api/v1/endpoints/${ep.id}/patches`, fake);
+  }
+}
+
 async function coverage035(page, f, vp, label) {
   await adoptionScreens(page, f, vp, label);
   await patchWindowEditor(page, f, vp, label);
   await patchingApprovalModes(page, f, vp, label);
+  await patchLifecycleUi(page, f, vp, label);
   await automationSchedules(page, f, vp, label);
   await chatTab(page, f, vp, label);
   await scriptRunPanel(page, f, vp, label);

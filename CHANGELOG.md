@@ -5,6 +5,79 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.94.0] — 2026-11-28 · *Waypoint*
+
+Patching, guided: UX_ROADMAP.md P1-8, directive §14 ("clearly distinguish"
+the eleven states; "explain WSUS, Intune, Windows Update for Business … in
+plain English"; "do not enable automatic patch deployment or restarts merely
+because a template is selected"). Display only. No route, migration, agent,
+signer or permission change.
+
+### Added
+
+- **The update lifecycle.** The Patches tab has a new *Update lifecycle* card.
+  It lists the eleven stages (scan requested, scan completed, approved,
+  downloaded, installation started, installation succeeded, restart required,
+  restart completed, verified after install, failed, unknown) and marks each
+  one only from what the Patches read already returns. *What is this?* gives a
+  stage's meaning and its evidence.
+
+  Three stages have no event behind them, and the card says so rather than
+  guessing:
+  - *Downloaded* is Windows Update's own flag at the last scan. A download
+    during an install is never seen.
+  - *Installation started* is the plan being handed out. The agent reports
+    nothing between taking a plan and its result.
+  - *Restart completed* is a boot time after the result. With no boot time it
+    reads *Not reported*, never done.
+
+  A device on the standard agent shows every stage as *Not reported*.
+- **Who manages updates, in plain English.** Where the signed agent finds
+  WSUS, an Intune (or other MDM) update policy, Windows Update for Business or
+  Configuration Manager, the Patches tab says what it is, what Rem0te does
+  (shows the device's report, never installs there, never changes the
+  setting) and where to change it. It replaces the yellow banner. An
+  unreported policy is *Not known* and never read as free to patch.
+- **Optional templates.** The patch policy form and the company-wide form can
+  *Start from a template*:
+  - *Workstations*: security, critical and definition updates, weekdays
+    12:00–14:00, all together.
+  - *Servers*: security and critical updates, five days after the second
+    Tuesday, 02:00–05:00, one server first, then the rest after 24 h.
+
+  Choosing a template only previews it. *Fill in the form* sets its classes,
+  severities, staging, soak and window. A template has no field for devices, a
+  test device, the reboot or restart rule, the RustDesk exception or the
+  reason, and the picker makes no request. The policy is still proposed (or,
+  in direct mode, created) by the form's own button under the same approval
+  rules.
+
+### Changed
+
+- **Deployment page labels** come from the same map: *Approved, not yet handed
+  out*, *Installation started* (was "delivered"), *Installation succeeded*,
+  *Verified after install* (was "effective"), *No longer offered*, *Refused by
+  the device*. An unrecognised state is *Unknown*, never a raw code.
+  `docs/staged-patching.md`'s state table follows.
+
+### Checks
+
+- `apps/web/scripts/unit-patch-lifecycle.mjs` (in CI, *Patching, guided
+  (unit)*), 48 checks. It checks:
+  - the eleven stages, in order, with distinct labels and evidence;
+  - that `UPDATE_STATE` matches the API's `UpdateState` union exactly, and
+    `OWNERSHIP` matches `MANAGERS`;
+  - that a stage is done only from a fact;
+  - that templates carry only their allowed fields;
+  - that applying a template touches no device, reboot, restart or reason.
+- Security invariant §99. It covers the pure module, no request from the card
+  or the picker, templates without devices or restarts, and the agent's and
+  API's `managed_elsewhere` refusal still in place.
+- `e2e-ui.mjs`:
+  - `patchLifecycleUi`: eleven stages, the WSUS explanation, *What is this?*;
+  - the signed policy form: the Servers template previews, fills in, keeps
+    restarts off and no device ticked, and sends nothing.
+
 ## [0.93.0] — 2026-11-27 · *Lantern*
 
 Background technician tools, presented: UX_ROADMAP.md P1-7, directive §13

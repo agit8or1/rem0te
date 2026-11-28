@@ -13,6 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/utils';
 import { CLASS_NAMES, DEFAULT_POLICY_CLASSES, DRIVERS_CLASS, POLICY_STATUS, describeWindow, type PolicyWindowInput } from '@/lib/patching';
 import { WindowEditor, defaultWindowDraft, draftReady, windowFromDraft } from '@/components/patching/window-editor';
+import { PolicyTemplatePicker, templateWindow } from '@/components/patching/policy-template';
 import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
 import { PolicyRestartEditor, defaultPolicyRestart, policyRestartBody, policyRestartReady } from '@/components/patching/policy-restart';
 import { EFFECTIVE_LABEL, type EffectivePolicy } from '@/components/patching/patch-policy-setting';
@@ -210,6 +211,12 @@ function CreateSeries({ businessId, scope, computers, onDone }: { businessId: st
     <Card className="mb-4">
       <CardHeader className="pb-3"><CardTitle className="text-sm">{scope === 'business' ? 'New company-wide patch policy' : 'New assignable patch policy'}</CardTitle></CardHeader>
       <CardContent className="space-y-4 text-sm">
+        {/* 0.94 (UX P1-8): never sets a restart or a test device, never creates the policy. */}
+        <PolicyTemplatePicker id="ser" onApply={(t) => {
+          if (!name.trim()) setName(t.name);
+          setClasses(new Set(t.classes)); setTestFirst(t.testFirst);
+          setSoakHours(t.testFirst ? t.soakHours : 24); setFailureThreshold(t.failureThreshold); setWin((w) => templateWindow(t, w));
+        }} />
         <div className="max-w-md space-y-1"><Label htmlFor="ser-name" className="text-xs">Name</Label><Input id="ser-name" maxLength={100} value={name} onChange={(e) => setName(e.target.value)} placeholder={scope === 'business' ? 'e.g. All devices, Saturday night' : 'e.g. Servers, Sunday early morning'} /></div>
         <div className="space-y-1">
           <p className="text-xs font-medium">Classes it may install</p>

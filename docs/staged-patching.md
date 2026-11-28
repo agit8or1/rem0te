@@ -139,19 +139,19 @@ These are the states shown for each update on each device on the deployment page
 
 | State | Meaning |
 |---|---|
-| **awaiting approval** / **scheduled** / **delivered** | The plan isn't approved, is approved but not yet taken, or the device has it and hasn't answered |
-| **installed** | Windows reported the install succeeded. **Not yet confirmed:** a later scan must show it took effect |
-| **restart required** | Installed. It takes effect after a restart: one a person makes, or one the in-window rule scheduled |
-| **effective** | A scan taken *after* the result no longer offers the update, Windows' own history records it installed (or the device said it already was), and no restart is pending |
-| **superseded** | Windows Update replaced it with a newer update before install. Nothing was installed for it |
-| **not offered** | Windows Update didn't offer it to this device at install time (e.g. it doesn't apply) |
-| **excluded** | Windows Update offered it, but the agent refused it (a driver, optional, needs a licence or input) |
-| **failed** | Windows reported a failure, with its own HRESULT. Or a later scan offers it again, which means it didn't stay installed |
-| **refused** | The device refused the whole plan (a signature, target, window or `managed_elsewhere` reason) |
-| **unknown** | Nobody knows. The installer died, or the device didn't answer within six hours. Never reported as failed |
-| **canceled** | That device was taken out before delivery (`device_identity_changed`, `requester_no_longer_authorized`, …) |
+| **Pending approval** / **Approved, not yet handed out** / **Installation started** | The plan isn't approved, is approved but not yet taken, or the device has it and hasn't answered. The agent reports nothing between taking a plan and its result |
+| **Installation succeeded** | Windows reported the install succeeded. **Not yet confirmed:** a later scan must show it took effect |
+| **Restart required** | Installed. It takes effect after a restart: one a person makes, or one the in-window rule scheduled |
+| **Verified after install** | A scan taken *after* the result no longer offers the update, Windows' own history records it installed (or the device said it already was), and no restart is pending |
+| **Superseded** | Windows Update replaced it with a newer update before install. Nothing was installed for it |
+| **No longer offered** | Windows Update didn't offer it to this device at install time (e.g. it doesn't apply) |
+| **Excluded** | Windows Update offered it, but the agent refused it (a driver, optional, needs a licence or input) |
+| **Failed** | Windows reported a failure, with its own HRESULT. Or a later scan offers it again, which means it didn't stay installed |
+| **Refused by the device** | The device refused the whole plan (a signature, target, window or `managed_elsewhere` reason) |
+| **Unknown** | Nobody knows. The installer died, or the device didn't answer within six hours. Never reported as failed |
+| **Canceled** | That device was taken out before delivery (`device_identity_changed`, `requester_no_longer_authorized`, …) |
 
-**Effective is what the device reports.** It doesn't prove a vulnerability is fixed, and it doesn't cover a
+**Verified after install is what the device reports.** (Before 0.94 it was labelled *effective*.) It doesn't prove a vulnerability is fixed, and it doesn't cover a
 device that was restored from a backup afterwards.
 
 A device counts as **failed** for the threshold if it reported failed, partial, refused or not executed, if any of
@@ -163,6 +163,60 @@ If the installer stops part-way (a crash, a power cut, a reboot by someone else)
 It reports **uncertain** and never runs that plan again on that device. The deployment page shows **Reconcile** for
 that device. Check **Settings → Windows Update → Update history** on it, then record what you found. The gate
 doesn't move until you do.
+
+## The update lifecycle, on screen (0.94)
+
+A device's **Patches** tab has an **Update lifecycle** card listing eleven stages. Each one is marked only from
+something the device or the approval signer reported. *What is this?* on a row says what the stage means and
+what proves it.
+
+| Stage | Marked from | What Rem0te cannot see |
+|---|---|---|
+| **Scan requested** | The scan request, until the device's next check-in | |
+| **Scan completed** | The last scan's time, with no scan error | |
+| **Approved** | The latest install plan's approval (two approvers, or direct mode) | |
+| **Downloaded** | Windows Update's own *downloaded* flag at the last scan | Downloads while an install runs |
+| **Installation started** | The plan being handed to the device | Progress before the result: the agent reports none |
+| **Installation succeeded** | The agent's signed result | |
+| **Restart required** | The result, or a later scan, saying Windows waits for a restart | |
+| **Restart completed** | The device's last boot time being after the install result | The restart itself. With no boot time it says *Not reported* |
+| **Verified after install** | A later scan: not offered again, recorded installed, no restart pending | |
+| **Failed** | A failed result with Windows' error code, a failed scan, or a later scan offering the update again | |
+| **Unknown** | An uncertain result, or no scan and no install | |
+
+*Not reported* means Rem0te cannot see that stage; it never means something went wrong, and nothing is shown
+as done without the fact behind it. A device on the standard agent shows every stage as *Not reported*: that
+agent lists pending updates but reports no install lifecycle.
+
+### Who manages updates
+
+When the signed agent finds another update manager, the Patches tab says so in plain English: what it is, what
+Rem0te does, and where to change it.
+
+| Manager | Found by | What Rem0te does |
+|---|---|---|
+| **WSUS** | Group Policy `WUServer` with `UseWUServer=1` | Shows what the device reports. It never installs there and never changes the setting |
+| **Intune or another MDM** | An MDM update policy under `PolicyManager\current\device\Update` | The same; change the update ring in Intune |
+| **Windows Update for Business** | A deferral, pause or target-release Group Policy | The same |
+| **Configuration Manager** | The `CcmExec` service | The same |
+
+The device itself refuses a Rem0te install while one of these manages it (`managed_elsewhere`), and policies,
+company-wide policies and templates leave it out. When nothing has reported the policy (the standard agent),
+the answer is *Not known*: Rem0te never treats an unknown device as free to patch.
+
+### Templates
+
+The patch policy form and the company-wide form offer an optional **Start from a template**. There are two
+templates:
+
+- **Workstations**: Security, Critical and Definition updates, weekdays 12:00–14:00, all devices together.
+- **Servers**: Security and Critical updates, five days after the second Tuesday of each month, 02:00–05:00. One
+  server goes first, and the rest follow after 24 hours.
+
+Choosing a template only shows its preview. **Fill in the form** changes only the classes, severities, staging,
+soak and window, and you can change any of them afterwards. A template never picks a device or a test device,
+never sets a reboot or restart rule or the RustDesk exception, and never proposes or creates the policy. The
+form's own button does that, with the same approval (or direct-mode) rules as before.
 
 ## On the device
 

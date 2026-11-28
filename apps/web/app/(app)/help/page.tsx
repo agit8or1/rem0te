@@ -796,6 +796,20 @@ const SECTIONS: Section[] = [
           transcript, the collected event-log entries and the recent transfers. None of this changes who may use a
           tool.
         </p>
+        <p className="font-medium text-foreground">Update lifecycle, ownership and templates (0.94)</p>
+        <p>
+          A device&apos;s Patches tab lists the eleven stages of an update: scan requested, scan completed,
+          approved, downloaded, installation started, installation succeeded, restart required, restart completed,
+          verified after install, failed and unknown. Each is marked only from what the device or the approval
+          signer reported. <strong className="text-foreground">Not reported</strong> means Rem0te cannot see that
+          stage (a download during an install, its progress, the restart itself), never that it went wrong. When
+          WSUS, Intune, Windows Update for Business or Configuration Manager manages a device, the tab says so in
+          plain English, and Rem0te never installs there. The policy forms offer optional Workstations and Servers
+          templates. Choosing one shows a preview, and <strong className="text-foreground">Fill in the form</strong>
+          sets only its classes, staging and window. A template never picks devices, never turns on a restart and
+          never creates the policy. More in{' '}
+          <Link href="/docs/staged-patching" className="underline text-foreground">Staged patching</Link>.
+        </p>
         <p className="font-medium text-foreground">Nothing here is live</p>
         <p>
           Apart from the Terminal and Files, Rem0te has no channel to reach into a device. Everything on that tab arrived
