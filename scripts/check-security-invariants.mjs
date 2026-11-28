@@ -9041,6 +9041,38 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   console.log('\n§98 Background tools (0.93): pure presentation, no request from the chrome, audit by record inside scope');
 }
 
+// ── §99 (0.94 Compass): patching, guided ─────────────────────────────────────
+//     Display only (directive §14: "do not enable automatic patch deployment
+//     or restarts merely because a template is selected"; "do not override
+//     externally managed patch policies"). lib/patch-lifecycle.ts is pure; the
+//     lifecycle card and the template picker make no request; a template
+//     carries no device, reboot or restart, and applying one only fills the
+//     form. The signer, the device's managed_elsewhere refusal and the form's
+//     own propose/create button are unchanged.
+{
+  const code = (t) => t.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const lib = read('apps/web/lib/patch-lifecycle.ts');
+  check('lib/patch-lifecycle.ts imports nothing, reads no clock and fetches nothing',
+    !/^import /m.test(lib) && !/Date\.now\(|new Date\(/.test(code(lib)) && !/fetch\(|axios/.test(lib), 'apps/web/lib/patch-lifecycle.ts');
+  const tpl = code(lib).slice(code(lib).indexOf('export const POLICY_TEMPLATES'), code(lib).indexOf('export function templatePreview'));
+  check('no template carries devices, rings, a reboot, a restart, the RustDesk exception or a reason',
+    tpl.length > 100 && !/\b(devices|rings|reboot|restart|ignoreRemoteSession|reason|expiresInDays|endpointId|canary)\s*:/.test(tpl), 'POLICY_TEMPLATES');
+  for (const f of ['apps/web/components/patching/patch-lifecycle-card.tsx', 'apps/web/components/patching/policy-template.tsx']) {
+    check(`${f.split('/').pop()} makes no request and holds no mutation`, !/api-client|Api\.|fetch\(|useMutation|useQuery/.test(code(read(f))), f);
+  }
+  for (const [f, id] of [['apps/web/components/patching/patch-policies.tsx', 'pol'], ['apps/web/components/patching/company-policies.tsx', 'ser']]) {
+    const m = read(f).match(new RegExp(`<PolicyTemplatePicker id="${id}" onApply=\\{\\(t\\) => \\{([\\s\\S]*?)\\}\\} />`));
+    check(`${f.split('/').pop()}: applying a template never sets devices, reboot, restart or reason, and never submits`,
+      !!m && !/setPicked|setRingOf|setCanary|setReboot|setRestart|setReason|mutate/.test(m[1]), f);
+  }
+  check('agent: a device managed by WSUS / WUfB / MDM / ConfigMgr is still refused before installing',
+    /managed_elsewhere/.test(read('tools/windows-installer/internal/patch/install.go')) && /MANAGED_ELSEWHERE/.test(read('apps/api/src/patching/patching.service.ts')), 'install.go / patching.service.ts');
+  check('suites: unit-patch-lifecycle in CI; e2e-ui checks the lifecycle and a template',
+    /unit-patch-lifecycle\.mjs/.test(read('.github/workflows/ci.yml')) && /patch-lifecycle/.test(read('apps/web/scripts/e2e-ui.mjs')) && /pol-template/.test(read('apps/web/scripts/e2e-ui.mjs')),
+    'ci.yml / e2e-ui.mjs');
+  console.log('\n§99 Patching, guided (0.94): pure lifecycle words, templates never pick devices or restarts, external owners untouched');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);

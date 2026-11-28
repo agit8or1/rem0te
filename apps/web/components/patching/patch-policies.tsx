@@ -15,6 +15,7 @@ import { formatDate } from '@/lib/utils';
 import { useAsks } from '@/lib/confirm-policy';
 import { POLICY_STATUS, CLASS_NAMES, DEFAULT_POLICY_CLASSES, DRIVERS_CLASS, SEVERITIES, describeWindow, type PolicyWindowInput } from '@/lib/patching';
 import { WindowEditor, defaultWindowDraft, draftReady, windowFromDraft } from '@/components/patching/window-editor';
+import { PolicyTemplatePicker, templateWindow } from '@/components/patching/policy-template';
 import { AlertTriangle, CheckCircle2, Loader2, Plus, ScrollText, XCircle } from 'lucide-react';
 import { RebootChoice, type RebootRule } from '@/components/patching/patch-reboot-choice';
 import { PolicyRestartEditor, defaultPolicyRestart, policyRestartBody, policyRestartReady } from '@/components/patching/policy-restart';
@@ -186,6 +187,12 @@ function CreatePolicy({ businessId, onDone }: { businessId: string; onDone: () =
     <Card className="mb-4">
       <CardHeader className="pb-3"><CardTitle className="text-sm">New patch policy</CardTitle></CardHeader>
       <CardContent className="space-y-4 text-sm">
+        {/* 0.94 (UX P1-8): never picks devices, never sets a restart, never proposes. */}
+        <PolicyTemplatePicker id="pol" onApply={(t) => {
+          if (!name.trim()) setName(t.name);
+          setClasses(new Set(t.classes)); setSeverities(new Set(t.severities)); setTestFirst(t.testFirst);
+          setSoakHours(t.testFirst ? t.soakHours : 24); setFailureThreshold(t.failureThreshold); setWin((w) => templateWindow(t, w));
+        }} />
         <div className="max-w-md space-y-1">
           <Label htmlFor="pol-name" className="text-xs">Name</Label>
           <Input id="pol-name" maxLength={120} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Security updates, Saturday night" />

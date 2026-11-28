@@ -2519,6 +2519,21 @@ terminal and files tabs keep their capability checks. Unit:
 `e2e-terminal.mjs` (audit by record, other owner gets nothing). Browser:
 `e2e-ui.mjs` (`terminalPanel`, `filesPanel`).
 
+§99 (0.94) is patching, guided (directive §14), display only.
+`apps/web/lib/patch-lifecycle.ts` is pure (no import, no clock). It holds the
+eleven stages, the per-update labels (`UPDATE_STATE`, exactly the API's
+`UpdateState` union), plain-English ownership (`OWNERSHIP`, exactly
+`posture.ts`'s `MANAGERS`) and two policy templates. **A stage is marked only
+from a fact**: *Downloaded* is Windows Update's scan-time flag, *Installation
+started* is the plan handed out, *Restart completed* is a boot after the
+result, and each says what Rem0te cannot see; *Not reported* never means done.
+**A template never makes a policy install or restart**: it has no devices,
+rings, reboot, restart, RustDesk exception or reason, applying one only fills
+the form (no `setPicked`, `setReboot`, `setRestart`, `mutate`), and the picker
+and the lifecycle card make no request. The device's `managed_elsewhere`
+refusal is unchanged. Unit: `unit-patch-lifecycle.mjs` (in CI); browser:
+`e2e-ui.mjs` (`patchLifecycleUi`, the policy form's template).
+
 CI runs it on every push and pull request, alongside `check-versions.mjs`.
 
 ## Docs

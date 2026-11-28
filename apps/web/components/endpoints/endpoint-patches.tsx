@@ -25,6 +25,7 @@ import { ScheduleChoice, defaultSchedule, scheduleBody, type ScheduleValue } fro
 import { CancelTask, TaskItems, TaskSteps } from '@/components/tasks/task-ui';
 import { STATE_LABEL, STATE_VARIANT, type TaskView } from '@/lib/tasks';
 import { ComputerRestartWindowCard, RestartWindowSentence } from '@/components/restart-windows/restart-window-card';
+import { PatchLifecycleCard, UpdateOwnership } from '@/components/patching/patch-lifecycle-card';
 
 /**
  * Windows Update posture of one computer (v0.27), as its signed agent's
@@ -472,6 +473,14 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
   return (
     <div className="space-y-4">
       <PatchSummaryCard s={p.summary} platform={platform} />
+      {/* 0.94 (UX P1-8): the eleven stages, from this read only. */}
+      <PatchLifecycleCard facts={{
+        signed: true, scanRequestedAt: p.scanRequestedAt, scanPending: p.scanPending, scannedAt: p.scannedAt, scanError: p.error,
+        offered: p.updates.length, downloaded: p.updates.filter((u) => u.downloaded).length,
+        installState: p.afterInstall?.task.state ?? null, installed: p.afterInstall?.installed ?? 0, installFailed: p.afterInstall?.failed ?? 0,
+        restartRequired: p.afterInstall?.restartRequired ?? false, restartedSinceInstall: p.summary.restartedSinceLastInstall,
+        verified: p.summary.confirmations.filter((c) => c.confirmedByLaterScan).length, rebootPendingNow: p.reboot?.pending ?? null,
+      }} />
       {p.afterInstall && <AfterInstallCard endpointId={endpointId} zones={p.timeZones ?? {}} a={p.afterInstall} checkedAt={dataUpdatedAt} onScan={() => rescan.mutate()} scanning={rescan.isPending || p.scanPending} />}
       <InstallUpdates endpointId={endpointId} p={p} onOpenAgentCard={onOpenAgentCard} />
       <PatchPolicySetting endpointId={endpointId} />
@@ -489,12 +498,8 @@ export function EndpointPatches({ endpointId, platform, onOpenAgentCard }: { end
             {p.scannedAt ? `Last scanned ${formatDate(p.scannedAt)}` : 'Not scanned yet'} · automatic updates {p.autoUpdate ?? 'unknown'}
           </p>
           {p.error && <p className="text-xs text-destructive">The last scan failed: {p.error}. The lists below may be out of date.</p>}
-          {p.managers.length > 0 && (
-            <div className="rounded-md border border-yellow-300 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-950/40 p-3 text-xs flex gap-2">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />
-              <span>Updates on this device are managed by <strong>{p.managers.map((m) => m.label).join(', ')}</strong>. Rem0te will not install updates here — the device itself refuses, so the two do not fight over it.</span>
-            </div>
-          )}
+          {/* 0.94 (UX P1-8): who owns updates, in plain English; Rem0te never overrides it. */}
+          {p.managers.length > 0 && <UpdateOwnership state="external" managers={p.managers} />}
           {p.reboot?.pending && (
             <p className="text-xs flex gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-yellow-600" />A restart is pending ({p.reboot.sources.map((s) => REBOOT_SOURCE[s] ?? s).join(', ')}). Installed updates take effect after a restart: someone restarts it, an approved restart is requested, its restart window does it, or a patch policy’s restart rule does.</p>
           )}
