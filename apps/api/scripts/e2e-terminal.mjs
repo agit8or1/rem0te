@@ -295,7 +295,9 @@ async function all() {
   r = await req('GET', `/audit?resource=terminal_session&resourceId=${s1}`, { s: SOA });
   check(ok(r) && r.data.scope === 'business' && r.data.logs.some((l) => l.resourceId === s1), "audit by record: business A's owner sees it in their own scope", msg(r));
   r = await req('GET', `/audit?resource=terminal_session&resourceId=${s1}&businessId=${bizA.id}`, { s: SOB });
-  check(ok(r) && r.data.scope === 'business' && r.data.logs.length === 0, "audit by record: business B's owner gets nothing, even naming business A", msg(r));
+  check(r.status === 403 && !r.data?.logs, "audit by record: business B's owner naming business A is refused (403)", msg(r));
+  r = await req('GET', `/audit?resource=terminal_session&resourceId=${s1}`, { s: SOB });
+  check(ok(r) && r.data.scope === 'business' && r.data.logs.length === 0, "audit by record: business B's owner gets nothing for A's session in their own scope", msg(r));
   r = await req('GET', '/audit?resourceId=..%2Fx%27%20OR%201%3D1', { s: SAd });
   check(r.status === 400 && code(r) === 'BAD_RESOURCE_ID', 'audit by record: a malformed resourceId is refused (400)', msg(r));
   r = await req('GET', '/audit?action=NOT_A_REAL_ACTION', { s: SAd });
