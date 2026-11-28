@@ -181,6 +181,27 @@ A transfer ends as:
 Cancelling never asks for a fresh confirmation. On the device, a send that
 ends early deletes its temporary file; nothing is left half-written.
 
+## On screen (0.93)
+
+A transfer's card shows:
+
+- the device, the customer, the hostname and *Runs as SYSTEM*;
+- *Hard limit*, the server's own `notAfter` as a clock time;
+- while the transfer is waiting or moving, when it stops without progress
+  (its last progress plus the stall limit);
+- the transfer's reference, with *Copy* and *Audit log*. The link opens
+  this transfer's rows (`/audit?resource=file_transfer&resourceId=<id>`)
+  inside the reader's scope.
+
+*Recent transfers* can be filtered by path, reason, person or state. A
+transfer this browser is not running, such as one in another tab or by
+another technician, shows its bytes and percentage. The full SHA-256 is in
+the hash's tooltip, as before. Errors keep the server's words and add the
+next step where one is known, such as raising the customer's file size
+limit.
+
+Nothing here changes who may transfer, which paths are allowed, or the limits.
+
 ## What is kept
 
 - **The audit log.** `FILE_TRANSFER_REQUESTED`, then one of

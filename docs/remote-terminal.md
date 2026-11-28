@@ -184,6 +184,30 @@ looking:
   code. A worker that restarts and no longer holds a shell ends that session
   (`agent_error`).
 
+## On screen (0.93)
+
+While a terminal is open the tab shows:
+
+- **What it is connected to.** The device, its customer, its hostname and
+  *Runs as SYSTEM*, inside the terminal card as well as at the top of the tab.
+- **Three clocks.** The idle limit and the time left in the session count
+  down as before. *Hard limit* gives the server's own `notAfter` as a clock
+  time ("ends at 15:42 (in 58 min)"). Nothing extends it.
+- **A reference.** The session id, shortened, with *Copy* (the full id) and
+  *Audit log*. The link opens the audit log filtered to this session's rows
+  (`/audit?resource=terminal_session&resourceId=<id>`). The filter only
+  narrows: it applies inside the reader's own scope, and the audit page
+  still needs *Audit view*.
+- **Find in output.** This searches the output already on screen and lists
+  the matching lines with their numbers. A transcript, when the customer
+  keeps them, has the same search. Nothing is fetched to search.
+- **Errors in plain words.** The server's own message, followed by what to
+  do where that is known. For example, *Update the agent from its Agent card*
+  follows an agent too old for terminals.
+
+None of this changes who may open a terminal, what it runs as or how long it
+lasts.
+
 ## What is kept
 
 **Always**, in the audit log:

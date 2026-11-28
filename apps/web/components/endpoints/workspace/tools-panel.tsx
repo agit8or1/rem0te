@@ -154,6 +154,8 @@ export function ToolsPanel({
         }}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><Wrench className="h-4 w-4" />Tools for {name}</DialogTitle>
+          {/* 0.93 (UX P1-7): the customer too, so a tool is never opened on the wrong customer's device. */}
+          {(ep.customer as { name?: string } | null)?.name && <p className="text-sm text-muted-foreground" data-testid="tools-customer">Customer {(ep.customer as { name: string }).name}</p>}
           <DialogDescription>
             Each tool opens the flow that already does it, with its own confirmation. The server checks your access, containment and approval again when you use it.
             {loading && <span className="ml-1 inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" />Checking…</span>}

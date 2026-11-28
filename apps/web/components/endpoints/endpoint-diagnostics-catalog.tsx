@@ -12,6 +12,8 @@ import { DEFAULT_TCP_TIMEOUT, TCP_TIMEOUTS, paramsSummary, parseDiagnosticParams
 import {
   Stethoscope, Play, Loader2, CheckCircle2, XCircle, Clock, AlertTriangle, ShieldCheck, Lock, FlaskConical, HelpCircle, MinusCircle,
 } from 'lucide-react';
+import { errorLine, OperationRef } from './workspace/tool-chrome';
+import { AUDIT_RESOURCE, deadlineText } from '@/lib/tool-ops';
 
 /**
  * One-click read-only diagnostics (0.31).
@@ -118,8 +120,8 @@ function bytes(n: unknown): string {
 }
 const s = (v: unknown) => (v === null || v === undefined || v === '' ? '—' : String(v));
 const arr = (v: unknown) => (Array.isArray(v) ? (v as Record<string, unknown>[]) : []);
-const errText = (e: unknown, fallback: string) =>
-  (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? fallback;
+// 0.93: the server's own words, then what to do (lib/tool-ops.ts TOOL_FIXES).
+const errText = (e: unknown, fallback: string) => errorLine(e, fallback);
 
 function StatusPill({ status }: { status: RunStatus }) {
   const map: Record<RunStatus, { label: string; cls: string; icon: React.ReactNode }> = {
@@ -391,7 +393,7 @@ function Result({ run }: { run: Run }) {
   }
 }
 
-function RunDetail({ run, now }: { run: Run; now: number }) {
+function RunDetail({ run, now, endpointId }: { run: Run; now: number; endpointId: string }) {
   return (
     <div className="space-y-2 rounded-md border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -407,8 +409,9 @@ function RunDetail({ run, now }: { run: Run; now: number }) {
         </span>
       </div>
       <Steps run={run} />
-      {run.status === 'REQUESTED' && <p className="text-xs text-muted-foreground">The device collects this on its next check-in, normally within three minutes. If it does not check in within fifteen, the request expires.</p>}
+      {run.status === 'REQUESTED' && <p className="text-xs text-muted-foreground" data-testid="diag-expiry">The device collects this on its next check-in, normally within three minutes. If it does not check in, the request {deadlineText(run.expiresAt, now, { future: 'expires', past: 'expired' }) ?? 'expires'}.</p>}
       {run.error && <p className="text-xs text-red-600 dark:text-red-400">{run.error}</p>}
+      {!run.automatic && <OperationRef id={run.id} resource={AUDIT_RESOURCE.device} resourceId={endpointId} action="ENDPOINT_DIAGNOSTIC_REQUESTED" label="Run" />}
       {run.status === 'COMPLETED' && run.resultOnTab && <p className="text-xs text-muted-foreground">The result is on the {TAB_NAME[run.key] ?? 'device'} tab.</p>}
       {run.status === 'COMPLETED' && !run.resultOnTab && (run.resultWithheld
         ? <p className="text-xs text-muted-foreground flex items-center gap-1"><Lock className="h-3 w-3" />The result contains event-log text, which needs the &ldquo;Read event logs&rdquo; permission.</p>
@@ -686,7 +689,7 @@ export function EndpointDiagnosticsCatalog({ endpointId, focusKey }: {
         </CardContent>
       </Card>
 
-      {shown && <RunDetail run={shown} now={now} />}
+      {shown && <RunDetail run={shown} now={now} endpointId={endpointId} />}
 
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-sm">Recent runs</CardTitle></CardHeader>

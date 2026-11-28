@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Loader2, ShieldAlert, X } from 'lucide-react';
+import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Loader2, Search, ShieldAlert, X } from 'lucide-react';
 import { filesApi } from '@/lib/api-client';
 import { CAP, usePermissions } from '@/lib/auth';
 import { Sha256, fromBase64, toBase64 } from '@/lib/sha256';
@@ -13,6 +13,8 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { compareVersions } from '@/lib/device-tools';
 import { agentType, ago } from './device-model';
+import { errorLine, OperationRef, ToolTarget } from './tool-chrome';
+import { AUDIT_RESOURCE, deadlineText, filterRows } from '@/lib/tool-ops';
 
 /**
  * Files (0.78 Courier, docs/file-transfer.md). Send a file to a Windows
@@ -42,6 +44,8 @@ type Transfer = {
   state: 'pending' | 'transferring' | 'completed' | 'failed' | 'cancelled'; size: number | null; sha256: string | null;
   maxBytes: number; chunks: number; inSeq: number; ackSeq: number; bytesDone: number;
   createdAt: string; endedAt: string | null; endReason: string | null;
+  /** 0.93: the server's hard limit, and its last progress (the stall clock runs from it). */
+  notAfter?: string; lastProgressAt?: string | null;
   technicianEmail: string | null; mine: boolean; canCancel: boolean;
 };
 type ListView = { transfers: Transfer[]; limits: { maxBytes: number; chunkBytes: number; maxMinutes: number; stallMinutes: number; minAgent: string } };
@@ -72,8 +76,8 @@ const END_TEXT: Record<string, string> = {
 
 const MB = 1024 * 1024;
 const fmtBytes = (n: number | null) => (n === null ? '—' : n >= MB ? `${(n / MB).toFixed(1)} MB` : n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`);
-const errText = (e: unknown, fallback: string) =>
-  (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message?.toString() ?? fallback;
+// 0.93: the server's own words, then what to do (lib/tool-ops.ts TOOL_FIXES).
+const errText = (e: unknown, fallback: string) => errorLine(e, fallback);
 const errCode = (e: unknown) => (e as { response?: { data?: { code?: string } } })?.response?.data?.code;
 const errStatus = (e: unknown) => (e as { response?: { status?: number } })?.response?.status;
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -159,7 +163,10 @@ export function DeviceFilesTab({ endpointId, ep }: { endpointId: string; ep: Rec
     onError: (e) => toast({ title: 'Not cancelled', description: errText(e, 'The transfer could not be cancelled.'), variant: 'destructive' }),
   });
 
-  const transfers = list.data?.transfers ?? [];
+  const allTransfers = list.data?.transfers ?? [];
+  // 0.93: a filter over the transfers already listed (path, reason, who, state). Nothing is fetched.
+  const [find, setFind] = useState('');
+  const transfers = filterRows(allTransfers, find, (t) => `${t.path} ${t.reason} ${t.technicianEmail ?? ''} ${t.state} ${t.endReason ?? ''}`);
   const mineLive = new Set(jobs.map((j) => j.tid));
 
   return (
@@ -180,7 +187,7 @@ export function DeviceFilesTab({ endpointId, ep }: { endpointId: string; ep: Rec
       ) : null}
 
       {jobs.map((j) => (
-        <TransferProgress key={j.tid} endpointId={endpointId} job={j} onDone={refresh}
+        <TransferProgress key={j.tid} ep={ep} stallMinutes={limits?.stallMinutes ?? null} endpointId={endpointId} job={j} onDone={refresh}
           onDismiss={() => setJobs((all) => all.filter((x) => x.tid !== j.tid))} />
       ))}
 
@@ -256,10 +263,17 @@ export function DeviceFilesTab({ endpointId, ep }: { endpointId: string; ep: Rec
 
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base">Recent transfers</CardTitle></CardHeader>
-        <CardContent>
+        <CardContent className="space-y-2">
+          {allTransfers.length > 0 && (
+            <div className="relative max-w-sm">
+              <Search className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden="true" />
+              <Input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Filter by path, reason or person" aria-label="Filter transfers" className="h-9 pl-8" data-testid="files-filter" />
+            </div>
+          )}
           {list.isLoading ? <p className="text-sm text-muted-foreground">Loading…</p>
             : list.isError ? <p className="text-sm text-muted-foreground">{errText(list.error, 'Could not read the transfers.')}</p>
-              : transfers.length === 0 ? <p className="text-sm text-muted-foreground" data-testid="files-none">No file has been transferred with this device.</p>
+              : allTransfers.length === 0 ? <p className="text-sm text-muted-foreground" data-testid="files-none">No file has been transferred with this device.</p>
+              : transfers.length === 0 ? <p className="text-sm text-muted-foreground" data-testid="files-filter-none">No transfer matches “{find.trim()}”.</p>
                 : (
                   <ul className="divide-y text-sm" data-testid="files-transfers">
                     {transfers.map((t) => (
@@ -272,7 +286,10 @@ export function DeviceFilesTab({ endpointId, ep }: { endpointId: string; ep: Rec
                           <div className="break-words text-xs text-muted-foreground">
                             {t.direction === 'to_computer' ? 'Sent' : 'Fetched'} by {t.technicianEmail ?? 'a technician'} · {stateText(t)} · {fmtBytes(t.size)} · “{t.reason}” · {ago(t.createdAt)}
                             {t.sha256 && <> · <span className="font-mono" title={t.sha256}>SHA-256 {t.sha256.slice(0, 12)}…</span></>}
+                            {/* 0.93: progress for a transfer this browser is not running (another tab, another person). */}
+                            {(t.state === 'transferring' || t.state === 'pending') && !mineLive.has(t.id) && t.size ? <> · {fmtBytes(t.bytesDone)} of {fmtBytes(t.size)} ({Math.min(100, Math.round((t.bytesDone / t.size) * 100))}%)</> : null}
                           </div>
+                          <OperationRef id={t.id} resource={AUDIT_RESOURCE.file} label="Transfer" />
                         </div>
                         {t.canCancel && !mineLive.has(t.id) && (
                           <Button size="sm" variant="destructive" onClick={() => cancelM.mutate(t.id)} disabled={cancelM.isPending} data-testid="files-revoke">Cancel</Button>
@@ -288,7 +305,9 @@ export function DeviceFilesTab({ endpointId, ep }: { endpointId: string; ep: Rec
 }
 
 /** One transfer this browser started: it moves the bytes, shows progress, and offers Cancel. */
-function TransferProgress({ endpointId, job, onDone, onDismiss }: { endpointId: string; job: Job; onDone: () => void; onDismiss: () => void }) {
+function TransferProgress({ ep, stallMinutes, endpointId, job, onDone, onDismiss }: { ep: Record<string, unknown>; stallMinutes: number | null; endpointId: string; job: Job; onDone: () => void; onDismiss: () => void }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const i = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(i); }, []);
   const { toast } = useToast();
   const [t, setT] = useState<Transfer | null>(null);
   const [moved, setMoved] = useState(0);
@@ -444,6 +463,15 @@ function TransferProgress({ endpointId, job, onDone, onDismiss }: { endpointId: 
             {t && !live && <Button size="sm" variant="outline" onClick={onDismiss}>Close</Button>}
           </span>
         </div>
+        {/* 0.93: the server's own clocks — the hard limit and, while it runs, when it stalls out without progress. */}
+        {t && (t.state === 'pending' || t.state === 'transferring') && (
+          <p className="flex flex-wrap gap-x-4 text-xs text-muted-foreground" data-testid="files-deadline">
+            {t.notAfter && <span>Hard limit: {deadlineText(t.notAfter, now)}</span>}
+            {t.lastProgressAt && stallMinutes ? <span>Without progress it {deadlineText(new Date(new Date(t.lastProgressAt).getTime() + stallMinutes * 60_000), now, { future: 'stops', past: 'stopped' })}</span> : null}
+          </p>
+        )}
+        <ToolTarget ep={ep} runsAs="SYSTEM" />
+        <OperationRef id={job.tid} resource={AUDIT_RESOURCE.file} label="Transfer" />
         {note && <p className="text-xs text-destructive" data-testid="files-note">{note}</p>}
       </CardContent>
     </Card>

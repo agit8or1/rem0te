@@ -1929,6 +1929,7 @@ model ActivityLog {
   @@index([createdAt])
   @@index([customerId, createdAt])
   @@index([tenantId, createdAt])
+  @@index([resource, resourceId]) // 0.93: a background tool's link to its own audit rows
 }
 
 // ─── API Keys ─────────────────────────────────────────────────────────────────

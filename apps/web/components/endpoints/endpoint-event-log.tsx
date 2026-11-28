@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { errorLine, OperationRef } from '@/components/endpoints/workspace/tool-chrome';
+import { AUDIT_RESOURCE, deadlineText, filterRows } from '@/lib/tool-ops';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { endpointsApi } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
@@ -75,6 +77,8 @@ interface CommandRow {
   result: { events?: EventRow[] } | null;
   createdAt: string;
   completedAt: string | null;
+  /** 0.93: when a request the device has not picked up expires (the server's own time). */
+  expiresAt?: string | null;
 }
 
 function LevelBadge({ level, name }: { level: number | null; name: string | null }) {
@@ -171,10 +175,8 @@ export function EndpointEventLog({
       setCommandId(id);
     },
     onError: (e: unknown) => {
-      const message =
-        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        'Could not queue the request';
-      toast({ title: 'Error', description: message, variant: 'destructive' });
+      // 0.93: the server's own words, then what to do (lib/tool-ops.ts).
+      toast({ title: 'Not requested', description: errorLine(e, 'Could not queue the request.'), variant: 'destructive' });
     },
   });
 
@@ -211,6 +213,10 @@ export function EndpointEventLog({
   const shown = command ?? previous ?? null;
   const waiting = shown?.status === 'PENDING' || shown?.status === 'DISPATCHED';
   const events = shown?.status === 'SUCCEEDED' ? shown.result?.events ?? [] : [];
+  // 0.93: a filter over the entries already collected (message, provider, event ID, level). Each row
+  // keeps its index in the collected result, which Ask AI and Create ticket name it by.
+  const [find, setFind] = useState('');
+  const visible = filterRows(events.map((row, i) => ({ row, i })), find, ({ row }) => `${row.message ?? ''} ${row.provider ?? ''} ${row.eventId ?? ''} ${row.levelName ?? ''}`);
   // A result nobody on this screen asked for gets said so, rather than
   // implying the Fetch button produced it.
   const isHistoric = !command && !!previous;
@@ -379,11 +385,15 @@ export function EndpointEventLog({
               </p>
             )}
             {waiting && (
-              <p className="text-sm text-muted-foreground py-4 text-center">
+              <p className="text-sm text-muted-foreground py-4 text-center" data-testid="event-log-waiting">
                 Requested {formatDate(shown.createdAt)}. This page updates itself when
                 the device answers.
+                {shown.expiresAt ? <> If the device does not pick it up, it {deadlineText(shown.expiresAt, Date.now(), { future: 'expires', past: 'expired' })}.</> : null}
               </p>
             )}
+            <div className="mb-2">
+              <OperationRef id={shown.id} resource={AUDIT_RESOURCE.device} resourceId={endpointId} action="ENDPOINT_EVENT_LOG_REQUESTED" label="Request" />
+            </div>
 
             {(shown.status === 'FAILED' || shown.status === 'EXPIRED') && (
               <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
@@ -416,13 +426,20 @@ export function EndpointEventLog({
               </div>
             )}
             {events.length > 0 && (
+              <div className="mb-3 relative max-w-sm">
+                <Search className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                <Input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Filter by message, source or event ID" aria-label="Filter events" className="h-9 pl-8 text-sm" data-testid="event-log-filter" />
+                {find.trim() && <p className="mt-1 text-xs text-muted-foreground" data-testid="event-log-filter-count">{visible.length} of {events.length} shown</p>}
+              </div>
+            )}
+            {events.length > 0 && (
               <div className="-my-2">
                 {/* Wide by nature: a timestamp, a level, an id, a source and a
                     message do not compress, so this scrolls sideways on a
                     narrow window rather than wrapping into porridge. */}
                 <div className="overflow-x-auto">
                   <div className="min-w-[720px]">
-                    {events.map((row, i) => (
+                    {visible.map(({ row, i }) => (
                       <EventRowView key={`${row.eventId}-${row.timeCreated}-${i}`} row={row} endpointId={endpointId} commandId={shown.id} index={i} />
                     ))}
                   </div>

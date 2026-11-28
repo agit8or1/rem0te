@@ -9009,6 +9009,38 @@ const POSIX_PARTS = ['POSIX_SETUP', 'POSIX_TRANSPORT', 'POSIX_HEARTBEAT', 'POSIX
   console.log('\n§97 Alert questions (0.92): pure, stale never fresh, only a measurement verifies, ticket question only with a PSA or a ticket');
 }
 
+// ── §98 (0.93 Lantern): background tools, presented ──────────────────────────
+//     Display only (directive §13: "never broaden arbitrary command execution
+//     access as part of a usability improvement"). lib/tool-ops.ts is pure;
+//     the shared tool chrome makes no request; the tool tabs keep their own
+//     capability checks. The audit log's record filter (resourceId) is applied
+//     inside the caller's resolved scope, never instead of it, and a
+//     malformed id or an unknown action is refused before the database.
+{
+  const code = (t) => t.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  const ops = read('apps/web/lib/tool-ops.ts');
+  check('lib/tool-ops.ts imports nothing, reads no clock and fetches nothing',
+    !/^import /m.test(ops) && !/Date\.now\(|new Date\(\)/.test(code(ops)) && !/fetch\(|axios/.test(ops), 'apps/web/lib/tool-ops.ts');
+  const chrome = code(read('apps/web/components/endpoints/workspace/tool-chrome.tsx'));
+  check('the tool chrome makes no request and holds no mutation',
+    !/api-client|Api\.|\bapi\.|fetch\(|useMutation|useQuery/.test(chrome), 'tool-chrome.tsx');
+  const ctl = code(read('apps/api/src/audit/audit.controller.ts'));
+  check('GET /audit: Audit view, scope first, resourceId bounded, an unknown action refused, scope always passed',
+    /@RequireCapability\(CAP\.AUDIT_VIEW\)/.test(ctl) && ctl.indexOf('this.acl.resolveScope(') < ctl.indexOf('RESOURCE_ID.test(resourceId)')
+      && /const RESOURCE_ID = \/\^\[A-Za-z0-9_-\]\{1,64\}\$\/;/.test(ctl) && /BAD_ACTION/.test(ctl)
+      && /this\.audit\.query\(\{\s*customerId: scope \?\? undefined,/.test(ctl), 'audit.controller.ts');
+  const svc = code(read('apps/api/src/audit/audit.service.ts'));
+  check('the audit query adds resourceId only as an equality, next to the scope',
+    /\.\.\.\(params\.resourceId \? \{ resourceId: params\.resourceId \} : \{\}\)/.test(svc), 'audit.service.ts');
+  // The tool tabs keep the capability checks they had: nothing in this release widens who may run a tool.
+  const tabs = {
+    'apps/web/components/endpoints/workspace/terminal-tab.tsx': /can\(CAP\.COMPUTERS_TERMINAL\)/,
+    'apps/web/components/endpoints/workspace/files-tab.tsx': /can\(CAP\.COMPUTERS_FILES_UPLOAD\)[\s\S]*can\(CAP\.COMPUTERS_FILES_DOWNLOAD\)/,
+  };
+  for (const [f, re] of Object.entries(tabs)) check(`${f.split('/').pop()} keeps its capability check`, re.test(read(f)), f);
+  console.log('\n§98 Background tools (0.93): pure presentation, no request from the chrome, audit by record inside scope');
+}
+
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} security invariant(s) broken:\n`);
   for (const f of failures) console.error(`   ✗ ${f}\n`);
